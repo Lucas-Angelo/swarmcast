@@ -81,7 +81,8 @@ test.describe('landing pages', () => {
     await expect(page.getByRole('heading', { name: 'Open, and honest about it' })).toBeVisible();
     await expect(page.getByTestId('limits').locator('li')).toHaveCount(4);
     await expect(page.getByTestId('faq').locator('details')).toHaveCount(5);
-    await expect(page.getByTestId('logo-placeholder').first()).toBeVisible();
+    // The real brand symbol (light or dark variant, whichever the theme shows).
+    await expect(page.locator('img.sc-logo-mark:visible').first()).toBeVisible();
     await page.waitForLoadState('networkidle');
     expect(external, 'no third-party requests (trackers, fonts…)').toEqual([]);
     expect(await context.cookies()).toEqual([]);
