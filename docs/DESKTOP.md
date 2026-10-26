@@ -269,11 +269,16 @@ mode the server does it on first start (no `system-check.json`, or a different a
 | Unit (vitest, cargo test) | protocol encode/decode, autostart entry generation per OS, system check thresholds, i18n completeness, update state |
 | Integration (vitest) | real server with `--desktop` driven by a fake shell over stdio: ready, state, start/stop, quit, stdin EOF, fatal on busy ports |
 | macOS (local + CI arm64/x64) | build `.app`/`.dmg`, install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
-| Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, WebDriver (tauri-driver) E2E of the panel, autostart file, AppImage update, uninstall |
-| Windows (CI) | NSIS silent install, launch, WebDriver E2E, autostart key, update vA→vB with config kept, uninstall, nothing left running |
+| Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
+| Windows (CI) | NSIS silent install, launch, panel through the admin API, Job object (killing the app ends the server), autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
-CI: `.github/workflows/desktop.yml` builds the installers for every target (windows-x64, macos-arm64,
-macos-x64, linux-x64 on Ubuntu 22.04 for an older glibc, linux-arm64) and runs the clean-machine tests on
-each OS, on every pull request and push to `main`, monthly, and as a gate of `release.yml`, which then
-publishes the tested installers, their `.sig` files and `latest.json` (`scripts/build/updater-manifest.mjs`).
-Only release builds see `TAURI_SIGNING_PRIVATE_KEY`; other builds have no updater artifacts.
+CI: `.github/workflows/desktop.yml` runs `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`
+on each OS, builds the installers for every target (windows-x64, macos-arm64, macos-x64 on the Intel
+image, linux-x64 and linux-arm64 on Ubuntu 22.04 for an older glibc) and runs
+`scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`, `.dmg` → `~/Applications`, `.deb` and the
+AppImage), launch, panel login (admin API), autostart on/off, kill (the server and tools go too), quit,
+the NSIS uninstaller / `apt remove` and `scripts/uninstall-*`, and an update from test build A
+(0.0.0-test.1) to B (0.0.0-test.2) served on 127.0.0.1, with config and secrets kept. A and B are built
+with `--insecure-updates --updater-pubkey` and a key pair generated in the job. Only `release.yml` passes
+the real `TAURI_SIGNING_PRIVATE_KEY` and publishes the tested installers, their `.sig` files and
+`latest.json`; other builds of the real installers have no updater artifacts.
