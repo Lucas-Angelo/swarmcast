@@ -186,7 +186,7 @@ Sizing for a big stream: 300 viewers × 3 Mbps × 2 h ≈ **810 GB at about 900 
 - **mCaptcha:** AGPL server + Postgres, pre-alpha [61].
 - **Turnstile:** requires a Cloudflare account [62].
 
-**ALTCHA:** turn it on only when "under attack" (or above N joins/min). PoW raises the cost per join; it doesn't stop GPU or botnet attackers [63], and it costs battery on phones.
+**ALTCHA:** turn it on only when "under attack" (or above N joins/min). PoW raises the cost per join; it doesn't stop GPU or botnet attackers [63], and it costs battery on phones. **Revised 2026-10-26:** on by default, but solved once per browser (signed cookie, see below), so the battery cost is paid once instead of on every join.
 
 ## 6. Implementation plan
 
@@ -203,7 +203,7 @@ Effort: XS < 2 h, S ≈ 0.5 d, M ≈ 1–2 d, L ≈ 3–5 d.
 | P1 | Panic rotate (new secret + new tunnel host + re-join tickets over `/control`) | M | `core/live.ts`, `control/control.ts`, `access/access.ts`, `tunnel/quick.ts`, `apps/viewer/src/watch.ts` |
 | P1 | Direct mode hot-standby tunnel, `fallbackUrl`, attack detection + auto-revert (**✅ detection + auto-revert done**; hot standby/`fallbackUrl` still open) | M–L | `direct/direct.ts`, `core/live.ts`, `packages/shared/src/schemas.ts`, `apps/viewer/src/watch.ts` |
 | P1 | `ssh-relay` tunnel provider (localhost.run / Pinggy / own server) + client-IP trust per provider; throughput test first | M | `tunnel/ssh.ts` (new), `tunnel/parse.ts`, `core/config.ts`, `public/security.ts`, `core/live.ts` |
-| P1 | ALTCHA on `/api/join` (self-hosted worker, auto-enabled under attack) (**✅ done**) | M | `apps/viewer/src/join.ts`, `join.html`, `public/server.ts`, `public/security.ts` (CSP unchanged) |
+| P1 | ALTCHA on `/api/join` (self-hosted worker, on by default and remembered per browser, stronger under attack) (**✅ done**) | M | `apps/viewer/src/join.ts`, `join.html`, `public/server.ts`, `public/security.ts` (CSP unchanged) |
 | P2 | `frp` provider + Oracle Always Free relay guide (Caddy, nginx HLS cache with `auth_request`) | L | `tunnel/frp.ts` (new), `scripts/build/versions.json`, new docs |
 | P2 | Optional TURN: `turnServers` config + viewer "hide my IP (relay)" toggle (`iceTransportPolicy: 'relay'`) | M | `core/config.ts`, `public/server.ts` (`/api/config`), `apps/viewer/src/watch.ts` |
 | P2 | Same-public-IP-only P2P mode | S | `tracker/tracker.ts` |
@@ -216,16 +216,16 @@ Code: `apps/server/src/security/` (detector, reactions, pow, blocklists, cidr, s
 | Control | Default | Why |
 |---|---|---|
 | Attack detector | always on | Pure logic, rolling 10 s window; thresholds = max(absolute floor, k × EWMA baseline learned while calm, per-viewer allowance), so a 400-viewer stream or a raid of real joins does not trigger. normal → suspicious → attack after 3 s; attack → suspicious after 60 s calm, → normal after 120 s more; exit thresholds are 60 % of entry ones |
-| Light browser check when suspicious, strong under attack | on | Invisible to viewers ("Checking your browser…", solved while they type), ≤ 20,000 SHA-256 attempts ≈ 0.1–0.2 s on a laptop, around a second on a mid-range phone |
+| Light browser check when suspicious, strong under attack | on | Invisible to viewers ("Checking your browser…" with a progress bar, solved while they type). Level 1: 5,000–15,000 SHA-256 attempts; level 2: 15,000–40,000. Measured 2026-10-26 on an Apple-silicon Mac: Chrome 1.5 µs/attempt (~6 µs with DevTools 4× CPU throttling, ~8–9 µs with 6×), Safari/WebKit ~22 µs. So level 1 is ≈ 0.1 s on a mid-range Android phone and an estimated 0.3–0.8 s on a mid-range iPhone (WebKit's digest is the slow case); level 2 ≈ 0.3 s / 0.8–2.2 s |
 | Tighten under attack | on | Join limits ÷ 4 per IP, 1 session per browser, viewer cap held at max(20, 1.25 × sessions + 10); nobody watching is dropped |
 | Auto new link (Secure mode) | **off** | The streamer must resend it; when it happens the panel highlights the new link and explains |
 | Direct mode → back to Secure mode | on | Nothing on the PC stops a flood on the home IP [8][9] |
 | …and Stop everything if that fails | on | Same reason |
 | Stop everything on any attack | **off** | In Secure mode Cloudflare absorbs volumetric floods [14]; only app-level abuse reaches the PC |
-| Always require the browser check | **off** | Costs battery for no reason when nothing is happening |
+| Always require the browser check | **on** (since 2026-10-26; a v0.1.0 `config.json` with the old default `false` is switched on once, `configVersion` 2) | It runs once per browser: after a solve, a signed `sc_verified` cookie (HMAC-SHA256 with `browserCheckKey` from `secrets.json`, bound to the device cookie, records the solved level, 30 days) skips it on later joins. It is asked again only when the shield needs a higher level. Cookies are per address: with a quick tunnel (new hostname every live) viewers solve it once per live |
 | Public blocklists | on | Conservative lists, rare false positives; bogons/CGNAT/private ranges are never blocked |
 
-**ALTCHA evaluation (2026-10-25):** `altcha@3.5.0` (widget) and `altcha-lib@2.8.0` (server), both MIT [59]. The widget's external build has no `eval`/`new Function` and no `style=` attributes (it only uses the CSSOM, which `style-src 'self'` allows), so it would run under our CSP. We still use only `altcha-lib` (`^2.8.0`) on both sides: its `solveChallenge` + WebCrypto SHA-256 run in our own Vite-built same-origin worker (3 KB) instead of the 85 KB Svelte widget, so the check is invisible, translated by our dictionaries, and needs no third-party UI. Challenges are HMAC-signed (deterministic counter + key signature, so verifying is two HMACs), expire after 10 minutes, are single use (replay store, fails closed when full) and use a per-live secret.
+**ALTCHA evaluation (2026-10-25):** `altcha@3.5.0` (widget) and `altcha-lib@2.8.0` (server), both MIT [59]. The widget's external build has no `eval`/`new Function` and no `style=` attributes (it only uses the CSSOM, which `style-src 'self'` allows), so it would run under our CSP. We still use only `altcha-lib` (`^2.8.0`) on both sides: its `solveChallenge` + WebCrypto SHA-256 run in our own Vite-built same-origin worker (3 KB) instead of the 85 KB Svelte widget, so the check is invisible, translated by our dictionaries, and needs no third-party UI. Challenges are HMAC-signed (deterministic counter + key signature, so verifying is two HMACs), expire after 10 minutes, are single use (replay store, fails closed when full) and use a per-live secret. The challenge's signed `data` carries the level (recorded in the `sc_verified` cookie) and the most attempts it can need (for the progress bar). The cookie never bypasses the link/ticket or the device ban, and "New link" / "Disconnect everyone" keep it (it is about bots, not access). Reusing one verified device for many joins gains little: each device holds at most `maxSessionsPerDevice` sessions (1 while tightened), so many concurrent fake viewers still need many devices, each solving its own check.
 
 **Public blocklists (checked 2026-10-25, all free and with no account; only a plain GET is sent):**
 

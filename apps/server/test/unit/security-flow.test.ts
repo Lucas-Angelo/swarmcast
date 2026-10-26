@@ -50,9 +50,10 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('protection switches have safe defaults and round-trip through config', () => {
     const { live, saved } = setup();
+    expect(live.snapshot().security.browserCheck).toBe(1);
     expect(live.snapshot().security.settings).toEqual({
       blockKnownBadIps: true,
-      requireBrowserCheck: false,
+      requireBrowserCheck: true,
       autoTighten: true,
       autoBrowserCheck: true,
       autoNewLink: false,
@@ -60,13 +61,13 @@ describe('settings round-trip: admission limits and protection switches', () => 
       autoStopIfDirectFails: true,
       stopOnAttack: false,
     });
-    const next = securitySettingsSchema.parse({ ...live.snapshot().security.settings, requireBrowserCheck: true, autoNewLink: true, blockKnownBadIps: false });
+    const next = securitySettingsSchema.parse({ ...live.snapshot().security.settings, requireBrowserCheck: false, autoNewLink: true, blockKnownBadIps: false });
     live.updateSecurity(next);
     expect(live.snapshot().security.settings).toEqual(next);
     const reloaded = configSchema.parse(saved.at(-1));
     expect(reloaded.security).toMatchObject(next);
     expect(reloaded.security.blocklists).toEqual(['spamhaus-drop', 'spamhaus-drop-v6', 'firehol-level1']);
-    expect(live.snapshot().security.browserCheck).toBe(1);
+    expect(live.snapshot().security.browserCheck).toBe(0);
     expect(securitySettingsSchema.safeParse({ ...next, stopOnAttack: 'yes' }).success).toBe(false);
     expect(configSchema.safeParse({ security: { extraBlocklistUrls: ['http://insecure.example/list.txt'] } }).success).toBe(false);
   });
@@ -120,9 +121,9 @@ describe('attack flow through the real public server', () => {
     const replay = await post({ nickname: 'Bia', pow });
     expect(replay.status).toBe(403);
 
-    // "End alert" → back to normal right away.
+    // "End alert" → back to normal right away (the light check that is on by default stays).
     live.clearAttackAlert();
-    expect(live.snapshot().security).toMatchObject({ threat: 'normal', browserCheck: 0, tightened: false });
+    expect(live.snapshot().security).toMatchObject({ threat: 'normal', browserCheck: 1, tightened: false });
     expect(live.snapshot().warningCodes.map((w) => w.code)).not.toContain('warn.attackDetected');
   });
 

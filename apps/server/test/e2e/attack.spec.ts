@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import { admin, adminState, liveLink, waitPlaying } from './fixtures.js';
+import { admin, adminApi, adminState, liveLink, waitPlaying } from './fixtures.js';
 
 // Runs first (alphabetical order) so its flood starts with fresh rate-limit buckets, and waits
 // for 127.0.0.1's join bucket to recover at the end so the other specs are not affected.
@@ -11,6 +11,9 @@ test('a flood of invalid join links is detected, turns on the browser check, and
   test.skip(browserName !== 'chromium', 'checked on Chromium');
   test.setTimeout(180_000);
   const link = await liveLink();
+  // The always-on light check (the default) is switched off here, so this test sees the shield turn it on.
+  const settings = (await adminState()).security.settings;
+  await adminApi('PUT', '/api/security', { ...settings, requireBrowserCheck: false });
   const before = await adminState();
   expect(before.security).toMatchObject({ threat: 'normal', browserCheck: 0 });
 
@@ -77,6 +80,8 @@ test('a flood of invalid join links is detected, turns on the browser check, and
   await expect(panel.getByTestId('threat')).toHaveAttribute('data-threat', 'normal');
   expect((await adminState()).security).toMatchObject({ threat: 'normal', browserCheck: 0, tightened: false });
 
+  await adminApi('PUT', '/api/security', settings);
+  expect((await adminState()).security.browserCheck).toBe(1);
   await ctxA.close();
   await ctxB.close();
   await adminCtx.close();
