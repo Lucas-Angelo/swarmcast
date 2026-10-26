@@ -73,6 +73,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' data:",
+    // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
+    "font-src 'self'",
     `connect-src 'self' ws://127.0.0.1:${o.port} ws://localhost:${o.port}`,
     "base-uri 'none'",
     "form-action 'self'",

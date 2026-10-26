@@ -1,14 +1,145 @@
-/* Quality menu and Stable / Lower-delay toggle (quality-menu.ts, latency-toggle.ts). */
-.player-controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin: 0.5rem 0; }
-.player-controls:empty { display: none; }
-.control-group { display: inline-flex; align-items: center; gap: 0.35rem; }
-/* The menu hides itself when there is only one quality; hide its tooltip too. */
-.control-group:has(select[hidden]) { display: none; }
-.quality-menu {
-  font: inherit; padding: 0.3rem 0.5rem; border-radius: 8px;
-  border: 1px solid rgba(127, 127, 127, 0.4); background: transparent; color: inherit;
+/* Quality menu and Stable / Lower-delay switch (quality-menu.ts, latency-toggle.ts).
+ * Tokens only (mapping: packages/shared/web/brand.css). */
+.player-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp-4) var(--sp-6);
 }
-.latency-toggle { border: 0; padding: 0; margin: 0; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
-.latency-toggle legend { float: left; margin-right: 0.2rem; font-weight: 600; padding: 0; }
-.latency-toggle .tip { margin-right: 0.3rem; }
-.latency-toggle small { flex-basis: 100%; opacity: 0.75; }
+.player-controls:empty {
+  display: none;
+}
+.control-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+/* The menu hides itself when there is only one quality; hide its tooltip too. */
+.control-group:has(select[hidden]) {
+  display: none;
+}
+.quality-group {
+  order: 2;
+}
+.latency-group {
+  order: 1;
+  flex: 1 1 18rem;
+}
+.quality-menu {
+  height: 36px;
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: var(--fs-md);
+  font-weight: var(--sc-weight-medium);
+  color: var(--sc-ink);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  cursor: pointer;
+}
+.quality-menu:hover {
+  border-color: var(--sc-border-strong);
+}
+
+.latency-toggle {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2) 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.latency-toggle legend {
+  float: left;
+  padding: 0;
+  margin-right: var(--sp-2);
+  font-weight: var(--sc-weight-semibold);
+  font-size: var(--fs-base);
+}
+.latency-toggle .tip {
+  margin-right: var(--sp-4);
+}
+.latency-toggle label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-right: var(--sp-4);
+  font-weight: var(--sc-weight-medium);
+  font-size: var(--fs-md);
+  cursor: pointer;
+}
+.latency-toggle .segmented {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.latency-toggle small {
+  flex-basis: 100%;
+  margin-top: var(--sp-1);
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+}
+/* Segmented control where :has() exists (radios stay visible otherwise). */
+@supports selector(:has(*)) {
+  .latency-toggle label {
+    position: relative;
+    height: 36px;
+    margin: 0;
+    padding: 0 var(--sp-4);
+    background: var(--sc-surface);
+    border: 1px solid var(--sc-border);
+    color: var(--sc-ink);
+    transition:
+      background-color 0.12s,
+      color 0.12s;
+  }
+  .latency-toggle .segmented {
+    flex-wrap: nowrap;
+  }
+  .latency-toggle label + label {
+    margin-left: -1px;
+  }
+  .latency-toggle label:first-child {
+    border-radius: var(--sc-radius-md) 0 0 var(--sc-radius-md);
+  }
+  .latency-toggle label:last-child {
+    border-radius: 0 var(--sc-radius-md) var(--sc-radius-md) 0;
+  }
+  /* Phones: the switch takes its own full-width line, two equal halves. */
+  @media (max-width: 640px) {
+    .latency-toggle .segmented {
+      flex: 1 1 100%;
+    }
+    .latency-toggle .segmented label {
+      flex: 1 1 0;
+      justify-content: center;
+      height: 40px;
+    }
+  }
+  .latency-toggle label:hover {
+    background: var(--hover);
+  }
+  .latency-toggle label input {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  .latency-toggle label:has(input:checked) {
+    z-index: 1;
+    background: var(--sc-accent);
+    border-color: var(--sc-accent);
+    color: var(--sc-on-accent);
+  }
+  .latency-toggle label:has(input:focus-visible) {
+    z-index: 2;
+    outline: 2px solid var(--sc-focus);
+    outline-offset: 2px;
+  }
+}
