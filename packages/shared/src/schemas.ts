@@ -297,15 +297,83 @@ export interface ActivityEntry {
 }
 
 /**
- * Messages on the admin WebSocket (/ws). A bare AdminState snapshot (no `type` field, as before)
- * or an activity-log message: `reset` replaces the client's list (backlog on connect, clear).
+ * Messages on the admin WebSocket (/ws). A bare AdminState snapshot (no `type` field, as before),
+ * an activity-log message (`reset` replaces the client's list: backlog on connect, clear), or,
+ * in desktop mode only, the desktop app's state (autostart, updates, first-run check).
  */
 export interface AdminLogMessage {
   type: 'log';
   reset: boolean;
   entries: ActivityEntry[];
 }
-export type AdminSocketMessage = AdminState | AdminLogMessage;
+export interface AdminDesktopMessage extends DesktopInfo {
+  type: 'desktop';
+}
+export type AdminSocketMessage = AdminState | AdminLogMessage | AdminDesktopMessage;
+
+// ---- desktop app (docs/DESKTOP.md) ----
+
+export const DESKTOP_UPDATE_STATUSES = ['none', 'available', 'downloading', 'installing', 'error'] as const;
+export type DesktopUpdateStatus = (typeof DESKTOP_UPDATE_STATUSES)[number];
+
+const clipped = (max: number) => z.string().transform((v) => v.slice(0, max));
+
+/**
+ * Update status sent by the desktop shell (`{"type":"update",...}` on the server's stdin).
+ * Lenient on sizes (long texts are cut, progress is clamped) so a long release note never
+ * hides an available update.
+ */
+export const desktopUpdateSchema = z.object({
+  status: z.enum(DESKTOP_UPDATE_STATUSES),
+  /** Installed version. */
+  current: clipped(64).optional(),
+  /** Version offered (available / downloading / installing). */
+  version: clipped(64).optional(),
+  /** Release notes (plain text or Markdown, shown as text). */
+  notes: clipped(20_000).optional(),
+  /** Download progress, 0..1. */
+  progress: z
+    .number()
+    .transform((n) => Math.min(1, Math.max(0, n)))
+    .optional(),
+  error: clipped(2000).optional(),
+});
+export type DesktopUpdate = z.output<typeof desktopUpdateSchema>;
+
+/** PUT /api/desktop/autostart */
+export const desktopAutostartSchema = z.object({ enabled: z.boolean() });
+
+/** First-run system check of the desktop app: idle (not needed or not started), running, done, failed. */
+export type DesktopSystemCheckRun = 'idle' | 'running' | 'done' | 'failed';
+
+export interface DesktopAutostartState {
+  /** Only when the shell told the server where the app is (SWARMCAST_DESKTOP_EXE). */
+  supported: boolean;
+  /** An entry exists in the OS (read back on every request). */
+  enabled: boolean;
+  /** The entry starts another copy of the app (moved or reinstalled); rewritten on enable. */
+  stale?: boolean;
+  /** Why the entry could not be read (English). */
+  error?: string;
+}
+
+/** GET /api/desktop in desktop mode. */
+export interface DesktopInfo {
+  desktop: true;
+  /** Version of the desktop app (shell). */
+  version: string;
+  /** Version of the server inside it. */
+  serverVersion: string;
+  autostart: DesktopAutostartState;
+  /** Last update status from the shell; null until it sends one. */
+  update: DesktopUpdate | null;
+  /** "Check for updates" was asked and the shell has not answered yet. */
+  updateChecking: boolean;
+  systemCheck: DesktopSystemCheckRun;
+}
+
+/** GET /api/desktop: `{ desktop: false }` when SwarmCast was started by a start script. */
+export type DesktopInfoResponse = DesktopInfo | { desktop: false };
 
 export interface AdminState {
   version: string;

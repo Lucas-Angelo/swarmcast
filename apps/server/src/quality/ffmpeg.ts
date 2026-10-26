@@ -77,10 +77,14 @@ export function resolveFfmpeg(o: { configPath?: string; binDir: string; dataDir:
 }
 
 export interface InstallProgress {
-  phase: 'downloading' | 'verifying' | 'extracting' | 'done' | 'error';
+  /** 'retrying': the last try failed (`message`), the next one starts shortly. */
+  phase: 'downloading' | 'verifying' | 'extracting' | 'retrying' | 'done' | 'error';
   receivedBytes: number;
   totalBytes?: number;
   message?: string;
+  /** Automatic retries (desktop first run): this try's number and how many there can be. */
+  attempt?: number;
+  attempts?: number;
 }
 
 function findFile(dir: string, name: string): string | null {
@@ -97,8 +101,9 @@ function findFile(dir: string, name: string): string | null {
 
 /**
  * Download the pinned ffmpeg build for this platform straight from its publisher, verify the
- * SHA-256, extract only the ffmpeg binary and check that it runs. Started only by the
- * streamer from the panel: SwarmCast itself does not redistribute ffmpeg (docs/QUALITY.md).
+ * SHA-256, extract only the ffmpeg binary and check that it runs. Started by the streamer
+ * from the panel, by the start scripts' setup, or by the desktop app's first start (its
+ * installer step): SwarmCast itself does not redistribute ffmpeg (docs/QUALITY.md).
  */
 export async function installFfmpeg(
   dataDir: string,

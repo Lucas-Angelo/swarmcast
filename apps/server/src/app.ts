@@ -24,6 +24,9 @@ import { Reaper } from './process/children.js';
 import { ExternalTunnel, NoTunnel, type TunnelProvider } from './tunnel/provider.js';
 import { QuickTunnel } from './tunnel/quick.js';
 import { PublicBlocklists, blocklistSources } from './security/blocklists.js';
+import type { DesktopBridge } from './desktop/bridge.js';
+import { desktopPreflight } from './desktop/preflight.js';
+import { StartupError } from './desktop/protocol.js';
 
 export interface AppOptions {
   dataDir?: string;
@@ -33,6 +36,11 @@ export interface AppOptions {
   configOverrides?: Partial<AppConfig>;
   /** Disable the reaper watchdog (tests that spawn many apps). */
   noReaper?: boolean;
+  /**
+   * Desktop mode (`--desktop`): the panel gets the desktop API, and startup fails (StartupError)
+   * when another SwarmCast is running or the RTMP port is busy.
+   */
+  desktop?: DesktopBridge;
 }
 
 export interface App {
@@ -70,6 +78,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
   const log = createLogger({ logsDir: paths.logsDir, stdout: opts.logToStdout ?? true, sink: activity.logStream() });
   const config = { ...loadConfig(paths.configFile), ...opts.configOverrides };
   if (opts.noTunnel) config.tunnel = { provider: 'none' };
+  if (opts.desktop) await desktopPreflight(config.ports);
   const secrets = loadOrCreateSecrets(paths.secretsFile);
   const signer = await ManifestSigner.create(secrets.manifestPrivateKeyPem);
   const version = appVersion();
@@ -158,7 +167,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
   // browser follow them); only RTMP must stay fixed because OBS is configured with it.
   const adminPort = await firstFreePort(config.ports.admin);
   if (adminPort === null) {
-    throw new Error(`Ports ${config.ports.admin}-${config.ports.admin + 19} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
+    throw new StartupError('ports-busy', `Ports ${config.ports.admin}-${config.ports.admin + 19} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
   }
   if (adminPort !== config.ports.admin) log.warn({ wanted: config.ports.admin, using: adminPort }, 'admin port busy, using another one');
   config.ports = { ...config.ports, admin: adminPort };
@@ -198,6 +207,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     checkDirect: () => direct.check(),
     cleanupStale: () => direct.cleanupStale(),
     systemCheckFile: path.join(paths.dataDir, 'system-check.json'),
+    desktop: opts.desktop,
   });
   await app.admin.listen({ host: '127.0.0.1', port: config.ports.admin });
   void direct.init().catch(() => {});
