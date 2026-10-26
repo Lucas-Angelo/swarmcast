@@ -17,10 +17,14 @@ inputs:
 runs:
   using: composite
   steps:
+    # One npm cache for the root workspace and the website (site/ has its own lockfile).
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24.x
         cache: npm
+        cache-dependency-path: |
+          package-lock.json
+          site/package-lock.json
 
     - if: inputs.go == 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0

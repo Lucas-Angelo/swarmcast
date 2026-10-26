@@ -19,6 +19,7 @@ on:
       - 'assets/brand/**'
       - 'apps/admin/src/onboarding/img/**'
       - 'packages/shared/src/i18n/**'
+      - '.github/actions/**'
       - '.github/workflows/site.yml'
   push:
     branches: [main]
@@ -28,6 +29,7 @@ on:
       - 'assets/brand/**'
       - 'apps/admin/src/onboarding/img/**'
       - 'packages/shared/src/i18n/**'
+      - '.github/actions/**'
       - '.github/workflows/site.yml'
   workflow_run:
     workflows: [Usage stats]
@@ -55,14 +57,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24.x
-          cache: npm
-          cache-dependency-path: site/package-lock.json
+      # Node + the root workspace: it provides vitest for the site's unit tests (site/test/unit),
+      # which `astro check` also type-checks.
+      - uses: ./.github/actions/setup
 
       - name: Install the site's dependencies
         run: npm ci --no-audit --no-fund
+
+      - name: Unit tests
+        working-directory: .
+        run: npx vitest run site/test/unit
 
       # Public data written by stats.yml (GitHub's own download counters, no telemetry).
       - name: Get the usage numbers

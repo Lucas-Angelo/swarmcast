@@ -42,6 +42,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+      # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
+      - name: Install the website's dependencies
+        run: npm ci --prefix site --no-audit --no-fund
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
