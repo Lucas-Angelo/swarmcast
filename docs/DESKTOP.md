@@ -93,6 +93,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 | `{"type":"fatal","code":"…","message":"…"}` | Startup failed, then exits 1. `code`: `already-running` (another SwarmCast answers on the panel port, e.g. started from a terminal), `ports-busy` (the RTMP port, or all 20 panel ports, used by another program), `startup-failed` (anything else, e.g. a broken `config.json`). `message` is English. |
 | `{"type":"update-check"}` | Panel button "Check for updates". |
 | `{"type":"update-install"}` | Panel button "Update now". |
+| `{"type":"export-logs","ok":true,"path":"…/Downloads/SwarmCast-logs-0.2.0-20261026-1430.zip"}` | Answer to the shell's `export-logs` once the ZIP is written (`ok:false` + English `error` when it failed). The shell reveals `path` in Explorer / Finder / the file manager. |
 
 **Shell → server** (stdin):
 
@@ -101,6 +102,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 | `{"type":"click","id":"start\|stop\|quit"}` | Same as the tray helper clicks. `quit` = stop everything and exit 0. |
 | `{"type":"quit"}` | Stop everything and exit 0. |
 | `{"type":"update","status":"none\|available\|downloading\|installing\|error","current":"…","version":"…","notes":"…","progress":0..1,"error":"…"}` | Update status, shown in the panel (banner, progress, errors). |
+| `{"type":"export-logs"}` | Tray "Export logs…": write the anonymised log export (the same ZIP as the panel's "Export logs" button, without full IP addresses) to the Downloads folder (fallback `<data>/exports`) and answer with `export-logs`. Extra fields are ignored. |
 
 Stdin EOF also means quit. Quitting first aborts everything that may take long and is not needed any
 more: a start still opening the tunnel (a new quick-tunnel name can need a minute of DNS; the tray already
@@ -144,8 +146,10 @@ Notes:
   Without a tray icon (Linux desktop without an AppIndicator host) "keep running" minimizes instead.
 - **Tray / menu bar**: icons off / waiting / live (from `apps/tray/icons`), localized tooltip from
   `phase` + `viewers`; menu: Open SwarmCast, Start live, Stop live (enabled from `canStart` /
-  `canStop`), Check for updates, Quit. Windows / Linux: left click opens the window; macOS: the menu.
-  Tray clicks are sent as `click` start / stop; Quit is handled by the shell (it sends `quit`).
+  `canStop`), Check for updates, Export logs…, Quit. Windows / Linux: left click opens the window; macOS:
+  the menu. Tray clicks are sent as `click` start / stop; Quit is handled by the shell (it sends `quit`).
+  Export logs… sends `export-logs` and reveals the returned path (tauri-plugin-opener
+  `reveal_item_in_dir`); when the server is not running or the export failed, it opens the logs folder.
 - **Links**: anything that is not the splash or the admin origin opens in the default browser
   (navigation, `window.open`, and `target=_blank` links, which a small injected script turns into a
   navigation so WebKit's pop-up rules do not drop them). Only http(s) and mailto are opened; other schemes
@@ -157,7 +161,9 @@ Notes:
   The webview must report the OS language in `navigator.language` (macOS: `CFBundleLocalizations` en,
   pt-BR in Info.plist; Windows WebView2: `--lang=<locale>`), so the panel's existing detection works.
 - **Logs**: `<data>/logs/desktop.log`: the server's stdout/stderr lines except protocol lines, and the
-  shell's own lines (`[desktop]`). Rotated at 2 MB, two old files kept (`desktop.log.1`, `.2`).
+  shell's own lines (`[desktop]`). Rotated at 2 MB, two old files kept (`desktop.log.1`, `.2`). The
+  server's retention (`diagnostics.logRetentionDays`, 14 days by default) also deletes old
+  `desktop.log.*` files, never the `desktop.log` being written; log exports include them.
 - **Process tree**: Windows: the server runs in a Job object with KILL_ON_JOB_CLOSE and without a
   console window, so killing the shell kills the server and everything it started. macOS / Linux: the
   server's parent watch and stdin EOF; after the 35 s grace the shell SIGKILLs the server only, and the

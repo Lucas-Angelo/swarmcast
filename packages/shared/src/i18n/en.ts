@@ -846,4 +846,29 @@ export const en = {
   'desktop.update.errorNoDetail': 'The update did not work. This version keeps working.',
   'desktop.update.retry': 'Try again',
   'desktop.update.retry.tip': 'Tries the update again. If it keeps failing, check your internet connection and try again later; this version keeps working.',
+  // ---- admin: diagnostics (log retention, "Export logs") ----
+  'err.diagnostics.export': 'Could not export the logs: {error}',
+  'diag.title': 'Problem report',
+  'diag.title.tip':
+    'If something does not work, export the logs and send the file to whoever is helping you (or attach it to a GitHub issue). It helps find the cause without remote access to your computer.',
+  'diag.export': 'Export logs',
+  'diag.export.tip':
+    "Saves one ZIP file to your Downloads folder with what is needed to find a problem: SwarmCast's logs from the last 14 days (including the desktop app and the video tools), a summary of this computer and of SwarmCast's settings, the PC check and the Activity card. It never contains your stream key, the live link, passwords or keys. Viewers' IP addresses and nicknames are replaced by anonymous labels. Nothing is sent anywhere: you choose who gets the file.",
+  'diag.exporting': 'Exporting…',
+  'diag.saved': 'Saved to {path}',
+  'diag.savedFallback': 'Your Downloads folder could not be used, so it was saved to {path}',
+  'diag.next': 'Attach this file to a GitHub issue, or send it to the person helping you.',
+  'diag.show': 'Show in folder',
+  'diag.show.tip': 'Opens the folder with the ZIP file selected.',
+  'diag.showFailed': 'Could not open the folder. The file is at {path}',
+  'diag.advanced': 'Advanced',
+  'diag.fullIps': 'Include full IP addresses (only if the developer asks)',
+  'diag.fullIps.tip':
+    "Off by default: viewers' IP addresses are replaced by anonymous labels (the same address keeps the same label inside one file, so problems can still be followed). Turn it on only if the developer asks for it to look into a network problem, and only send that file to them.",
+  'diag.retention': 'Keep logs for',
+  'diag.retention.tip':
+    'Log files (and exports that could not go to Downloads) older than this are deleted, when SwarmCast starts and once a day. The logs folder is also kept under 100 MB. From 3 to 90 days; 14 by default.',
+  'diag.retention.days': 'days',
+  'diag.retention.save': 'Save',
+  'diag.retention.saved': 'Saved ✓',
 } as const satisfies Record<string, Entry>;

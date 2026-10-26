@@ -1,5 +1,5 @@
 //! Tray / menu bar icon: off / waiting / live icons (same as apps/tray), localized tooltip
-//! and menu (Open SwarmCast, Start live, Stop live, Check for updates, Quit).
+//! and menu (Open SwarmCast, Start live, Stop live, Check for updates, Export logs…, Quit).
 
 use std::sync::{Arc, Mutex};
 
@@ -73,10 +73,11 @@ pub fn create(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
     let start = MenuItem::with_id(app, "start", t("tray.start"), false, None::<&str>)?;
     let stop = MenuItem::with_id(app, "stop", t("tray.stop"), false, None::<&str>)?;
     let check = MenuItem::with_id(app, "check-updates", t("tray.check_updates"), true, None::<&str>)?;
+    let export = MenuItem::with_id(app, "export-logs", t("tray.export_logs"), true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", t("tray.quit"), true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&open, &PredefinedMenuItem::separator(app)?, &start, &stop, &PredefinedMenuItem::separator(app)?, &check, &quit],
+        &[&open, &PredefinedMenuItem::separator(app)?, &start, &stop, &PredefinedMenuItem::separator(app)?, &check, &export, &quit],
     )?;
     let view = TrayView::starting();
     let menu_shell = shell.clone();
@@ -94,6 +95,7 @@ pub fn create(app: &AppHandle, shell: Arc<Shell>) -> tauri::Result<()> {
                 "start" => shell.click(ClickId::Start),
                 "stop" => shell.click(ClickId::Stop),
                 "check-updates" => updater::check_soon(shell, true),
+                "export-logs" => shell.export_logs(),
                 "quit" => shell.request_quit(false),
                 _ => {}
             }

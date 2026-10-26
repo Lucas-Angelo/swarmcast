@@ -60,6 +60,17 @@ export function startDesktop(
     }
   };
 
+  // Tray "Export logs…": same anonymised ZIP as the panel button; the shell reveals the file.
+  const exportLogs = (): void => {
+    app.diagnostics.exportLogs().then(
+      (r) => out.send({ type: 'export-logs', ok: true, path: r.path }),
+      (err: Error) => {
+        log.warn({ err: err.message }, 'log export from the desktop app failed');
+        out.send({ type: 'export-logs', ok: false, error: err.message });
+      },
+    );
+  };
+
   const input = o.input ?? process.stdin;
   const rl = readline.createInterface({ input, crlfDelay: Infinity });
   rl.on('line', (line) => {
@@ -71,6 +82,7 @@ export function startDesktop(
     }
     if (msg.type === 'click') click(msg.id);
     else if (msg.type === 'quit') o.onQuit();
+    else if (msg.type === 'export-logs') exportLogs();
     else bridge.setUpdate(msg.update);
   });
   let closed = false;
