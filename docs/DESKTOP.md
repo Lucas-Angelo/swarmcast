@@ -71,6 +71,7 @@ with environment:
 | `SWARMCAST_DESKTOP_VERSION` | Version of the shell. |
 | `SWARMCAST_LOCALE` | OS locale (`pt-BR`, `en-US`…), for server-side texts. |
 | `SWARMCAST_NO_FFMPEG_INSTALL` | `1` skips the automatic ffmpeg download of the first start (tests/CI only). |
+| `SWARMCAST_TEST_LOGIN_FILE` | Tests/CI only: the server also writes the panel login URL (`ready.adminUrl`) to this file, owner-only, so `scripts/test/desktop/verify.mjs` can call the admin API of an app it did not start itself. |
 
 `--desktop` implies `--no-open` and `--no-tray`, keeps the parent watch, and also exits cleanly when
 stdin closes. Messages are JSON, one per line. As in script mode, the server turns the live on at

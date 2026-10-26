@@ -39,6 +39,15 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # The desktop app's updater only installs packages signed with this key.
+      - name: The updater signing key must be set
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+        run: |
+          if [ "$HAS_KEY" != true ]; then
+            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (Settings > Secrets and variables > Actions): without them the desktop installers have no update signatures."
+            exit 1
+          fi
       - name: CHANGELOG.md must have a section for this version
         shell: bash
         env:
@@ -481,22 +490,21 @@ jobs:
           fi
           cat notes.md
 
-      # ---- Desktop app: installers + .sig (from desktop.yml) and the updater manifest ----
+      # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
       - name: Download the desktop installers
-        if: needs.desktop.outputs.built == 'true'
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: desktop-*
           merge-multiple: true
-          path: release
+          path: release/desktop
       # latest.json: what the app's updater reads at releases/latest/download/latest.json
       # (version, notes, per-platform URL + signature). /latest skips pre-releases.
-      # TODO(desktop): confirm the updater-manifest.mjs flags once the shell is merged.
       - name: Add latest.json (desktop updater manifest)
-        if: needs.desktop.outputs.built == 'true'
-        run: >-
-          node scripts/build/updater-manifest.mjs --dir release --version "$VERSION" --notes-file notes.md
-          --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" --out release/latest.json
+        run: |
+          node scripts/build/updater-manifest.mjs --version "$VERSION" --notes-file notes.md --require-all \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" --out release/latest.json release/desktop
+          mv release/desktop/* release/
+          rmdir release/desktop
 
       - name: Generate SHA256SUMS.txt
         run: node scripts/build/checksums.mjs release

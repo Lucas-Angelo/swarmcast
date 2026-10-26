@@ -139,11 +139,11 @@ O repositório é público, então os runners padrão (Windows, macOS e Linux) s
 | `scripts.yml` | scripts de instalação e desinstalação contra uma release falsa | Windows, macOS, Ubuntu |
 | `preflight.yml` | "máquina limpa": instala o pacote real, faz live, assiste, P2P, túnel | Windows, macOS (arm64 e Intel), Ubuntu 22.04 e atual |
 | `windows.yml` | matriz completa do Windows (instalador, app em Chrome/Edge/Firefox, qualidade, modo direto, OBS) | Windows Server |
-| `desktop.yml` | instaladores do app desktop e testes deles em cada sistema (pulado até o app desktop entrar na branch) | Windows, macOS, Ubuntu x64 e arm64 |
+| `desktop.yml` | app desktop: `cargo fmt`/`clippy`/`test`, os instaladores de cada sistema e o teste deles em máquina limpa (instalar, abrir, painel, iniciar com o computador, fechar, desinstalar, atualizar da versão A para a B) | Windows, macOS (arm64 e Intel), Ubuntu x64 e arm64 |
 | `codeql.yml` | análise de segurança do código e dos workflows | Ubuntu |
 | `site.yml` | site (GitHub Pages): build, links, testes no navegador; publica só a partir da `main` | Ubuntu |
 | `stats.yml` | uma vez por dia: contadores públicos de download das releases (sem telemetria) | Ubuntu |
-| `release.yml` | tag `v*`: roda as suítes acima, compila, assina e publica | todos |
+| `release.yml` | tag `v*`: roda as suítes acima, compila, assina e publica (com os instaladores do app, os `.sig` e o `latest.json`; exige os secrets `TAURI_SIGNING_PRIVATE_KEY` e `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`) | todos |
 
 - **Em cada pull request e push na `main`:** todos rodam. Mudanças só em `docs/`, `site/` ou arquivos `.md` não recompilam o app (`scripts.yml` roda quando mudam os scripts ou as páginas do site que viram o guia offline dos zips; `site.yml` roda quando muda o site). Um push novo no mesmo PR cancela a execução anterior; na `main` e nas tags nada é cancelado.
 - **Uma vez por mês (dia 1º):** os do app rodam de novo, para pegar downloads de terceiros que sumiram ou mudanças nas imagens dos runners. Nesse dia também roda o aviso de MediaMTX/cloudflared desatualizados.

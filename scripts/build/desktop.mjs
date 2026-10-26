@@ -11,11 +11,14 @@
 // copies the results to release/desktop/<target>/.
 //
 // Usage: node scripts/build/desktop.mjs [--target macos-arm64] [--version 0.2.0] [--package]
-//          [--bundles app,dmg] [--sidecar mock] [--insecure-updates] [--debug] [--runner cargo-xwin]
+//          [--bundles app,dmg] [--sidecar mock] [--insecure-updates [--updater-pubkey <file.pub>]]
+//          [--debug] [--runner cargo-xwin]
 //
 //   --package           run package.mjs first (needs `npm run build`)
 //   --sidecar mock      bundle apps/desktop/test/mock-server.mjs instead of the real server (tests)
 //   --insecure-updates  allow http:// update URLs (local update tests only; never for releases)
+//   --updater-pubkey    with --insecure-updates: trust this public key (`tauri signer generate`'s
+//                       .pub file) instead of the release key, for update tests with a throwaway key
 //   --runner <cmd>      passed to `tauri build` (e.g. cargo-xwin to build windows-x64 from Linux)
 //
 // Updater signing: TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD (CI secrets),
@@ -155,6 +158,11 @@ const insecure = flag('insecure-updates');
 if (insecure) {
   overlay.plugins = { updater: { dangerousInsecureTransportProtocol: true } };
   console.warn('⚠ --insecure-updates: this build accepts http:// update URLs (local tests only, never publish it)');
+}
+if (arg('updater-pubkey')) {
+  if (!insecure) throw new Error('--updater-pubkey is for test builds only: use it with --insecure-updates');
+  overlay.plugins.updater.pubkey = fs.readFileSync(arg('updater-pubkey'), 'utf8').trim();
+  console.warn(`⚠ --updater-pubkey: this build trusts ${arg('updater-pubkey')}, not the release key`);
 }
 const overlayFile = path.join(stageDir, 'tauri.build.json');
 fs.writeFileSync(overlayFile, `${JSON.stringify(overlay, null, 2)}\n`);

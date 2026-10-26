@@ -44,8 +44,9 @@ jobs:
           # The workflows themselves (injection, unpinned actions, excessive permissions...).
           - language: actions
             build-mode: none
-          # TODO(desktop): add `- { language: rust, build-mode: none }` once apps/desktop/src-tauri
-          # is merged (CodeQL fails a language with no source files).
+          # The desktop shell (apps/desktop/src-tauri).
+          - language: rust
+            build-mode: none
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
