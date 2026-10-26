@@ -6,13 +6,24 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
-import { ADMIN_COOKIE, directEnableSchema, securitySettingsSchema, settingsSchema, type AdminLogMessage, type ApiErrorBody, type DirectCheckResponse } from '@swarmcast/shared';
+import {
+  ADMIN_COOKIE,
+  directEnableSchema,
+  securitySettingsSchema,
+  settingsSchema,
+  type AdminDesktopMessage,
+  type AdminLogMessage,
+  type ApiErrorBody,
+  type DirectCheckResponse,
+} from '@swarmcast/shared';
 import { resolveLang } from '@swarmcast/shared/i18n';
 import type { CheckResult } from '../direct/direct.js';
+import type { DesktopBridge } from '../desktop/bridge.js';
 import type { LiveController } from '../core/live.js';
 import type { Logger } from '../core/logger.js';
 import { codeOf, coded } from '../core/messages.js';
 import { applySecurityHeaders } from '../public/security.js';
+import { registerDesktopRoutes } from './desktop-routes.js';
 import { registerOnboardingRoutes } from './onboarding-routes.js';
 import { registerQualityRoutes } from './quality-routes.js';
 import { registerSystemCheckRoutes } from './system-check-routes.js';
@@ -29,6 +40,8 @@ export interface AdminOptions {
   cleanupStale: () => Promise<boolean>;
   /** <data>/system-check.json written by the start scripts (shown in the setup tutorial). */
   systemCheckFile?: string;
+  /** Desktop mode only (`--desktop`): autostart, updates, first-run check. */
+  desktop?: DesktopBridge;
 }
 
 const NOT_AUTHORIZED = {
@@ -181,6 +194,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   registerQualityRoutes(app, L, auth, wrap);
   registerOnboardingRoutes(app, L, auth, wrap);
   registerSystemCheckRoutes(app, o.systemCheckFile, auth);
+  registerDesktopRoutes(app, o.desktop, auth, wrap);
   app.post('/api/app/quit', { preHandler: auth }, wrap(() => {
     setTimeout(o.onQuit, 100);
     return { ok: true };
@@ -202,6 +216,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.send(JSON.stringify(L.snapshot()));
       ws.send(JSON.stringify({ type: 'log', reset: true, entries: L.activity.list() } satisfies AdminLogMessage));
+      if (o.desktop) ws.send(JSON.stringify({ type: 'desktop', ...o.desktop.snapshot() } satisfies AdminDesktopMessage));
     });
   });
   let pending: NodeJS.Timeout | null = null;
@@ -215,7 +230,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
   L.on('state', push);
   // Activity entries go out right away, as their own message type (the state message is unchanged).
-  const broadcast = (msg: AdminLogMessage): void => {
+  const broadcast = (msg: AdminLogMessage | AdminDesktopMessage): void => {
     const data = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(data);
   };
@@ -223,10 +238,16 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   const onClear = (): void => broadcast({ type: 'log', reset: true, entries: [] });
   L.activity.on('entry', onEntry);
   L.activity.on('clear', onClear);
+  // Desktop app state (update status from the shell, autostart, first-run check) as its own message.
+  const onDesktop = (): void => {
+    if (o.desktop) broadcast({ type: 'desktop', ...o.desktop.snapshot() });
+  };
+  o.desktop?.on('changed', onDesktop);
   app.addHook('onClose', async () => {
     L.off('state', push);
     L.activity.off('entry', onEntry);
     L.activity.off('clear', onClear);
+    o.desktop?.off('changed', onDesktop);
     for (const c of wss.clients) c.terminate();
     wss.close();
   });

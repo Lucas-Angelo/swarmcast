@@ -11,7 +11,9 @@ const value = z.union([z.string().max(200), z.number(), z.boolean(), z.null()]).
 
 /**
  * Result of the start script's system check, written to `<data>/system-check.json` (English values).
- * Unknown result ids are kept (the panel shows them with their raw id); unknown fields are dropped.
+ * The desktop app writes the same file on its first start (src/desktop/system-check.ts), plus
+ * `appVersion` and `source` so it can run again after an update. Unknown result ids are kept
+ * (the panel shows them with their raw id); unknown fields are dropped.
  */
 export const systemCheckSchema = z.object({
   version: z.literal(1),
@@ -34,9 +36,15 @@ export const systemCheckSchema = z.object({
   downloadMbps: z.number().nullable().optional(),
   viewerEstimate: z.number().nullable().optional(),
   belowMinimum: z.array(z.string().max(40)).max(50).default([]),
+  /** Version of SwarmCast that ran the check (desktop app only; the start scripts do not write it). */
+  appVersion: z.string().max(64).optional(),
+  /** Who ran the check; missing means a start script. */
+  source: z.enum(['script', 'desktop']).optional(),
 });
 
 export type SystemCheck = z.infer<typeof systemCheckSchema>;
+
+export type SystemCheckResult = SystemCheck['results'][number];
 
 /** Parse the file's text; null when it is not a valid system check. */
 export function parseSystemCheck(text: string): SystemCheck | null {

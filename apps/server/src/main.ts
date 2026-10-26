@@ -5,6 +5,11 @@ import { appVersion } from './core/version.js';
 import { startTray } from './tray/tray.js';
 import { isListening } from './core/ports.js';
 import { runCleanupCommand } from './direct/cleanup.js';
+import { Autostart } from './desktop/autostart.js';
+import { createProtocolWriter, DesktopBridge, type ProtocolWriter } from './desktop/bridge.js';
+import { startDesktop } from './desktop/desktop.js';
+import { runDesktopFirstRun } from './desktop/first-run.js';
+import { fatalCodeOf } from './desktop/protocol.js';
 
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -39,6 +44,8 @@ Usage: swarmcast [options]
   --no-open        Do not open the panel in the browser
   --no-tray        Do not show the tray / menu bar icon
   --no-autostart   Do not start the stream automatically
+  --desktop        Run inside the SwarmCast desktop app (JSON lines on stdin/stdout; implies
+                   --no-open and --no-tray; quits when stdin closes). See docs/DESKTOP.md
   --smoke-test     Start everything (no tunnel), verify, stop, exit
   --cleanup        Remove a router port left open by a crash (used by the uninstaller), exit
   --data-dir DIR   Use DIR for config, secrets and logs
@@ -47,11 +54,29 @@ Usage: swarmcast [options]
   }
 
   const smoke = flag('smoke-test');
+  // Desktop app (docs/DESKTOP.md): protocol lines on stdout, commands on stdin.
+  const desktop = flag('desktop') && !smoke;
+  let out: ProtocolWriter | null = null;
+  let bridge: DesktopBridge | undefined;
+  if (desktop) {
+    out = createProtocolWriter(process.stdout);
+    const exe = process.env.SWARMCAST_DESKTOP_EXE;
+    bridge = new DesktopBridge({
+      version: process.env.SWARMCAST_DESKTOP_VERSION || appVersion(),
+      serverVersion: appVersion(),
+      autostart: new Autostart({ exe: exe ? exe : undefined }),
+      send: (msg) => out!.send(msg),
+    });
+  }
   let app: App;
   try {
-    app = await createApp({ dataDir: value('data-dir'), noTunnel: flag('no-tunnel') || smoke });
+    app = await createApp({ dataDir: value('data-dir'), noTunnel: flag('no-tunnel') || smoke, desktop: bridge });
   } catch (err) {
     console.error(`\n✗ ${(err as Error).message}\n`);
+    if (out) {
+      out.send({ type: 'fatal', code: fatalCodeOf(err), message: (err as Error).message });
+      await out.flush();
+    }
     process.exit(1);
   }
 
@@ -64,6 +89,8 @@ Usage: swarmcast [options]
     setTimeout(() => process.exit(code), 30_000).unref();
     await app.close();
     console.log('✓ Off: nothing on your computer is reachable.');
+    // Pipes can be asynchronous (macOS): let the last lines (state "off") reach the shell.
+    await out?.flush();
     process.exit(code);
   };
   for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
@@ -96,6 +123,20 @@ Usage: swarmcast [options]
 
   if (smoke) {
     await runSmokeTest(app);
+    return;
+  }
+
+  if (bridge && out) {
+    // The shell opens the panel in its window and draws the tray icon itself.
+    startDesktop(app, bridge, out, { onQuit: () => void exit(0) });
+    // The per-run panel token and the live link stay out of the shell's log file.
+    console.log(`\nSwarmCast ${appVersion()} (desktop app)`);
+    console.log(`Panel: ${app.adminUrl}\n`);
+    app.live.scheduleSpeedTests();
+    void runDesktopFirstRun(app, bridge).catch((err: Error) => app.log.warn({ err: err.message }, 'desktop first run failed'));
+    if (!flag('no-autostart')) {
+      app.live.start().catch((err: Error) => console.error(`\n✗ Could not start: ${err.message}\n`));
+    }
     return;
   }
 
