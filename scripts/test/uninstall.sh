@@ -26,6 +26,42 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/swarmcast-uninstall-test.XXXXXX")"
 WORK="$(cd "$WORK" && pwd -P)"
 DATA="$WORK/swarm home"          # a space on purpose: quoting must hold
 OUT=""
+
+# Never the real home folder, Applications folder, login items or packages: every
+# run below gets a fake HOME, a fake /Applications (SWARMCAST_APPLICATIONS_DIR) and
+# stub launchctl / dpkg-query / sudo that only record how they were called.
+export HOME="$WORK/home"
+mkdir -p "$HOME"
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
+export SWARMCAST_APPLICATIONS_DIR="$WORK/system Applications"
+mkdir -p "$SWARMCAST_APPLICATIONS_DIR"
+STUBS="$WORK/stubs"
+mkdir -p "$STUBS"
+export STUB_LOG="$STUBS/calls.log"
+cat >"$STUBS/launchctl" <<'EOF'
+#!/bin/sh
+printf 'launchctl %s\n' "$*" >>"$STUB_LOG"
+exit 3
+EOF
+cat >"$STUBS/dpkg-query" <<'EOF'
+#!/bin/sh
+printf 'dpkg-query %s\n' "$*" >>"$STUB_LOG"
+if [ "${FAKE_DEB_INSTALLED:-0}" = 1 ]; then printf 'install ok installed'; exit 0; fi
+echo "dpkg-query: no packages found matching $3" >&2
+exit 1
+EOF
+cat >"$STUBS/sudo" <<'EOF'
+#!/bin/sh
+printf 'sudo %s\n' "$*" >>"$STUB_LOG"
+exit 1
+EOF
+chmod 755 "$STUBS/launchctl" "$STUBS/dpkg-query" "$STUBS/sudo"
+export PATH="$STUBS:$PATH"
+if [ "$(command -v launchctl)" != "$STUBS/launchctl" ] || [ "$(command -v dpkg-query)" != "$STUBS/dpkg-query" ]; then
+  echo "The stub launchctl / dpkg-query are not first in PATH; refusing to run." >&2
+  exit 2
+fi
+APP_ID="io.github.lucas-angelo.swarmcast"
 PIDS=""                          # every process started by the tests (killed at the end)
 
 PASS=0
@@ -111,6 +147,44 @@ exit "${FAKE_CLEANUP_EXIT:-0}"
 EOF
   chmod 755 "$DATA/app/current/swarmcast"
 }
+
+# write_recorder PATH TAG: a fake SwarmCast server that logs "TAG args" to $FAKE_CLEANUP_LOG.
+write_recorder() {
+  mkdir -p "$(dirname "$1")"
+  rm -f "$1"
+  cat >"$1" <<EOF
+#!/bin/sh
+printf '%s %s\n' "$2" "\$*" >>"\$FAKE_CLEANUP_LOG"
+echo "fake $2 cleanup output line"
+exit 0
+EOF
+  chmod 755 "$1"
+}
+
+# make_app PATH BUNDLE_ID: a fake .app bundle.
+make_app() {
+  rm -rf "$1"
+  mkdir -p "$1/Contents/MacOS" "$1/Contents/Resources/bin"
+  cat >"$1/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key>
+  <string>SwarmCast</string>
+  <key>CFBundleIdentifier</key>
+  <string>$2</string>
+  <key>CFBundleName</key>
+  <string>SwarmCast</string>
+</dict>
+</plist>
+EOF
+  printf 'fake\n' >"$1/Contents/MacOS/SwarmCast"
+  chmod 755 "$1/Contents/MacOS/SwarmCast"
+}
+
+# A file with some content, creating its folder.
+put() { mkdir -p "$(dirname "$1")"; printf '%s\n' "${2:-x}" >"$1"; }
 
 # --- a real executable that sleeps (the running-process cases) --------------
 SLEEPER="$WORK/sleeper"
@@ -355,6 +429,245 @@ assert_eq "$RC" 0 "exit code 0"
 assert_contains "$OUT" "Data folder: $D2"
 assert_no_file "$D2"
 assert_file "$WORK/home2"
+end
+
+# --- 9. desktop app -----------------------------------------------------------
+SYS_APPS="$SWARMCAST_APPLICATIONS_DIR"
+begin "9. desktop app (macOS): removes SwarmCast.app, its login item and web data; leaves other apps alone"
+if [ "$OS" != macos ]; then
+  echo "  (macOS only, skipped)"
+elif [ ! -x "$SLEEPER" ]; then
+  echo "  (no C compiler to build a test process, skipped)"
+else
+  make_tree
+  : >"$STUB_LOG"
+  make_app "$SYS_APPS/SwarmCast.app" "$APP_ID"
+  make_app "$HOME/Applications/SwarmCast.app" "com.example.not-swarmcast"
+  for a in "$SYS_APPS/SwarmCast.app" "$HOME/Applications/SwarmCast.app"; do
+    rm -f "$a/Contents/MacOS/SwarmCast"
+    cp "$SLEEPER" "$a/Contents/MacOS/SwarmCast"
+  done
+  cp "$SLEEPER" "$SYS_APPS/SwarmCast.app/Contents/Resources/bin/mediamtx"
+  make_app "$SYS_APPS/Other.app" "com.example.other"
+  put "$HOME/Library/LaunchAgents/$APP_ID.plist" '<plist/>'
+  put "$HOME/Library/LaunchAgents/com.example.keep.plist" '<plist/>'
+  for d in "Caches/$APP_ID" "WebKit/$APP_ID" "HTTPStorages/$APP_ID" "Application Support/$APP_ID" "Saved Application State/$APP_ID.savedState"; do
+    put "$HOME/Library/$d/data.bin"
+  done
+  put "$HOME/Library/Caches/com.example.keep/data.bin"
+  put "$HOME/Library/WebKit/com.example.keep/data.bin"
+  start_detached "$WORK/d1" "$SYS_APPS/SwarmCast.app/Contents/MacOS/SwarmCast" 300
+  start_detached "$WORK/d2" "$SYS_APPS/SwarmCast.app/Contents/Resources/bin/mediamtx" 300
+  start_detached "$WORK/d3" "$HOME/Applications/SwarmCast.app/Contents/MacOS/SwarmCast" 300
+  sleep 0.5
+  assert_alive "$(cat "$WORK/d1")" "SwarmCast.app (ours)"
+  run_uninstall
+  assert_eq "$RC" 0 "exit code 0"
+  assert_contains "$OUT" "Desktop app: $SYS_APPS/SwarmCast.app"
+  assert_contains "$OUT" "Not SwarmCast's, left alone: $HOME/Applications/SwarmCast.app (bundle id: com.example.not-swarmcast)"
+  assert_dead "$(cat "$WORK/d1")" "SwarmCast (desktop app)"
+  assert_dead "$(cat "$WORK/d2")" "mediamtx (desktop app)"
+  assert_alive "$(cat "$WORK/d3")" "the other SwarmCast.app"
+  assert_no_file "$SYS_APPS/SwarmCast.app"
+  assert_file "$HOME/Applications/SwarmCast.app/Contents/Info.plist"
+  assert_file "$SYS_APPS/Other.app"
+  assert_no_file "$HOME/Library/LaunchAgents/$APP_ID.plist"
+  assert_file "$HOME/Library/LaunchAgents/com.example.keep.plist"
+  assert_contains "$STUB_LOG" "launchctl bootout gui/$(id -u)/$APP_ID" "launchctl bootout of the login item"
+  for d in "Caches/$APP_ID" "WebKit/$APP_ID" "HTTPStorages/$APP_ID" "Application Support/$APP_ID" "Saved Application State/$APP_ID.savedState"; do
+    assert_no_file "$HOME/Library/$d"
+  done
+  assert_file "$HOME/Library/Caches/com.example.keep/data.bin"
+  assert_file "$HOME/Library/WebKit/com.example.keep/data.bin"
+  assert_no_file "$DATA"
+  assert_contains "$OUT" "SwarmCast was removed from this computer"
+  kill -9 "$(cat "$WORK/d3")" 2>/dev/null
+  rm -rf "$HOME/Applications" "$SYS_APPS/Other.app"
+fi
+end
+
+begin "9b. desktop app (macOS): its server runs --cleanup only when there is no script-mode swarmcast"
+if [ "$OS" != macos ]; then
+  echo "  (macOS only, skipped)"
+else
+  make_tree
+  make_app "$SYS_APPS/SwarmCast.app" "$APP_ID"
+  write_recorder "$SYS_APPS/SwarmCast.app/Contents/MacOS/swarmcast-server" server
+  rm -f "$WORK/cleanup.log"
+  FAKE_CLEANUP_LOG="$WORK/cleanup.log" run_uninstall
+  assert_eq "$RC" 0 "exit code 0"
+  assert_eq "$(cat "$WORK/cleanup.log" 2>/dev/null)" "server --cleanup --data-dir $DATA" "the app's swarmcast-server ran --cleanup once"
+  assert_no_file "$SYS_APPS/SwarmCast.app"
+  make_tree
+  make_app "$SYS_APPS/SwarmCast.app" "$APP_ID"
+  write_recorder "$SYS_APPS/SwarmCast.app/Contents/MacOS/swarmcast-server" server
+  write_recorder "$DATA/app/current/swarmcast" script
+  rm -f "$WORK/cleanup.log"
+  FAKE_CLEANUP_LOG="$WORK/cleanup.log" run_uninstall
+  assert_eq "$RC" 0 "exit code 0"
+  assert_eq "$(cat "$WORK/cleanup.log" 2>/dev/null)" "script --cleanup --data-dir $DATA" "only the script-mode swarmcast ran --cleanup"
+  assert_no_file "$SYS_APPS/SwarmCast.app"
+  assert_no_file "$DATA"
+fi
+end
+
+begin "9c. desktop app (macOS): an Applications folder the user may not change is reported, never sudo"
+if [ "$OS" != macos ]; then
+  echo "  (macOS only, skipped)"
+else
+  make_tree
+  : >"$STUB_LOG"
+  make_app "$SYS_APPS/SwarmCast.app" "$APP_ID"
+  chmod 555 "$SYS_APPS"
+  run_uninstall
+  chmod 755 "$SYS_APPS"
+  assert_eq "$RC" 0 "exit code 0"
+  assert_file "$SYS_APPS/SwarmCast.app/Contents/Info.plist"
+  assert_no_file "$DATA"
+  assert_contains "$OUT" "$SYS_APPS/SwarmCast.app was not removed: your user is not allowed to change $SYS_APPS"
+  assert_contains "$OUT" "drag SwarmCast from $SYS_APPS to the Trash"
+  assert_contains "$OUT" "files in your user folder were removed"
+  assert_not_contains "$OUT" "SwarmCast was removed from this computer"
+  assert_contains "$OUT" "still installed (needs an administrator): $SYS_APPS/SwarmCast.app" "summary line names the app"
+  assert_not_contains "$STUB_LOG" "sudo" "sudo was not used"
+  rm -rf "$SYS_APPS/SwarmCast.app"
+fi
+end
+
+begin "9d. desktop app only, no data folder"
+: >"$STUB_LOG"
+rm -rf "$DATA"
+if [ "$OS" = macos ]; then
+  make_app "$HOME/Applications/SwarmCast.app" "$APP_ID"
+  put "$HOME/Library/Caches/$APP_ID/x"
+  APP_PIECE="$HOME/Applications/SwarmCast.app"
+  CACHE_PIECE="$HOME/Library/Caches/$APP_ID"
+else
+  put "$HOME/Downloads/SwarmCast_0.2.0_aarch64.AppImage"
+  put "$HOME/.cache/$APP_ID/x"
+  APP_PIECE="$HOME/Downloads/SwarmCast_0.2.0_aarch64.AppImage"
+  CACHE_PIECE="$HOME/.cache/$APP_ID"
+fi
+run_uninstall
+assert_eq "$RC" 0 "exit code 0"
+assert_no_file "$APP_PIECE"
+assert_no_file "$CACHE_PIECE"
+assert_contains "$OUT" "Removed the desktop app: $APP_PIECE"
+assert_contains "$OUT" "SwarmCast uninstall finished: removed the desktop app"
+assert_not_contains "$OUT" "not installed"
+end
+
+begin "9e. desktop app (Linux): removes SwarmCast AppImages, their menu entries, autostart and web data"
+if [ "$OS" != linux ]; then
+  echo "  (Linux only, skipped)"
+else
+  make_tree
+  : >"$STUB_LOG"
+  A1="$HOME/Applications/SwarmCast_0.2.0_amd64.AppImage"
+  A2="$HOME/Downloads/SwarmCast_0.1.9_amd64.AppImage"
+  A3="$HOME/.local/bin/SwarmCast.AppImage"
+  APPS_DIR="$HOME/.local/share/applications"
+  mkdir -p "$HOME/Applications" "$HOME/Downloads" "$HOME/.local/bin" "$APPS_DIR"
+  if [ -x "$SLEEPER" ]; then cp "$SLEEPER" "$A1"; else put "$A1"; fi
+  put "$A2"
+  put "$WORK/real.AppImage"
+  ln -s "$WORK/real.AppImage" "$A3"
+  # Not SwarmCast's AppImages (wrong name or in a subfolder) and other files: kept.
+  put "$HOME/Downloads/Other_1.0.AppImage"
+  put "$HOME/Downloads/SwarmCast-notes.txt"
+  put "$HOME/Applications/MySwarmCast.AppImage"
+  put "$HOME/Applications/old/SwarmCast_0.0.1.AppImage"
+  printf '[Desktop Entry]\nType=Application\nName=SwarmCast\nExec=%s %%U\nTryExec=%s\n' "$A1" "$A1" >"$APPS_DIR/appimagekit_1a2b-SwarmCast.desktop"
+  printf '[Desktop Entry]\nType=Application\nName=SwarmCast\nExec="%s" --background\n' "$HOME/Downloads/SwarmCast_0.0.9.AppImage" >"$APPS_DIR/swarmcast-old.desktop"
+  printf '[Desktop Entry]\nType=Application\nName=Notes\nExec=/usr/bin/gedit %s\n' "$A1" >"$APPS_DIR/swarmcast-notes.desktop"
+  printf '[Desktop Entry]\nType=Application\nName=Other\nExec=%s\n' "$A1" >"$APPS_DIR/other.desktop"
+  printf '[Desktop Entry]\nType=Application\nName=Old\nExec=%s\n' "$HOME/Applications/old/SwarmCast_0.0.1.AppImage" >"$APPS_DIR/swarmcast-older.desktop"
+  printf '[Desktop Entry]\nName=Other\n[Desktop Action x]\nExec=%s\n' "$A1" >"$APPS_DIR/swarmcast-action.desktop"
+  put "$HOME/.config/autostart/swarmcast.desktop" '[Desktop Entry]'
+  put "$HOME/.config/autostart/other.desktop" '[Desktop Entry]'
+  for d in "$HOME/.local/share/$APP_ID" "$HOME/.cache/$APP_ID" "$HOME/.config/$APP_ID"; do put "$d/data.bin"; done
+  put "$HOME/.cache/other/data.bin"
+  if [ -x "$SLEEPER" ]; then
+    # A running AppImage: the file itself (FUSE) and what it mounted.
+    M="$WORK/tmp/.mount_SwarmCa1B2c3"
+    mkdir -p "$M/usr/bin" "$M/usr/lib/SwarmCast/bin" "$WORK/tmp/.mount_Othera1B2c3/usr/bin" "$WORK/outside"
+    cp "$SLEEPER" "$M/usr/bin/swarmcast-desktop"
+    cp "$SLEEPER" "$M/usr/bin/swarmcast-server"
+    cp "$SLEEPER" "$M/usr/lib/SwarmCast/bin/mediamtx"
+    cp "$SLEEPER" "$WORK/tmp/.mount_Othera1B2c3/usr/bin/swarmcast-desktop"
+    cp "$SLEEPER" "$WORK/outside/swarmcast-server"
+    start_detached "$WORK/e1" "$A1" 300
+    start_detached "$WORK/e2" "$M/usr/bin/swarmcast-desktop" 300
+    start_detached "$WORK/e3" "$M/usr/bin/swarmcast-server" 300
+    start_detached "$WORK/e4" "$M/usr/lib/SwarmCast/bin/mediamtx" 300
+    start_detached "$WORK/e5" "$WORK/tmp/.mount_Othera1B2c3/usr/bin/swarmcast-desktop" 300
+    start_detached "$WORK/e6" "$WORK/outside/swarmcast-server" 300
+    sleep 0.5
+  fi
+  run_uninstall
+  assert_eq "$RC" 0 "exit code 0"
+  if [ -x "$SLEEPER" ]; then
+    assert_dead "$(cat "$WORK/e1")" "the running AppImage"
+    assert_dead "$(cat "$WORK/e2")" "swarmcast-desktop (AppImage mount)"
+    assert_dead "$(cat "$WORK/e3")" "swarmcast-server (AppImage mount)"
+    assert_dead "$(cat "$WORK/e4")" "mediamtx (AppImage mount)"
+    assert_alive "$(cat "$WORK/e5")" "swarmcast-desktop from another AppImage's mount"
+    assert_alive "$(cat "$WORK/e6")" "swarmcast-server outside SwarmCast folders"
+    kill -9 "$(cat "$WORK/e5")" "$(cat "$WORK/e6")" 2>/dev/null
+  else
+    echo "  (no test process available, process checks skipped)"
+  fi
+  assert_no_file "$A1"
+  assert_no_file "$A2"
+  if [ ! -e "$A3" ] && [ ! -L "$A3" ]; then pass "absent: the AppImage link in ~/.local/bin"; else fail "the AppImage link in ~/.local/bin should be gone"; fi
+  assert_file "$WORK/real.AppImage"
+  assert_file "$HOME/Downloads/Other_1.0.AppImage"
+  assert_file "$HOME/Downloads/SwarmCast-notes.txt"
+  assert_file "$HOME/Applications/MySwarmCast.AppImage"
+  assert_file "$HOME/Applications/old/SwarmCast_0.0.1.AppImage"
+  assert_no_file "$APPS_DIR/appimagekit_1a2b-SwarmCast.desktop"
+  assert_no_file "$APPS_DIR/swarmcast-old.desktop"
+  assert_file "$APPS_DIR/swarmcast-notes.desktop"
+  assert_file "$APPS_DIR/other.desktop"
+  assert_file "$APPS_DIR/swarmcast-older.desktop"
+  assert_file "$APPS_DIR/swarmcast-action.desktop"
+  assert_no_file "$HOME/.config/autostart/swarmcast.desktop"
+  assert_file "$HOME/.config/autostart/other.desktop"
+  for d in "$HOME/.local/share/$APP_ID" "$HOME/.cache/$APP_ID" "$HOME/.config/$APP_ID"; do assert_no_file "$d"; done
+  assert_file "$HOME/.cache/other/data.bin"
+  assert_no_file "$DATA"
+  assert_contains "$OUT" "SwarmCast was removed from this computer"
+  assert_not_contains "$OUT" "sudo apt remove" "no package note when the package is not installed"
+  rm -rf "$HOME/Applications" "$HOME/Downloads" "$HOME/.local/bin" "$APPS_DIR" "$HOME/.config" "$HOME/.cache"
+fi
+end
+
+begin "9f. desktop app (Linux): XDG_CONFIG_HOME autostart, and the apt package is only reported"
+if [ "$OS" != linux ]; then
+  echo "  (Linux only, skipped)"
+else
+  make_tree
+  : >"$STUB_LOG"
+  put "$WORK/xdg config/autostart/swarmcast.desktop" '[Desktop Entry]'
+  put "$HOME/.config/autostart/swarmcast.desktop" '[Desktop Entry]'
+  XDG_CONFIG_HOME="$WORK/xdg config" FAKE_DEB_INSTALLED=1 run_uninstall
+  assert_eq "$RC" 0 "exit code 0"
+  assert_no_file "$WORK/xdg config/autostart/swarmcast.desktop"
+  assert_file "$HOME/.config/autostart/swarmcast.desktop"
+  assert_no_file "$DATA"
+  assert_contains "$OUT" "Desktop app: package swarmcast-desktop"
+  assert_contains "$OUT" "    sudo apt remove swarmcast-desktop" "the exact apt command is shown"
+  assert_contains "$OUT" "still installed: package swarmcast-desktop" "summary line names the package"
+  assert_contains "$STUB_LOG" "dpkg-query -W" "dpkg-query was asked"
+  assert_not_contains "$STUB_LOG" "sudo" "sudo was not run"
+  rm -rf "$WORK/xdg config" "$HOME/.config"
+  # Only the package (no data folder): still reported, not "not installed".
+  : >"$STUB_LOG"
+  FAKE_DEB_INSTALLED=1 run_uninstall
+  assert_eq "$RC" 0 "package only: exit code 0"
+  assert_contains "$OUT" "sudo apt remove swarmcast-desktop"
+  assert_not_contains "$STUB_LOG" "sudo" "sudo was not run"
+fi
 end
 
 # --- 8. usage ---------------------------------------------------------------

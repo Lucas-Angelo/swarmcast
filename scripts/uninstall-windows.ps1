@@ -7,8 +7,10 @@
 # -Yes / --yes (accepted; nothing is asked by default), -Help / --help.
 #
 # It stops SwarmCast if it is running, removes a router port that a crash may have
-# left open (Direct mode), then deletes the SwarmCast data folder. It never touches
-# OBS or anything outside the SwarmCast data folder, and writes nothing to disk.
+# left open (Direct mode), uninstalls the SwarmCast desktop app (its own uninstaller,
+# silently) and its "start with the computer" entry, then deletes the SwarmCast data
+# folder. It never asks anything (unless -Ask), never touches OBS or anything that is
+# not SwarmCast's own, and writes nothing to disk.
 #
 # Compatible with Windows PowerShell 5.1. This file is ASCII-only on purpose
 # (PowerShell 5.1 reads BOM-less files as ANSI); symbols are built from char codes.
@@ -27,6 +29,15 @@ $SC_ObsNote = 'Your OBS settings were not changed. Remove the SwarmCast target/s
 $SC_Markers = @('app', 'config.json', 'secrets.json', 'state.json', 'logs', 'run', 'bin', 'tools', 'cache', 'blocklists', 'system-check.json')
 $SC_Keep = @('config.json', 'secrets.json')
 $SC_CleanupTimeout = 60
+# Desktop app (docs/DESKTOP.md): per-user NSIS install, found through its Uninstall key.
+$SC_AppId = 'io.github.lucas-angelo.swarmcast'
+$SC_ProductName = 'SwarmCast'
+$SC_UninstallTimeout = 120
+$SC_RegBase = 'HKCU:\Software\Microsoft\Windows\CurrentVersion'
+# SWARMCAST_TEST_SANDBOX (tests only): a registry key and shell folders of their own,
+# never the real Run / Uninstall keys, Start menu or desktop.
+$script:Sandbox = ("$env:SWARMCAST_TEST_SANDBOX" -match '^[A-Za-z0-9-]+$')
+if ($script:Sandbox) { $SC_RegBase = "HKCU:\Software\SwarmCastTestSandbox\$($env:SWARMCAST_TEST_SANDBOX)" }
 # SWARMCAST_STOP_GRACE / SWARMCAST_DELETE_DELAYS: shorter waits for the tests.
 $SC_StopGrace = 10
 if ("$env:SWARMCAST_STOP_GRACE" -match '^\d+$') { $SC_StopGrace = [int]$env:SWARMCAST_STOP_GRACE }
@@ -41,7 +52,8 @@ $script:Result = ''
 function Show-Usage {
   Write-Host @'
 SwarmCast uninstaller for Windows: stops SwarmCast, removes a router port a crash
-may have left open, and deletes the SwarmCast data folder.
+may have left open, uninstalls the SwarmCast desktop app and its "start with the
+computer" entry, and deletes the SwarmCast data folder.
 
 Usage: uninstall-windows.cmd [options]
        powershell -NoProfile -ExecutionPolicy Bypass -File uninstall-windows.ps1 [options]
@@ -57,7 +69,7 @@ Options:
 Environment:
   SWARMCAST_HOME   Data folder (default: %LOCALAPPDATA%\SwarmCast)
 
-OBS and its settings are never changed. Nothing outside the data folder is deleted.
+OBS and its settings are never changed. Only SwarmCast's own files are deleted.
 '@
 }
 
@@ -182,8 +194,9 @@ function Test-SamePath([string]$A, [string]$B) {
 }
 
 # Refuses folders that can never be a SwarmCast data folder (a wrong SWARMCAST_HOME).
-function Test-SafeTarget {
+function Test-SafeTarget([string]$Dir) {
   $d = $script:DataDir
+  if ($Dir) { $d = Get-NormalPath $Dir }
   if ($d -eq [System.IO.Path]::GetPathRoot($d)) { return $false }
   $never = @($env:USERPROFILE, $env:HOME, $env:LOCALAPPDATA, $env:APPDATA, $env:WINDIR, $env:SystemRoot, $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:ProgramData, $env:TEMP, $env:TMP, $env:PUBLIC)
   if ($env:SystemDrive) { $never += (Join-Path "$($env:SystemDrive)\" 'Users') }
@@ -206,16 +219,22 @@ function Test-LooksLikeSwarmCast {
   return $false
 }
 
-# Processes whose executable lives inside the data folder (swarmcast, its reaper,
-# mediamtx, cloudflared, swarmcast-tray, ffmpeg...). Nothing else is ever touched.
+# Processes whose executable lives inside a SwarmCast folder: the data folder
+# (swarmcast, its reaper, mediamtx, cloudflared, swarmcast-tray, ffmpeg...) and the
+# desktop app's install folder (SwarmCast.exe, swarmcast-server.exe, mediamtx,
+# cloudflared), plus the WebView2 processes that use the app's own web data folder.
+# Nothing else is ever touched.
 function Get-SwarmCastProcesses {
-  $prefix = $script:DataDir + [System.IO.Path]::DirectorySeparatorChar
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  $prefixes = @($script:ProcDirs | Where-Object { $_ } | ForEach-Object { $_ + $sep })
+  $webData = $null
+  if ($script:WebDataDir) { $webData = $script:WebDataDir + $sep }
   $all = @()
   $listed = $false
   if ($script:OnWindows) {
     try {
       foreach ($p in @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)) {
-        if ($p.ExecutablePath) { $all += [pscustomobject]@{ Id = [int]$p.ProcessId; Path = [string]$p.ExecutablePath } }
+        if ($p.ExecutablePath) { $all += [pscustomobject]@{ Id = [int]$p.ProcessId; Path = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } }
       }
       $listed = $true
     } catch {
@@ -226,10 +245,17 @@ function Get-SwarmCastProcesses {
     foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
       $path = $null
       try { $path = $p.Path } catch { $path = $null }
-      if ($path) { $all += [pscustomobject]@{ Id = [int]$p.Id; Path = [string]$path } }
+      if ($path) { $all += [pscustomobject]@{ Id = [int]$p.Id; Path = [string]$path; CommandLine = '' } }
     }
   }
-  return @($all | Where-Object { $_.Id -ne $PID -and $_.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) })
+  return @($all | Where-Object {
+      $proc = $_
+      if ($proc.Id -eq $PID) { return $false }
+      foreach ($pre in $prefixes) {
+        if ($proc.Path.StartsWith($pre, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+      }
+      return ($webData -and (Split-Path -Leaf $proc.Path) -eq 'msedgewebview2.exe' -and $proc.CommandLine.IndexOf($webData, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+    })
 }
 
 # Ctrl+C to the console SwarmCast runs in: the same as pressing Ctrl+C in its window,
@@ -304,7 +330,12 @@ function Stop-SwarmCast {
   }
   Say-Heading 'Stopping SwarmCast'
   foreach ($p in $procs) { Say "  $(Split-Path -Leaf $p.Path) (PID $($p.Id))" }
-  Send-GracefulStop @($procs | ForEach-Object { $_.Id })
+  # The desktop app has no console for Ctrl+C: closing it makes its server
+  # (swarmcast-server.exe) stop everything by itself, as when its window is closed.
+  $shells = @($procs | Where-Object { (Split-Path -Leaf $_.Path) -eq "$SC_ProductName.exe" })
+  foreach ($p in $shells) { try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { } }
+  $others = @($procs | Where-Object { (Split-Path -Leaf $_.Path) -ne "$SC_ProductName.exe" })
+  if ($others.Count -gt 0) { Send-GracefulStop @($others | ForEach-Object { $_.Id }) }
   $left = @(Wait-NoSwarmCast $SC_StopGrace)
   if ($left.Count -gt 0) {
     Say "  Still running after $SC_StopGrace s; forcing it to stop..."
@@ -325,6 +356,13 @@ function Invoke-RouterCleanup {
   foreach ($dir in @('current', 'previous')) {
     $candidate = Join-Path (Join-Path (Join-Path $script:DataDir 'app') $dir) 'swarmcast.exe'
     if (Test-Path -LiteralPath $candidate -PathType Leaf) { $exe = $candidate; break }
+  }
+  # No script-mode SwarmCast: the desktop app's server knows the same command.
+  if (-not $exe) {
+    foreach ($dir in $script:Desktop.InstallDirs) {
+      $candidate = Join-Path $dir 'swarmcast-server.exe'
+      if (Test-Path -LiteralPath $candidate -PathType Leaf) { $exe = $candidate; break }
+    }
   }
   if (-not $exe) { return }
   Say 'Checking the router for a port SwarmCast left open...'
@@ -402,29 +440,195 @@ function Show-Leftovers([string]$Path) {
 }
 
 function Remove-Data {
-  Say-Heading 'Deleting SwarmCast files'
-  # Never stand inside the folder being deleted.
-  try {
-    $safe = [System.IO.Path]::GetTempPath()
-    Set-Location -LiteralPath $safe
-    [System.IO.Directory]::SetCurrentDirectory($safe)
-  } catch { }
-  $failed = @()
   if ($script:Opt.KeepSettings) {
     foreach ($e in @(Get-ChildItem -LiteralPath $script:DataDir -Force -ErrorAction SilentlyContinue)) {
       if ($SC_Keep -contains $e.Name) { continue }
-      if (-not (Remove-WithRetry $e.FullName)) { $failed += $e.FullName }
+      if (-not (Remove-WithRetry $e.FullName)) { $script:Failed += $e.FullName }
     }
   } else {
-    if (-not (Remove-WithRetry $script:DataDir)) { $failed += $script:DataDir }
+    if (-not (Remove-WithRetry $script:DataDir)) { $script:Failed += $script:DataDir }
   }
-  if ($failed.Count -gt 0) {
-    Say-Err 'Some files could not be removed:'
-    foreach ($f in $failed) { Show-Leftovers $f }
-    Say '  Close any program that may be using them (or restart the computer) and run this again.'
-    return $false
+}
+
+# ---------------------------------------------------------------------------
+# Desktop app (docs/DESKTOP.md)
+# ---------------------------------------------------------------------------
+
+function Get-KnownFolder([string]$EnvValue, [string]$Name) {
+  if ($EnvValue) { return (Get-NormalPath $EnvValue) }
+  # Off Windows (development runs) only an explicit value counts.
+  if ($script:OnWindows) {
+    $f = [Environment]::GetFolderPath($Name)
+    if ($f) { return (Get-NormalPath $f) }
   }
+  return $null
+}
+
+# Program of a command line ("C:\x y\a.exe" /flag or C:\a.exe /flag).
+function Get-CommandExe([string]$Command) {
+  $c = "$Command".Trim()
+  if (-not $c) { return $null }
+  if ($c.StartsWith('"')) {
+    $end = $c.IndexOf('"', 1)
+    if ($end -gt 1) { return $c.Substring(1, $end - 1) }
+    return $c.Substring(1)
+  }
+  $i = $c.ToLowerInvariant().IndexOf('.exe')
+  if ($i -ge 0) { return $c.Substring(0, $i + 4) }
+  return $c
+}
+
+function Test-UnderDir([string]$Path, [string[]]$Dirs) {
+  if (-not $Path) { return $false }
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  foreach ($d in $Dirs) {
+    if ($d -and $Path.StartsWith($d + $sep, [StringComparison]::OrdinalIgnoreCase)) { return $true }
+  }
+  return $false
+}
+
+# An install folder that is safe to delete: named SwarmCast, not a system or user
+# folder, and not the data folder (or inside / around it).
+function Test-InstallDirSafe([string]$Dir) {
+  if (-not $Dir) { return $false }
+  $d = Get-NormalPath $Dir
+  if ((Split-Path -Leaf $d) -ne $SC_ProductName) { return $false }
+  if (-not (Test-SafeTarget $d)) { return $false }
+  if ((Test-SamePath $d $script:DataDir) -or (Test-UnderDir $d @($script:DataDir)) -or (Test-UnderDir $script:DataDir @($d))) { return $false }
   return $true
+}
+
+function Get-ShortcutFolders {
+  if ($script:Sandbox) {
+    $f = @()
+    if ($env:APPDATA) { $f += (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs') }
+    if ($env:USERPROFILE) { $f += (Join-Path $env:USERPROFILE 'Desktop') }
+    return $f
+  }
+  return @([Environment]::GetFolderPath('Programs'), [Environment]::GetFolderPath('Desktop'))
+}
+
+# Finds the desktop app's pieces: the Uninstall registry entries whose DisplayName is
+# SwarmCast (Tauri's NSIS installer writes one), the install folders, the Run value
+# ("start with the computer"), Start menu / desktop shortcuts that start the app,
+# and the app's own web data folders (WebView2).
+function Find-DesktopApp {
+  $d = @{ Entries = @(); InstallDirs = @(); RunValue = $false; Shortcuts = @(); WebDirs = @(); Found = $false }
+  $local = Get-KnownFolder $env:LOCALAPPDATA 'LocalApplicationData'
+  $roaming = Get-KnownFolder $env:APPDATA 'ApplicationData'
+  $candidates = @()
+  if ($local) { $candidates += (Join-Path (Join-Path $local 'Programs') $SC_ProductName) }
+  if ($script:OnWindows) {
+    $ukey = "$SC_RegBase\Uninstall"
+    foreach ($k in @(Get-ChildItem -LiteralPath $ukey -ErrorAction SilentlyContinue)) {
+      $p = $null
+      try { $p = Get-ItemProperty -LiteralPath $k.PSPath -ErrorAction Stop } catch { continue }
+      if ("$($p.DisplayName)".Trim() -ne $SC_ProductName) { continue }
+      $exe = Get-CommandExe "$($p.UninstallString)"
+      $dir = "$($p.InstallLocation)".Trim().Trim('"')
+      if (-not $dir -and $exe) { $dir = Split-Path -Parent $exe }
+      if ($dir) { try { $dir = Get-NormalPath $dir } catch { $dir = $null } }
+      $d.Entries += [pscustomobject]@{ Key = $k.PSPath; Name = $k.PSChildName; Exe = $exe; Dir = $dir }
+      if ($dir) { $candidates += $dir }
+      if ($exe) { try { $candidates += (Split-Path -Parent (Get-NormalPath $exe)) } catch { } }
+    }
+    try {
+      $run = Get-ItemProperty -LiteralPath "$SC_RegBase\Run" -Name $SC_ProductName -ErrorAction Stop
+      if ($null -ne $run) { $d.RunValue = $true }
+    } catch { }
+  }
+  foreach ($c in $candidates) {
+    $n = $null
+    try { $n = Get-NormalPath $c } catch { continue }
+    if (-not (Test-InstallDirSafe $n)) { continue }
+    if (@($d.InstallDirs | Where-Object { Test-SamePath $_ $n }).Count -eq 0) { $d.InstallDirs += $n }
+  }
+  # Shortcuts are only ours when they start something in a SwarmCast install folder.
+  if ($script:OnWindows -and $d.InstallDirs.Count -gt 0) {
+    $shell = $null
+    try { $shell = New-Object -ComObject WScript.Shell } catch { $shell = $null }
+    if ($shell) {
+      foreach ($folder in @(Get-ShortcutFolders)) {
+        if (-not $folder) { continue }
+        foreach ($lnk in @((Join-Path $folder "$SC_ProductName.lnk"), (Join-Path (Join-Path $folder $SC_ProductName) "$SC_ProductName.lnk"))) {
+          if (-not (Test-Path -LiteralPath $lnk -PathType Leaf)) { continue }
+          $target = $null
+          try { $target = [string]$shell.CreateShortcut($lnk).TargetPath } catch { $target = $null }
+          if ($target -and (Test-UnderDir $target $d.InstallDirs)) { $d.Shortcuts += $lnk }
+        }
+      }
+    }
+  }
+  foreach ($base in @($local, $roaming)) {
+    if (-not $base) { continue }
+    $w = Join-Path $base $SC_AppId
+    if (Test-Path -LiteralPath $w) { $d.WebDirs += $w }
+  }
+  if ($local) { $script:WebDataDir = Join-Path $local $SC_AppId }
+  $existing = @($d.InstallDirs | Where-Object { Test-Path -LiteralPath $_ })
+  $d.Found = ($d.Entries.Count -gt 0 -or $existing.Count -gt 0 -or $d.RunValue -or $d.Shortcuts.Count -gt 0 -or $d.WebDirs.Count -gt 0)
+  $script:Desktop = $d
+  $script:ProcDirs = @($script:DataDir) + @($d.InstallDirs)
+}
+
+function Remove-Autostart {
+  if (-not $script:Desktop.RunValue) { return }
+  try {
+    Remove-ItemProperty -LiteralPath "$SC_RegBase\Run" -Name $SC_ProductName -ErrorAction Stop
+    Say-Ok 'Removed the "start with the computer" entry.'
+  } catch {
+    $script:Failed += "$SC_RegBase\Run\$SC_ProductName (registry value)"
+  }
+}
+
+function Uninstall-DesktopApp {
+  $d = $script:Desktop
+  # The app's own uninstaller first, silently. "_?=" makes NSIS run in place (it
+  # otherwise copies itself to TEMP and returns at once), so the wait is real; it
+  # cannot delete itself then, so its folder is removed below.
+  foreach ($e in $d.Entries) {
+    if (-not $e.Exe -or -not (Test-Path -LiteralPath $e.Exe -PathType Leaf)) { continue }
+    $dir = Split-Path -Parent (Get-NormalPath $e.Exe)
+    Say "Running the SwarmCast desktop app's uninstaller (silently)..."
+    $r = $null
+    try {
+      $r = Invoke-Captured $e.Exe "/S _?=$dir" $SC_UninstallTimeout
+    } catch {
+      $r = @{ Code = -1; Out = "$($_.Exception.Message)"; TimedOut = $false }
+    }
+    if ($r.TimedOut) {
+      Say-Warn "The desktop app's uninstaller did not finish in $SC_UninstallTimeout s; removing its files directly."
+    } elseif ($r.Code -ne 0) {
+      Say-Warn "The desktop app's uninstaller stopped with exit code $($r.Code); removing its files directly."
+    }
+  }
+  foreach ($dir in $d.InstallDirs) {
+    if (-not (Test-Path -LiteralPath $dir)) { continue }
+    if (Remove-WithRetry $dir) { Say-Ok "Removed the desktop app: $dir" } else { $script:Failed += $dir }
+  }
+  # Its Uninstall entry ("Installed apps" in Settings), once its folder is gone.
+  foreach ($e in $d.Entries) {
+    if ($e.Dir -and (Test-Path -LiteralPath $e.Dir)) { continue }
+    if (-not (Test-Path -LiteralPath $e.Key)) { continue }
+    try { Remove-Item -LiteralPath $e.Key -Recurse -Force -ErrorAction Stop } catch { $script:Failed += "$($e.Key) (registry key)" }
+  }
+  foreach ($lnk in $d.Shortcuts) {
+    if (-not (Test-Path -LiteralPath $lnk)) { continue }
+    if (Remove-WithRetry $lnk) {
+      Say-Ok "Removed the shortcut: $lnk"
+      $parent = Split-Path -Parent $lnk
+      if ((Split-Path -Leaf $parent) -eq $SC_ProductName -and @(Get-ChildItem -LiteralPath $parent -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+        try { [System.IO.Directory]::Delete($parent, $false) } catch { }
+      }
+    } else {
+      $script:Failed += $lnk
+    }
+  }
+  $n = 0
+  foreach ($w in $d.WebDirs) {
+    if (Remove-WithRetry $w) { $n++ } else { $script:Failed += $w }
+  }
+  if ($n -gt 0) { Say-Ok "Removed the desktop app's web data ($n folders)." }
 }
 
 function Invoke-Main {
@@ -435,36 +639,49 @@ function Invoke-Main {
     exit 0
   }
   Initialize-Paths
+  $script:Failed = @()
+  $script:ProcDirs = @($script:DataDir)
+  $script:WebDataDir = $null
+  Find-DesktopApp
   Say 'SwarmCast uninstaller for Windows' 'Cyan'
   Say "Data folder: $($script:DataDir)"
+  foreach ($dir in $script:Desktop.InstallDirs) {
+    if (Test-Path -LiteralPath $dir) { Say "Desktop app: $dir" }
+  }
 
-  if (-not (Test-Path -LiteralPath $script:DataDir)) {
-    Say-Ok 'SwarmCast is not installed on this computer (no data folder). Nothing to do.'
+  $haveData = $false
+  $removedEmpty = $false
+  if (Test-Path -LiteralPath $script:DataDir) {
+    if (-not (Test-SafeTarget)) {
+      Say-Err "$($script:DataDir) is not a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
+      $script:ExitCode = 1
+      $script:Result = "refused: unsafe folder $($script:DataDir)"
+      Complete-Uninstall
+    }
+    if ((Test-Path -LiteralPath $script:DataDir -PathType Container) -and (Test-LooksLikeSwarmCast)) {
+      $haveData = $true
+    } elseif ((Test-Path -LiteralPath $script:DataDir -PathType Container) -and @(Get-ChildItem -LiteralPath $script:DataDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
+      try { [System.IO.Directory]::Delete($script:DataDir, $false) } catch { }
+      $removedEmpty = $true
+    } else {
+      Say-Err "$($script:DataDir) does not look like a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
+      $script:ExitCode = 1
+      $script:Result = 'refused: not a SwarmCast folder'
+      Complete-Uninstall
+    }
+  }
+  if (-not $haveData -and -not $script:Desktop.Found) {
+    if ($removedEmpty) {
+      Say-Ok 'SwarmCast is not installed on this computer (the data folder was empty and has been removed).'
+    } else {
+      Say-Ok 'SwarmCast is not installed on this computer (no data folder). Nothing to do.'
+    }
     Say $SC_ObsNote
     $script:Result = 'not installed'
     Complete-Uninstall
   }
-  if (-not (Test-SafeTarget)) {
-    Say-Err "$($script:DataDir) is not a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
-    $script:ExitCode = 1
-    $script:Result = "refused: unsafe folder $($script:DataDir)"
-    Complete-Uninstall
-  }
-  if (-not (Test-Path -LiteralPath $script:DataDir -PathType Container) -or -not (Test-LooksLikeSwarmCast)) {
-    if ((Test-Path -LiteralPath $script:DataDir -PathType Container) -and @(Get-ChildItem -LiteralPath $script:DataDir -Force -ErrorAction SilentlyContinue).Count -eq 0) {
-      try { [System.IO.Directory]::Delete($script:DataDir, $false) } catch { }
-      Say-Ok 'SwarmCast is not installed on this computer (the data folder was empty and has been removed).'
-      Say $SC_ObsNote
-      $script:Result = 'not installed'
-      Complete-Uninstall
-    }
-    Say-Err "$($script:DataDir) does not look like a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
-    $script:ExitCode = 1
-    $script:Result = 'refused: not a SwarmCast folder'
-    Complete-Uninstall
-  }
 
-  if ($script:Opt.KeepSettings) {
+  if ($haveData -and $script:Opt.KeepSettings) {
     Say 'Your settings and stream key (config.json, secrets.json) will be kept (--keep-settings).'
   }
   if ($script:Opt.Ask) {
@@ -479,20 +696,34 @@ function Invoke-Main {
   }
 
   Stop-SwarmCast
-  Invoke-RouterCleanup
-  if (Remove-Data) {
+  if ($haveData) { Invoke-RouterCleanup }
+  Say-Heading 'Deleting SwarmCast files'
+  # Never stand inside a folder being deleted.
+  try {
+    $safe = [System.IO.Path]::GetTempPath()
+    Set-Location -LiteralPath $safe
+    [System.IO.Directory]::SetCurrentDirectory($safe)
+  } catch { }
+  Remove-Autostart
+  Uninstall-DesktopApp
+  if ($haveData) { Remove-Data }
+
+  if ($script:Failed.Count -eq 0) {
     Say-Heading 'Done'
-    if ($script:Opt.KeepSettings) {
+    if ($haveData -and $script:Opt.KeepSettings) {
       Say-Ok "SwarmCast was removed. Your settings and stream key were kept in: $($script:DataDir)"
       Say '  Run the start script again to reinstall with the same stream key, or delete that folder to remove them too.'
       $script:Result = "removed (settings kept in $($script:DataDir))"
     } else {
       Say-Ok 'SwarmCast was removed from this computer.'
-      $script:Result = "removed $($script:DataDir)"
+      if ($haveData) { $script:Result = "removed $($script:DataDir)" } else { $script:Result = 'removed the desktop app' }
     }
     Say $SC_ObsNote
     Say 'You can also delete the folder with the installer files (the extracted zip) yourself.'
   } else {
+    Say-Err 'Some files could not be removed:'
+    foreach ($f in $script:Failed) { Show-Leftovers $f }
+    Say '  Close any program that may be using them (or restart the computer) and run this again.'
     $script:ExitCode = 1
     $script:Result = 'some files could not be removed'
     Say $SC_ObsNote
