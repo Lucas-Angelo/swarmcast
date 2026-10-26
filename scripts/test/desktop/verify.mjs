@@ -101,6 +101,7 @@ async function nothingLeft(what) {
 // ---------------------------------------------------------------- the app and its panel
 
 let child = null;
+let debPackage = '';
 /** Starts the installed app and logs into its panel. */
 async function launch(exe, env = {}, argv = []) {
   fs.rmSync(loginFile, { force: true });
@@ -204,8 +205,10 @@ function install(dir) {
     step('the .dmg holds SwarmCast.app (copied to ~/Applications)', fs.existsSync(exe), exe);
     return exe;
   }
-  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', file(dir, /\.deb$/)]);
-  step('the .deb installs swarmcast-desktop', fs.existsSync('/usr/bin/swarmcast-desktop'));
+  const deb = file(dir, /\.deb$/);
+  debPackage = spawnSync('dpkg-deb', ['--field', deb, 'Package'], { encoding: 'utf8' }).stdout.trim();
+  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', deb]);
+  step(`the .deb (package ${debPackage}) installs swarmcast-desktop`, fs.existsSync('/usr/bin/swarmcast-desktop'));
   return '/usr/bin/swarmcast-desktop';
 }
 
@@ -226,7 +229,7 @@ async function nativeUninstall() {
     step('NSIS uninstaller removes the app', !fs.existsSync(path.join(winInstallDir, 'SwarmCast.exe')));
     step('...and keeps the settings (no "delete app data")', fs.existsSync(path.join(dataDir, 'config.json')));
   } else if (OS === 'linux') {
-    run('sudo', ['apt-get', 'remove', '-y', 'swarmcast-desktop']);
+    run('sudo', ['apt-get', 'remove', '-y', debPackage]);
     step('apt remove removes the app', !fs.existsSync('/usr/bin/swarmcast-desktop'));
   }
 }
@@ -294,15 +297,28 @@ async function updateTest(dirA, dirB, port) {
     fs.rmSync(loginFile, { force: true });
     await api(panel, 'POST', '/api/desktop/update/install');
     console.log('"Update now" sent; waiting for the new version to start by itself');
-    await until(() => fs.existsSync(loginFile), 300_000, 'the updated app to start');
-    panel = await login();
-    await checkDesktopApi(panel, manifest.version);
+    const log = path.join(dataDir, 'logs', 'desktop.log');
+    const restarted = (t) => {
+      const i = t.lastIndexOf(`SwarmCast desktop ${manifest.version} starting`);
+      return i >= 0 && t.indexOf('ready, opening the panel', i) > 0;
+    };
+    await until(() => fs.existsSync(log) && restarted(fs.readFileSync(log, 'utf8')), 300_000, `SwarmCast ${manifest.version} to start by itself`);
+    step(`the app relaunched itself as ${manifest.version} and its server is ready`, true);
     const after = [fs.readFileSync(config, 'utf8'), fs.readFileSync(secrets, 'utf8')];
     step('config.json is unchanged by the update', JSON.stringify(JSON.parse(after[0])) === JSON.stringify(JSON.parse(before[0])));
     step('secrets.json is unchanged by the update', after[1] === before[1]);
-    // The relaunched app is not our child: quit it through its panel.
-    await api(panel, 'POST', '/api/app/quit');
-    await nothingLeft('after quitting the updated app');
+    if (OS === 'windows') {
+      // NSIS relaunches the app through the shell with the user's own environment, so this
+      // test's variables (login file, update URL) are gone: the log above is the check.
+      run('taskkill', ['/F', '/IM', 'SwarmCast.exe'], { allowFail: true });
+    } else {
+      // The app relaunches itself with the same environment: check the new version's panel.
+      await until(() => fs.existsSync(loginFile), 60_000, 'the login URL of the updated app');
+      panel = await login();
+      await checkDesktopApi(panel, manifest.version);
+      await api(panel, 'POST', '/api/app/quit');
+    }
+    await nothingLeft('after closing the updated app');
     scriptUninstall(exe); // updated in place
   } finally {
     server.close();
