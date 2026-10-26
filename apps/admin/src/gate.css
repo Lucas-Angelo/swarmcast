@@ -1,0 +1,85 @@
+/*
+ * The pages the server shows before the panel is open: "not authorized" and the sign-in hop of
+ * /auth/<token> (apps/server/src/admin/gate.ts). Built from apps/admin/gate.html into its own
+ * small stylesheet (no panel CSS, no script). Brand tokens only, like the rest of the panel.
+ */
+@import '@swarmcast/shared/web/brand.css';
+
+body.gate {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-6) var(--sp-4);
+  font-size: var(--fs-base);
+  line-height: 1.6;
+}
+.gate-card {
+  width: 100%;
+  max-width: 560px;
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+  padding: var(--sp-8);
+}
+.gate-card .sc-brand {
+  font-size: var(--fs-xl);
+  margin-bottom: var(--sp-6);
+}
+.gate-card h1 {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-2xl);
+  font-weight: var(--sc-weight-bold);
+  line-height: 1.25;
+  letter-spacing: -0.01em;
+}
+.gate-card h2 {
+  margin: var(--sp-6) 0 var(--sp-2);
+  font-size: var(--fs-base);
+  font-weight: var(--sc-weight-semibold);
+}
+.gate-card p {
+  margin: 0;
+}
+.gate-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-3);
+}
+.gate-steps li {
+  background: var(--sc-surface-2);
+  border-radius: var(--sc-radius-md);
+  padding: var(--sp-3) var(--sp-4);
+}
+.gate-steps strong {
+  display: block;
+  color: var(--sc-ink);
+  font-weight: var(--sc-weight-semibold);
+}
+.gate-note {
+  margin-top: var(--sp-5) !important;
+  color: var(--sc-muted);
+  font-size: var(--fs-md);
+}
+.gate-open {
+  margin-top: var(--sp-5) !important;
+}
+.gate-open a {
+  display: inline-block;
+  background: var(--sc-accent);
+  color: var(--sc-on-accent);
+  border-radius: var(--sc-radius-md);
+  padding: var(--sp-2) var(--sp-4);
+  font-weight: var(--sc-weight-semibold);
+  text-decoration: none;
+}
+.gate-open a:hover {
+  background: var(--sc-accent-strong);
+}
+@media (max-width: 480px) {
+  .gate-card {
+    padding: var(--sp-6) var(--sp-5);
+  }
+}

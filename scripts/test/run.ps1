@@ -526,7 +526,7 @@ try {
   Assert-TmpEmpty
   End-Case
 
-  Begin-Case '8b. second run from the bundle: already up to date; private repo (HTTP 404) is fine'
+  Begin-Case '8b. second run from the bundle: already up to date; HTTP 404 from the release server is fine'
   New-Bundle '0.1.0' "$Url/private-repo"
   Set-Content -LiteralPath $ReqLog -Value '' -NoNewline
   Invoke-Bundle ($Common + '--smoke-test')
@@ -616,7 +616,7 @@ try {
   Assert-TmpEmpty
   End-Case
 
-  Begin-Case '8h. no bundle, private repo (HTTP 404), nothing installed: points to the installer zip'
+  Begin-Case '8h. no bundle, HTTP 404 from the release server, nothing installed: points to the installer zip'
   $Data = Join-Path $Work 'empty home 404'
   Invoke-Installer "$Url/private-repo" ($Common + '--install-only')
   Assert-Ne $script:Rc 0 'non-zero exit code'

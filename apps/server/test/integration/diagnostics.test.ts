@@ -106,7 +106,8 @@ describe('log export (real server)', () => {
     const base = login[1]!;
     const token = login[2]!;
     const jar = new Jar(base);
-    expect((await jar.fetch(`/auth/${token}`)).status).toBe(303);
+    // /auth/<token> answers 200 with a page that opens / itself (not a redirect: SameSite=Strict).
+    expect((await jar.fetch(`/auth/${token}`)).status).toBe(200);
     const json = { origin: base, 'content-type': 'application/json' };
 
     // Produce some log lines (warnings go to the log file and the activity log).

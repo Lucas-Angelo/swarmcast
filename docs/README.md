@@ -12,6 +12,8 @@ Developer and maintainer documents:
 | [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md) | Attack detection and protections, with sources | English |
 | [QUALITY.md](QUALITY.md) | Renditions, ffmpeg, player settings, upload budget | English |
 | [DESKTOP.md](DESKTOP.md) | Desktop app: installers, shell ↔ server contract, updates | English |
-| [PUBLICACAO_PT-BR.md](PUBLICACAO_PT-BR.md) | Maintainer: GitHub repo, branch protection, releases, signing | Português (BR) |
+| [RELEASING.md](RELEASING.md) | Maintainer: repository settings, branch protection, releases, updater key, GitHub Pages, signing | English |
+| [assets/brand/README.md](../assets/brand/README.md) | Brand: Forest & Cream palette, tokens, symbol, icons, mascot, fonts | English |
+| [site/DESIGN.md](../site/DESIGN.md) | Website design spec: principles, tokens, components | English |
 
-Component READMEs: [apps](../apps/README.md) · [server](../apps/server/README.md) · [viewer](../apps/viewer/README.md) · [admin](../apps/admin/README.md) · [tray](../apps/tray/README.md) · [packages](../packages/README.md) · [shared](../packages/shared/README.md) · [scripts](../scripts/README.md).
+Component READMEs: [apps](../apps/README.md) · [server](../apps/server/README.md) · [viewer](../apps/viewer/README.md) · [admin](../apps/admin/README.md) · [desktop](../apps/desktop/README.md) · [tray](../apps/tray/README.md) · [packages](../packages/README.md) · [shared](../packages/shared/README.md) · [scripts](../scripts/README.md) · [site](../site/README.md) · [brand](../assets/brand/README.md).

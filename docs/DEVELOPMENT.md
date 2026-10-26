@@ -89,6 +89,8 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `security.stopOnAttack` | false | Stop everything when an attack is detected (panel) |
 | `security.blocklists` | `["spamhaus-drop","spamhaus-drop-v6","firehol-level1"]` | Built-in lists; `"feodo"` (abuse.ch Feodo Tracker, already inside FireHOL level1) is optional |
 | `security.extraBlocklistUrls` | `[]` | Extra `https://` lists (one IP/CIDR per line), e.g. blocklist.de or Tor exit lists. Not recommended: aggressive lists block innocent viewers |
+| `showViewerCount` | true | Show viewers how many people are watching (panel) |
+| `diagnostics.logRetentionDays` | 14 | Days of logs and log exports kept in `<data>/logs` and `<data>/exports` (3 to 90; the folders are also kept under 100 MB) (panel: Problem report → Advanced) |
 | `autoStopMinutes` | 10 | Stop everything after this long without video from OBS |
 | `alsoStreamingElsewhere` | true | Reserve upload for another platform you stream to at the same time (e.g. Twitch, YouTube, Kick) in the capacity estimate |
 | `tunnel.provider` | `cloudflare-quick` | `cloudflare-quick`, `none` (local only) or `external` |
@@ -105,13 +107,13 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 
 **ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (published with each release as `binaries.json`) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. See [QUALITY.md](QUALITY.md).
 
-`secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date) and `logs/`.
+`secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date), `system-check.json` (the computer check shown by the setup tutorial), `tools/ffmpeg/` and `logs/` (daily `swarmcast-YYYY-MM-DD.log` files, plus `desktop.log` from the desktop app; [apps/server/README.md](../apps/server/README.md) has the rotation, retention and "Export logs" details).
 
-App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-tray`, `--no-autostart`, `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_LOG_LEVEL`.
+App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-tray`, `--no-autostart`, `--desktop` (run inside the desktop app, [DESKTOP.md](DESKTOP.md)), `--cleanup` (remove a router port left open by a crash, then exit), `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_WEB_DIR`, `SWARMCAST_LOG_LEVEL`, `SWARMCAST_NO_OPEN=1` (do not open the panel in the browser), `SWARMCAST_FFMPEG`.
 
 ## Development
 
-Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. To build the tray helper you need Go 1.23+ ([apps/tray/README.md](../apps/tray/README.md)).
+Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. To build the tray helper you need Go 1.23+ ([apps/tray/README.md](../apps/tray/README.md)); the desktop app needs Rust and the Tauri prerequisites ([apps/desktop/README.md](../apps/desktop/README.md)).
 
 ```sh
 npm ci
@@ -124,13 +126,13 @@ npm run dev               # run the app from source (tsx)
 npm run lint && npm run typecheck
 ```
 
-Layout: [apps/](../apps/README.md) (server, viewer, admin, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
+Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
 
 ## Website
 
 `site/` is a standalone Astro Starlight project with its own `package-lock.json` (not a root workspace, so the
 app's CI and release jobs never install Astro). English pages are in `site/src/content/docs/`, Brazilian
-Portuguese in `site/src/content/docs/pt-br/` (same file names).
+Portuguese in `site/src/content/docs/pt-br/` (same file names). More in [site/README.md](../site/README.md).
 
 ```sh
 cd site && npm ci
@@ -140,7 +142,7 @@ npm run check      # types
 npm run test:e2e   # Playwright against the built site (SITE_E2E_PORT moves its port)
 ```
 
-- Branding (logo, favicon, mascot, accent colour): `site/src/brand.mjs`.
+- Branding (logo, favicon, mascot): `site/src/brand.mjs`. Colours, fonts, radii: the brand tokens in `assets/brand/tokens.css` ([assets/brand/README.md](../assets/brand/README.md)), mapped onto Starlight in `site/src/styles/`.
 - Offline guide pages and order: `site/offline-guide.json`; `node scripts/build/guide-html.mjs out.html --lang en|pt-BR`.
 - Usage numbers without telemetry: `scripts/stats/` and `.github/workflows/stats.yml` (data on the `stats` branch),
   explained to visitors on the site's "Privacy and usage numbers" page.
@@ -156,6 +158,6 @@ Everything is pinned so a surprise major release cannot break a build, while bug
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs the release workflow. It builds and tests every platform, then publishes `SwarmCast-vX.Y.Z-{windows-x64.zip, macos-arm64.tar.gz, macos-x64.tar.gz, linux-x64.tar.gz, linux-arm64.tar.gz}`, one `SwarmCast-vX.Y.Z-<target>-installer.zip` per target (start script + package + its checksum + guide), `SHA256SUMS.txt` and the start scripts to GitHub Releases, and optionally to a public mirror repository. Maintainer guide (Portuguese): [PUBLICACAO_PT-BR.md](PUBLICACAO_PT-BR.md).
+Pushing a tag `vX.Y.Z` runs the release workflow. The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`) and `latest.json`, the script-mode packages, one installer zip per target, the start and uninstall scripts, `binaries.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
 
-**Binaries are unsigned by default.** Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper may block the app (open **System Settings → Privacy & Security → Open Anyway**). The start scripts handle the usual cases. Code signing and notarization switch on automatically when the signing secrets are set in the repository (see the maintainer guide).
+**Binaries are not code-signed by default** (signing certificates are paid). Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper blocks the first open (**System Settings → Privacy & Security → Open Anyway**). The website's install pages walk through both. Desktop updates are always signed with the updater key, and code signing of the script-mode binaries switches on when the signing secrets are set (see [RELEASING.md](RELEASING.md)).

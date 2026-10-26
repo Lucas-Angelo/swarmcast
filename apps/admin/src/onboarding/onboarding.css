@@ -110,9 +110,10 @@ button.onb-fig-btn:hover { border-color: var(--sc-border-strong); background: va
   flex: none; width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
   font-weight: var(--sc-weight-bold); font-size: 0.8rem; background: var(--sc-surface-2); color: var(--sc-muted);
 }
-.onb-sys-ok .onb-sys-icon { color: var(--on-status); background: var(--sc-success); }
-.onb-sys-warn .onb-sys-icon { color: var(--on-status); background: var(--sc-warning); }
-.onb-sys-fail .onb-sys-icon { color: var(--on-status); background: var(--sc-danger); }
+/* No on-success / on-warning tokens: the accent's text colour keeps 5:1 or more on both fills. */
+.onb-sys-ok .onb-sys-icon { color: var(--sc-on-accent); background: var(--sc-success); }
+.onb-sys-warn .onb-sys-icon { color: var(--sc-on-accent); background: var(--sc-warning); }
+.onb-sys-fail .onb-sys-icon { color: var(--sc-on-danger); background: var(--sc-danger); }
 .onb-sys-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--sp-2); min-width: 0; }
 .onb-sys-label { font-weight: var(--sc-weight-semibold); }
 .onb-sys-value { font-variant-numeric: tabular-nums; }

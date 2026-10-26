@@ -21,7 +21,7 @@ PALETTES = {
             "accent": "#F29E0C", "on-accent": "#1D1812", "accent-strong": "#8F5300",
             "secondary": "#1D1812", "on-secondary": "#FBF7EF",
             "success": "#257A4A", "warning": "#B45309", "live": "#D7322A", "on-live": "#FFFFFF",
-            "danger": "#C42B21", "focus": "#2F6FDB",
+            "danger": "#C42B21", "on-danger": "#FFFFFF", "focus": "#2F6FDB",
         },
         "dark": {
             "bg": "#14110D", "surface": "#1E1A14", "surface-2": "#28221A", "border": "#3A3227",
@@ -29,7 +29,7 @@ PALETTES = {
             "accent": "#F5A623", "on-accent": "#1D1812", "accent-strong": "#FFC15E",
             "secondary": "#F7F1E6", "on-secondary": "#14110D",
             "success": "#4CC283", "warning": "#F59E0B", "live": "#FF5247", "on-live": "#1D1812",
-            "danger": "#FF6B61", "focus": "#7FA8FF",
+            "danger": "#FF6B61", "on-danger": "#14110D", "focus": "#7FA8FF",
         },
     },
     "forest": {
@@ -41,7 +41,7 @@ PALETTES = {
             "accent": "#0F5C53", "on-accent": "#FFFDF8", "accent-strong": "#0A4740",
             "secondary": "#F2B441", "on-secondary": "#12211F",
             "success": "#3B7A2A", "warning": "#A15C00", "live": "#D63A2F", "on-live": "#FFFFFF",
-            "danger": "#B9302A", "focus": "#9A6200",
+            "danger": "#B9302A", "on-danger": "#FFFDF8", "focus": "#9A6200",
         },
         "dark": {
             "bg": "#0C1716", "surface": "#13221F", "surface-2": "#1A2D29", "border": "#26403A",
@@ -49,7 +49,7 @@ PALETTES = {
             "accent": "#3DB5A2", "on-accent": "#0C1716", "accent-strong": "#7DD8C8",
             "secondary": "#F2B441", "on-secondary": "#12211F",
             "success": "#7BC86A", "warning": "#F2B441", "live": "#FF5A4E", "on-live": "#0C1716",
-            "danger": "#FF7A70", "focus": "#F2B441",
+            "danger": "#FF7A70", "on-danger": "#0C1716", "focus": "#F2B441",
         },
     },
     "onair": {
@@ -61,7 +61,7 @@ PALETTES = {
             "accent": "#FF5A1F", "on-accent": "#1C1B1A", "accent-strong": "#B83A0B",
             "secondary": "#1C1B1A", "on-secondary": "#F7F4EF",
             "success": "#1E7F4E", "warning": "#A86200", "live": "#FF5A1F", "on-live": "#1C1B1A",
-            "danger": "#C2261C", "focus": "#2F6FDB",
+            "danger": "#C2261C", "on-danger": "#FFFFFF", "focus": "#2F6FDB",
         },
         "dark": {
             "bg": "#121212", "surface": "#1C1B1A", "surface-2": "#262422", "border": "#36332F",
@@ -69,7 +69,7 @@ PALETTES = {
             "accent": "#FF6A33", "on-accent": "#121212", "accent-strong": "#FF9466",
             "secondary": "#F5F2ED", "on-secondary": "#121212",
             "success": "#4CC283", "warning": "#FFB547", "live": "#FF6A33", "on-live": "#121212",
-            "danger": "#FF6B61", "focus": "#7FA8FF",
+            "danger": "#FF6B61", "on-danger": "#121212", "focus": "#7FA8FF",
         },
     },
 }
@@ -120,7 +120,7 @@ PAIRS = [
     ("text", "bg"), ("border-strong", "surface"), ("accent-strong", "accent-soft"),
     ("ink", "bg"), ("ink", "surface"), ("muted", "surface"), ("on-accent", "accent"), ("accent-strong", "surface"),
     ("accent", "bg"), ("on-live", "live"), ("danger", "surface"), ("success", "surface"), ("warning", "surface"),
-    ("on-secondary", "secondary"), ("focus", "bg"),
+    ("on-secondary", "secondary"), ("on-danger", "danger"), ("focus", "bg"),
 ]
 
 
