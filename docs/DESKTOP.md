@@ -70,9 +70,16 @@ with environment:
 | `SWARMCAST_WEB_DIR` | Folder containing `viewer/` and `admin/` (new). |
 | `SWARMCAST_DESKTOP_VERSION` | Version of the shell. |
 | `SWARMCAST_LOCALE` | OS locale (`pt-BR`, `en-US`…), for server-side texts. |
+| `SWARMCAST_NO_FFMPEG_INSTALL` | `1` skips the automatic ffmpeg download of the first start (tests/CI only). |
 
 `--desktop` implies `--no-open` and `--no-tray`, keeps the parent watch, and also exits cleanly when
-stdin closes. Messages are JSON, one per line.
+stdin closes. Messages are JSON, one per line. As in script mode, the server turns the live on at
+start (waiting for OBS, off again by itself after the auto-stop time) unless the shell also passes
+`--no-autostart` (a good fit for `--background`).
+
+Desktop mode refuses to run next to another SwarmCast (the start scripts do not): if a SwarmCast panel
+answers on the configured panel port, or the RTMP port is busy, it sends `fatal` and exits 1 before
+`ready`.
 
 **Server → shell** (stdout lines starting with `@@swarmcast ` followed by JSON; every other stdout line is
 an ordinary log line the shell copies to `logs/desktop.log`):
@@ -81,7 +88,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 |---|---|
 | `{"type":"ready","adminUrl":"http://127.0.0.1:8081/auth/…","version":"0.2.0"}` | Admin panel is up. Sent once. |
 | `{"type":"state","state":"off\|waiting\|live","tooltip":"…","canStart":b,"canStop":b,"phase":"off\|starting\|waiting-obs\|live\|stopping","viewers":n}` | On every change (same fields as the Go tray helper + `phase`, `viewers`). |
-| `{"type":"fatal","code":"…","message":"…"}` | Startup failed (e.g. ports in use because SwarmCast is already running in a terminal), then exits ≠ 0. |
+| `{"type":"fatal","code":"…","message":"…"}` | Startup failed, then exits 1. `code`: `already-running` (another SwarmCast answers on the panel port, e.g. started from a terminal), `ports-busy` (the RTMP port, or all 20 panel ports, used by another program), `startup-failed` (anything else, e.g. a broken `config.json`). `message` is English. |
 | `{"type":"update-check"}` | Panel button "Check for updates". |
 | `{"type":"update-install"}` | Panel button "Update now". |
 
@@ -95,6 +102,16 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 
 Stdin EOF also means quit. The shell waits up to 35 s for the sidecar to exit after `quit`, then kills it
 (the server's reaper still cleans its children).
+
+Notes:
+- Protocol lines are always whole lines; log lines (pino JSON and a few human lines) never contain the
+  prefix. The `ready` line carries the per-run panel token: do not copy protocol lines to
+  `desktop.log` (the server's own human lines omit the token and the live link in desktop mode).
+- `state` is also re-sent every 15 s when the viewer count changed (sessions can time out without a
+  phase change).
+- Unknown or invalid stdin lines are ignored (logged). `update` fields are validated; long texts are
+  cut (notes 20 000 characters) and `progress` is clamped to 0..1. Lines over 256 KB are ignored.
+- The panel's "Quit SwarmCast" button also makes the server stop everything and exit 0 by itself.
 
 ## Shell behaviour
 
@@ -127,8 +144,20 @@ source of truth (read back on every request):
 | macOS | `~/Library/LaunchAgents/io.github.lucas-angelo.swarmcast.plist` (`RunAtLoad`, args `<exe> --background`) |
 | Linux | `~/.config/autostart/swarmcast.desktop` (`Exec="<exe>" --background`) |
 
-Panel API: `GET /api/desktop` → `{ desktop: true, version, autostart: { supported, enabled }, update }`,
-`PUT /api/desktop/autostart {enabled}`. Uninstallers remove the entry.
+Panel API (admin auth like the other routes):
+
+- `GET /api/desktop` → `{ desktop: true, version, serverVersion, autostart: { supported, enabled, stale?, error? },
+  update, updateChecking, systemCheck }`, or `{ desktop: false }` in script mode (the panel then hides
+  everything desktop-related). `version` is `SWARMCAST_DESKTOP_VERSION` (else the server's), `update` the
+  last `update` message from the shell (or null), `updateChecking` is true from "Check for updates" until
+  the shell answers (at most 60 s), `systemCheck` is `idle | running | done | failed` (first start).
+- `PUT /api/desktop/autostart {enabled}` → same object; writes or removes the entry and reads it back.
+- `POST /api/desktop/update/check` / `POST /api/desktop/update/install` → same object; send
+  `update-check` / `update-install` to the shell. The panel asks for confirmation first when the live is on.
+- The same object is pushed on the panel WebSocket as `{ "type": "desktop", … }` whenever it changes.
+
+Uninstallers remove the entry. Turning it off on macOS only deletes the plist (no `launchctl bootout`:
+when the app was started by that agent, bootout would kill it).
 
 ## Updates
 
@@ -165,9 +194,16 @@ The installers of script mode run a system check and install ffmpeg before start
 mode the server does it on first start (no `system-check.json`, or a different app version):
 
 - **System check** in TypeScript (`apps/server/src/desktop/system-check.ts`), same ids, thresholds and
-  `system-check.json` schema as the scripts, so the onboarding tutorial shows it unchanged.
-- **ffmpeg**: automatic `installFfmpeg()` (existing, pinned + SHA-256) with bounded retries; progress
-  in the panel; failures are not fatal (original quality only) and the panel offers "Try again".
+  `system-check.json` schema as the scripts, so the onboarding tutorial shows it unchanged. The file gets
+  two optional fields the scripts do not write: `appVersion` (decides "another version") and
+  `source: "desktop"`. The ports SwarmCast itself is using count as free; `github` is checked once
+  (`unreachable (not needed)` is a warning, as with a local bundle); `release` is
+  `v<version> (desktop app)`. The speed test reuses the server's startup speed test (skipped when speed
+  tests are off in `config.json`). The tutorial shows "Checking your computer…" meanwhile and reloads
+  when it is done.
+- **ffmpeg**: automatic `installFfmpeg()` (existing, pinned + SHA-256), first try plus 3 retries after
+  2 s, 5 s and 10 s (phase `retrying` in between); progress in the panel (quality card and tutorial);
+  failures are not fatal (original quality only) and the panel offers "Try again".
 
 ## Installers
 
