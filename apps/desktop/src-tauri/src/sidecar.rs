@@ -19,13 +19,34 @@ use std::time::Duration;
 use crate::logs;
 use crate::protocol::{self, Line, ServerMessage, ShellMessage};
 
-/// File name of the sidecar next to the shell executable (Tauri `externalBin`).
+/// File name of the sidecar (Tauri `externalBin` on macOS / Windows, next to the shell
+/// executable).
 pub fn sidecar_file_name() -> &'static str {
     if cfg!(windows) {
         "swarmcast-server.exe"
     } else {
         "swarmcast-server"
     }
+}
+
+/// AppImage: the sidecar's folder, relative to the parent of the shell's (usr). The server is a
+/// pkg executable that linuxdeploy would break by patching it in usr/bin or usr/lib, so the
+/// build puts it here (scripts/build/desktop.mjs, LINUX_SIDECAR).
+const APPIMAGE_SIDECAR_DIR: &str = "libexec/SwarmCast";
+
+/// The sidecar next to the shell executable (macOS, Windows, the .deb's /usr/bin), else, on
+/// Linux, the AppImage's usr/libexec/SwarmCast when it is there.
+fn sidecar_path(exe_dir: &Path) -> PathBuf {
+    let next_to_exe = exe_dir.join(sidecar_file_name());
+    if cfg!(target_os = "linux") && !next_to_exe.exists() {
+        if let Some(usr) = exe_dir.parent() {
+            let appimage = usr.join(APPIMAGE_SIDECAR_DIR).join(sidecar_file_name());
+            if appimage.exists() {
+                return appimage;
+            }
+        }
+    }
+    next_to_exe
 }
 
 /// Where the shell finds the server and its resources.
@@ -42,7 +63,7 @@ impl Layout {
     /// `resource_dir`: Tauri's resource folder (Contents/Resources, /usr/lib/SwarmCast,
     /// the install folder on Windows).
     pub fn new(exe_dir: &Path, resource_dir: &Path) -> Self {
-        let sidecar = exe_dir.join(sidecar_file_name());
+        let sidecar = sidecar_path(exe_dir);
         // Debug builds only: run another server (e.g. test/mock-server) without bundling it.
         #[cfg(debug_assertions)]
         let sidecar = std::env::var_os("SWARMCAST_SIDECAR").map(PathBuf::from).unwrap_or(sidecar);
@@ -289,5 +310,44 @@ mod win {
                 CloseHandle(self.0);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A fresh <tmp>/<name>/usr/bin, and <tmp>/<name>.
+    fn usr_bin(name: &str) -> (PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("swarmcast-sidecar-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("usr/bin")).unwrap();
+        (root.join("usr/bin"), root)
+    }
+
+    #[test]
+    fn sidecar_next_to_the_shell() {
+        let (bin, root) = usr_bin("next");
+        std::fs::write(bin.join(sidecar_file_name()), b"").unwrap();
+        assert_eq!(sidecar_path(&bin), bin.join(sidecar_file_name()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn sidecar_in_the_appimage_libexec() {
+        let (bin, root) = usr_bin("libexec");
+        let libexec = root.join("usr/libexec/SwarmCast");
+        std::fs::create_dir_all(&libexec).unwrap();
+        std::fs::write(libexec.join(sidecar_file_name()), b"").unwrap();
+        let expected = if cfg!(target_os = "linux") { libexec } else { bin.clone() };
+        assert_eq!(sidecar_path(&bin), expected.join(sidecar_file_name()));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_sidecar_is_looked_for_next_to_the_shell() {
+        let (bin, root) = usr_bin("missing");
+        assert_eq!(sidecar_path(&bin), bin.join(sidecar_file_name()));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

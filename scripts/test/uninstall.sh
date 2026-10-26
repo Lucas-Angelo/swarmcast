@@ -590,15 +590,15 @@ else
   if [ -x "$SLEEPER" ]; then
     # A running AppImage: the file itself (FUSE) and what it mounted.
     M="$WORK/tmp/.mount_SwarmCa1B2c3"
-    mkdir -p "$M/usr/bin" "$M/usr/lib/SwarmCast/bin" "$WORK/tmp/.mount_Othera1B2c3/usr/bin" "$WORK/outside"
+    mkdir -p "$M/usr/bin" "$M/usr/lib/SwarmCast/bin" "$M/usr/libexec/SwarmCast" "$WORK/tmp/.mount_Othera1B2c3/usr/bin" "$WORK/outside"
     cp "$SLEEPER" "$M/usr/bin/swarmcast-desktop"
-    cp "$SLEEPER" "$M/usr/bin/swarmcast-server"
+    cp "$SLEEPER" "$M/usr/libexec/SwarmCast/swarmcast-server"
     cp "$SLEEPER" "$M/usr/lib/SwarmCast/bin/mediamtx"
     cp "$SLEEPER" "$WORK/tmp/.mount_Othera1B2c3/usr/bin/swarmcast-desktop"
     cp "$SLEEPER" "$WORK/outside/swarmcast-server"
     start_detached "$WORK/e1" "$A1" 300
     start_detached "$WORK/e2" "$M/usr/bin/swarmcast-desktop" 300
-    start_detached "$WORK/e3" "$M/usr/bin/swarmcast-server" 300
+    start_detached "$WORK/e3" "$M/usr/libexec/SwarmCast/swarmcast-server" 300
     start_detached "$WORK/e4" "$M/usr/lib/SwarmCast/bin/mediamtx" 300
     start_detached "$WORK/e5" "$WORK/tmp/.mount_Othera1B2c3/usr/bin/swarmcast-desktop" 300
     start_detached "$WORK/e6" "$WORK/outside/swarmcast-server" 300

@@ -400,7 +400,7 @@ find_swarmcast_processes() {
       for (i = 1; i <= nd; i++) if (dirs[i] != "" && index($2, dirs[i] "/") == 1) { print; next }
       for (i = 1; i <= nf; i++) if (files[i] != "" && $2 == files[i]) { print; next }
       # A running AppImage mounts itself at <tmp>/.mount_<first 6 letters of its name>XXXXXX.
-      if (ENVIRON["SC_LINUX"] == 1 && tolower($2) ~ /\/\.mount_swarmc[^\/]*\/usr\/(bin\/swarmcast-(desktop|server)$|lib\/swarmcast\/)/) { print; next }
+      if (ENVIRON["SC_LINUX"] == 1 && tolower($2) ~ /\/\.mount_swarmc[^\/]*\/usr\/(bin\/swarmcast-(desktop|server)$|lib\/swarmcast\/|libexec\/swarmcast\/swarmcast-server$)/) { print; next }
     }'
 }
 

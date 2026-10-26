@@ -143,19 +143,36 @@ if (!env.TAURI_SIGNING_PRIVATE_KEY) {
 }
 
 // Linux CI runners have no FUSE: let the AppImage tools (linuxdeploy) run extracted.
-// NO_STRIP: linuxdeploy must not strip the sidecar, a pkg executable whose payload follows
-// the ELF data (stripped, it fails at start with "SyntaxError" in pkg/prelude/bootstrap.js).
-if (target.startsWith('linux')) {
+// NO_STRIP: linuxdeploy must not strip what it deploys (belt and braces, see LINUX_SIDECAR).
+const isLinux = target.startsWith('linux');
+if (isLinux) {
   env.APPIMAGE_EXTRACT_AND_RUN ??= '1';
   env.NO_STRIP ??= 'true';
 }
+
+// Linux: the sidecar is not an `externalBin`. The server is a pkg executable (Node + a payload
+// appended after the ELF data), and linuxdeploy (the AppImage bundler) runs patchelf on every
+// dynamically linked ELF in usr/bin and usr/lib (recursively): the rewritten ELF moves the
+// payload and the server dies at start with "SyntaxError" in pkg/prelude/bootstrap.js.
+// So each package gets its own copy, outside of linuxdeploy's reach in the AppImage:
+//   .deb       /usr/bin/swarmcast-server                (same place as an externalBin)
+//   .AppImage  usr/libexec/SwarmCast/swarmcast-server   (linuxdeploy never looks there)
+// sidecar.rs (Layout::new) finds either one.
+const LINUX_SIDECAR = { deb: '/usr/bin/swarmcast-server', appimage: '/usr/libexec/SwarmCast/swarmcast-server' };
 
 // 4. tauri build with a config overlay (keeps tauri.conf.json free of build-time paths, so
 // `cargo build` / `cargo test` work without a staged package).
 const overlay = {
   version,
   bundle: {
-    externalBin: ['staged/binaries/swarmcast-server'],
+    ...(isLinux
+      ? {
+          linux: {
+            deb: { files: { [LINUX_SIDECAR.deb]: sidecar } },
+            appimage: { files: { [LINUX_SIDECAR.appimage]: sidecar } },
+          },
+        }
+      : { externalBin: ['staged/binaries/swarmcast-server'] }),
     resources: {
       'staged/resources/bin/': 'bin/',
       'staged/resources/web/': 'web/',

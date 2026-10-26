@@ -269,8 +269,11 @@ mode the server does it on first start (no `system-check.json`, or a different a
   Apple certificate, so the first open needs System Settings → Privacy & Security → "Open Anyway"
   (documented in the guide with screenshots).
 - **Linux**: `.deb` (depends on `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`) and `.AppImage`,
-  x64 and arm64. The app binary is `swarmcast-desktop` and the sidecar `/usr/bin/swarmcast-server`
-  (Tauri puts `externalBin` next to the app); resources in `/usr/lib/SwarmCast/`. Removing the `.deb`
+  x64 and arm64. The app binary is `swarmcast-desktop`; resources in `/usr/lib/SwarmCast/`. The sidecar
+  is not an `externalBin` on Linux: the `.deb` ships it as `/usr/bin/swarmcast-server`, the AppImage
+  as `usr/libexec/SwarmCast/swarmcast-server`. linuxdeploy (the AppImage bundler) runs patchelf on every
+  dynamically linked ELF in `usr/bin` and `usr/lib`, which breaks the pkg executable (its payload
+  follows the ELF data: "SyntaxError" in `pkg/prelude/bootstrap.js` at start). Removing the `.deb`
   does not touch `~/.config/autostart/swarmcast.desktop` (a root package script should not edit home
   folders); the server writes `TryExec=<exe>` in that file, so the session skips the entry once the app
   is gone.
