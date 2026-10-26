@@ -1,0 +1,542 @@
+---
+// The download page: one card per system (files, requirements, the first-run security prompt),
+// then why the warning appears and how to check the file, the requirements and other ways to
+// install. Without JavaScript every button opens the latest GitHub release; in the browser the
+// visitor's system is highlighted and, with stats.json, buttons link straight to the files.
+import Icon from './Icon.astro';
+import { links } from '../brand.mjs';
+import { boldHtml, copy } from '../lib/copy';
+import { BASE, pagePath, tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+}
+const { lang } = Astro.props;
+const d = copy[lang].download;
+
+type Option = { key: string; label: string; hint: string };
+const systems: { id: 'windows' | 'macos' | 'linux'; name: string; req: string; options: Option[]; note?: string; firstRun: string; guide: string }[] = [
+  {
+    id: 'windows',
+    name: tr(lang, 'os.windows'),
+    req: d.windows.req,
+    options: [{ key: 'windows', label: d.windows.button, hint: d.windows.fileHint }],
+    firstRun: d.windows.firstRun,
+    guide: 'install/windows',
+  },
+  {
+    id: 'macos',
+    name: tr(lang, 'os.macos'),
+    req: d.macos.req,
+    options: [
+      { key: 'macos-arm64', label: d.macos.arm, hint: d.macos.armHint },
+      { key: 'macos-x64', label: d.macos.intel, hint: d.macos.intelHint },
+    ],
+    note: d.macos.which,
+    firstRun: d.macos.firstRun,
+    guide: 'install/macos',
+  },
+  {
+    id: 'linux',
+    name: tr(lang, 'os.linux'),
+    req: d.linux.req,
+    options: [
+      { key: 'linux-deb', label: d.linux.deb, hint: d.linux.debHint },
+      { key: 'linux-appimage', label: d.linux.appimage, hint: d.linux.appimageHint },
+    ],
+    firstRun: d.linux.firstRun,
+    guide: 'install/linux',
+  },
+];
+---
+
+<div class="sc-dlp" data-lang={lang} data-releases={links.releases} data-stats={`${BASE}/stats.json`} data-version-template={d.leadVersion}>
+  <header class="sc-container sc-dlp-head">
+    <h1>{d.title}</h1>
+    <p class="sc-lead">
+      {d.lead} <span data-version hidden></span>
+    </p>
+  </header>
+
+  <div class="sc-container">
+    <div class="sc-os-grid">
+      {
+        systems.map((s) => (
+          <article class="sc-os" id={s.id} data-os={s.id} data-testid={`os-${s.id}`} aria-labelledby={`${s.id}-title`}>
+            <header class="sc-os-head">
+              <h2 id={`${s.id}-title`}>{s.name}</h2>
+              <span class="sc-badge sc-badge-honey" data-yours hidden>
+                {d.yours}
+              </span>
+            </header>
+            <p class="sc-os-req">{s.req}</p>
+            <ul class="sc-os-files">
+              {s.options.map((o, i) => (
+                <li>
+                  <a class="sc-btn sc-btn-secondary" href={links.releases} rel="noopener" data-choice={o.key} data-first={i === 0 ? '' : undefined} data-testid={`file-${o.key}`}>
+                    <Icon name="download" size={18} />
+                    <span>{o.label}</span>
+                  </a>
+                  <span class="sc-os-file" data-file={o.key}>
+                    {o.hint}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {s.note && <p class="sc-os-note">{s.note}</p>}
+            <div class="sc-os-first">
+              <h3>
+                <Icon name="info" size={16} />
+                {d.firstRun}
+              </h3>
+              <p set:html={boldHtml(s.firstRun)} />
+            </div>
+            <a class="sc-link sc-os-guide" href={pagePath(lang, s.guide)}>
+              {d.guide}
+              <Icon name="arrow-right" size={14} class="sc-arrow" />
+            </a>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+
+  <section class="sc-container sc-dlp-section sc-dlp-trust" aria-labelledby="why">
+    <div>
+      <h2 id="why">{d.why.title}</h2>
+      {d.why.text.map((t) => <p>{t}</p>)}
+    </div>
+    <div class="sc-verify" data-testid="verify">
+      <h3>
+        <Icon name="shield" size={18} />
+        {d.verify.title}
+      </h3>
+      <ol>
+        {d.verify.steps.map((s) => <li set:html={boldHtml(s)} />)}
+      </ol>
+      <dl class="sc-cmds">
+        <div>
+          <dt>{d.verify.windowsLabel}</dt>
+          <dd><code>{d.verify.windowsCmd}</code></dd>
+        </div>
+        <div>
+          <dt>{d.verify.unixLabel}</dt>
+          <dd><code>{d.verify.unixCmd}</code></dd>
+        </div>
+      </dl>
+      <a class="sc-link" href={links.releases} rel="noopener">
+        {tr(lang, 'dl.allFiles')}
+        <Icon name="external" size={14} />
+      </a>
+    </div>
+  </section>
+
+  <section class="sc-container sc-dlp-section" aria-labelledby="requirements">
+    <h2 id="requirements">{d.req.title}</h2>
+    <div class="sc-table-wrap">
+      <table class="sc-req">
+        <thead>
+          <tr>
+            <th scope="col"><span class="sc-sr-only">{d.req.title}</span></th>
+            <th scope="col">{d.req.minimum}</th>
+            <th scope="col">{d.req.recommended}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {
+            d.req.rows.map(([k, min, rec]) => (
+              <tr>
+                <th scope="row">{k}</th>
+                <td>{min}</td>
+                <td>{rec}</td>
+              </tr>
+            ))
+          }
+        </tbody>
+      </table>
+    </div>
+    <p class="sc-req-note">{d.req.obs}</p>
+  </section>
+
+  <section class="sc-container sc-dlp-section" aria-labelledby="other">
+    <h2 id="other">{d.other.title}</h2>
+    <ul class="sc-other">
+      <li>
+        <a href={pagePath(lang, 'advanced/script-install')}>
+          <Icon name="terminal" size={20} />
+          <span>
+            <strong>{d.other.script}</strong>
+            <span>{d.other.scriptText}</span>
+          </span>
+          <Icon name="arrow-right" size={16} class="sc-other-arrow" />
+        </a>
+      </li>
+      <li>
+        <a href={links.releases} rel="noopener">
+          <Icon name="github" size={20} />
+          <span>
+            <strong>{d.other.source}</strong>
+            <span>{d.other.sourceText}</span>
+          </span>
+          <Icon name="external" size={16} class="sc-other-arrow" />
+        </a>
+      </li>
+    </ul>
+  </section>
+</div>
+
+<script>
+  import { choice, detectOs, formatSize, type ChoiceKey } from '../lib/download';
+  import { loadUsage } from '../lib/stats';
+  import type { SiteLang } from '../lib/i18n';
+
+  for (const root of document.querySelectorAll<HTMLElement>('.sc-dlp')) {
+    const lang = (root.dataset.lang ?? 'en') as SiteLang;
+    const releases = root.dataset.releases ?? '';
+    const os = detectOs(navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } });
+    const mine = root.querySelector<HTMLElement>(`.sc-os[data-os="${os}"]`);
+    if (mine) {
+      mine.classList.add('is-yours');
+      mine.querySelector<HTMLElement>('[data-yours]')!.hidden = false;
+      const first = mine.querySelector<HTMLElement>('[data-first]');
+      first?.classList.replace('sc-btn-secondary', 'sc-btn-primary');
+      // Phones: the visitor's own system first. On wide screens the order stays.
+      mine.parentElement?.prepend(mine);
+    }
+    void loadUsage(root.dataset.stats ?? '').then((u) => {
+      if (!u.latest) return;
+      if (u.latest.version) {
+        const v = root.querySelector<HTMLElement>('[data-version]')!;
+        v.textContent = (root.dataset.versionTemplate ?? '').replace('{version}', u.latest.version);
+        v.hidden = false;
+      }
+      for (const a of root.querySelectorAll<HTMLAnchorElement>('[data-choice]')) {
+        const c = choice(a.dataset.choice as ChoiceKey, u.latest, releases);
+        a.href = c.href;
+        a.dataset.direct = String(c.direct);
+        const file = root.querySelector<HTMLElement>(`[data-file="${c.key}"]`);
+        if (file && c.fileName) {
+          file.textContent = c.size ? `${c.fileName} · ${formatSize(c.size, lang)}` : c.fileName;
+          file.classList.add('is-file');
+        }
+      }
+    });
+  }
+</script>
+
+<style>
+  .sc-dlp {
+    padding-bottom: var(--sc-section);
+  }
+  .sc-dlp-head {
+    display: grid;
+    gap: 1rem;
+    padding-top: clamp(2.5rem, 1.5rem + 4vw, 5rem);
+    padding-bottom: clamp(2rem, 1.5rem + 2vw, 3rem);
+  }
+  h1 {
+    font-size: var(--sc-text-h1);
+    font-weight: 650;
+    line-height: 1.15;
+    letter-spacing: -0.03em;
+  }
+  .sc-dlp-head .sc-lead {
+    max-width: 46rem;
+  }
+  [hidden] {
+    display: none !important;
+  }
+
+  /* ---------- System cards ---------- */
+  .sc-os-grid {
+    display: grid;
+    gap: 1rem;
+  }
+  .sc-os {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    padding: 1.5rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-lg);
+    background: var(--sc-surface);
+    scroll-margin-top: calc(var(--sc-nav-height) + 1rem);
+  }
+  .sc-os.is-yours {
+    border-color: var(--sc-accent);
+    box-shadow: inset 0 0 0 1px var(--sc-accent);
+  }
+  .sc-os-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+  }
+  .sc-os h2 {
+    font-size: 1.375rem;
+    letter-spacing: -0.02em;
+  }
+  .sc-os-req {
+    margin-top: -0.5rem;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  .sc-os-files {
+    display: grid;
+    gap: 0.875rem;
+    padding: 0;
+    list-style: none;
+  }
+  .sc-os-files li {
+    display: grid;
+    gap: 0.375rem;
+  }
+  .sc-os-files .sc-btn {
+    width: 100%;
+  }
+  .sc-os-file {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-micro);
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .sc-os-file.is-file {
+    font-family: var(--sc-font-mono);
+    font-size: 0.75rem;
+  }
+  .sc-os-note {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  .sc-os-first {
+    display: grid;
+    gap: 0.375rem;
+    padding: 1rem;
+    border-radius: var(--sc-radius);
+    background: var(--sc-bg);
+    font-size: var(--sc-text-small);
+    line-height: 1.55;
+  }
+  .sc-os-first h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: var(--sc-text-small);
+  }
+  .sc-os-first p {
+    color: var(--sc-text);
+  }
+  .sc-os-guide {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    align-self: flex-start;
+    margin-top: auto;
+    font-size: var(--sc-text-small);
+  }
+  @media (min-width: 64rem) {
+    .sc-os-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 1.25rem;
+    }
+    /* Keep Windows, macOS, Linux in that order on wide screens. */
+    #windows {
+      order: 1;
+    }
+    #macos {
+      order: 2;
+    }
+    #linux {
+      order: 3;
+    }
+    .sc-os {
+      padding: 1.75rem;
+    }
+  }
+
+  /* ---------- Sections below ---------- */
+  /* A hairline between sections, aligned with the content (not the screen edge). */
+  .sc-dlp-section {
+    position: relative;
+    margin-top: calc(var(--sc-section) * 0.75);
+    padding-top: calc(var(--sc-section) * 0.75);
+  }
+  .sc-dlp-section h2 {
+    margin-bottom: 1rem;
+    font-size: var(--sc-text-h2);
+    line-height: 1.2;
+    letter-spacing: -0.025em;
+  }
+  .sc-dlp-section::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    inset-inline: var(--sc-gutter);
+    height: 1px;
+    background: var(--sc-border);
+  }
+  .sc-dlp-trust {
+    display: grid;
+    gap: 2rem;
+  }
+  .sc-dlp-trust > *,
+  .sc-cmds,
+  .sc-cmds > div {
+    min-width: 0;
+  }
+  .sc-dlp-trust > div:first-child {
+    display: grid;
+    gap: 1rem;
+    align-content: start;
+    max-width: 36rem;
+  }
+  .sc-dlp-trust > div:first-child h2 {
+    margin-bottom: 0;
+  }
+  .sc-dlp-trust p {
+    color: var(--sc-text);
+    line-height: 1.65;
+  }
+  .sc-verify {
+    display: grid;
+    gap: 1rem;
+    align-content: start;
+    justify-items: start;
+    padding: 1.5rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-lg);
+    background: var(--sc-surface);
+  }
+  .sc-verify h3 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: var(--sc-text-h3);
+  }
+  .sc-verify ol {
+    display: grid;
+    gap: 0.625rem;
+    padding-inline-start: 1.25rem;
+    font-size: 0.9375rem;
+    line-height: 1.55;
+  }
+  .sc-verify li::marker {
+    color: var(--sc-muted);
+    font-variant-numeric: tabular-nums;
+  }
+  .sc-cmds {
+    display: grid;
+    gap: 0.75rem;
+    width: 100%;
+    margin: 0;
+  }
+  .sc-cmds dt {
+    margin-bottom: 0.25rem;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-micro);
+    font-weight: 500;
+  }
+  .sc-cmds dd {
+    margin: 0;
+  }
+  .sc-cmds code {
+    display: block;
+    padding: 0.625rem 0.75rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius);
+    background: var(--sc-bg);
+    color: var(--sc-ink);
+    font-size: 0.8125rem;
+    overflow-x: auto;
+    white-space: pre;
+  }
+  .sc-verify > a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    font-size: var(--sc-text-small);
+  }
+  @media (min-width: 64rem) {
+    .sc-dlp-trust {
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+      gap: 4rem;
+    }
+  }
+
+  .sc-table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-lg);
+    max-width: 44rem;
+  }
+  .sc-req {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9375rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .sc-req th,
+  .sc-req td {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--sc-border);
+    text-align: start;
+  }
+  .sc-req tbody tr:last-child > * {
+    border-bottom: 0;
+  }
+  .sc-req thead th {
+    background: var(--sc-surface);
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+    font-weight: 500;
+  }
+  .sc-req tbody th {
+    color: var(--sc-ink);
+    font-weight: 500;
+  }
+  .sc-req td {
+    color: var(--sc-text);
+  }
+  .sc-req-note {
+    margin-top: 1rem;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+
+  .sc-other {
+    display: grid;
+    gap: 0.75rem;
+    max-width: 44rem;
+    padding: 0;
+    list-style: none;
+  }
+  .sc-other a {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 1rem;
+    padding: 1rem 1.25rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-lg);
+    color: var(--sc-ink);
+    text-decoration: none;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease;
+  }
+  .sc-other a:hover {
+    border-color: var(--sc-border-strong);
+    background: var(--sc-surface);
+  }
+  .sc-other a > span {
+    display: grid;
+    gap: 0.125rem;
+  }
+  .sc-other a > span > span {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  .sc-other :global(.sc-other-arrow) {
+    color: var(--sc-muted);
+  }
+</style>

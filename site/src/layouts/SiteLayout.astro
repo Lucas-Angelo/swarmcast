@@ -1,0 +1,76 @@
+---
+// Layout of the site's own pages (landing, download): slim nav, content, footer. The guide
+// pages use Starlight; both read the same tokens (src/styles/tokens.css) and the same theme
+// choice (localStorage "starlight-theme").
+import '../styles/tokens.css';
+import '../styles/ui.css';
+import '../styles/site.css';
+import Nav from '../components/Nav.astro';
+import Footer from '../components/Footer.astro';
+import { brand, links } from '../brand.mjs';
+import { langRedirectScript } from '../lang-redirect.mjs';
+import { themeColors } from '../tokens.mjs';
+import { pagePath, tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+  /** Page slug without language, '' for the home page. */
+  slug: string;
+  title: string;
+  description: string;
+}
+const { lang, slug, title, description } = Astro.props;
+const colors = themeColors();
+const en = pagePath('en', slug);
+const pt = pagePath('pt-BR', slug);
+const canonical = new URL(lang === 'en' ? en : pt, links.site).href;
+const favicon = `${links.base}${brand.favicon}`;
+const themeScript = `(function () {
+  var t = '';
+  try { t = localStorage.getItem('starlight-theme') || ''; } catch (e) {}
+  var m = window.matchMedia('(prefers-color-scheme: light)');
+  var apply = function () {
+    var s = '';
+    try { s = localStorage.getItem('starlight-theme') || ''; } catch (e) {}
+    document.documentElement.dataset.theme = s === 'light' || s === 'dark' ? s : m.matches ? 'light' : 'dark';
+  };
+  apply();
+  m.addEventListener('change', apply);
+})();`;
+---
+
+<!doctype html>
+<html lang={lang} dir="ltr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{title}</title>
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="en" href={new URL(en, links.site).href} />
+    <link rel="alternate" hreflang="pt-BR" href={new URL(pt, links.site).href} />
+    <link rel="alternate" hreflang="x-default" href={new URL(en, links.site).href} />
+    <link rel="icon" href={favicon} type="image/svg+xml" />
+    <link rel="sitemap" href={`${links.base}/sitemap-index.xml`} />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content={colors.light} />
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content={colors.dark} />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content={brand.name} />
+    <meta property="og:locale" content={lang === 'en' ? 'en_US' : 'pt_BR'} />
+    <meta name="twitter:card" content="summary" />
+    <script is:inline set:html={langRedirectScript(links.base)} />
+    <script is:inline set:html={themeScript} />
+  </head>
+  <body>
+    <a class="sc-skip" href="#main">{tr(lang, 'nav.skip')}</a>
+    <Nav lang={lang} slug={slug} />
+    <main id="main" data-pagefind-body>
+      <slot />
+    </main>
+    <Footer lang={lang} />
+  </body>
+</html>

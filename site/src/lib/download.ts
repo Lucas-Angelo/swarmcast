@@ -35,6 +35,8 @@ export interface Choice {
   /** Direct file URL when the latest release has it, else the releases page. */
   href: string;
   fileName?: string;
+  /** File size in bytes, when stats.json has it. */
+  size?: number;
   direct: boolean;
 }
 
@@ -58,7 +60,10 @@ const OS_OF: Record<ChoiceKey, Choice['os']> = {
 export function choice(key: ChoiceKey, latest: LatestRelease | null | undefined, releasesUrl: string): Choice {
   for (const slot of SLOTS[key]) {
     const a = latest?.assets?.[slot];
-    if (a?.url && /^https:\/\/github\.com\//.test(a.url)) return { key, os: OS_OF[key], href: a.url, fileName: a.name, direct: true };
+    if (a?.url && /^https:\/\/github\.com\//.test(a.url)) {
+      const size = typeof a.size === 'number' && Number.isFinite(a.size) && a.size > 0 ? a.size : undefined;
+      return { key, os: OS_OF[key], href: a.url, fileName: a.name, direct: true, ...(size ? { size } : {}) };
+    }
   }
   return { key, os: OS_OF[key], href: releasesUrl, direct: false };
 }
@@ -76,4 +81,11 @@ export function choicesFor(os: Os, latest: LatestRelease | null | undefined, rel
     default:
       return { primary: null, alternatives: [] };
   }
+}
+
+/** "9.1 MB" / "9,1 MB" (decimal megabytes, like the browsers' download lists). */
+export function formatSize(bytes: number, lang: 'en' | 'pt-BR'): string {
+  const mb = bytes / 1_000_000;
+  const n = new Intl.NumberFormat(lang, { maximumFractionDigits: mb < 10 ? 1 : 0 }).format(mb < 0.1 ? 0.1 : mb);
+  return `${n} MB`;
 }
