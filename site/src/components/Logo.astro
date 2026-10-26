@@ -10,11 +10,12 @@ interface Props {
   size?: 'md' | 'lg';
 }
 const { suffix, size = 'md' } = Astro.props;
-const files = import.meta.glob<{ default: ImageMetadata }>('../../../assets/brand/*.{svg,png,webp}', { eager: true });
+const files = import.meta.glob<{ default: ImageMetadata }>('../../../assets/brand/**/*.{svg,png,webp}', { eager: true });
 const file = (name: string | undefined) => (name ? files[`../../../assets/brand/${name}`]?.default : undefined);
 const full = file(brand.logo?.full);
 const fullDark = file(brand.logo?.fullDark);
 const mark = file(brand.logo?.mark);
+const markDark = file(brand.logo?.markDark);
 const markPx = size === 'lg' ? 28 : 24;
 ---
 
@@ -28,7 +29,10 @@ const markPx = size === 'lg' ? 28 : 24;
     ) : (
       <>
         {mark ? (
-          <img class="sc-logo-mark" src={mark.src} alt="" width={markPx} height={markPx} />
+          <>
+            <img class:list={['sc-logo-mark', { 'sc-logo-light': markDark }]} src={mark.src} alt="" width={markPx} height={markPx} />
+            {markDark && <img class="sc-logo-mark sc-logo-dark" src={markDark.src} alt="" width={markPx} height={markPx} />}
+          </>
         ) : (
           <svg class="sc-logo-mark" width={markPx} height={markPx} viewBox="0 0 24 24" aria-hidden="true" data-testid="logo-placeholder">
             <path d="M12 2.2 20.5 7.1v9.8L12 21.8 3.5 16.9V7.1z" fill="var(--sc-secondary)" stroke="var(--sc-secondary)" stroke-width="1.6" stroke-linejoin="round" />

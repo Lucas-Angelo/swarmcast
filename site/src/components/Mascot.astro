@@ -11,7 +11,7 @@ interface Props {
   eager?: boolean;
 }
 const { lang, width = 160, eager = false } = Astro.props;
-const files = import.meta.glob<{ default: ImageMetadata }>('../../../assets/brand/*.{png,jpg,jpeg,webp,svg,avif}', { eager: true });
+const files = import.meta.glob<{ default: ImageMetadata }>('../../../assets/brand/**/*.{png,jpg,jpeg,webp,svg,avif}', { eager: true });
 const file = brand.mascot ? files[`../../../assets/brand/${brand.mascot.file}`]?.default : undefined;
 ---
 
