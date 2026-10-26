@@ -52,8 +52,27 @@ gh api -X PUT repos/Lucas-Angelo/swarmcast/branches/main/protection --input - <<
 EOF
 ```
 
-CI runs automatically on pull requests and on `main`. The usage-stats job writes only to its own `stats`
-branch (section 6), so the protection on `main` never blocks it.
+CI runs automatically on every pull request and push to `main` (standard runners are free on a public
+repository), again on the 1st of every month (to catch dead third-party downloads or runner image
+changes), and by hand from **Actions → (workflow) → Run workflow**; the **Re-run** button repeats a run.
+A newer push to a pull request cancels its older runs; runs on `main` and tags are never cancelled.
+
+| Workflow | What | Runs on |
+|----------|------|---------|
+| `ci.yml` | lint, typecheck, build, unit, integration and E2E tests, `npm audit`, tray helper | Windows, macOS, Ubuntu |
+| `scripts.yml` | start and uninstall scripts against a fake release | Windows (PowerShell 5.1), macOS, Ubuntu |
+| `preflight.yml` | clean-machine check of the real script-mode package (install, live, watch, P2P, tunnel) | Windows, macOS arm64 + Intel, Ubuntu 22.04 + latest |
+| `windows.yml` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
+| `desktop.yml` | `cargo fmt`/`clippy`/`test`, desktop installers per target, clean-machine install/launch/autostart/update/uninstall tests | Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
+| `codeql.yml` | code scanning (TypeScript, Go, Rust, the workflows) | Ubuntu |
+| `site.yml`, `stats.yml` | the website and the usage numbers (section 6) | Ubuntu |
+| `release.yml` | on a `v*` tag: the suites above as a gate, then build, sign and publish (section 4) | all |
+
+Changes that only touch `docs/`, `site/` or `.md` files do not rebuild the app (`scripts.yml` and
+`site.yml` run for the pages they use). A required check that did not run keeps a pull request waiting,
+so require only checks that always run for app changes, or merge such docs-only pull requests as an admin.
+The usage-stats job writes only to its own `stats` branch (section 6), so the protection on `main` never
+blocks it.
 
 ## 3. Secrets
 

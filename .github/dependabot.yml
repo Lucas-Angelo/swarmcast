@@ -39,8 +39,9 @@ updates:
       prefix: deps(site)
 
   # Actions are pinned by commit SHA; Dependabot bumps the SHA and its `# vX.Y.Z` comment.
+  # `/` covers .github/workflows; the composite actions in .github/actions are listed too.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ['/', '/.github/actions/*']
     schedule:
       interval: weekly
       day: monday
@@ -63,3 +64,18 @@ updates:
         update-types: ['version-update:semver-major']
     commit-message:
       prefix: deps(tray)
+
+  # Desktop shell (Tauri, Rust). Tauri stays on 2.x: majors are ignored like everywhere else.
+  - package-ecosystem: cargo
+    directory: /apps/desktop/src-tauri
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    commit-message:
+      prefix: deps(desktop)
