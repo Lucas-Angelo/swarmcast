@@ -1,30 +1,37 @@
 name: Pre-release check
 
-# "Clean machine" verification of a real package on every supported OS, run before tagging
-# a release: builds the package, installs it with the real start script into an empty data
-# folder, streams a synthetic OBS feed, watches with Google Chrome (Playwright), checks P2P,
-# kick, link rotation, "Stop everything", quitting, no leftover process/port, and playback
-# through a real Cloudflare quick tunnel. See scripts/test/preflight/verify.mjs.
-
-# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
-# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
-# private repo.
+# "Clean machine" verification of a real package on every supported desktop OS: builds the
+# package, installs it with the real start script into an empty data folder, streams a
+# synthetic OBS feed, watches with Google Chrome (Playwright), checks P2P, kick, link
+# rotation, "Stop everything", quitting, no leftover process/port, and playback through a
+# real Cloudflare quick tunnel. See scripts/test/preflight/verify.mjs.
+#
+# Runs on pull requests and pushes to main (docs- and site-only changes skip it), monthly,
+# manually, and as a gate of release.yml.
 on:
+  pull_request:
+    paths-ignore: &app-paths-ignore
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+  push:
+    branches: [main]
+    paths-ignore: *app-paths-ignore
   schedule:
     - cron: '27 6 1 * *'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
+# Superseded pull request runs are cancelled; runs on main, tags and schedules never are.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: preflight-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: '1'
-  NODE_VERSION: 24.x
-  GO_VERSION: 1.27.x
 
 jobs:
   preflight:
@@ -35,6 +42,7 @@ jobs:
         include:
           - { target: windows-x64, os: windows-latest }
           - { target: macos-arm64, os: macos-latest }
+          # The last Intel macOS image GitHub offers.
           - { target: macos-x64, os: macos-15-intel }
           - { target: linux-x64, os: ubuntu-latest }
           - { target: linux-x64, os: ubuntu-22.04 }
@@ -47,27 +55,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/tray/go.sum
-      - name: Install ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Install ffmpeg (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      - name: Install ffmpeg (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
-
-      - run: npm ci
+          go: 'true'
+          ffmpeg: 'true'
       - run: npx playwright install --with-deps chromium
       - run: npm run build
       - name: Build tray helper

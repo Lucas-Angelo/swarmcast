@@ -1,19 +1,31 @@
 name: Install scripts
 
-# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
-# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
-# private repo.
+# The start (installer) and uninstall scripts against a fake release on 127.0.0.1, on
+# Windows (PowerShell 5.1), macOS and Linux. Runs on pull requests and pushes to main that
+# touch the scripts or the guides shipped in the installer zips, monthly, manually, and as a
+# gate of release.yml.
 on:
+  pull_request:
+    paths: &scripts-paths
+      - 'scripts/**'
+      - 'docs/TUTORIAL_*.md'
+      - '.github/actions/**'
+      - '.github/workflows/scripts.yml'
+  push:
+    branches: [main]
+    paths: *scripts-paths
   schedule:
     - cron: '37 6 1 * *'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
+# Superseded pull request runs are cancelled; runs on main, tags and schedules never are.
 concurrency:
-  group: scripts-${{ github.ref }}
-  cancel-in-progress: true
+  group: scripts-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -28,11 +40,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # The scripts and their tests need only Node.js (no npm dependencies).
+      - uses: ./.github/actions/setup
         with:
-          node-version: 24
-          package-manager-cache: false
+          npm-ci: 'false'
 
       # The installer zips carry these guides as HTML (see release.yml).
       - name: Render the streamer guides
