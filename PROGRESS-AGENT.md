@@ -1,17 +1,20 @@
 # CI restructure (agent progress, delete in the final commit)
 
-Branch: worktree branch pushed as `ci/restructure`, draft PR into `feat/desktop-app`.
+Branch: worktree branch pushed as `ci/restructure`; draft PR https://github.com/Lucas-Angelo/swarmcast/pull/1 (base feat/desktop-app).
 
 ## Done
 - Merged feat/desktop-app.
+- `.github/actions/setup` composite (Node + npm cache, Go, ffmpeg, npm ci).
+- ci/scripts/preflight/windows/codeql: pull_request + push main (paths filters), schedule, dispatch; workflow_call on ci/scripts/preflight/windows/desktop.
+- pr-commands.yml removed; docs (PUBLICACAO_PT-BR.md, DESKTOP.md) updated.
+- desktop.yml (gated on apps/desktop/src-tauri/tauri.conf.json + scripts/build/desktop.mjs; TODO(desktop) commands).
+- release.yml: gates via workflow_call, native linux-arm64 build + smoke, desktop artifacts + latest.json.
+- dependabot: cargo (apps/desktop/src-tauri), composite actions dir.
 
 ## In progress
-- Composite action `.github/actions/setup`, rewrite ci/scripts/preflight/windows/codeql triggers,
-  workflow_call gates in release.yml, desktop.yml (gated on apps/desktop), remove pr-commands.yml.
+- Watching PR runs and fixing failures.
 
 ## Next steps
-1. actionlint clean.
-2. Push `ci/restructure`, open draft PR, watch runs, fix failures.
-3. Temporary commit to exercise release.yml wiring (no publish), then revert.
-4. Docs: PUBLICACAO_PT-BR.md pipelines section, DESKTOP.md CI paragraph.
-5. Delete this file in the final commit.
+1. All PR workflows green on all OSes.
+2. Temporary commit to exercise release.yml wiring (pull_request trigger, publish skipped), then revert.
+3. Delete this file in the final commit.

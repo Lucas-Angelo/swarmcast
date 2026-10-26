@@ -19,12 +19,12 @@ gh repo edit Lucas-Angelo/swarmcast --visibility public --accept-visibility-chan
 
 ## 2. Proteção da branch `main`
 
-Exija PR e os checks do CI. Use como `contexts` os nomes dos jobs definidos em `.github/workflows/ci.yml`; os nomes abaixo são exemplos:
+Exija PR e os checks do CI. Os `contexts` são os nomes dos jobs como aparecem no PR (aba **Checks**); os de `.github/workflows/ci.yml` são, por exemplo:
 
 ```sh
 gh api -X PUT repos/Lucas-Angelo/swarmcast/branches/main/protection --input - <<'EOF'
 {
-  "required_status_checks": { "strict": true, "contexts": ["lint-typecheck", "unit", "integration", "e2e"] },
+  "required_status_checks": { "strict": true, "contexts": ["Lint, typecheck, build, unit tests (ubuntu-latest)", "Integration tests (ubuntu-latest)", "E2E (Playwright, ubuntu-latest)"] },
   "enforce_admins": false,
   "required_pull_request_reviews": { "required_approving_review_count": 0 },
   "restrictions": null,
@@ -34,7 +34,9 @@ gh api -X PUT repos/Lucas-Angelo/swarmcast/branches/main/protection --input - <<
 EOF
 ```
 
-Em repositório privado, a proteção de branch exige um plano pago do GitHub. Em repositório público, é grátis.
+Em repositório público, a proteção de branch é grátis.
+
+Atenção: os workflows têm filtro de caminhos (um PR que só muda `docs/`, `site/` ou arquivos `.md` não roda o CI). Um check obrigatório que não roda deixa o PR esperando; nesse caso, faça o merge como admin.
 
 ## 3. Lançar uma versão
 
@@ -44,8 +46,8 @@ Em repositório privado, a proteção de branch exige um plano pago do GitHub. E
    git tag v0.1.0 && git push origin v0.1.0
    ```
 3. O workflow de release (`.github/workflows/release.yml`) roda sozinho:
-   1. Compila e testa em Windows, macOS (arm64 e x64) e Linux (x64 e arm64).
-   2. Gera os pacotes `SwarmCast-v0.1.0-<plataforma>.zip|tar.gz`.
+   1. Confere a tag e o `CHANGELOG.md`, e roda todas as suítes de teste (os mesmos workflows dos PRs: `ci`, `scripts`, `preflight`, `windows` e `desktop`). Se alguma falhar, nada é publicado.
+   2. Compila e testa em Windows, macOS (arm64 e x64) e Linux (x64 e arm64), e gera os pacotes `SwarmCast-v0.1.0-<plataforma>.zip|tar.gz`.
    3. Assina os binários se os secrets existirem.
    4. Monta um zip de instalação por plataforma: `SwarmCast-v0.1.0-<plataforma>-installer.zip`.
    5. Gera o `SHA256SUMS.txt` de tudo e publica em **GitHub → Releases** (`https://github.com/Lucas-Angelo/swarmcast/releases/latest`), junto com `start-windows.ps1`, `start-windows.cmd`, `start-macos.command`, `start-macos.sh` e `start-linux.sh`.
@@ -127,13 +129,20 @@ Sem assinatura, o Windows mostra o SmartScreen e o macOS mostra o Gatekeeper; o 
 
 Sem esses secrets, o release sai sem assinatura, que é o comportamento padrão.
 
-## Pipelines (GitHub Actions) e custo
+## Pipelines (GitHub Actions)
 
-Em repositório privado os minutos do Actions são pagos depois da cota grátis (Windows conta 2×, macOS 10×). Por isso nada roda a cada push:
+O repositório é público, então os runners padrão (Windows, macOS e Linux) são grátis e tudo roda sozinho:
 
-- **Em um pull request:** comente `/run all` (ou `/run ci`, `/run scripts`, `/run preflight`, `/run windows`). Só quem tem acesso de escrita ao repositório consegue disparar.
-- **Uma vez por mês (dia 1º):** todas as pipelines rodam sozinhas.
-- **Manual:** aba **Actions** → escolha o workflow → **Run workflow**, ou `gh workflow run windows.yml` (por padrão só no Windows Server 2025; para incluir o 2022: `gh workflow run windows.yml -f runners='["windows-latest","windows-2022"]'`).
-- **Release:** continua automática ao criar uma tag `v*`.
+| Workflow | O que faz | Sistemas |
+|----------|-----------|----------|
+| `ci.yml` | lint, typecheck, build, testes unitários, de integração e E2E (Playwright), `npm audit`, helper da bandeja | Windows, macOS, Ubuntu |
+| `scripts.yml` | scripts de instalação e desinstalação contra uma release falsa | Windows, macOS, Ubuntu |
+| `preflight.yml` | "máquina limpa": instala o pacote real, faz live, assiste, P2P, túnel | Windows, macOS (arm64 e Intel), Ubuntu 22.04 e atual |
+| `windows.yml` | matriz completa do Windows (instalador, app em Chrome/Edge/Firefox, qualidade, modo direto, OBS) | Windows Server |
+| `desktop.yml` | instaladores do app desktop e testes deles em cada sistema (pulado até o app desktop entrar na branch) | Windows, macOS, Ubuntu x64 e arm64 |
+| `codeql.yml` | análise de segurança do código e dos workflows | Ubuntu |
+| `release.yml` | tag `v*`: roda as suítes acima, compila, assina e publica | todos |
 
-Quando o repositório for público, dá para voltar os disparos em `push`/`pull_request` (Actions é grátis em repositório público).
+- **Em cada pull request e push na `main`:** todos rodam. Mudanças só em `docs/`, `site/` ou arquivos `.md` não recompilam o app (`scripts.yml` roda quando mudam os scripts ou os tutoriais). Um push novo no mesmo PR cancela a execução anterior; na `main` e nas tags nada é cancelado.
+- **Uma vez por mês (dia 1º):** todos rodam de novo, para pegar downloads de terceiros que sumiram ou mudanças nas imagens dos runners. Nesse dia também roda o aviso de MediaMTX/cloudflared desatualizados.
+- **Rodar de novo:** botão **Re-run** na execução, ou aba **Actions** → escolha o workflow → **Run workflow** (`gh workflow run ci.yml --ref <branch>`). O `windows.yml` aceita outros runners e suítes: `gh workflow run windows.yml -f runners='["windows-latest","windows-2022"]'`.

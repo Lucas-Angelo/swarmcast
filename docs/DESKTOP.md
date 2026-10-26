@@ -225,9 +225,12 @@ mode the server does it on first start (no `system-check.json`, or a different a
 |---|---|
 | Unit (vitest, cargo test) | protocol encode/decode, autostart entry generation per OS, system check thresholds, i18n completeness, update state |
 | Integration (vitest) | real server with `--desktop` driven by a fake shell over stdio: ready, state, start/stop, quit, stdin EOF, fatal on busy ports |
-| macOS (this Mac) | build arm64 `.app`/`.dmg` (+ x64 compile), install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
+| macOS (local + CI arm64/x64) | build `.app`/`.dmg`, install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
 | Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, WebDriver (tauri-driver) E2E of the panel, autostart file, AppImage update, uninstall |
 | Windows (CI) | NSIS silent install, launch, WebDriver E2E, autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
-CI for this branch runs only on demand (`/run desktop` on the PR, or a commit message containing
-`[desktop-ci]` on this branch). macOS is tested locally only (macOS runners cost 10× more).
+CI: `.github/workflows/desktop.yml` builds the installers for every target (windows-x64, macos-arm64,
+macos-x64, linux-x64 on Ubuntu 22.04 for an older glibc, linux-arm64) and runs the clean-machine tests on
+each OS, on every pull request and push to `main`, monthly, and as a gate of `release.yml`, which then
+publishes the tested installers, their `.sig` files and `latest.json` (`scripts/build/updater-manifest.mjs`).
+Only release builds see `TAURI_SIGNING_PRIVATE_KEY`; other builds have no updater artifacts.

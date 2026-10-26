@@ -1,0 +1,205 @@
+name: Desktop app
+
+# The Tauri desktop app (apps/desktop, docs/DESKTOP.md): installers for every target, then
+# clean-machine tests of those installers on each OS (install, launch, panel E2E, update
+# vA -> vB with settings kept, uninstall, nothing left running).
+#
+# Runs on pull requests and pushes to main (docs- and site-only changes skip it), monthly,
+# manually, and from release.yml, which passes `release: true` and the updater signing key
+# and publishes the installers, their .sig files and latest.json.
+#
+# Until the desktop shell is merged (apps/desktop/src-tauri, scripts/build/desktop.mjs), the
+# `shell` job reports that and every other job is skipped.
+on:
+  pull_request:
+    paths-ignore: &app-paths-ignore
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+  push:
+    branches: [main]
+    paths-ignore: *app-paths-ignore
+  schedule:
+    - cron: '7 7 1 * *'
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      release:
+        description: Release build (updater artifacts signed with TAURI_SIGNING_PRIVATE_KEY).
+        type: boolean
+        default: false
+      version:
+        description: Version to build (defaults to package.json).
+        type: string
+        default: ''
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY:
+        required: false
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
+        required: false
+    outputs:
+      built:
+        description: "'true' when the desktop installers were built (artifacts desktop-<target>)."
+        value: ${{ jobs.shell.outputs.present }}
+
+permissions:
+  contents: read
+
+# Superseded pull request runs are cancelled; runs on main, tags and schedules never are.
+concurrency:
+  group: desktop-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  shell:
+    name: Desktop shell present
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: check
+        run: |
+          if [ -f apps/desktop/src-tauri/tauri.conf.json ] && [ -f scripts/build/desktop.mjs ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice title=Desktop jobs skipped::The desktop shell (apps/desktop/src-tauri, scripts/build/desktop.mjs) is not in this branch yet."
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: shell
+    if: needs.shell.outputs.present == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x64, os: windows-latest }
+          - { target: macos-arm64, os: macos-latest }
+          # The last Intel macOS image GitHub offers.
+          - { target: macos-x64, os: macos-15-intel }
+          # The oldest supported Ubuntu: the .deb/.AppImage then run on any newer glibc.
+          - { target: linux-x64, os: ubuntu-22.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      RELEASE: ${{ inputs.release || false }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/desktop/src-tauri
+          # Only main and release builds write the cache; pull requests restore it.
+          save-if: ${{ github.event_name != 'pull_request' }}
+      # Tauri v2 Linux prerequisites (WebKitGTK 4.1, tray, AppImage tooling).
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev libssl-dev
+
+      - name: Version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: echo "VERSION=${INPUT_VERSION:-$(node -p "require('./package.json').version")}" >> "$GITHUB_ENV"
+      - run: npm run build
+      # The server sidecar and its resources (release/staging/<target>), as the script mode ships them.
+      - name: Assemble release/staging/${{ matrix.target }}
+        run: node scripts/build/package.mjs --target "$TARGET" --version "$VERSION" --no-archive
+
+      - name: Release builds must be signed
+        if: env.RELEASE == 'true'
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' }}
+        run: |
+          if [ "$HAS_KEY" != true ]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set: the updater artifacts (.sig, latest.json) cannot be signed."
+            exit 1
+          fi
+      # The signing key reaches this step only for release builds (never on pull requests).
+      # TODO(desktop): confirm the desktop.mjs flags and output folder once the shell is merged.
+      # Without TAURI_SIGNING_PRIVATE_KEY it must build without updater artifacts.
+      - name: Build the installers
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: node scripts/build/desktop.mjs --target "$TARGET" --version "$VERSION" --out "release/desktop/$TARGET"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-${{ matrix.target }}
+          path: release/desktop/${{ matrix.target }}/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  test:
+    name: Clean-machine test ${{ matrix.target }} on ${{ matrix.os }}
+    needs: [shell, build]
+    if: needs.shell.outputs.present == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x64, os: windows-latest }
+          - { target: macos-arm64, os: macos-latest }
+          - { target: macos-x64, os: macos-15-intel }
+          - { target: linux-x64, os: ubuntu-22.04 }
+          - { target: linux-x64, os: ubuntu-24.04 }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          ffmpeg: 'true'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-${{ matrix.target }}
+          path: release/desktop/${{ matrix.target }}
+      # WebDriver for the panel E2E: WebKitGTK's driver + tauri-driver under Xvfb on Linux,
+      # Edge's driver (matching WebView2) on Windows. macOS has no WebDriver for WKWebView.
+      - name: Linux test dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends xvfb webkit2gtk-driver
+      # TODO(desktop): replace with the shell agent's clean-machine test once merged: install the
+      # installer from release/desktop/<target>, launch, panel E2E, autostart on/off, update
+      # vA -> vB from a local endpoint (SWARMCAST_UPDATE_URL) with config.json/secrets.json kept,
+      # uninstall, nothing left running and no leftover files outside the data folder.
+      - name: Install, launch, E2E, update, uninstall
+        env:
+          SWARMCAST_NO_FFMPEG_INSTALL: '1'
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            xvfb-run -a node scripts/test/desktop/verify.mjs --target "$TARGET" --installers "release/desktop/$TARGET"
+          else
+            node scripts/test/desktop/verify.mjs --target "$TARGET" --installers "release/desktop/$TARGET"
+          fi

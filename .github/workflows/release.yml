@@ -1,5 +1,8 @@
 name: Release
 
+# On a `v*` tag: check the tag, run the full test suites (the same workflows that run on pull
+# requests, via workflow_call), build and sign every package, and publish the GitHub release
+# only if everything passed.
 on:
   push:
     tags: ['v*']
@@ -7,15 +10,13 @@ on:
 permissions:
   contents: read
 
-# One release run per tag. A re-pushed tag supersedes the previous run.
+# One release run per tag; a release run is never cancelled by another one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_COLOR: '1'
-  NODE_VERSION: 24.x
-  GO_VERSION: 1.27.x
 
 jobs:
   verify:
@@ -48,29 +49,48 @@ jobs:
             exit 1
           fi
 
+  # ---- Gate: the full test suites. Nothing is built or published unless they all pass. ----
+  ci:
+    name: CI
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+  scripts:
+    name: Install scripts
+    needs: verify
+    uses: ./.github/workflows/scripts.yml
+  preflight:
+    name: Pre-release check
+    needs: verify
+    uses: ./.github/workflows/preflight.yml
+  windows:
+    name: Windows E2E
+    needs: verify
+    uses: ./.github/workflows/windows.yml
+  # Builds the desktop installers (updater artifacts signed with the Tauri key) and tests them
+  # on every OS; publish uploads the very artifacts that were tested.
+  desktop:
+    name: Desktop app
+    needs: verify
+    uses: ./.github/workflows/desktop.yml
+    with:
+      release: true
+      version: ${{ needs.verify.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
   build:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: [verify, ci, scripts, preflight, windows, desktop]
     strategy:
       fail-fast: true
       matrix:
         include:
-          - target: windows-x64
-            os: windows-latest
-            smoke: true
-          - target: macos-arm64
-            os: macos-latest
-            smoke: true
-          - target: macos-x64
-            os: macos-15-intel
-            smoke: true
-          - target: linux-x64
-            os: ubuntu-latest
-            smoke: true
-          # Cross-built: private repositories get no free arm64 runners, so no smoke test.
-          - target: linux-arm64
-            os: ubuntu-latest
-            smoke: false
+          - { target: windows-x64, os: windows-latest }
+          - { target: macos-arm64, os: macos-latest }
+          - { target: macos-x64, os: macos-15-intel }
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     defaults:
@@ -89,16 +109,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/tray/go.sum
-
-      - run: npm ci
+          go: 'true'
       - run: npm run build
       - name: Build tray helper
         run: node apps/tray/build.mjs --target "$TARGET" --vendor
@@ -201,7 +214,6 @@ jobs:
 
       # Runs the (signed, when signing is configured) staged build on its own platform.
       - name: Smoke test
-        if: matrix.smoke
         run: |
           exe=swarmcast
           if [ "$RUNNER_OS" = Windows ]; then exe=swarmcast.exe; fi
@@ -244,7 +256,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [verify, build]
+    needs: [verify, build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -262,9 +274,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          npm-ci: 'false'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: swarmcast-*
@@ -454,8 +466,6 @@ jobs:
           done
       # --- end uninstallers ---
 
-      - name: Generate SHA256SUMS.txt
-        run: node scripts/build/checksums.mjs release
       - name: Extract release notes from CHANGELOG.md
         run: |
           awk -v header="## [${VERSION}]" '
@@ -469,6 +479,26 @@ jobs:
             exit 1
           fi
           cat notes.md
+
+      # ---- Desktop app: installers + .sig (from desktop.yml) and the updater manifest ----
+      - name: Download the desktop installers
+        if: needs.desktop.outputs.built == 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release
+      # latest.json: what the app's updater reads at releases/latest/download/latest.json
+      # (version, notes, per-platform URL + signature). /latest skips pre-releases.
+      # TODO(desktop): confirm the updater-manifest.mjs flags once the shell is merged.
+      - name: Add latest.json (desktop updater manifest)
+        if: needs.desktop.outputs.built == 'true'
+        run: >-
+          node scripts/build/updater-manifest.mjs --dir release --version "$VERSION" --notes-file notes.md
+          --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" --out release/latest.json
+
+      - name: Generate SHA256SUMS.txt
+        run: node scripts/build/checksums.mjs release
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
