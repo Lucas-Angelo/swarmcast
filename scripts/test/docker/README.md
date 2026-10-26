@@ -33,7 +33,7 @@ network (`http://release:8000/ok`). A second folder (`/corrupt`) lists a newer v
   2. second run through `curl … | bash`: "Already up to date", nothing downloaded
   3. corrupted checksum on update: aborts, installed files byte-identical, no `previous/`;
      3b. on a clean install: nothing installed
-  4. normal start in the background: panel login (`/auth/<token>` → 303 + cookie), panel 200,
+  4. normal start in the background: panel login (`/auth/<token>` → 200 + cookie), panel 200,
      `/api/state` phase `waiting-obs`, ffmpeg RTMP push → `live` + `obsConnected`, viewer join
      flow with curl (link → 303 + ticket cookie, `POST /api/join`, playlist, init + media
      segment 200), SIGINT → "Off: nothing on your computer is reachable", no MediaMTX left,

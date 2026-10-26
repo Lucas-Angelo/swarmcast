@@ -71,6 +71,7 @@ with environment:
 | `SWARMCAST_DESKTOP_VERSION` | Version of the shell. |
 | `SWARMCAST_LOCALE` | OS locale (`pt-BR`, `en-US`…), for server-side texts. |
 | `SWARMCAST_NO_FFMPEG_INSTALL` | `1` skips the automatic ffmpeg download of the first start (tests/CI only). |
+| `SWARMCAST_SPEEDTEST_URL` | Speed test server instead of Cloudflare's (`<url>/__down?bytes=n`, `POST <url>/__up`; tests only). |
 
 `--desktop` implies `--no-open` and `--no-tray`, keeps the parent watch, and also exits cleanly when
 stdin closes. Messages are JSON, one per line. As in script mode, the server turns the live on at
@@ -100,8 +101,12 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 | `{"type":"quit"}` | Stop everything and exit 0. |
 | `{"type":"update","status":"none\|available\|downloading\|installing\|error","current":"…","version":"…","notes":"…","progress":0..1,"error":"…"}` | Update status, shown in the panel (banner, progress, errors). |
 
-Stdin EOF also means quit. The shell waits up to 35 s for the sidecar to exit after `quit`, then kills it
-(the server's reaper still cleans its children).
+Stdin EOF also means quit. Quitting first aborts everything that may take long and is not needed any
+more: a start still opening the tunnel (a new quick-tunnel name can need a minute of DNS; the tray already
+says "waiting for OBS" meanwhile), the speed test, the first-run system check (nothing is written, so the
+next start checks again) and the ffmpeg download with its retries. Then the live stops as usual, so the
+server normally exits within a few seconds. The shell waits up to 35 s for the sidecar to exit after
+`quit`, then kills it (the server's reaper still cleans its children).
 
 Notes:
 - Protocol lines are always whole lines; log lines (pino JSON and a few human lines) never contain the
@@ -122,11 +127,12 @@ Notes:
   splash shows the localized text for its `code` (the server's English `message` for unknown codes) with
   "Try again". A server that stayed up for 60 s gets a fresh set of restarts when it crashes later; an
   exit with code 0 after `ready` (the panel's "Quit SwarmCast") closes the whole app.
-- **Login**: the admin cookie is `SameSite=Strict`, and WebKit does not send it on the `/auth/<token>` →
-  `/` redirect when the navigation started from the splash (another site), so the first panel load can be
-  "not authorized" although the cookie is stored. For the first 3 panel loads after `ready` the shell
-  checks for the panel's root element (`#app`) and, when it is missing, opens `adminUrl` again from the
-  panel's own origin, which works. (`SameSite=Lax` on that cookie would make this unnecessary.)
+- **Login**: on `ready` the window opens `adminUrl` (`/auth/<token>`). The admin cookie is `SameSite=Strict`,
+  and a redirect chain that started on another site (the splash) would not send it to `/`, so `/auth/<token>`
+  is not a redirect: it answers 200 with a tiny page that sets the cookie and opens `/` itself
+  (`<meta http-equiv="refresh" content="0;url=/">` plus a link, no script, `Cache-Control: no-store`,
+  `Referrer-Policy: no-referrer`, the token not repeated). That navigation starts on 127.0.0.1, so the
+  cookie is sent. Browsers in script mode get the same page.
 - **`--background`** (used by autostart): start with the window hidden, tray only (macOS: no Dock icon
   while the window is hidden), and pass `--no-autostart` to the server so the live does not turn on at
   every login.
@@ -166,7 +172,7 @@ source of truth (read back on every request):
 |---|---|
 | Windows | `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, value `SwarmCast` = `"<exe>" --background` |
 | macOS | `~/Library/LaunchAgents/io.github.lucas-angelo.swarmcast.plist` (`RunAtLoad`, args `<exe> --background`) |
-| Linux | `~/.config/autostart/swarmcast.desktop` (`Exec="<exe>" --background`) |
+| Linux | `~/.config/autostart/swarmcast.desktop` (`TryExec=<exe>`, `Exec="<exe>" --background`) |
 
 Panel API (admin auth like the other routes):
 
@@ -258,7 +264,8 @@ mode the server does it on first start (no `system-check.json`, or a different a
   x64 and arm64. The app binary is `swarmcast-desktop` and the sidecar `/usr/bin/swarmcast-server`
   (Tauri puts `externalBin` next to the app); resources in `/usr/lib/SwarmCast/`. Removing the `.deb`
   does not touch `~/.config/autostart/swarmcast.desktop` (a root package script should not edit home
-  folders); the server should write `TryExec=` in that file so a removed app is simply skipped.
+  folders); the server writes `TryExec=<exe>` in that file, so the session skips the entry once the app
+  is gone.
 - No paid code signing: Windows shows SmartScreen "More info → Run anyway" once (documented).
 
 ## Testing

@@ -187,7 +187,7 @@ ADMIN="${LOGIN%/auth/*}"
 # argv[0] rather than /proc/PID/exe: under emulation (Rosetta/QEMU) exe is the emulator.
 eq "$(basename "$(tr '\0' '\n' <"/proc/$APP_PID/cmdline" 2>/dev/null | head -n1)")" "swarmcast" "start script exec'd into the app (same PID)"
 if [ -n "$LOGIN" ]; then
-  eq "$(curl -s -o /dev/null -c "$W/admin.jar" -w '%{http_code}' "$LOGIN")" "303" "GET /auth/<token> -> 303"
+  eq "$(curl -s -o /dev/null -c "$W/admin.jar" -w '%{http_code}' "$LOGIN")" "200" "GET /auth/<token> -> 200 (cookie + meta refresh)"
   eq "$(curl -s -o "$W/panel.html" -b "$W/admin.jar" -w '%{http_code}' "$ADMIN/")" "200" "GET / (panel) with cookie -> 200"
   if grep -qi '<script' "$W/panel.html"; then ok "panel HTML has a script tag"; else bad "panel HTML looks wrong"; fi
   eq "$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN/api/state")" "401" "GET /api/state without cookie -> 401"

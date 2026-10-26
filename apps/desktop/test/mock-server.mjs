@@ -171,9 +171,15 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   if (env.MOCK_LOG_REQUESTS === '1') log(`http ${req.method} ${url.pathname}`);
   if (url.pathname === `/auth/${token}`) {
-    // Same as the real server: a SameSite=Strict cookie, then a 303 to the panel.
-    res.writeHead(303, { location: '/', 'set-cookie': `mock=${token}; Path=/; HttpOnly; SameSite=Strict` });
-    return res.end();
+    // Same as the real server: a SameSite=Strict cookie and a page that opens the panel from
+    // this origin (meta refresh), so the cookie is sent although the splash started the navigation.
+    res.writeHead(200, {
+      'content-type': 'text/html; charset=utf-8',
+      'cache-control': 'no-store',
+      'referrer-policy': 'no-referrer',
+      'set-cookie': `mock=${token}; Path=/; HttpOnly; SameSite=Strict`,
+    });
+    return res.end('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>SwarmCast panel</title><a href="/">Open the panel</a>');
   }
   const authed = (req.headers.cookie ?? '').split(/;\s*/).includes(`mock=${token}`);
   if (url.pathname === '/report') {

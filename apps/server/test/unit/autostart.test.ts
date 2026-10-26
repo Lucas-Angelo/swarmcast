@@ -7,6 +7,7 @@ import {
   Autostart,
   checkExePath,
   desktopExecValue,
+  desktopTryExecValue,
   linuxDesktopEntry,
   linuxEntryExe,
   macLaunchAgentPlist,
@@ -56,7 +57,12 @@ describe('autostart entries (pure)', () => {
       expect(entry).toMatch(/^\[Desktop Entry\]\nType=Application\n/);
       expect(entry).toContain('X-GNOME-Autostart-enabled=true');
       expect(linuxEntryExe(entry)).toBe(exe);
+      // TryExec: the bare path (string escaping only), so a removed app is skipped at login.
+      expect(entry).toContain(`\nTryExec=${exe.replace(/\\/g, '\\\\')}\nExec=`);
     }
+    expect(desktopTryExecValue('/opt/Swarm Cast/swarmcast-desktop')).toBe('/opt/Swarm Cast/swarmcast-desktop');
+    expect(desktopTryExecValue('/home/a"b/$x`y`/100%/c\\d')).toBe('/home/a"b/$x`y`/100%/c\\\\d');
+    expect(linuxDesktopEntry('/usr/bin/swarmcast-desktop')).toContain('\nTryExec=/usr/bin/swarmcast-desktop\nExec="/usr/bin/swarmcast-desktop" --background\n');
     expect(linuxEntryExe('[Desktop Entry]\nExec=/usr/bin/swarmcast-desktop --background\n')).toBe('/usr/bin/swarmcast-desktop');
     expect(linuxEntryExe('[Desktop Entry]\nExec=/x --background\nHidden=true\n')).toBeNull();
     expect(linuxEntryExe('[Desktop Entry]\nExec=/x\nX-GNOME-Autostart-enabled=false\n')).toBeNull();

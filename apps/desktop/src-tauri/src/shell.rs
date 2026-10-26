@@ -25,8 +25,6 @@ use crate::updater;
 pub const RESTART_DELAYS: [Duration; 3] = [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(10)];
 /// How long the server gets to stop the live and exit after `quit`.
 pub const QUIT_GRACE: Duration = Duration::from_secs(35);
-/// Page loads after `ready` on which the window checks that the panel is logged in.
-const LOGIN_CHECKS: u8 = 3;
 /// A server that stayed up this long gets a fresh set of restarts when it crashes.
 const STABLE_AFTER: Duration = Duration::from_secs(60);
 
@@ -86,9 +84,6 @@ pub struct Shell {
     admin_origin: Arc<RwLock<Option<url::Origin>>>,
     splash_url: RwLock<Option<Url>>,
     has_tray: RwLock<bool>,
-    /// `/auth/<token>` of the running server and how many login checks are left; see
-    /// `take_login_check`.
-    login: Mutex<(Option<Url>, u8)>,
 }
 
 impl Shell {
@@ -128,7 +123,6 @@ impl Shell {
             admin_origin: Arc::new(RwLock::new(None)),
             splash_url: RwLock::new(None),
             has_tray: RwLock::new(false),
-            login: Mutex::new((None, 0)),
         }))
     }
 
@@ -142,22 +136,6 @@ impl Shell {
 
     pub fn set_splash_url(&self, url: Url) {
         *self.splash_url.write().unwrap() = Some(url);
-    }
-
-    /// The login URL, for the first `LOGIN_CHECKS` page loads of the panel. The server's login
-    /// cookie is `SameSite=Strict`, and WebKit may not send it on the redirect
-    /// `/auth/<token>` -> `/` because that navigation started from the splash (another site):
-    /// the panel then shows "not authorized" (the cookie is stored, just not sent). Logging in
-    /// again from the panel's own origin works, so after a load the window checks for the
-    /// panel's root element (`#app`, apps/admin/index.html) and, if it is missing, opens the
-    /// login URL again (see window.rs).
-    pub fn take_login_check(&self) -> Option<Url> {
-        let mut login = self.login.lock().unwrap();
-        if login.1 == 0 {
-            return None;
-        }
-        login.1 -= 1;
-        login.0.clone()
     }
 
     pub fn set_has_tray(&self, has: bool) {
@@ -269,8 +247,10 @@ impl Shell {
         if update.status != UpdateStatus::None {
             self.send(&ShellMessage::Update(update));
         }
+        // `/auth/<token>` answers with a page that sets the panel cookie and then opens `/`
+        // from the panel's own origin, so the SameSite=Strict cookie is sent although this
+        // navigation starts on the splash.
         if let Some(window) = self.window() {
-            *self.login.lock().unwrap() = (Some(url.clone()), LOGIN_CHECKS);
             if let Err(err) = window.navigate(url) {
                 logs::shell(format!("could not open the panel: {err}"));
             }

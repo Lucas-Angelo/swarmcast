@@ -6,6 +6,7 @@ import type { SpeedTestResult } from '@swarmcast/shared';
 import { readSystemCheck, type SystemCheck, type SystemCheckResult } from '../admin/system-check-routes.js';
 import { writePrivateFile } from '../core/paths.js';
 import { isPortFree } from '../core/ports.js';
+import { throwIfAborted } from '../core/retry.js';
 
 /**
  * The start scripts' system check (scripts/start-*: check_os … report_and_confirm,
@@ -227,14 +228,16 @@ export function writeSystemCheck(file: string, c: SystemCheck): void {
 
 type Exec = (command: string, args: string[], timeoutMs?: number) => Promise<{ ok: boolean; stdout: string }>;
 
-const exec: Exec = (command, args, timeoutMs = 10_000) =>
-  new Promise((resolve) => {
-    try {
-      execFile(command, args, { windowsHide: true, timeout: timeoutMs }, (err, stdout) => resolve({ ok: !err, stdout: String(stdout ?? '') }));
-    } catch {
-      resolve({ ok: false, stdout: '' });
-    }
-  });
+const execWith =
+  (signal?: AbortSignal): Exec =>
+  (command, args, timeoutMs = 10_000) =>
+    new Promise((resolve) => {
+      try {
+        execFile(command, args, { windowsHide: true, timeout: timeoutMs, signal }, (err, stdout) => resolve({ ok: !err, stdout: String(stdout ?? '') }));
+      } catch {
+        resolve({ ok: false, stdout: '' });
+      }
+    });
 
 export interface GatherDeps {
   dataDir: string;
@@ -251,6 +254,8 @@ export interface GatherDeps {
   exec?: Exec;
   fetchImpl?: typeof fetch;
   githubUrl?: string;
+  /** Aborted when the app quits: the check gives up and writes nothing. */
+  signal?: AbortSignal;
 }
 
 async function onPath(name: string, env: NodeJS.ProcessEnv): Promise<string | null> {
@@ -270,7 +275,7 @@ async function onPath(name: string, env: NodeJS.ProcessEnv): Promise<string | nu
 /** check_obs / Find-Obs. */
 export async function findObs(platform: Platform, o: { env?: NodeJS.ProcessEnv; home?: string; exec?: Exec } = {}): Promise<string | null> {
   const env = o.env ?? process.env;
-  const run = o.exec ?? exec;
+  const run = o.exec ?? execWith();
   if (platform === 'darwin') {
     for (const p of ['/Applications/OBS.app', path.join(o.home ?? os.homedir(), 'Applications', 'OBS.app')]) {
       if (fs.existsSync(p)) return p;
@@ -333,9 +338,10 @@ function freeDisk(dir: string): number {
 }
 
 /** Any HTTP answer means github.com is reachable. */
-async function reachable(url: string, f: typeof fetch): Promise<boolean> {
+async function reachable(url: string, f: typeof fetch, signal?: AbortSignal): Promise<boolean> {
   try {
-    await f(url, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(20_000), headers: { 'User-Agent': 'SwarmCast system check' } });
+    const timeout = AbortSignal.timeout(20_000);
+    await f(url, { method: 'HEAD', redirect: 'manual', signal: signal ? AbortSignal.any([signal, timeout]) : timeout, headers: { 'User-Agent': 'SwarmCast system check' } });
     return true;
   } catch {
     return false;
@@ -344,7 +350,7 @@ async function reachable(url: string, f: typeof fetch): Promise<boolean> {
 
 export async function gatherSystemFacts(d: GatherDeps): Promise<SystemFacts> {
   const platform = d.platform ?? (process.platform as Platform);
-  const run = d.exec ?? exec;
+  const run = d.exec ?? execWith(d.signal);
   const env = d.env ?? process.env;
   const own = new Set(d.ownPorts());
   const busyPorts: SystemFacts['busyPorts'] = [];
@@ -355,9 +361,10 @@ export async function gatherSystemFacts(d: GatherDeps): Promise<SystemFacts> {
     osInfo(platform, run),
     archOf(platform, run),
     findObs(platform, { env, home: d.home, exec: run }),
-    reachable(d.githubUrl ?? 'https://github.com', d.fetchImpl ?? fetch),
+    reachable(d.githubUrl ?? 'https://github.com', d.fetchImpl ?? fetch, d.signal),
     d.speed().catch(() => undefined),
   ]);
+  throwIfAborted(d.signal);
   return {
     platform,
     os: osI,

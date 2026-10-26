@@ -133,9 +133,11 @@ Usage: swarmcast [options]
     console.log(`\nSwarmCast ${appVersion()} (desktop app)`);
     console.log(`Panel: ${app.adminUrl}\n`);
     app.live.scheduleSpeedTests();
-    void runDesktopFirstRun(app, bridge).catch((err: Error) => app.log.warn({ err: err.message }, 'desktop first run failed'));
+    void runDesktopFirstRun(app, bridge, { signal: app.live.quitSignal }).catch((err: Error) => app.log.warn({ err: err.message }, 'desktop first run failed'));
     if (!flag('no-autostart')) {
-      app.live.start().catch((err: Error) => console.error(`\n✗ Could not start: ${err.message}\n`));
+      app.live.start().catch((err: Error) => {
+        if (!app.live.quitSignal.aborted) console.error(`\n✗ Could not start: ${err.message}\n`);
+      });
     }
     return;
   }
@@ -166,7 +168,9 @@ Usage: swarmcast [options]
 
   app.live.scheduleSpeedTests();
   if (!flag('no-autostart')) {
-    app.live.start().catch((err: Error) => console.error(`\n✗ Could not start: ${err.message}\n`));
+    app.live.start().catch((err: Error) => {
+      if (!app.live.quitSignal.aborted) console.error(`\n✗ Could not start: ${err.message}\n`);
+    });
   }
 }
 

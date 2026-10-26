@@ -27,7 +27,7 @@ import { QualityManager } from '../quality/manager.js';
 import { createPublicServer, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
-import { runSpeedTest } from '../speedtest/speedtest.js';
+import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
 import { TrackerService } from '../tracker/tracker.js';
 import { probeHealth, waitForReachable, type TunnelProvider } from '../tunnel/provider.js';
 import { ActivityLog } from './activity.js';
@@ -36,6 +36,7 @@ import type { Logger } from './logger.js';
 import { notify } from './notify.js';
 import { firstFreePort, isListening, isPortFree } from './ports.js';
 import { CodedError, codeOf, coded } from './messages.js';
+import { abortable } from './retry.js';
 
 export interface LiveDeps {
   config: AppConfig;
@@ -50,7 +51,8 @@ export interface LiveDeps {
   version: string;
   /** Cookies get the Secure attribute (false only for plain-HTTP local testing without a tunnel). */
   secureCookies: boolean;
-  speedTest?: () => Promise<SpeedTestResult>;
+  /** Replaces the real speed test (tests); `signal` aborts it when the app quits. */
+  speedTest?: (signal: AbortSignal) => Promise<SpeedTestResult>;
   now?: () => number;
   /** In-memory activity log shown in the panel (a private one is created when omitted). */
   activity?: ActivityLog;
@@ -117,6 +119,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   private sentCount: number | null | undefined;
   private tunnelDrops = 0;
   private busy: Promise<unknown> = Promise.resolve();
+  /** Aborted when the app quits: running speed tests stop at once. */
+  private readonly quitting = new AbortController();
   private originBytes = { http: 0 };
   private lastStepError?: string;
 
@@ -141,6 +145,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       mediamtxHlsUrl: `http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`,
       streamKey: d.streamKey,
       speedTest: () => this.speedTest,
+      quitSignal: this.quitting.signal,
       warn: (code, params) => this.warn(code, params),
       now: d.now,
     });
@@ -336,7 +341,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         this.activity.action('log.started');
         this.changed();
       } catch (err) {
-        this.d.log.error({ err: (err as Error).message }, 'start failed');
+        if (this.quitting.signal.aborted) this.d.log.info('start cancelled: SwarmCast is quitting');
+        else this.d.log.error({ err: (err as Error).message }, 'start failed');
         await this.teardown(false);
         this.phase = 'off';
         this.changed();
@@ -345,11 +351,14 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     });
   }
 
+  /** The tunnel step can take minutes (new quick-tunnel names need DNS): quitting gives up at once. */
   private async openTunnel(): Promise<string> {
+    const signal = this.quitting.signal;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const url = await this.d.tunnel.start(this.d.config.ports.public);
+      // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
+      const url = await abortable(this.d.tunnel.start(this.d.config.ports.public), signal);
       if (this.d.tunnel.name === 'none') return url;
-      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000 })) return url;
+      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal })) return url;
       this.d.log.warn({ attempt }, 'tunnel address not reachable yet, retrying with a new tunnel');
       await this.d.tunnel.stop();
     }
@@ -358,7 +367,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private async onTunnelUrl(url: string): Promise<void> {
     if (this.mode !== 'secure' || !this.access.live) return;
-    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000 });
+    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal }).catch(() => false);
+    if (this.quitting.signal.aborted) return;
     this.baseUrl = url;
     this.tunnelUrlChangedAt = this.now();
     this.warn(ok ? 'warn.tunnelNewAddress' : 'warn.tunnelNotAnswering');
@@ -682,12 +692,12 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.activity.action('log.speedTestStarted');
     this.changed();
     try {
-      this.speedTest = await (this.d.speedTest ?? runSpeedTest)();
+      this.speedTest = await (this.d.speedTest ?? ((signal) => runSpeedTest({ ...speedTestUrls(), signal })))(this.quitting.signal);
       this.d.log.info({ up: this.speedTest.uploadMbps, down: this.speedTest.downloadMbps }, 'speed test done');
       this.activity.action('log.speedTestDone', { up: this.speedTest.uploadMbps, down: this.speedTest.downloadMbps, ping: this.speedTest.latencyMs });
       return this.speedTest;
     } catch (err) {
-      this.warn('warn.speedTestFailed', { error: (err as Error).message });
+      if (!this.quitting.signal.aborted) this.warn('warn.speedTestFailed', { error: (err as Error).message });
       return undefined;
     } finally {
       this.speedTestRunning = false;
@@ -827,8 +837,17 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     return this.lastStepError;
   }
 
+  /**
+   * Aborted when the app quits (shutdown): the speed test, a start still opening the tunnel,
+   * the desktop first-run check and the ffmpeg download give up instead of delaying the exit.
+   */
+  get quitSignal(): AbortSignal {
+    return this.quitting.signal;
+  }
+
   /** Final shutdown when the app exits. */
   async shutdown(): Promise<void> {
+    this.quitting.abort();
     await this.stop().catch(() => {});
     this.d.log.debug('live stopped; closing control channel and tracker');
     if (this.speedTimer) clearInterval(this.speedTimer);
