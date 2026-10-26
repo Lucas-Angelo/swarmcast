@@ -75,7 +75,7 @@ function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<t
   toggle.element.querySelector('legend')?.after(tip(t('watch.latency.tip')));
 }
 
-/** "👁 12 watching" next to the status; hidden when the streamer hides the count (null). */
+/** "12 watching" (eye icon from CSS) next to the status; hidden when the streamer hides the count (null). */
 function showViewerCount(count: number | null | undefined): void {
   const show = typeof count === 'number' && count >= 0 && !ended;
   viewerCountWrap.hidden = !show;
@@ -135,6 +135,8 @@ let control: WebSocket | null = null;
 function setStatus(key: MessageKey, live = false): void {
   statusEl.textContent = t(key);
   liveDot.classList.toggle('live', live);
+  // Dot colour: live (red), waiting for video (honey) or paused (muted).
+  liveDot.dataset.state = live ? 'live' : key === 'watch.paused' ? 'off' : 'wait';
 }
 
 function showOverlay(key: MessageKey | null): void {
@@ -462,7 +464,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean)
 }
 
 /**
- * "● LIVE" badge while at the live edge; "Go live" (with how far behind) after pausing or
+ * "LIVE" badge while at the live edge; "Go live" (with how far behind) after pausing or
  * buffering. Clicking/tapping seeks to hls.js' live sync position (or near the end of the
  * seekable range) and plays.
  */

@@ -7,13 +7,15 @@
     ".": "./src/index.ts",
     "./constants": "./src/constants.ts",
     "./i18n": "./src/i18n/index.ts",
-    "./i18n/browser": "./src/i18n/browser.ts"
+    "./i18n/browser": "./src/i18n/browser.ts",
+    "./web/brand.css": "./web/brand.css"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "~5.3.0",
     "zod": "^4.6.7"
   }
 }

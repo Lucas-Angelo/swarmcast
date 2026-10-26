@@ -82,11 +82,14 @@ function Status({ kind, children, testid }: { kind: 'ok' | 'wait' | 'warn' | 'of
 export function WelcomeStep() {
   return (
     <>
-      <ul class="onb-lines">
-        <li>{t('onb.welcome.l1')}</li>
-        <li>{t('onb.welcome.l2')}</li>
-        <li>{t('onb.welcome.l3')}</li>
-      </ul>
+      <div class="onb-hero">
+        <span class="sc-mascot sc-mascot-hello" aria-hidden="true" />
+        <ul class="onb-lines">
+          <li>{t('onb.welcome.l1')}</li>
+          <li>{t('onb.welcome.l2')}</li>
+          <li>{t('onb.welcome.l3')}</li>
+        </ul>
+      </div>
       <p class="onb-callout">{t('onb.welcome.plan')}</p>
       <p class="muted small">{t('onb.welcome.twitch')}</p>
     </>

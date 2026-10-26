@@ -112,7 +112,10 @@ export function App() {
     <div class="wrap" lang={lang}>
       <header class="top">
         <div class="top-main">
-          <div class="brand">SwarmCast</div>
+          <div class="brand sc-brand">
+            <span class="sc-symbol" aria-hidden="true" />
+            <span class="sc-wordmark">SwarmCast</span>
+          </div>
           <div class="row tight">
             <div class="state" data-testid="status">
               <span class={`dot ${dotClass}`} /> {statusText}
@@ -232,7 +235,7 @@ export function App() {
             <button class="small" title={t('admin.obs.copyKey.tip')} onClick={() => copy('key', s.streamKey)}>{copied === 'key' ? t('common.copiedShort') : t('common.copy')}</button>
           </div>
           <div class="row tight small">
-            {s.obsConnected ? <span class="ok">{t('admin.obs.sending', { mbps: mbps(s.obsBitrateKbps) })}</span> : <span class="muted">{t('admin.obs.none')}</span>}
+            {s.obsConnected ? <span class="ok ok-dot">{t('admin.obs.sending', { mbps: mbps(s.obsBitrateKbps) })}</span> : <span class="muted">{t('admin.obs.none')}</span>}
             <Info text={t('admin.obs.pill.tip')} />
           </div>
           {autoStopText && (
@@ -355,7 +358,10 @@ export function App() {
           )}
         </h2>
         {s.viewers.length === 0 ? (
-          <p class="muted">{t('admin.viewers.nobody')}</p>
+          <div class="empty">
+            <span class="sc-mascot sc-mascot-sleep" aria-hidden="true" />
+            <p class="muted">{t('admin.viewers.nobody')}</p>
+          </div>
         ) : (
           <div class="table-wrap">
             <table data-testid="viewers">
