@@ -10,7 +10,6 @@
 // It exits when stdin closes, so it never outlives SwarmCast.
 package main
 
-//go:generate go run ./icons/gen icons
 
 import (
 	"bufio"
