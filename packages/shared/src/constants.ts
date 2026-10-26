@@ -35,7 +35,15 @@ export const HASH_FAILURE_THRESHOLD = 3;
 /** Cloudflare quick tunnels reject above ~200 concurrent in-flight requests. */
 export const QUICK_TUNNEL_CONCURRENCY_LIMIT = 200;
 
+/**
+ * How long a browser that passed the join browser check (proof-of-work) is remembered: it is not
+ * asked again until then, unless the attack shield raises the level above the one it solved.
+ */
+export const BROWSER_CHECK_TTL_S = 30 * 24 * 3600;
+
 export const SESSION_COOKIE = 'sc_session';
 export const TICKET_COOKIE = 'sc_ticket';
 export const DEVICE_COOKIE = 'sc_device';
+/** Signed "this browser passed the browser check" cookie (bound to the device cookie). */
+export const VERIFIED_COOKIE = 'sc_verified';
 export const ADMIN_COOKIE = 'sc_admin';

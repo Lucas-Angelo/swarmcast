@@ -167,6 +167,9 @@ wait_for 60 phase_is live && ok "phase live" || bad "phase $(state | jq -r .phas
 eq "$(state | jq -r .obsConnected)" "true" "obsConnected true"
 LINK="$(state | jq -r .liveLink)"
 BASE="${LINK%/join/*}"
+# curl cannot solve the browser check (on by default since v0.2): check the default, then turn it off from the panel API.
+eq "$(state | jq -r .security.settings.requireBrowserCheck)" "true" "browser check on by default"
+eq "$(curl -s -o /dev/null -X PUT -b "$W/admin.jar" -H "origin: $ADMIN" -H 'content-type: application/json' -d "$(state | jq -c '.security.settings | .requireBrowserCheck = false')" -w '%{http_code}' "$ADMIN/api/security")" "200" "browser check turned off for the curl viewer"
 J="$W/viewer.jar"
 curl -s -o /dev/null -c "$J" -b "$J" "$LINK"
 eq "$(curl -s -o /dev/null -c "$J" -b "$J" -H 'content-type: application/json' -d '{"nickname":"obs-viewer"}' -w '%{http_code}' "$BASE/api/join")" "200" "viewer joined"

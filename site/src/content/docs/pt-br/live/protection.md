@@ -22,7 +22,11 @@ O SwarmCast acompanha o tráfego da sua live e compara com o que o seu público 
 
 O que ele faz sozinho (dá para mudar cada item):
 
-- **Verificação do navegador (um captcha sem quebra-cabeça):** o navegador de quem entra resolve um pequeno desafio automático, mais ou menos um segundo no celular, enquanto a pessoa digita o apelido. Isso deixa as entradas falsas em massa lentas e caras. Liga sozinha quando algo parece errado. Você também pode deixar **sempre ligada**.
+- **Verificação do navegador (um captcha sem quebra-cabeça), ligada por padrão:** o navegador de quem entra resolve um pequeno desafio automático, cerca de 1–2 segundos no celular, enquanto a pessoa digita o apelido. Nada para clicar, e nenhum serviço de fora participa. Isso deixa as entradas falsas em massa lentas e caras.
+  - Dentro de uma mesma live (links novos, abas novas, recarregar a página) um navegador que já passou não é verificado de novo. **Gerar novo link** e **Desconectar todo mundo** não apagam isso, e quem você expulsou continua bloqueado.
+  - Com o túnel rápido gratuito da Cloudflare cada live tem um endereço novo, então os espectadores fazem a verificação de ~1 s uma vez por live. Com um endereço fixo (modo Direto ou o seu próprio domínio) o navegador é lembrado por 30 dias.
+  - Durante um ataque a verificação fica mais forte e os navegadores são verificados de novo.
+  - Desligue no cartão só se o celular ou navegador muito antigo de algum espectador não conseguir terminar. Ela ainda liga sozinha quando algo parece errado.
 - **Limites de entrada mais rígidos durante um ataque:** menos tentativas de entrada por endereço de internet, uma sessão por navegador e o limite de espectadores segurado perto do público atual. Ninguém que já está assistindo cai.
 - **Listas públicas de bloqueio:** o SwarmCast recusa visitas de redes que estão em listas públicas e gratuitas de redes maliciosas conhecidas (Spamhaus DROP e FireHOL level1). As listas são baixadas uma vez por dia, sem conta nenhuma. Conexões normais de casa e de celular quase nunca estão nelas, e você pode desligar as listas no cartão.
 - **Link novo durante um ataque** (desligado por padrão): o link antigo para de funcionar e você precisa mandar o novo.

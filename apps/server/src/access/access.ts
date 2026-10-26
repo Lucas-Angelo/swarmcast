@@ -83,7 +83,11 @@ export class AccessControl extends EventEmitter<AccessEvents> {
     if (hadSessions) this.emit('reset');
   }
 
-  /** New 256-bit link secret. The old link stops working for new joins; current viewers stay. */
+  /**
+   * New 256-bit link secret. The old link stops working for new joins; current viewers stay.
+   * Browsers that passed the browser check stay remembered (security/verified.ts): the check is
+   * about bots, not about who may watch, and the new link is still required to join.
+   */
   rotateLink(): string {
     this.linkSecret = crypto.randomBytes(32).toString('base64url');
     this.linkSecretHash = sha256(this.linkSecret);
@@ -204,7 +208,10 @@ export class AccessControl extends EventEmitter<AccessEvents> {
     return session;
   }
 
-  /** Disconnect everyone without banning (they can rejoin with the current link). */
+  /**
+   * Disconnect everyone without banning (they can rejoin with the current link). Like a new link,
+   * this does not forget which browsers passed the browser check: that is about bots, not access.
+   */
   disconnectAll(): void {
     this.sessions.clear();
     this.emit('all-disconnected');

@@ -22,7 +22,11 @@ SwarmCast watches the traffic of your live and compares it with what your audien
 
 What it does by itself (you can change each one):
 
-- **Browser check (captcha without puzzles):** new viewers' browsers solve a small automatic puzzle, about a second on a phone, while they type their nickname. It makes fake mass joins slow and costly. It turns on by itself when something looks wrong. You can also make it **always on**.
+- **Browser check (captcha without puzzles), on by default:** new viewers' browsers solve a small automatic puzzle, about 1–2 seconds on a phone, while they type their nickname. Nothing to click, and no outside service is involved. It makes fake mass joins slow and costly.
+  - Within one live (new links, new tabs, reloads) a browser that passed is not asked again. **Generate new link** and **Disconnect everyone** do not reset it, and a kicked viewer stays blocked.
+  - With the free Cloudflare quick tunnel every live has a new address, so viewers do the ~1 s check once per live. With a fixed address (Direct mode or your own domain) the browser is remembered for 30 days.
+  - During an attack the check gets stronger and browsers are asked again.
+  - Turn it off in the card only if a viewer's very old phone or browser cannot finish it. It still turns on by itself when something looks wrong.
 - **Stricter join limits during an attack:** fewer join attempts per internet address, one session per browser, and the viewer limit held near the current audience. Nobody already watching is dropped.
 - **Public blocklists:** SwarmCast refuses visitors from networks on free public lists of known malicious networks (Spamhaus DROP and FireHOL level1). The lists are downloaded once a day, with no account. Normal home and mobile connections are almost never on them, and you can turn the lists off in the card.
 - **New link during an attack** (off by default): the old link stops working, and you must send the new one.

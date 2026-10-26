@@ -21,6 +21,18 @@ describe('join proof-of-work (ALTCHA)', () => {
     expect(await pow.verify(payload)).toBe('ok');
   });
 
+  it('reports the solved level from the signed challenge data', async () => {
+    const pow = new JoinPow();
+    const ch = await pow.issue(2);
+    expect(ch.parameters.data).toEqual({ level: 2, max: POW_COUNTER_RANGE[2][1] });
+    expect(await pow.verifyLevel(await solve(ch))).toEqual({ verdict: 'ok', level: 2 });
+    expect(await pow.verifyLevel(await solve(await pow.issue(1)))).toEqual({ verdict: 'ok', level: 1 });
+    // Claiming a higher level breaks the signature.
+    const forged = await solve(await pow.issue(1));
+    forged.challenge = { ...forged.challenge, parameters: { ...forged.challenge.parameters, data: { level: 2, max: POW_COUNTER_RANGE[2][1] } } };
+    expect(await pow.verifyLevel(forged)).toEqual({ verdict: 'invalid' });
+  });
+
   it('level 2 is harder but bounded', async () => {
     const ch = await new JoinPow().issue(2);
     const { solution } = await solve(ch);

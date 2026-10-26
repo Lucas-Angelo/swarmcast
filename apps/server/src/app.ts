@@ -148,6 +148,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     // Never persist ports chosen at runtime as a fallback.
     saveConfig: (c) => saveConfig(paths.configFile, persistableConfig(c, loadConfig(paths.configFile), { noTunnel: opts.noTunnel })),
     streamKey: secrets.streamKey,
+    browserCheckKey: secrets.browserCheckKey,
     signer,
     mediamtx,
     tunnel,

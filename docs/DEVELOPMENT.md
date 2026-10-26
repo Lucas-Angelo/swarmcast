@@ -79,7 +79,8 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `maxViewers` | 500 | Cap on simultaneous viewer sessions; further joins see "stream is full" (panel; lowering it never drops anyone watching) |
 | `maxSessionsPerDevice` | 3 | Sessions one browser may hold (the oldest is replaced) (panel) |
 | `security.blockKnownBadIps` | true | Refuse IPs on free public blocklists (Spamhaus DROP + DROPv6, FireHOL level1), downloaded at start and every 24 h, cached in `blocklists/` (panel) |
-| `security.requireBrowserCheck` | false | Always ask new viewers' browsers for a short proof-of-work (ALTCHA protocol, self-hosted) (panel) |
+| `security.requireBrowserCheck` | true | Ask new viewers' browsers for a short proof-of-work (ALTCHA protocol, self-hosted), once per browser: a signed `sc_verified` cookie remembers it for 30 days (panel) |
+| `configVersion` | 2 | Format version. Files without it are from v0.1.0: their `requireBrowserCheck: false` (the old default) is switched on once |
 | `security.autoBrowserCheck` | true | Turn the browser check on automatically on unusual activity / attacks (panel) |
 | `security.autoTighten` | true | Under attack: stricter per-IP join limits, 1 session per browser, viewer cap held near the current audience (panel) |
 | `security.autoNewLink` | false | Under attack (Secure mode): generate a new link automatically; you must resend it (panel) |
