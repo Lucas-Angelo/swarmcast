@@ -6,6 +6,7 @@ import { applyLang, rememberLang } from '@swarmcast/shared/i18n/browser';
 import { ActivityConsole } from './Activity.js';
 import { api, errorText, post, subscribe } from './api.js';
 import { DesktopCard, UpdateBanner } from './DesktopCard.js';
+import { DiagnosticsCard } from './DiagnosticsCard.js';
 import { loadDesktop, setDesktop } from './desktop.js';
 import { Info } from './Info.js';
 import { Onboarding, RedoTutorialButton } from './onboarding/Onboarding.js';
@@ -391,6 +392,8 @@ export function App() {
         onCopy={(text) => copy('activity', text)}
         onClear={() => void act('clear-log', () => post('/api/activity/clear'))}
       />
+
+      <DiagnosticsCard />
 
       <footer>
         <span class="muted small">{t('admin.version', { version: s.version })}</span>

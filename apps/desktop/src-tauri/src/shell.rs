@@ -221,6 +221,7 @@ impl Shell {
             }
             ServerMessage::UpdateCheck => updater::check_soon(self.clone(), true),
             ServerMessage::UpdateInstall => updater::install_soon(self.clone()),
+            ServerMessage::ExportLogs { ok, path, error } => self.on_logs_exported(ok, path, error),
         }
     }
 
@@ -519,6 +520,31 @@ impl Shell {
         if let Some(window) = self.window().filter(|w| self.is_on_splash(w)) {
             let json = serde_json::to_string(&splash).unwrap_or_default();
             let _ = window.eval(format!("window.swarmcastSplash && window.swarmcastSplash({json})"));
+        }
+    }
+
+    /// Tray "Export logs…": the server writes the ZIP (docs/DESKTOP.md, `export-logs`). Without a
+    /// running server, the logs folder opens instead.
+    pub fn export_logs(&self) {
+        if !self.send(&ShellMessage::ExportLogs) {
+            self.open_logs();
+        }
+    }
+
+    /// Shows the exported ZIP in Explorer / Finder / the file manager; on failure, the logs folder.
+    fn on_logs_exported(&self, ok: bool, path: Option<String>, error: Option<String>) {
+        match path.filter(|_| ok) {
+            Some(path) => {
+                logs::shell("logs exported");
+                if let Err(err) = self.app.opener().reveal_item_in_dir(&path) {
+                    logs::shell(format!("could not show the log export: {err}"));
+                    self.open_logs();
+                }
+            }
+            None => {
+                logs::shell(format!("log export failed: {}", error.unwrap_or_default()));
+                self.open_logs();
+            }
         }
     }
 

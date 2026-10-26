@@ -62,6 +62,15 @@ pub enum ServerMessage {
     },
     UpdateCheck,
     UpdateInstall,
+    /// Answer to `export-logs`: the ZIP's path, or why it failed.
+    ExportLogs {
+        #[serde(default)]
+        ok: bool,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 /// What one stdout line of the server is.
@@ -125,9 +134,14 @@ pub struct UpdateInfo {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ShellMessage {
-    Click { id: ClickId },
+    Click {
+        id: ClickId,
+    },
     Quit,
     Update(UpdateInfo),
+    /// Tray "Export logs…": the server writes the anonymised ZIP and answers with its path.
+    #[serde(rename = "export-logs")]
+    ExportLogs,
 }
 
 /// One stdin line for the server (JSON + `\n`).
@@ -177,6 +191,19 @@ mod tests {
         );
         assert_eq!(parse_line(r#"@@swarmcast {"type":"update-check"}"#), Line::Message(ServerMessage::UpdateCheck));
         assert_eq!(parse_line("@@swarmcast {\"type\":\"update-install\"}\r"), Line::Message(ServerMessage::UpdateInstall));
+    }
+
+    #[test]
+    fn export_logs_round_trip() {
+        assert_eq!(encode(&ShellMessage::ExportLogs), "{\"type\":\"export-logs\"}\n");
+        assert_eq!(
+            parse_line(r#"@@swarmcast {"type":"export-logs","ok":true,"path":"/home/a/Downloads/SwarmCast-logs.zip"}"#),
+            Line::Message(ServerMessage::ExportLogs { ok: true, path: Some("/home/a/Downloads/SwarmCast-logs.zip".into()), error: None })
+        );
+        assert_eq!(
+            parse_line(r#"@@swarmcast {"type":"export-logs","ok":false,"error":"disk full"}"#),
+            Line::Message(ServerMessage::ExportLogs { ok: false, path: None, error: Some("disk full".into()) })
+        );
     }
 
     #[test]

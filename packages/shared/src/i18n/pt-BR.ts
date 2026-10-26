@@ -842,4 +842,29 @@ export const ptBR: Messages = {
   'desktop.update.errorNoDetail': 'A atualização não deu certo. Esta versão continua funcionando.',
   'desktop.update.retry': 'Tentar de novo',
   'desktop.update.retry.tip': 'Tenta atualizar de novo. Se continuar falhando, confira a sua internet e tente mais tarde; esta versão continua funcionando.',
+  // ---- admin: diagnostics (log retention, "Export logs") ----
+  'err.diagnostics.export': 'Não deu para exportar os logs: {error}',
+  'diag.title': 'Relatório de problema',
+  'diag.title.tip':
+    'Se algo não funcionar, exporte os logs e mande o arquivo para quem está te ajudando (ou anexe numa issue do GitHub). Isso ajuda a achar a causa sem acesso remoto ao seu computador.',
+  'diag.export': 'Exportar logs',
+  'diag.export.tip':
+    'Salva um arquivo ZIP na sua pasta Downloads com o que é preciso para achar um problema: os logs do SwarmCast dos últimos 14 dias (incluindo o app para computador e as ferramentas de vídeo), um resumo deste computador e das configurações do SwarmCast, a verificação do PC e o cartão Atividade. Ele nunca contém a sua chave de transmissão, o link da live, senhas ou chaves. Os endereços IP e os apelidos dos espectadores são trocados por rótulos anônimos. Nada é enviado para lugar nenhum: você escolhe quem recebe o arquivo.',
+  'diag.exporting': 'Exportando…',
+  'diag.saved': 'Salvo em {path}',
+  'diag.savedFallback': 'Não deu para usar a sua pasta Downloads, então ele foi salvo em {path}',
+  'diag.next': 'Anexe este arquivo numa issue do GitHub, ou mande para a pessoa que está te ajudando.',
+  'diag.show': 'Mostrar na pasta',
+  'diag.show.tip': 'Abre a pasta com o arquivo ZIP selecionado.',
+  'diag.showFailed': 'Não deu para abrir a pasta. O arquivo está em {path}',
+  'diag.advanced': 'Avançado',
+  'diag.fullIps': 'Incluir os endereços IP completos (só se o desenvolvedor pedir)',
+  'diag.fullIps.tip':
+    'Desligado por padrão: os endereços IP dos espectadores são trocados por rótulos anônimos (o mesmo endereço fica com o mesmo rótulo dentro de um arquivo, então dá para acompanhar o problema). Ligue só se o desenvolvedor pedir para investigar um problema de rede, e mande esse arquivo só para ele.',
+  'diag.retention': 'Guardar os logs por',
+  'diag.retention.tip':
+    'Arquivos de log (e exportações que não puderam ir para Downloads) mais antigos que isso são apagados quando o SwarmCast abre e uma vez por dia. A pasta de logs também fica abaixo de 100 MB. De 3 a 90 dias; 14 por padrão.',
+  'diag.retention.days': 'dias',
+  'diag.retention.save': 'Salvar',
+  'diag.retention.saved': 'Salvo ✓',
 };

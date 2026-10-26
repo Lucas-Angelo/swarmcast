@@ -23,7 +23,7 @@ Another streaming app, or a second SwarmCast, uses port 1935 (the one OBS sends 
 
 ### "SwarmCast could not start"
 
-Click **Try again**. If it keeps failing, click **Open logs folder** and send the newest file when you ask for help (see the end of this page).
+Click **Try again**. If it keeps failing, click **Open logs folder** and send the newest files when you ask for help (see [Send your logs](#send-your-logs)).
 
 ## OBS
 
@@ -106,7 +106,29 @@ No. SwarmCast has no telemetry and no analytics. See [Privacy and usage numbers]
 
 SwarmCast is tested with OBS Studio. Any app that can send to a custom RTMP server with a stream key and 2-second keyframes should work, but the guides show OBS.
 
+## Send your logs
+
+When something goes wrong, the logs show what happened. SwarmCast puts them in one file for you:
+
+1. In the panel, scroll down to the **Problem report** card and click **Export logs**. In the desktop app you can also use the tray icon (on a Mac, the menu bar icon) → **Export logs…**.
+2. SwarmCast saves a ZIP file named like `SwarmCast-logs-0.1.0-20261026-1430.zip` in your **Downloads** folder and shows where it is. Click **Show in folder** to find it.
+3. Attach the ZIP to an issue on [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), or send it to the person helping you. Say what you did and what you expected.
+
+**What is inside:** the logs of the last 14 days (SwarmCast, the desktop app, the video receiver, the tunnel and the video converter), a short summary of your computer and of SwarmCast's settings, your PC check, and the **Activity** card.
+
+**What is never inside:** your stream key, the live link, the panel login, passwords or keys. The file is **anonymised**: viewers' IP addresses and nicknames are replaced by labels like `ip-3f9a1c2b` and `viewer-8d02e4aa`. Nothing is sent by itself: you choose who gets the file. Under **Advanced** there is an option to keep the full IP addresses; turn it on only if the developer asks for it.
+
+If the panel does not open at all, send the newest files from the logs folder instead:
+
+| System | Logs folder |
+|---|---|
+| Windows | `%LOCALAPPDATA%\SwarmCast\logs` (paste it into the File Explorer address bar) |
+| macOS | `~/Library/Application Support/SwarmCast/logs` (Finder → **Go** → **Go to Folder…**) |
+| Linux | `~/.local/share/swarmcast/logs` |
+
+SwarmCast deletes log files older than 14 days by itself (you can change it from 3 to 90 days under **Problem report** → **Advanced**).
+
 ## Asking for help
 
-1. In the panel's **Activity** card, click **Copy all**. Secrets (stream key, link) are already hidden.
-2. Open an issue on [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues) and paste it, with your system (Windows, macOS or Linux) and what you did.
+1. [Export your logs](#send-your-logs), or in the panel's **Activity** card, click **Copy all**. Secrets (stream key, link) are already hidden.
+2. Open an issue on [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), attach the ZIP or paste the text, and say your system (Windows, macOS or Linux) and what you did.

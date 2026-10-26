@@ -471,9 +471,16 @@ export function copyAppLogs(home, tag) {
     }
   }
 }
-/** pino log lines (JSON) of the app. */
+/** pino log lines (JSON) of the app: swarmcast-YYYY-MM-DD.log files (plus a legacy swarmcast.log), oldest first. */
 export function appLog(home) {
-  return readText(path.join(home, 'logs', 'swarmcast.log'));
+  const dir = path.join(home, 'logs');
+  let names = [];
+  try {
+    names = fs.readdirSync(dir).filter((n) => /^swarmcast(-\d{4}-\d{2}-\d{2})?\.log$/.test(n)).sort();
+  } catch {
+    /* no logs yet */
+  }
+  return names.map((n) => readText(path.join(dir, n))).join('');
 }
 
 export function editConfig(home, fn) {
