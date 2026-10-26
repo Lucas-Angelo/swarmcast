@@ -32,7 +32,7 @@ function contrast(a: string | undefined, b: string | undefined): number | null {
 }
 
 // The brand tokens the site maps (assets/brand/tokens.css). Missing one = tell the brand work.
-const REQUIRED = ['--sc-bg', '--sc-surface', '--sc-surface-2', '--sc-border', '--sc-ink', '--sc-muted', '--sc-accent', '--sc-on-accent', '--sc-accent-strong', '--sc-secondary', '--sc-on-secondary', '--sc-success', '--sc-warning', '--sc-live', '--sc-on-live', '--sc-danger', '--sc-focus', '--sc-font', '--sc-font-ui', '--sc-radius-sm', '--sc-radius-md', '--sc-radius-lg', '--sc-shadow'];
+const REQUIRED = ['--sc-bg', '--sc-surface', '--sc-surface-2', '--sc-border', '--sc-ink', '--sc-muted', '--sc-accent', '--sc-on-accent', '--sc-accent-strong', '--sc-secondary', '--sc-on-secondary', '--sc-success', '--sc-warning', '--sc-live', '--sc-on-live', '--sc-danger', '--sc-focus', '--sc-text', '--sc-border-strong', '--sc-accent-soft', '--sc-on-danger', '--sc-font', '--sc-font-ui', '--sc-font-text', '--sc-font-mono', '--sc-radius-sm', '--sc-radius-md', '--sc-radius-lg', '--sc-shadow'];
 
 const PAIRS: [fg: string, bg: string, min: number][] = [
   ['--sc-ink', '--sc-bg', 4.5],
@@ -40,10 +40,16 @@ const PAIRS: [fg: string, bg: string, min: number][] = [
   ['--sc-ink', '--sc-surface', 4.5],
   ['--sc-muted', '--sc-surface', 4.5],
   ['--sc-ink', '--sc-surface-2', 4.5],
+  ['--sc-text', '--sc-bg', 4.5], // body text
+  ['--sc-text', '--sc-surface', 4.5],
+  ['--sc-text', '--sc-surface-2', 4.5],
+  ['--sc-text', '--sc-accent-soft', 4.5], // Starlight accent-low backgrounds
+  ['--sc-accent-strong', '--sc-accent-soft', 4.5],
   ['--sc-accent-strong', '--sc-bg', 4.5], // links
   ['--sc-accent-strong', '--sc-surface', 4.5],
   ['--sc-on-accent', '--sc-accent', 4.5], // primary button
   ['--sc-on-secondary', '--sc-secondary', 4.5], // "Your system" badge
+  ['--sc-on-danger', '--sc-danger', 4.5],
   ['--sc-focus', '--sc-bg', 3],
 ];
 

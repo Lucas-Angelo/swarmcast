@@ -46,7 +46,7 @@ scripts/build/desktop.mjs (stage sidecar + resources from release/staging/<targe
 | Identifier | `io.github.lucas-angelo.swarmcast` |
 | App executable | Windows `SwarmCast.exe`, macOS `SwarmCast.app/Contents/MacOS/SwarmCast`, Linux `swarmcast-desktop` |
 | Server sidecar | `swarmcast-server[.exe]` = the same pkg binary the scripts install as `swarmcast` |
-| Resources | `bin/` (mediamtx, cloudflared; no Go tray helper), `web/viewer`, `web/admin`, licenses |
+| Resources | `bin/` (mediamtx, cloudflared; no Go tray helper), `web/viewer`, `web/admin`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` (npm packages, binaries, fonts and the Rust crates of the app for that platform) |
 | Windows install dir | `%LOCALAPPDATA%\Programs\SwarmCast` (per user, no admin prompt) |
 | Data dir (unchanged) | `%LOCALAPPDATA%\SwarmCast`, `~/Library/Application Support/SwarmCast`, `~/.local/share/swarmcast` |
 

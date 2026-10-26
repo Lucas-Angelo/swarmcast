@@ -111,7 +111,7 @@ SwarmCast is tested with OBS Studio. Any app that can send to a custom RTMP serv
 When something goes wrong, the logs show what happened. SwarmCast puts them in one file for you:
 
 1. In the panel, scroll down to the **Problem report** card and click **Export logs**. In the desktop app you can also use the tray icon (on a Mac, the menu bar icon) → **Export logs…**.
-2. SwarmCast saves a ZIP file named like `SwarmCast-logs-0.1.0-20261026-1430.zip` in your **Downloads** folder and shows where it is. Click **Show in folder** to find it.
+2. SwarmCast saves a ZIP file named like `SwarmCast-logs-0.2.0-20261026-1430.zip` in your **Downloads** folder and shows where it is. Click **Show in folder** to find it.
 3. Attach the ZIP to an issue on [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), or send it to the person helping you. Say what you did and what you expected.
 
 **What is inside:** the logs of the last 14 days (SwarmCast, the desktop app, the video receiver, the tunnel and the video converter), a short summary of your computer and of SwarmCast's settings, your PC check, and the **Activity** card.

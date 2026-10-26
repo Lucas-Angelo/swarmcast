@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 import preact from '@preact/preset-vite';
+import { fontLicenses } from '@swarmcast/shared/web/font-licenses';
 
 export default defineConfig({
-  plugins: [preact()],
+  plugins: [preact(), fontLicenses()],
   base: '/',
   build: {
     outDir: 'dist',

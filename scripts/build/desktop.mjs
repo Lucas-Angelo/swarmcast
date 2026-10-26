@@ -5,7 +5,9 @@
 //     swarmcast[.exe]            → sidecar  src-tauri/staged/binaries/swarmcast-server-<rust triple>[.exe]
 //     bin/mediamtx, cloudflared  → resource bin/   (not the Go tray helper: the shell draws the tray)
 //     web/viewer, web/admin      → resource web/
-//     LICENSE, THIRD_PARTY_...   → resources
+//     LICENSE                    → resource
+//   + THIRD_PARTY_LICENSES.txt   → resource, made here: the package's list plus the Rust crates
+//                                  compiled into the app (licenses.mjs, crate-licenses.mjs)
 //
 // then runs `tauri build` with the bundles of that OS and the updater artifacts (*.sig), and
 // copies the results to release/desktop/<target>/.
@@ -27,6 +29,7 @@ import path from 'node:path';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostTarget } from './fetch-binaries.mjs';
+import { writeThirdPartyLicenses } from './licenses.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -101,9 +104,12 @@ for (const tool of ['mediamtx', 'cloudflared']) {
   if (!isWin) fs.chmodSync(dest, 0o755);
 }
 fs.cpSync(path.join(staging, 'web'), path.join(resDir, 'web'), { recursive: true });
-for (const f of ['LICENSE', 'THIRD_PARTY_LICENSES.txt']) {
-  if (fs.existsSync(path.join(staging, f))) fs.copyFileSync(path.join(staging, f), path.join(resDir, f));
-}
+fs.copyFileSync(path.join(staging, 'LICENSE'), path.join(resDir, 'LICENSE'));
+// THIRD_PARTY_LICENSES.txt for the app: the package's list (npm, MediaMTX, cloudflared, fonts)
+// plus the Rust crates compiled into the app for this target. Fails the build when a crate has no
+// licence or one outside the allowlist (scripts/build/crate-licenses.mjs).
+const npmCount = writeThirdPartyLicenses(path.join(resDir, 'THIRD_PARTY_LICENSES.txt'), { desktop: { target, triple: spec.triple } });
+console.log(`✓ THIRD_PARTY_LICENSES.txt (${npmCount} npm packages + Rust crates for ${spec.triple})`);
 
 // macOS: the bundler signs the app and the sidecar, but not files in Resources. MediaMTX and
 // cloudflared must carry a valid signature of their own (cloudflared ships one); sign ad hoc
@@ -146,7 +152,7 @@ const overlay = {
       'staged/resources/bin/': 'bin/',
       'staged/resources/web/': 'web/',
       'staged/resources/LICENSE': 'LICENSE',
-      ...(fs.existsSync(path.join(resDir, 'THIRD_PARTY_LICENSES.txt')) ? { 'staged/resources/THIRD_PARTY_LICENSES.txt': 'THIRD_PARTY_LICENSES.txt' } : {}),
+      'staged/resources/THIRD_PARTY_LICENSES.txt': 'THIRD_PARTY_LICENSES.txt',
     },
     createUpdaterArtifacts: updaterArtifacts,
   },

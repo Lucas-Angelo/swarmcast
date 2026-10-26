@@ -69,6 +69,30 @@ describe('viewer count for viewers', () => {
     expect(live.control.viewerCount()).toBe(3);
   });
 
+  it('re-sends an unchanged number when a viewer was greeted with a different one meanwhile', () => {
+    // Regression (flaky e2e "viewers see how many people are watching"): the count went 2 -> 0
+    // -> 2 within one throttle window. Viewer A got "1" in its hello between the two pushes;
+    // the push of "2" must still go out although the last broadcast was also 2.
+    const { live, sent } = makeLive();
+    live.access.createSession({ nickname: 'old1', deviceId: 'd1', device: 'desktop', ip: 'ip1' });
+    live.access.createSession({ nickname: 'old2', deviceId: 'd2', device: 'desktop', ip: 'ip2' });
+    vi.advanceTimersByTime(0);
+    expect(counts(sent)).toEqual([2]);
+
+    live.disconnectAll();
+    live.access.createSession({ nickname: 'a', deviceId: 'd3', device: 'desktop', ip: 'ip3' });
+    expect(live.control.viewerCount()).toBe(1); // A's hello
+    live.access.createSession({ nickname: 'b', deviceId: 'd4', device: 'desktop', ip: 'ip4' });
+    expect(live.control.viewerCount()).toBe(2); // B's hello
+    vi.advanceTimersByTime(VIEWER_COUNT_INTERVAL_MS);
+    expect(counts(sent)).toEqual([2, 2]);
+
+    // Hellos that match what everyone already has do not cause extra pushes.
+    expect(live.control.viewerCount()).toBe(2);
+    vi.advanceTimersByTime(VIEWER_COUNT_INTERVAL_MS * 2);
+    expect(counts(sent)).toEqual([2, 2]);
+  });
+
   it('counts the same sessions as the panel "Watching" stat', () => {
     const { live } = makeLive();
     const a = live.access.createSession({ nickname: 'a', deviceId: 'd1', device: 'desktop', ip: 'ip1' });

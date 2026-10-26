@@ -1,8 +1,10 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
+import { fontLicenses } from '@swarmcast/shared/web/font-licenses';
 
 // Multi-page build. No inline scripts are emitted, so the strict CSP (script-src 'self') holds.
 export default defineConfig({
+  plugins: [fontLicenses()],
   base: '/',
   build: {
     outDir: 'dist',

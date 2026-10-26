@@ -205,7 +205,18 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       }
       this.changed();
     });
-    this.control.viewerCount = () => (this.d.config.showViewerCount ? this.connectedSessions().length : null);
+    this.control.viewerCount = () => {
+      const count = this.d.config.showViewerCount ? this.connectedSessions().length : null;
+      // This viewer's hello carries a number other than the last broadcast one, so viewers no
+      // longer all have `sentCount`: forget it, or a later push of that same number would be
+      // skipped and this viewer would keep a stale count (e.g. 2 -> 0 -> 2 within one throttle
+      // window: the viewer greeted with "1" in between never sees "2").
+      if (count !== this.sentCount) {
+        this.sentCount = undefined;
+        this.viewerCountChanged();
+      }
+      return count;
+    };
     this.access.on('session-created', (s) => {
       this.activity.add({ kind: 'viewer', code: 'log.viewerJoined', params: { nickname: s.nickname } });
       this.viewerCountChanged();

@@ -31,6 +31,7 @@ The desktop app release: SwarmCast now installs like any other app, opens in its
 - The start scripts download the video converter (ffmpeg) from its publisher, verify it and keep it in `<data>/tools/ffmpeg` (`--no-ffmpeg` / `-NoFfmpeg` to skip). Releases publish the pins as `binaries.json`; the installer zips include it.
 - The start scripts save their computer check to `<data>/system-check.json`, retry failed steps (2 s, 5 s, 10 s), and go back to the previous version if a new one does not start.
 - Releases also publish the desktop installers, their update signatures (`.sig`) and the updater manifest `latest.json`; the release is published only after the full test suites pass.
+- Licences: the desktop app's `THIRD_PARTY_LICENSES.txt` also lists the Rust crates it is built from (Tauri and its plugins, …), with their licence texts; the build stops if one has no licence or one outside the allowed list. The Fredoka and Inter font licences ship next to the fonts in the panel, the viewer pages and the website.
 
 ### Changed
 

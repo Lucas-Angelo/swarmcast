@@ -139,7 +139,7 @@ export async function buildLogExport(o: LogExportInput): Promise<BuiltExport> {
   return { files, zip: zipSync(zippable, { level: 6 }) };
 }
 
-/** `SwarmCast-logs-0.1.0-20261026-1430.zip` (local time). */
+/** `SwarmCast-logs-0.2.0-20261026-1430.zip` (local time). */
 export function exportFileName(version: string, now: number): string {
   const d = new Date(now);
   const p = (n: number): string => String(n).padStart(2, '0');

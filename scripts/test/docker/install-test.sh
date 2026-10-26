@@ -8,7 +8,7 @@
 #   RELEASE_URL   URL of the real release folder (SHA256SUMS.txt, packages, start-linux.sh)
 #   CORRUPT_URL   URL of a release folder whose SHA256SUMS.txt lists a wrong checksum
 #   SCRIPT        Path of start-linux.sh inside the container (default /release/start-linux.sh)
-#   EXPECT_VER    Expected version (default 0.1.0)
+#   EXPECT_VER    Expected version (default 0.2.0)
 #   SKIP_SPEED    1 = pass --skip-speedtest to the first run too (default 0)
 set -u
 set -o pipefail
@@ -16,7 +16,7 @@ set -o pipefail
 RELEASE_URL="${RELEASE_URL:?RELEASE_URL is required}"
 CORRUPT_URL="${CORRUPT_URL:-}"
 SCRIPT="${SCRIPT:-/release/start-linux.sh}"
-EXPECT_VER="${EXPECT_VER:-0.1.0}"
+EXPECT_VER="${EXPECT_VER:-0.2.0}"
 SKIP_SPEED="${SKIP_SPEED:-0}"
 
 W="$(mktemp -d /tmp/sc-docker-test.XXXXXX)"

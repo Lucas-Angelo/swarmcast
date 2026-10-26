@@ -1,12 +1,28 @@
 // @ts-check
+import fs from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import { brand, links } from './src/brand.mjs';
 import { langRedirectScript } from './src/lang-redirect.mjs';
 import { themeColors } from './src/tokens.mjs';
+import { FONT_LICENSES_FILE, fontLicensesText } from '../packages/shared/web/font-licenses.mjs';
 
 const colors = themeColors();
+
+/** The OFL asks for the licence to travel with the fonts: write it next to them (dist/_astro/). */
+const fontLicenses = {
+  name: 'swarmcast-font-licenses',
+  hooks: {
+    /** @param {{ dir: URL }} options */
+    'astro:build:done': ({ dir }) => {
+      const text = fontLicensesText({ resolveFrom: import.meta.url, fredokaLicense: fileURLToPath(new URL('./src/fonts/OFL.txt', import.meta.url)) });
+      fs.mkdirSync(new URL('_astro/', dir), { recursive: true });
+      fs.writeFileSync(new URL(`_astro/${FONT_LICENSES_FILE}`, dir), text);
+    },
+  },
+};
 
 /** Sidebar group/label helper: English label + pt-BR translation. */
 /** @param {string} en @param {string} pt */
@@ -19,6 +35,7 @@ export default defineConfig({
   // No telemetry, trackers or third-party requests on the site (the font is self-hosted).
   devToolbar: { enabled: false },
   integrations: [
+    fontLicenses,
     starlight({
       title: { en: `${brand.name} guide`, 'pt-BR': `Guia do ${brand.name}` },
       description: 'SwarmCast: members-only live streaming from your own computer. Free, private, open source.',

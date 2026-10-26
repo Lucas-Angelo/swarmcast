@@ -1,6 +1,6 @@
 {
   "name": "@swarmcast/shared",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "exports": {
@@ -8,7 +8,8 @@
     "./constants": "./src/constants.ts",
     "./i18n": "./src/i18n/index.ts",
     "./i18n/browser": "./src/i18n/browser.ts",
-    "./web/brand.css": "./web/brand.css"
+    "./web/brand.css": "./web/brand.css",
+    "./web/font-licenses": "./web/font-licenses.mjs"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json --noEmit",

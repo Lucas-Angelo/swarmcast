@@ -22,10 +22,11 @@ secondary). The site layers on top, in `site/src/styles/tokens.css`:
 
 - the font files (self-hosted Inter; Fredoka from `assets/brand/font/`, subset to Latin woff2 in
   `site/src/fonts/`);
-- three values **derived** from the brand tokens with `color-mix()`, so they follow every palette
-  and theme: `--sc-text` (body text), `--sc-border-strong`, `--sc-accent-soft`;
-- aliases `--sc-radius` (= `--sc-radius-md`), `--sc-font-text` (Inter, then `--sc-font-ui`),
-  `--sc-font-mono`, and the layout scale below.
+- aliases `--sc-radius` (= `--sc-radius-md`) and `--sc-shadow-sm`, and the layout scale below.
+
+Body text (`--sc-text`), `--sc-border-strong`, `--sc-accent-soft`, `--sc-on-danger`, `--sc-font-text`
+(Inter, then the UI stack) and `--sc-font-mono` are brand tokens too: the site uses them as they are and
+never overrides them.
 
 `site/src/styles/starlight.css` maps Starlight's `--sl-*` variables onto these, so the docs follow
 the same palette in light and dark. Nothing else in the site hard-codes a colour.
