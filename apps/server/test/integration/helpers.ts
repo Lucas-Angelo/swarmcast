@@ -40,13 +40,14 @@ export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: numbe
   );
 }
 
-export async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+/** `detail` describes the state at the timeout, so a CI failure says why. */
+export async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string, detail?: () => string): Promise<void> {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     if (await cond()) return;
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out waiting for ${what}${detail ? ` (${detail()})` : ''}`);
 }
 
 /** Tiny cookie jar for fetch-based "browsers". */

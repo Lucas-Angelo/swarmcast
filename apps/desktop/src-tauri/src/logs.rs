@@ -143,7 +143,11 @@ mod tests {
         assert_eq!(data_dir_for("macos", env(&[("HOME", "/Users/a")])), PathBuf::from("/Users/a/Library/Application Support/SwarmCast"));
         assert_eq!(data_dir_for("linux", env(&[("HOME", "/home/a")])), PathBuf::from("/home/a/.local/share/swarmcast"));
         assert_eq!(data_dir_for("linux", env(&[("HOME", "/home/a"), ("XDG_DATA_HOME", "/x")])), PathBuf::from("/x/swarmcast"));
-        assert_eq!(data_dir_for("macos", env(&[("HOME", "/Users/a"), ("SWARMCAST_DATA_DIR", "/tmp/sc")])), PathBuf::from("/tmp/sc"));
+        // Made absolute like the server's path.resolve (on Windows "/tmp/sc" gets the current drive).
+        assert_eq!(
+            data_dir_for("macos", env(&[("HOME", "/Users/a"), ("SWARMCAST_DATA_DIR", "/tmp/sc")])),
+            std::path::absolute("/tmp/sc").unwrap()
+        );
     }
 
     #[test]
