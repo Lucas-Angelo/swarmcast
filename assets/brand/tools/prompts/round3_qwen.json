@@ -1,0 +1,48 @@
+{
+  "defaults": {
+    "width": 1024, "height": 1024, "steps": 24, "guidance": 4.0,
+    "negative": "text, letters, words, typography, watermark, signature, photo, photorealistic, 3d render, gradient, texture, noise, drop shadow, busy background, clutter, purple, violet, indigo, glitch effect, speech bubble, blurry, low quality"
+  },
+  "jobs": [
+    {
+      "id": "A4", "dir": "A",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app. Chubby round body in warm golden honey amber with two deep dark brown stripes, soft cream face, big shiny friendly eyes, small happy smile, rosy cheeks, two small rounded translucent white wings, short antennae with round tips, wearing a tiny dark brown headset with a microphone, waving hello with one little hand. Flat vector cartoon illustration, bold simple shapes, clean thick dark brown outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "A5", "dir": "A",
+      "prompt": "Square app icon: the round face of a cute friendly bee mascot with a cream face, golden honey amber head, big dark eyes, small smile, short antennae with round tips and a tiny headset with microphone, centered on a solid deep dark brown background. Flat vector icon design, bold simple shapes, very few colors, readable at small size, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "B4", "dir": "B",
+      "prompt": "Minimalist logo symbol: a rounded play button triangle pointing right, made of a swarm of small round honey amber dots and a few tiny bees, the dots stream in along curved flight paths from the left and pack together into the solid triangle shape. Golden honey amber and deep dark brown only. Flat vector logo mark, bold simple geometric shapes, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "B5", "dir": "B",
+      "prompt": "Minimalist logo symbol: a cute minimal bee whose striped body is a rounded play button triangle pointing right, golden honey amber with deep dark brown stripes, two small rounded white wings on top, a small round eye near the tip, a short dotted flight trail behind it. Flat vector logo mark, bold geometric shapes, very few colors, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "C3", "dir": "C",
+      "prompt": "Minimalist logo symbol: a single honeycomb cell drawn as a soft rounded hexagon in deep dark brown, inside it a glowing golden honey amber dot with two curved broadcast signal arcs on each side, like a live broadcast icon inside a beehive cell. Flat vector logo mark, bold simple geometric shapes, two colors only, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "C4", "dir": "C",
+      "prompt": "Minimalist logo symbol: a friendly traditional dome-shaped straw beehive (skep) in golden honey amber with rounded horizontal bands and a small dark arched entrance, acting as a broadcast tower: deep dark brown radio signal arcs radiate from the top of the hive on both sides. Flat vector logo mark, bold simple shapes, two colors, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "D1", "dir": "D",
+      "prompt": "Minimalist logo symbol: a cute minimal round bee seen from the front, golden honey amber oval body with two deep dark brown stripes, two dot eyes and a small smile, two short antennae with round tips. Instead of wings it has broadcast radio wave arcs, two curved arcs on each side of the body like the symbol (( )), so the bee looks like it is transmitting a live signal. Flat vector logo mark, bold simple geometric shapes, two colors only, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "D2", "dir": "D",
+      "prompt": "Minimalist logo symbol: a small striped honey bee in golden amber and deep dark brown, flying, its two wings drawn as curved broadcast signal arcs that spread outward like radio waves, round and friendly geometric style. Flat vector logo mark, bold simple shapes, two colors only, centered on a plain cream white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    }
+  ]
+}
