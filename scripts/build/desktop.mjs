@@ -137,7 +137,12 @@ if (!env.TAURI_SIGNING_PRIVATE_KEY) {
 }
 
 // Linux CI runners have no FUSE: let the AppImage tools (linuxdeploy) run extracted.
-if (target.startsWith('linux')) env.APPIMAGE_EXTRACT_AND_RUN ??= '1';
+// NO_STRIP: linuxdeploy must not strip the sidecar, a pkg executable whose payload follows
+// the ELF data (stripped, it fails at start with "SyntaxError" in pkg/prelude/bootstrap.js).
+if (target.startsWith('linux')) {
+  env.APPIMAGE_EXTRACT_AND_RUN ??= '1';
+  env.NO_STRIP ??= 'true';
+}
 
 // 4. tauri build with a config overlay (keeps tauri.conf.json free of build-time paths, so
 // `cargo build` / `cargo test` work without a staged package).
