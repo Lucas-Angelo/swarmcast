@@ -1,0 +1,34 @@
+/* Stand-in for assets/brand/tokens.css (the brand's single source of truth), with the
+   "Forest & Cream" palette. build.rs copies assets/brand/tokens.css to splash/tokens.css when
+   it exists, else this file. Same variable names. */
+:root {
+  color-scheme: light dark;
+  --sc-bg: #f6f1e6;
+  --sc-surface: #fffdf8;
+  --sc-border: #e4dccb;
+  --sc-ink: #12211f;
+  --sc-muted: #5b6b67;
+  --sc-accent: #0f5c53;
+  --sc-on-accent: #fffdf8;
+  --sc-success: #1f7a4d;
+  --sc-warning: #f2b441;
+  --sc-live: #d63a2f;
+  --sc-focus: #f2b441;
+  --sc-radius: 14px;
+  --sc-font: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --sc-bg: #0c1716;
+    --sc-surface: #13221f;
+    --sc-border: #24403b;
+    --sc-ink: #eef3ee;
+    --sc-muted: #9db3ad;
+    --sc-accent: #3db5a2;
+    --sc-on-accent: #0c1716;
+    --sc-success: #4cc38a;
+    --sc-warning: #f2b441;
+    --sc-live: #ff5a4e;
+    --sc-focus: #f2b441;
+  }
+}
