@@ -9,6 +9,17 @@ export interface SpeedTestOptions {
   /** Bytes per upload request. */
   uploadBytes?: number;
   rounds?: number;
+  /** Aborts the whole test (the app is quitting). */
+  signal?: AbortSignal;
+}
+
+/**
+ * Speed test endpoints: Cloudflare's, or `SWARMCAST_SPEEDTEST_URL` (a server answering
+ * `<url>/__down?bytes=n` and `POST <url>/__up`; tests only).
+ */
+export function speedTestUrls(env: NodeJS.ProcessEnv = process.env): Pick<SpeedTestOptions, 'downloadUrl' | 'uploadUrl'> {
+  const base = env.SWARMCAST_SPEEDTEST_URL?.replace(/\/+$/, '');
+  return base ? { downloadUrl: `${base}/__down`, uploadUrl: `${base}/__up` } : {};
 }
 
 const DEFAULTS = {
@@ -28,12 +39,13 @@ export async function runSpeedTest(opts: SpeedTestOptions = {}): Promise<SpeedTe
   const o = { ...DEFAULTS, ...opts };
   const f = o.fetchImpl ?? fetch;
   const headers = { 'User-Agent': 'SwarmCast speed check' };
+  const signal = (ms: number): AbortSignal => (o.signal ? AbortSignal.any([o.signal, AbortSignal.timeout(ms)]) : AbortSignal.timeout(ms));
 
   // Latency: a few tiny requests, take the median.
   const latencies: number[] = [];
   for (let i = 0; i < 5; i++) {
     const t0 = performance.now();
-    const r = await f(`${o.downloadUrl}?bytes=0`, { headers, cache: 'no-store', signal: AbortSignal.timeout(10_000) });
+    const r = await f(`${o.downloadUrl}?bytes=0`, { headers, cache: 'no-store', signal: signal(10_000) });
     await r.arrayBuffer();
     latencies.push(performance.now() - t0);
   }
@@ -43,7 +55,7 @@ export async function runSpeedTest(opts: SpeedTestOptions = {}): Promise<SpeedTe
   const down: number[] = [];
   for (let i = 0; i < o.rounds; i++) {
     const t0 = performance.now();
-    const r = await f(`${o.downloadUrl}?bytes=${o.downloadBytes}`, { headers, cache: 'no-store', signal: AbortSignal.timeout(60_000) });
+    const r = await f(`${o.downloadUrl}?bytes=${o.downloadBytes}`, { headers, cache: 'no-store', signal: signal(60_000) });
     if (!r.ok) throw new Error(`download test failed (HTTP ${r.status})`);
     const n = (await r.arrayBuffer()).byteLength;
     const secs = Math.max(0.001, (performance.now() - t0 - latencyMs) / 1000);
@@ -58,7 +70,7 @@ export async function runSpeedTest(opts: SpeedTestOptions = {}): Promise<SpeedTe
       method: 'POST',
       headers: { ...headers, 'Content-Type': 'application/octet-stream' },
       body,
-      signal: AbortSignal.timeout(60_000),
+      signal: signal(60_000),
     });
     await r.arrayBuffer();
     if (!r.ok) throw new Error(`upload test failed (HTTP ${r.status})`);

@@ -57,6 +57,8 @@ export interface QualityDeps {
   mediamtxHlsUrl: string;
   streamKey: string;
   speedTest: () => SpeedTestResult | undefined;
+  /** Aborted when the app quits: an ffmpeg download (and its retries) stops. */
+  quitSignal?: AbortSignal;
   /** Panel warning + activity log line (translatable code). */
   warn: (code: MessageKey, params?: MessageParams) => void;
   now?: () => number;
@@ -178,10 +180,15 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     this.install = { phase: 'downloading', receivedBytes: 0, ...retry };
     this.changed();
     try {
-      this.ffmpegPath = await (this.d.installFfmpeg ?? installFfmpeg)(this.d.dataDir, this.d.log, (p) => {
-        this.install = { ...p, ...retry };
-        this.changed();
-      });
+      this.ffmpegPath = await (this.d.installFfmpeg ?? installFfmpeg)(
+        this.d.dataDir,
+        this.d.log,
+        (p) => {
+          this.install = { ...p, ...retry };
+          this.changed();
+        },
+        { signal: this.d.quitSignal },
+      );
       this.transcoder.setBinary(this.ffmpegPath);
       await this.probe(true);
     } catch (err) {
@@ -199,6 +206,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     const attempts = delaysMs.length + 1;
     return withRetries((attempt) => this.installFfmpeg({ attempt, attempts }), delaysMs, {
       sleep,
+      signal: this.d.quitSignal,
       onRetry: (err, next) => {
         this.d.log.warn({ err: err.message, next }, 'video converter install failed; trying again');
         this.install = { phase: 'retrying', receivedBytes: 0, message: err.message, attempt: next, attempts };

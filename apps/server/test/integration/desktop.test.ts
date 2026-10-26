@@ -1,5 +1,6 @@
 import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import readline from 'node:readline';
@@ -25,8 +26,8 @@ interface Ports {
   mediamtxHls: number;
 }
 
-function writeConfig(dir: string, ports: Ports): void {
-  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ports, speedTest: { enabled: false, intervalMinutes: 15 }, tunnel: { provider: 'none' } }));
+function writeConfig(dir: string, ports: Ports, extra: Record<string, unknown> = {}): void {
+  fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ports, speedTest: { enabled: false, intervalMinutes: 15 }, tunnel: { provider: 'none' }, ...extra }));
 }
 
 /** A folder like the desktop app's resources: web/admin and web/viewer (SWARMCAST_WEB_DIR). */
@@ -51,8 +52,9 @@ class FakeShell {
     readonly home: string,
     args: string[] = [],
     env: Record<string, string> = {},
+    o: { tunnel?: boolean } = {},
   ) {
-    this.proc = spawn(process.execPath, ['--import', 'tsx', MAIN, '--desktop', '--no-tunnel', '--data-dir', dataDir, ...args], {
+    this.proc = spawn(process.execPath, ['--import', 'tsx', MAIN, '--desktop', ...(o.tunnel ? [] : ['--no-tunnel']), '--data-dir', dataDir, ...args], {
       cwd: ROOT,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -106,13 +108,16 @@ class FakeShell {
 const isReady = (m: DesktopOutMessage): m is Extract<DesktopOutMessage, { type: 'ready' }> => m.type === 'ready';
 const isFatal = (m: DesktopOutMessage): m is Extract<DesktopOutMessage, { type: 'fatal' }> => m.type === 'fatal';
 
-/** Log in like the webview: follow /auth/<token>, keep the cookie. */
+/** Log in like the webview: open /auth/<token> (200, cookie, meta refresh to /), keep the cookie, open /. */
 async function login(adminUrl: string): Promise<{ base: string; cookie: string; status: number }> {
   const r1 = await fetch(adminUrl, { redirect: 'manual' });
-  expect(r1.status).toBe(303);
+  expect(r1.status).toBe(200);
+  const page = await r1.text();
+  expect(page).toContain('<meta http-equiv="refresh" content="0;url=/">');
+  expect(page).not.toContain(new URL(adminUrl).pathname.slice('/auth/'.length));
   const cookie = r1.headers.getSetCookie().map((c) => c.split(';')[0]!).find((c) => c.startsWith(`${ADMIN_COOKIE}=`))!;
   const base = new URL(adminUrl).origin;
-  const r2 = await fetch(new URL(r1.headers.get('location')!, base), { headers: { cookie } });
+  const r2 = await fetch(`${base}/`, { headers: { cookie } });
   return { base, cookie, status: r2.status };
 }
 
@@ -128,7 +133,10 @@ const shells: FakeShell[] = [];
 const servers: net.Server[] = [];
 afterEach(() => {
   for (const s of shells.splice(0)) if (s.proc.exitCode === null) s.proc.kill('SIGKILL');
-  for (const s of servers.splice(0)) s.close();
+  for (const s of servers.splice(0)) {
+    if (s instanceof http.Server) s.closeAllConnections();
+    s.close();
+  }
 });
 
 describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () => {
@@ -230,6 +238,38 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     expect(await shell.exited).toBe(0);
     await waitFor(() => children.every((p) => !isAlive(p)), 10_000, 'child processes to exit');
     expect(await isListening(ports.rtmp)).toBe(false);
+  });
+
+  it('quit right away while the live is starting and the first-run speed test hangs: exit in under 5 s, nothing left', async () => {
+    // One local server that accepts every request and never answers: the speed test
+    // (SWARMCAST_SPEEDTEST_URL) and the tunnel's reachability check (an "external" tunnel
+    // pointing at it) both hang, like a slow network on the first start.
+    const seen: string[] = [];
+    const hang = http.createServer((req) => seen.push(req.url ?? ''));
+    servers.push(hang);
+    await new Promise<void>((r) => hang.listen(0, '127.0.0.1', () => r()));
+    const hangUrl = `http://127.0.0.1:${(hang.address() as net.AddressInfo).port}`;
+    const dir = tmpDir();
+    const ports = { rtmp: 29765, public: 28495, admin: 28496, mediamtxHls: 29303 };
+    writeConfig(dir, ports, { speedTest: { enabled: true, intervalMinutes: 15 }, tunnel: { provider: 'external', externalUrl: hangUrl } });
+    const shell = new FakeShell(dir, tmpDir('sc-home-'), [], { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_SPEEDTEST_URL: hangUrl }, { tunnel: true });
+    shells.push(shell);
+    await shell.next(isReady);
+    await shell.phaseIs('starting');
+    await waitFor(() => seen.some((u) => u.startsWith('/__down')) && seen.includes('/healthz'), 20_000, 'the speed test and the tunnel check to hang');
+    const children = childPids(shell.proc.pid!);
+    expect(children.length).toBeGreaterThan(0);
+
+    const t0 = Date.now();
+    shell.send({ type: 'quit' });
+    expect(await shell.exited).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(5000);
+    expect(shell.messages.at(-1)).toMatchObject({ type: 'state', phase: 'off' });
+    await waitFor(() => children.every((p) => !isAlive(p)), 5000, 'child processes to exit');
+    for (const p of Object.values(ports)) expect(await isListening(p)).toBe(false);
+    // The aborted first-run check wrote nothing (the next start checks again).
+    expect(fs.existsSync(path.join(dir, 'system-check.json'))).toBe(false);
+    hang.closeAllConnections();
   });
 
   it('{"type":"quit"} exits 0; autostart is unsupported without SWARMCAST_DESKTOP_EXE', async () => {

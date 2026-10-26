@@ -135,13 +135,27 @@ export function desktopExecValue(exe: string): string {
   return `${quoted} ${BACKGROUND_ARG}`.replace(/\\/g, '\\\\');
 }
 
-/** XDG autostart entry. */
+/**
+ * TryExec value: the program alone, with the string escaping of every Desktop Entry value
+ * (a backslash doubled, as in Exec). No Exec-style quotes: TryExec is a path, not a command line,
+ * and a quoted one would never be found.
+ */
+export function desktopTryExecValue(exe: string): string {
+  return exe.replace(/\\/g, '\\\\');
+}
+
+/**
+ * XDG autostart entry. `TryExec`: removing the `.deb` leaves this file in the home folder
+ * (package scripts do not edit home folders), and sessions skip an entry whose TryExec
+ * program is gone.
+ */
 export function linuxDesktopEntry(exe: string): string {
   checkExePath(exe);
   return `[Desktop Entry]
 Type=Application
 Name=SwarmCast
 Comment=Opens SwarmCast in the tray when you sign in
+TryExec=${desktopTryExecValue(exe)}
 Exec=${desktopExecValue(exe)}
 Terminal=false
 X-GNOME-Autostart-enabled=true
