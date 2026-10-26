@@ -4,6 +4,9 @@ import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
 import { brand, links } from './src/brand.mjs';
 import { langRedirectScript } from './src/lang-redirect.mjs';
+import { themeColors } from './src/tokens.mjs';
+
+const colors = themeColors();
 
 /** Sidebar group/label helper: English label + pt-BR translation. */
 /** @param {string} en @param {string} pt */
@@ -13,13 +16,12 @@ export default defineConfig({
   site: links.site,
   base: links.base,
   trailingSlash: 'always',
-  // No telemetry, trackers or third-party requests on the site (fonts are the system's).
+  // No telemetry, trackers or third-party requests on the site (the font is self-hosted).
   devToolbar: { enabled: false },
   integrations: [
     starlight({
       title: { en: `${brand.name} guide`, 'pt-BR': `Guia do ${brand.name}` },
       description: 'SwarmCast: members-only live streaming from your own computer. Free, private, open source.',
-      logo: brand.logo,
       favicon: brand.favicon,
       defaultLocale: 'root',
       locales: {
@@ -30,27 +32,61 @@ export default defineConfig({
       editLink: { baseUrl: `${links.repo}/edit/main/site/` },
       lastUpdated: false,
       credits: false,
-      customCss: ['./src/styles/custom.css'],
+      // Colours, font, radii: assets/brand/tokens.css (via tokens.css), mapped onto Starlight.
+      customCss: ['./src/styles/tokens.css', './src/styles/ui.css', './src/styles/starlight.css'],
       components: {
         Header: './src/components/Header.astro',
-        Hero: './src/components/Hero.astro',
+        SiteTitle: './src/components/SiteTitle.astro',
+      },
+      expressiveCode: {
+        themes: ['github-dark', 'github-light'],
+        styleOverrides: {
+          borderRadius: '8px',
+          borderColor: 'var(--sc-border)',
+          codeBackground: 'var(--sc-surface)',
+          codeFontFamily: 'var(--sc-font-mono)',
+          codeFontSize: '0.875rem',
+          uiFontFamily: 'var(--sc-font)',
+          frames: {
+            frameBoxShadowCssValue: 'none',
+            editorActiveTabBackground: 'var(--sc-surface)',
+            editorActiveTabIndicatorTopColor: 'transparent',
+            editorTabBarBackground: 'var(--sc-surface-2)',
+            editorTabBarBorderBottomColor: 'var(--sc-border)',
+            terminalTitlebarBackground: 'var(--sc-surface-2)',
+            terminalTitlebarBorderBottomColor: 'var(--sc-border)',
+            terminalTitlebarDotsForeground: 'var(--sc-border-strong)',
+            terminalTitlebarDotsOpacity: '1',
+            terminalBackground: 'var(--sc-surface)',
+            inlineButtonBorder: 'var(--sc-border-strong)',
+            inlineButtonForeground: 'var(--sc-ink)',
+            tooltipSuccessBackground: 'var(--sc-ink)',
+            tooltipSuccessForeground: 'var(--sc-bg)',
+          },
+        },
       },
       head: [
         { tag: 'script', content: langRedirectScript(links.base) },
         { tag: 'meta', attrs: { name: 'referrer', content: 'strict-origin-when-cross-origin' } },
-        { tag: 'meta', attrs: { name: 'theme-color', content: brand.accent } },
+        { tag: 'meta', attrs: { name: 'theme-color', media: '(prefers-color-scheme: light)', content: colors.light } },
+        { tag: 'meta', attrs: { name: 'theme-color', media: '(prefers-color-scheme: dark)', content: colors.dark } },
       ],
       plugins: [
         starlightLinksValidator({
           errorOnInconsistentLocale: true,
           errorOnLocalLinks: true,
+          // The home and download pages are the site's own Astro pages (src/pages/), which the
+          // validator cannot see. Their anchors (#windows, #macos, #linux) are checked by the
+          // Playwright tests.
+          exclude: ['/swarmcast/', '/swarmcast/pt-br/', '/swarmcast/download/', '/swarmcast/download/#{windows,macos,linux}', '/swarmcast/pt-br/download/', '/swarmcast/pt-br/download/#{windows,macos,linux}'],
         }),
       ],
       sidebar: [
         {
           ...t('Get started', 'Começar'),
           items: [
-            { slug: 'download' },
+            { slug: 'guide' },
+            { ...t('Download', 'Baixar'), link: '/download/' },
             { slug: 'install/windows' },
             { slug: 'install/macos' },
             { slug: 'install/linux' },

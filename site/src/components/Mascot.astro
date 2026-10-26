@@ -1,43 +1,25 @@
 ---
-// The mascot on the home page. Until the real one exists (assets/brand/), a decorative
-// placeholder: a small swarm of dots in the panel purple. To use the real mascot, put the image
-// in site/src/assets/brand/ and set `mascot` in src/brand.mjs.
+// The mascot, when `brand.mascot` is set in src/brand.mjs (file in assets/brand/ at the repo
+// root). Renders nothing until then: no placeholder clip art.
 import { Image } from 'astro:assets';
 import { brand } from '../brand.mjs';
 import type { SiteLang } from '../lib/i18n';
 
 interface Props {
   lang: SiteLang;
+  width?: number;
+  eager?: boolean;
 }
-const { lang } = Astro.props;
-const files = import.meta.glob<{ default: ImageMetadata }>('../assets/brand/*.{png,jpg,jpeg,webp,svg,avif}', { eager: true });
-const file = brand.mascot ? files[`../assets/brand/${brand.mascot.file}`]?.default : undefined;
+const { lang, width = 160, eager = false } = Astro.props;
+const files = import.meta.glob<{ default: ImageMetadata }>('../../../assets/brand/*.{png,jpg,jpeg,webp,svg,avif}', { eager: true });
+const file = brand.mascot ? files[`../../../assets/brand/${brand.mascot.file}`]?.default : undefined;
 ---
 
-{
-  file ? (
-    <Image class="sc-mascot" src={file} alt={brand.mascot?.alt[lang] ?? ''} width={320} loading="eager" />
-  ) : (
-    <svg class="sc-mascot sc-mascot-placeholder" viewBox="0 0 200 200" width="240" height="240" aria-hidden="true" data-testid="mascot-placeholder">
-      <circle cx="100" cy="100" r="92" fill="var(--sl-color-accent-low)" />
-      <g fill="var(--sc-accent-strong)">
-        <circle cx="100" cy="62" r="16" />
-        <circle cx="62" cy="118" r="13" />
-        <circle cx="138" cy="118" r="13" />
-        <circle cx="100" cy="150" r="10" />
-        <circle cx="52" cy="72" r="7" />
-        <circle cx="150" cy="70" r="8" />
-      </g>
-      <g stroke="var(--sl-color-accent)" stroke-width="4" stroke-linecap="round" opacity="0.8">
-        <path d="M100 78 L66 108 M100 78 L134 108 M70 124 L95 145 M130 124 L105 145 M75 118 H125" fill="none" />
-      </g>
-    </svg>
-  )
-}
+{file && <Image class="sc-mascot" src={file} alt={brand.mascot?.alt[lang] ?? ''} width={width} loading={eager ? 'eager' : 'lazy'} style={`--w: ${width}px`} />}
 
 <style>
   .sc-mascot {
-    width: min(240px, 36vw);
+    width: min(var(--w, 160px), 40vw);
     height: auto;
     margin-inline: auto;
   }

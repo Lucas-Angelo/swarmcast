@@ -1,0 +1,136 @@
+---
+// Slim top navigation of the landing and download pages: logo, Guide, Download, GitHub, language.
+import Icon from './Icon.astro';
+import Logo from './Logo.astro';
+import { links } from '../brand.mjs';
+import { pagePath, tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+  slug: string;
+}
+const { lang, slug } = Astro.props;
+const other = lang === 'en' ? 'pt-BR' : 'en';
+const items = [
+  { slug: 'guide', label: tr(lang, 'nav.guide') },
+  { slug: 'download', label: tr(lang, 'nav.download'), desktopOnly: true },
+];
+---
+
+<header class="sc-nav">
+  <div class="sc-container sc-nav-inner">
+    <a class="sc-nav-home" href={pagePath(lang)} aria-label={tr(lang, 'nav.home')}>
+      <Logo />
+    </a>
+    <nav aria-label={tr(lang, 'nav.label')}>
+      <ul>
+        {
+          items.map((i) => (
+            <li class:list={{ 'sc-nav-desktop': i.desktopOnly }}>
+              <a href={pagePath(lang, i.slug)} aria-current={slug === i.slug ? 'page' : undefined}>
+                {i.label}
+              </a>
+            </li>
+          ))
+        }
+        <li>
+          <a href={links.repo} rel="noopener" aria-label={tr(lang, 'nav.github')} data-testid="nav-github">
+            <Icon name="github" size={18} />
+            <span class="sc-nav-desktop">{tr(lang, 'nav.github')}</span>
+          </a>
+        </li>
+        <li>
+          <a
+            class="sc-nav-lang"
+            href={pagePath(other, slug)}
+            hreflang={other}
+            lang={other}
+            aria-label={tr(lang, 'lang.switch.label')}
+            data-testid="lang-switch"
+          >
+            <Icon name="globe" size={16} />
+            <span class="sc-nav-desktop">{tr(lang, 'lang.switch')}</span>
+            <span class="sc-nav-mobile">{tr(lang, 'lang.short')}</span>
+          </a>
+        </li>
+      </ul>
+    </nav>
+  </div>
+</header>
+
+<style>
+  .sc-nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    border-bottom: 1px solid var(--sc-border);
+    background: color-mix(in srgb, var(--sc-bg) 92%, transparent);
+    backdrop-filter: saturate(1.4) blur(10px);
+    -webkit-backdrop-filter: saturate(1.4) blur(10px);
+  }
+  .sc-nav-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    height: var(--sc-nav-height);
+  }
+  .sc-nav-home {
+    display: inline-flex;
+    padding: 0.25rem;
+    margin-inline-start: -0.25rem;
+    border-radius: var(--sc-radius-sm);
+    text-decoration: none;
+  }
+  ul {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0;
+    list-style: none;
+  }
+  li {
+    display: flex;
+  }
+  nav a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-height: 2.25rem;
+    padding: 0 0.625rem;
+    border-radius: var(--sc-radius-sm);
+    color: var(--sc-muted);
+    font-size: 0.9375rem;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition:
+      color 0.15s ease,
+      background-color 0.15s ease;
+  }
+  nav a:hover {
+    color: var(--sc-ink);
+    background: var(--sc-surface);
+  }
+  nav a[aria-current='page'] {
+    color: var(--sc-ink);
+  }
+  .sc-nav-lang {
+    margin-inline-start: 0.25rem;
+    border: 1px solid var(--sc-border);
+  }
+  .sc-nav-mobile {
+    display: none;
+  }
+  @media (max-width: 39.99rem) {
+    .sc-nav-desktop {
+      display: none;
+    }
+    .sc-nav-mobile {
+      display: inline;
+    }
+    nav a {
+      padding: 0 0.5rem;
+    }
+  }
+</style>

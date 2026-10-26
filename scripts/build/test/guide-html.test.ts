@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { inline, loadGuideConfig, makeLinkMapper, markdownToHtml, parseFrontmatter, renderGuide, SITE_DIR, slugify } from '../guide-html.mjs';
+import { inline, loadGuideConfig, makeLinkMapper, markdownToHtml, parseFrontmatter, renderGuide, SITE_DIR, slugify, tokenDeclarations } from '../guide-html.mjs';
 
 describe('markdown subset', () => {
   it('escapes HTML and renders code, bold and http links only', () => {
@@ -80,5 +80,15 @@ describe('the offline guides built from the site pages', () => {
         expect(fs.existsSync(path.join(SITE_DIR, config.languages[lang].contentDir, `${slug}.md`)), `${lang}/${slug}`).toBe(true);
       }
     }
+  });
+});
+
+describe('colours', () => {
+  it('come from the brand tokens (hex only), with fallbacks', () => {
+    const t = tokenDeclarations(':root, :root[data-palette="x"] { --sc-bg: #ABCDEF; --sc-ink: oklch(0.2 0 0); } :root[data-theme="dark"] { --sc-bg: #010203; }');
+    expect(t.light).toContain('--sc-bg: #ABCDEF;');
+    expect(t.light).toContain('--sc-ink: #12211F;');
+    expect(t.dark).toContain('--sc-bg: #010203;');
+    expect(renderGuide({ lang: 'en' })).not.toMatch(/#6d4aff|#5b36f5/i);
   });
 });

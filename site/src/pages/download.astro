@@ -1,0 +1,11 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+import DownloadPage from '../components/DownloadPage.astro';
+import { copy } from '../lib/copy';
+
+const c = copy.en.download;
+---
+
+<SiteLayout lang="en" slug="download" title={`${c.title} · SwarmCast`} description={c.description}>
+  <DownloadPage lang="en" />
+</SiteLayout>

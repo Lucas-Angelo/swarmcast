@@ -21,7 +21,12 @@
     "test:e2e": "playwright test",
     "dev": "npm run dev -w @swarmcast/server",
     "package": "node scripts/build/package.mjs",
-    "fetch-bins": "node scripts/build/fetch-binaries.mjs"
+    "fetch-bins": "node scripts/build/fetch-binaries.mjs",
+    "desktop:build": "node scripts/build/desktop.mjs",
+    "desktop:dev": "node apps/desktop/test/dev.mjs",
+    "desktop:test": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml",
+    "desktop:manifest": "node scripts/build/updater-manifest.mjs",
+    "desktop:icons": "node apps/desktop/icons.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

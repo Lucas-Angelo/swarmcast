@@ -17,6 +17,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readTokens } from '../../site/src/tokens.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const SITE_DIR = path.join(REPO_ROOT, 'site');
@@ -216,43 +217,72 @@ export function makeLinkMapper(slugs, sitePrefix) {
   };
 }
 
-const CSS = `
-:root { color-scheme: light dark; --bg: #ffffff; --fg: #1d1d1f; --muted: #5f6368; --accent: #5b36f5;
-  --code-bg: #f1f0f5; --border: #e3e0ea; --note: #eef2ff; --tip: #ecfdf3; --caution: #fff7e6; --danger: #fdecec; }
-@media (prefers-color-scheme: dark) {
-  :root { --bg: #16151a; --fg: #ececf1; --muted: #a8a8b3; --accent: #b9a6ff; --code-bg: #26242d; --border: #34313d;
-    --note: #1d2033; --tip: #15281e; --caution: #2e2615; --danger: #321a1a; }
+/**
+ * The guide's colours come from the shared brand tokens (assets/brand/tokens.css, the same file
+ * the website uses), so the offline guide matches the site. Hex values only; the fallbacks keep
+ * it readable if the file is missing or uses another colour syntax.
+ */
+const TOKEN_FALLBACK = {
+  light: { '--sc-bg': '#F6F1E6', '--sc-surface': '#FFFDF8', '--sc-border': '#E1D9C7', '--sc-ink': '#12211F', '--sc-muted': '#58665F', '--sc-accent': '#0F5C53', '--sc-accent-strong': '#0A4740', '--sc-success': '#3B7A2A', '--sc-warning': '#A15C00', '--sc-live': '#D63A2F' },
+  dark: { '--sc-bg': '#0C1716', '--sc-surface': '#13221F', '--sc-border': '#26403A', '--sc-ink': '#EEF3EE', '--sc-muted': '#9CB0A9', '--sc-accent': '#3DB5A2', '--sc-accent-strong': '#7DD8C8', '--sc-success': '#7BC86A', '--sc-warning': '#F2B441', '--sc-live': '#FF5A4E' },
+};
+
+/** `--sc-x: #hex;` declarations for light and dark, read from assets/brand/tokens.css. */
+export function tokenDeclarations(css) {
+  let tokens = { light: {}, dark: {} };
+  try {
+    tokens = css === undefined ? readTokens() : readTokens(css);
+  } catch {}
+  const hex = (t) => Object.fromEntries(Object.entries(t).filter(([, v]) => /^#[0-9a-f]{3,8}$/i.test(v)));
+  const pick = (t) =>
+    Object.keys(TOKEN_FALLBACK.light)
+      .map((k) => `${k}: ${t[k]};`)
+      .join(' ');
+  return { light: pick({ ...TOKEN_FALLBACK.light, ...hex(tokens.light) }), dark: pick({ ...TOKEN_FALLBACK.dark, ...hex(tokens.dark) }) };
 }
+
+const VARS = tokenDeclarations();
+
+const CSS = `
+:root { color-scheme: light dark; ${VARS.light} }
+@media (prefers-color-scheme: dark) { :root { ${VARS.dark} } }
 * { box-sizing: border-box; }
-html { background: var(--bg); }
-body { margin: 0 auto; max-width: 46rem; padding: 2rem 1rem 4rem; background: var(--bg); color: var(--fg);
-  font: 17px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif; }
-h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 1rem; }
-h2 { font-size: 1.5rem; margin: 2.6rem 0 0.6rem; padding-top: 1.2rem; border-top: 2px solid var(--border); }
-h3 { font-size: 1.2rem; margin: 1.8rem 0 0.5rem; }
-h4 { font-size: 1.05rem; margin: 1.4rem 0 0.4rem; }
+html { background: var(--sc-bg); }
+body { margin: 0 auto; max-width: 44rem; padding: 2.5rem 1rem 4rem; background: var(--sc-bg); color: var(--sc-ink);
+  font: 17px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  -webkit-font-smoothing: antialiased; }
+h1, h2, h3, h4, strong { color: var(--sc-ink); }
+h1 { font-size: 2rem; line-height: 1.2; letter-spacing: -0.02em; margin: 0 0 0.75rem; }
+h2 { font-size: 1.5rem; line-height: 1.25; letter-spacing: -0.015em; margin: 3rem 0 0.75rem; padding-top: 2rem; border-top: 1px solid var(--sc-border); }
+h3 { font-size: 1.2rem; margin: 2rem 0 0.5rem; }
+h4 { font-size: 1.05rem; margin: 1.5rem 0 0.4rem; }
 p { margin: 0.6rem 0; }
 ol, ul { padding-left: 1.6rem; margin: 0.5rem 0; }
 li { margin: 0.3rem 0; }
+li::marker { color: var(--sc-muted); }
 li > ol, li > ul { margin: 0.2rem 0; }
-strong { font-weight: 650; }
-a { color: var(--accent); }
-code { font: 0.9em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--code-bg);
-  padding: 0.1em 0.35em; border-radius: 4px; overflow-wrap: anywhere; }
-pre { background: var(--code-bg); padding: 0.8rem; border-radius: 6px; overflow-x: auto; }
-pre code { padding: 0; background: none; }
-figure { margin: 0.8rem 0; }
-figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--border); border-radius: 8px; }
-figcaption { color: var(--muted); font-size: 0.85rem; margin-top: 0.3rem; }
-.aside { margin: 0.9rem 0; padding: 0.6rem 0.9rem; border-left: 4px solid var(--accent); border-radius: 6px; background: var(--note); }
-.aside-tip { background: var(--tip); border-color: #1f9d55; }
-.aside-caution { background: var(--caution); border-color: #c77700; }
-.aside-danger { background: var(--danger); border-color: #d33; }
-.aside-title { font-weight: 650; margin-top: 0; }
-.lead { color: var(--muted); }
-nav ol { columns: 2 14rem; }
-footer { margin-top: 3rem; color: var(--muted); font-size: 0.85rem; }
-@media print { body { max-width: none; } h2 { break-before: page; } h2, h3 { break-after: avoid; } }
+strong { font-weight: 600; }
+a { color: var(--sc-accent-strong); text-decoration-color: var(--sc-accent); text-decoration-thickness: 1.5px; text-underline-offset: 0.2em; }
+code { font: 0.875em ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: var(--sc-surface); color: var(--sc-ink);
+  border: 1px solid var(--sc-border); padding: 0.1em 0.35em; border-radius: 6px; overflow-wrap: anywhere; }
+pre { background: var(--sc-surface); border: 1px solid var(--sc-border); padding: 0.8rem 1rem; border-radius: 8px; overflow-x: auto; }
+pre code { padding: 0; border: 0; background: none; }
+figure { margin: 1rem 0; }
+figure img { display: block; max-width: 100%; height: auto; border: 1px solid var(--sc-border); border-radius: 8px; }
+figcaption { color: var(--sc-muted); font-size: 0.85rem; margin-top: 0.4rem; }
+.aside { margin: 1rem 0; padding: 0.75rem 1rem; border: 1px solid var(--sc-border); border-left: 3px solid var(--sc-accent); border-radius: 8px; background: var(--sc-surface); }
+.aside-tip { border-left-color: var(--sc-success); }
+.aside-caution { border-left-color: var(--sc-warning); }
+.aside-danger { border-left-color: var(--sc-live); }
+.aside-title { color: var(--sc-ink); font-weight: 600; margin-top: 0; }
+.lead { color: var(--sc-muted); }
+nav { margin-top: 1.5rem; padding: 0.5rem 1.25rem; border: 1px solid var(--sc-border); border-radius: 12px; }
+nav ol { columns: 2 14rem; margin: 0 0 0.5rem; }
+nav li { margin: 0 0 0.4rem; break-inside: avoid; }
+nav a { text-decoration: none; }
+nav a:hover { text-decoration: underline; }
+footer { margin-top: 3rem; padding-top: 1.5rem; border-top: 1px solid var(--sc-border); color: var(--sc-muted); font-size: 0.85rem; }
+@media print { body { max-width: none; } h2 { break-before: page; border-top: 0; } h2, h3 { break-after: avoid; } }
 `;
 
 /**

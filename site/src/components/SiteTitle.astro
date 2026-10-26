@@ -1,0 +1,22 @@
+---
+// Starlight's site title, replaced by the SwarmCast logo + "Guide". Links to the home page.
+import Logo from './Logo.astro';
+import { siteLang, tr } from '../lib/i18n';
+
+const { siteTitleHref, locale } = Astro.locals.starlightRoute;
+const lang = siteLang(locale);
+---
+
+<a href={siteTitleHref} class="site-title sc-site-title" aria-label={`${tr(lang, 'nav.home')}`}>
+  <Logo suffix={tr(lang, 'docs.label')} />
+</a>
+
+<style>
+  .sc-site-title {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    text-decoration: none;
+    border-radius: var(--sc-radius-sm);
+  }
+</style>

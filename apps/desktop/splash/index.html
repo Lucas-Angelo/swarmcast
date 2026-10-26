@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>SwarmCast</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="splash.css" />
+  </head>
+  <body>
+    <main class="splash" data-state="busy">
+      <!-- Same drawing as the app icon (src-tauri/icons/gen.mjs); colors from the brand tokens. -->
+      <svg class="logo" viewBox="0 0 1024 1024" aria-hidden="true">
+        <rect class="tile" x="100" y="100" width="824" height="824" rx="185" />
+        <circle class="dot" cx="512" cy="512" r="74" />
+        <g class="waves" fill="none" stroke-width="58" stroke-linecap="round">
+          <path fill="none" d="M 636.6 389.1 A 175 175 0 0 1 636.6 634.9 M 387.4 389.1 A 175 175 0 0 0 387.4 634.9" />
+          <path fill="none" opacity="0.85" d="M 718.5 307.9 A 290 290 0 0 1 718.5 716.1 M 305.5 307.9 A 290 290 0 0 0 305.5 716.1" />
+        </g>
+      </svg>
+      <div class="brand">SwarmCast</div>
+      <h1 id="title">Starting SwarmCast…</h1>
+      <p id="detail" class="muted">This usually takes a few seconds.</p>
+      <div class="activity" aria-hidden="true">
+        <div class="spinner"></div>
+        <div class="bar" hidden><div class="fill"></div></div>
+        <div class="pct" hidden></div>
+      </div>
+      <div class="actions">
+        <button id="retry" class="primary" type="button">Try again</button>
+        <button id="logs" type="button">Open logs folder</button>
+      </div>
+    </main>
+    <script src="splash.js"></script>
+  </body>
+</html>
