@@ -16,16 +16,19 @@
 /**
  * @type {{
  *   name: string,
- *   logo: undefined | { mark?: string, full?: string, fullDark?: string, alt: string },
+ *   logo: undefined | { mark?: string, markDark?: string, full?: string, fullDark?: string, alt: string },
  *   favicon: string,
  *   mascot: undefined | { file: string, alt: { en: string, 'pt-BR': string } },
  * }}
  */
 export const brand = {
   name: 'SwarmCast',
-  logo: undefined,
+  logo: { mark: 'symbol/swarmcast-symbol.svg', markDark: 'symbol/swarmcast-symbol-on-dark.svg', alt: 'SwarmCast' },
   favicon: '/favicon.svg',
-  mascot: undefined,
+  mascot: {
+    file: 'mascot/mascot-hello.png',
+    alt: { en: 'The SwarmCast bee waving hello', 'pt-BR': 'A abelha do SwarmCast acenando' },
+  },
 };
 
 /** Public URLs used across the site (kept here so a fork only changes one file). */
