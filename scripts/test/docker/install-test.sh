@@ -206,6 +206,9 @@ if [ -n "$LOGIN" ]; then
   eq "$(state | jq -r .obsConnected)" "true" "obsConnected true"
   LINK="$(state | jq -r .liveLink)"
   echo "  live link: ${LINK%/join/*}/join/<secret>"
+  # curl cannot solve the browser check (on by default since v0.2): check the default, then turn it off from the panel API.
+  eq "$(state | jq -r .security.settings.requireBrowserCheck)" "true" "browser check on by default"
+  eq "$(curl -s -o /dev/null -X PUT -b "$W/admin.jar" -H "origin: $ADMIN" -H 'content-type: application/json' -d "$(state | jq -c '.security.settings | .requireBrowserCheck = false')" -w '%{http_code}' "$ADMIN/api/security")" "200" "browser check turned off for the curl viewer"
   V="$W/viewer.jar"
   eq "$(curl -s -o /dev/null -c "$V" -b "$V" -w '%{http_code} %{redirect_url}' "$LINK")" "303 ${LINK%/join/*}/join" "GET live link -> 303 /join"
   if grep -q sc_ticket "$V"; then ok "ticket cookie set"; else bad "no ticket cookie"; fi

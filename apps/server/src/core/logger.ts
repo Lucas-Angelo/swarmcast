@@ -11,6 +11,7 @@ const REDACT = [
   'liveLink',
   'privateKey',
   'manifestPrivateKeyPem',
+  'browserCheckKey',
   'token',
   '*.streamKey',
   '*.secret',

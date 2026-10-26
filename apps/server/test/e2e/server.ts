@@ -1,5 +1,7 @@
 // Test server for Playwright: SwarmCast without tunnel + a synthetic OBS stream.
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -59,12 +61,24 @@ process.on('SIGUSR2', () => {
   ffmpeg?.kill('SIGKILL');
 });
 
+// Test-only control port (127.0.0.1, random port, never part of the app): POST /pow-level/<0|1|2>
+// sets the level the attack shield would choose by itself, without flooding the server.
+const control = http.createServer((req, res) => {
+  const m = /^\/pow-level\/([012])$/.exec(req.url ?? '');
+  if (req.method !== 'POST' || !m) return void res.writeHead(404).end();
+  (app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void }).setAutoPow(Number(m[1]) as 0 | 1 | 2);
+  res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ browserCheck: app.live.shield.powLevel() }));
+});
+await new Promise<void>((r) => control.listen(0, '127.0.0.1', r));
+const testControlUrl = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
+
 fs.mkdirSync('test-results', { recursive: true });
-fs.writeFileSync(path.join('test-results', 'e2e-env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, dataDir, pid: process.pid }));
+fs.writeFileSync(path.join('test-results', 'e2e-env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, dataDir, pid: process.pid, testControlUrl }));
 console.log('e2e server ready');
 
 const shutdown = async (): Promise<void> => {
   stopping = true;
+  control.close();
   ffmpeg?.kill('SIGKILL');
   await app.close();
   process.exit(0);

@@ -42,6 +42,13 @@ export async function adminApi<T = unknown>(method: string, pathname: string, bo
   return (await res.json()) as T;
 }
 
+/** Test-only: force the attack shield's automatic browser check level (0 = back to the settings). */
+export async function forcePowLevel(level: 0 | 1 | 2): Promise<number> {
+  const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { testControlUrl: string };
+  const res = await fetch(`${env.testControlUrl}/pow-level/${level}`, { method: 'POST' });
+  return ((await res.json()) as { browserCheck: number }).browserCheck;
+}
+
 /** pid of the e2e server (for test-only signals). */
 export function e2eServerPid(): number {
   return (JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { pid: number }).pid;

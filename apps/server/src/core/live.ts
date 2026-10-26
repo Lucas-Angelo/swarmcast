@@ -60,6 +60,8 @@ export interface LiveDeps {
   quality?: { binDir: string; dataDir: string; runDir: string; reaper: Reaper | null };
   /** Public IP blocklists (downloaded by the app; none in logic tests). */
   blocklists?: PublicBlocklists;
+  /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
+  browserCheckKey?: string;
 }
 
 type StepDef = { id: string; labelKey: MessageKey };
@@ -154,6 +156,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       settings: () => this.securitySettings(),
       limits: () => ({ maxViewers: d.config.maxViewers, maxSessionsPerDevice: d.config.maxSessionsPerDevice }),
       blocklists: d.blocklists,
+      browserCheckKey: d.browserCheckKey,
       activity: this.activity,
       log: d.log,
       now: d.now,

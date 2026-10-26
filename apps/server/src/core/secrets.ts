@@ -8,6 +8,11 @@ const secretsSchema = z.object({
   /** Ed25519 private key, PKCS#8 PEM. Signs the integrity manifest. */
   manifestPrivateKeyPem: z.string().includes('PRIVATE KEY'),
   createdAt: z.string(),
+  /**
+   * HMAC key (hex) for the "browser already passed the check" cookie. Kept across lives and
+   * restarts so a browser is remembered; added to older files on load.
+   */
+  browserCheckKey: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
 export type Secrets = z.infer<typeof secretsSchema>;
@@ -34,14 +39,19 @@ export function generateSecrets(): Secrets {
     streamKey: `sc_${randomToken(24)}`,
     manifestPrivateKeyPem: privateKey.export({ format: 'pem', type: 'pkcs8' }).toString(),
     createdAt: new Date().toISOString(),
+    browserCheckKey: crypto.randomBytes(32).toString('hex'),
   };
 }
 
 /** Load secrets, generating them on first run. Never log the returned object. */
 export function loadOrCreateSecrets(file: string): Secrets {
   if (fs.existsSync(file)) {
-    const parsed = secretsSchema.safeParse(JSON.parse(fs.readFileSync(file, 'utf8')));
+    const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    // Files from v0.1.0 have no browser check key yet: add one (keeping everything else).
+    const backfill = raw && typeof raw === 'object' && raw.browserCheckKey === undefined;
+    const parsed = secretsSchema.safeParse(backfill ? { ...raw, browserCheckKey: crypto.randomBytes(32).toString('hex') } : raw);
     if (parsed.success) {
+      if (backfill) writePrivateFile(file, JSON.stringify(parsed.data, null, 2) + '\n');
       if (process.platform !== 'win32') {
         try {
           fs.chmodSync(file, 0o600);

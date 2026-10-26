@@ -6,7 +6,16 @@ import { writePrivateFile } from './paths.js';
 export const tunnelProviderSchema = z.enum(['cloudflare-quick', 'none', 'external']);
 export type TunnelProviderName = z.infer<typeof tunnelProviderSchema>;
 
+/**
+ * Version of the config.json format. Missing in files written by v0.1.0 (= version 1).
+ * 2: the browser check is on by default. v0.1.0 saved its old default (`false`) in every file,
+ *    so a `false` from version 1 is switched on once; a `false` saved at version 2 or later is
+ *    the streamer's choice and stays.
+ */
+export const CONFIG_VERSION = 2;
+
 export const configSchema = z.object({
+  configVersion: z.number().int().min(1).default(CONFIG_VERSION),
   ports: z
     .object({
       rtmp: z.number().int().min(1).max(65535).default(DEFAULT_PORTS.rtmp),
@@ -39,7 +48,7 @@ export const configSchema = z.object({
   security: z
     .object({
       blockKnownBadIps: z.boolean().default(true),
-      requireBrowserCheck: z.boolean().default(false),
+      requireBrowserCheck: z.boolean().default(true),
       autoTighten: z.boolean().default(true),
       autoBrowserCheck: z.boolean().default(true),
       autoNewLink: z.boolean().default(false),
@@ -84,11 +93,30 @@ export function loadConfig(file: string): AppConfig {
     return cfg;
   }
   const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as unknown;
-  const parsed = configSchema.safeParse(raw);
+  const { config: migrated, changed } = migrateConfig(raw);
+  const parsed = configSchema.safeParse(migrated);
   if (!parsed.success) {
     throw new Error(`Invalid config file ${file}: ${z.prettifyError(parsed.error)}`);
   }
+  // Write the migration back once, so the streamer's later choices are read as such.
+  if (changed) saveConfig(file, parsed.data);
   return parsed.data;
+}
+
+/** Bring a config.json written by an older version up to CONFIG_VERSION (pure; unknown shapes pass through). */
+export function migrateConfig(raw: unknown): { config: unknown; changed: boolean } {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { config: raw, changed: false };
+  const cfg = { ...(raw as Record<string, unknown>) };
+  const version = typeof cfg.configVersion === 'number' ? cfg.configVersion : 1;
+  if (version >= CONFIG_VERSION) return { config: cfg, changed: false };
+  if (version < 2) {
+    const sec = cfg.security;
+    if (sec && typeof sec === 'object' && !Array.isArray(sec) && (sec as Record<string, unknown>).requireBrowserCheck === false) {
+      cfg.security = { ...(sec as Record<string, unknown>), requireBrowserCheck: true };
+    }
+  }
+  cfg.configVersion = CONFIG_VERSION;
+  return { config: cfg, changed: true };
 }
 
 /**

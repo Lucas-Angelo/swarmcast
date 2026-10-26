@@ -8,11 +8,13 @@ import cookie from '@fastify/cookie';
 import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import {
+  BROWSER_CHECK_TTL_S,
   DEVICE_COOKIE,
   SEGMENT_DURATION_S,
   SESSION_COOKIE,
   SESSION_TTL_S,
   TICKET_COOKIE,
+  VERIFIED_COOKIE,
   JOIN_TICKET_TTL_S,
   joinRequestSchema,
   nicknameError,
@@ -226,11 +228,15 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     return reply.type('text/html; charset=utf-8').send(pages.join);
   });
 
-  // Proof-of-work challenge for the join page (only when the browser check is on).
+  /** This browser already passed the check at the level required now (signed cookie, bound to the device cookie). */
+  const verified = (req: FastifyRequest): boolean => sec.isVerified(req.cookies[VERIFIED_COOKIE], req.cookies[DEVICE_COOKIE]);
+
+  // Proof-of-work challenge for the join page (only when the browser check is on and this browser
+  // has not passed it yet, or passed a lower level than the one asked for now).
   app.get('/api/join/challenge', { config: { rateLimit: { max: () => sec.joinRateMax(JOIN_CHALLENGE_PER_IP_PER_MIN), timeWindow: '1 minute', keyGenerator: ip } } }, async (req, reply) => {
     if (sec.blocked(ip(req))) return blockedJson(reply);
     if (!(await access.verifyTicket(req.cookies[TICKET_COOKIE]))) return reply.code(403).send(apiError('viewer.err.linkInvalid'));
-    const body: JoinChallengeResponse = sec.powLevel() > 0 ? { required: true, challenge: await sec.issuePow() } : { required: false };
+    const body: JoinChallengeResponse = sec.powLevel() > 0 && !verified(req) ? { required: true, challenge: await sec.issuePow() } : { required: false };
     return body;
   });
 
@@ -251,13 +257,16 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       const e = nicknameError(parsed.error.issues[0]?.message);
       return reply.code(400).send({ error: e.text, code: e.code, ...(e.params ? { params: e.params } : {}) } satisfies ApiErrorBody);
     }
-    if (sec.powLevel() > 0) {
-      const verdict = await sec.verifyPow((req.body as { pow?: unknown } | null)?.pow);
+    // The link/ticket and ban checks above always run first; the verified cookie only skips the proof-of-work.
+    if (sec.powLevel() > 0 && !verified(req)) {
+      const { verdict, level } = await sec.verifyPow((req.body as { pow?: unknown } | null)?.pow);
       if (verdict !== 'ok') {
         sec.joinFailed();
         // A fresh challenge comes with the refusal, so the page can solve it and retry.
         return reply.code(403).send({ ...apiError('viewer.err.checkRequired'), pow: await sec.issuePow() });
       }
+      // Remember this browser (set even if the stream turns out to be full, so a retry needs no new proof).
+      reply.setCookie(VERIFIED_COOKIE, sec.issueVerified(deviceId, level ?? 1), { ...cookieBase, maxAge: BROWSER_CHECK_TTL_S });
     }
     if (access.admit(deviceId, deps.limits().maxViewers, deps.limits().maxSessionsPerDevice) === 'full') {
       sec.joinFailed();

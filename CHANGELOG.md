@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The browser check on join is on by default and done once per browser: a signed cookie remembers it (30 days on a fixed address; once per live with the free quick tunnel, whose address changes every live). It is asked again only when an attack needs a stronger check. Configs from v0.1.0 that saved the old default (`false`) are switched on once; turning it off afterwards is kept. The join page shows a progress bar while it checks.
 - The start scripts never ask questions in the terminal: below the minimum they warn and continue. `--ask` / `-Ask` restores the question; `--yes` / `-Yes` still works.
 
 - The header button is now "Turn on SwarmCast" (it starts SwarmCast, not OBS).
