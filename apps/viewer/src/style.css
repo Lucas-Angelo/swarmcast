@@ -161,6 +161,28 @@ form button[type='submit'] {
   margin: var(--sp-3) 0 0;
   font-size: var(--fs-md);
 }
+.check progress {
+  flex: 1 1 auto;
+  min-width: 64px;
+  height: 6px;
+  border: 0;
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-surface-2);
+  overflow: hidden;
+  appearance: none;
+}
+.check progress::-webkit-progress-bar {
+  background: var(--sc-surface-2);
+  border-radius: var(--sc-radius-pill);
+}
+.check progress::-webkit-progress-value {
+  background: var(--sc-accent);
+  border-radius: var(--sc-radius-pill);
+}
+.check progress::-moz-progress-bar {
+  background: var(--sc-accent);
+  border-radius: var(--sc-radius-pill);
+}
 
 /* ---- Watch page: the player is the hero ---------------------------------------------------- */
 /* Width that keeps the 16:9 player plus the status bar inside the window on a laptop. */
