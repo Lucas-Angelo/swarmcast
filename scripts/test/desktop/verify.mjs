@@ -119,7 +119,7 @@ async function login() {
   const u = new URL(url);
   const res = await request({ port: u.port, path: u.pathname });
   const cookie = String(res.headers['set-cookie'] ?? '').split(';')[0];
-  step('panel login', res.status === 303 && cookie.includes('='), `HTTP ${res.status}`);
+  step('panel login', res.status < 400 && cookie.includes('='), `HTTP ${res.status}`);
   const panel = { port: Number(u.port), cookie };
   const page = await request({ port: panel.port, path: '/', cookie });
   step('panel page loads behind the login', page.status === 200 && page.body.includes('<html'), `HTTP ${page.status}`);

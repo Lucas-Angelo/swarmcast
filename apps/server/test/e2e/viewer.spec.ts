@@ -71,13 +71,13 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   const { context, page } = await join(browser, `golive-${browserName}`);
   await waitPlaying(page);
   const goLive = page.getByTestId('go-live');
-  await expect(goLive).toHaveText('● LIVE');
+  await expect(goLive).toHaveText('LIVE');
   await page.evaluate(() => document.querySelector('video')!.pause());
   await page.waitForTimeout(10_000);
   await expect(goLive).toContainText('Go live');
   expect(Number(await goLive.getAttribute('data-behind'))).toBeGreaterThan(5);
   await goLive.click();
-  await expect(goLive).toHaveText('● LIVE', { timeout: 15_000 });
+  await expect(goLive).toHaveText('LIVE', { timeout: 15_000 });
   const behind = await page.evaluate(() => {
     const hls = (window as unknown as { __hls: { liveSyncPosition: number | null } }).__hls;
     return (hls.liveSyncPosition ?? 0) - document.querySelector('video')!.currentTime;
@@ -93,7 +93,7 @@ test('viewers see how many people are watching', async ({ browser, browserName }
   const a = await join(browser, `countA-${browserName}`);
   const b = await join(browser, `countB-${browserName}`);
   for (const p of [a.page, b.page]) {
-    await expect(p.getByTestId('viewer-count')).toHaveText('👁 2 watching', { timeout: 20_000 });
+    await expect(p.getByTestId('viewer-count')).toHaveText('2 watching', { timeout: 20_000 });
   }
   await a.context.close();
   await b.context.close();

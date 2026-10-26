@@ -6,67 +6,73 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex, nofollow" />
     <title data-i18n="watch.pageTitle">Live · SwarmCast</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="../../assets/brand/favicon/favicon.svg" type="image/svg+xml" />
   </head>
   <body class="watch">
-    <div class="player">
-      <video id="video" controls playsinline muted autoplay></video>
-      <div id="overlay" class="overlay" data-i18n="watch.connecting">Connecting…</div>
-    </div>
-    <section class="bar">
-      <div class="status">
-        <span id="live-dot" class="dot"></span>
-        <span id="status" data-i18n="watch.connecting">Connecting…</span>
-        <span class="tip"
-          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-status">i</button
-          ><span class="tip-bubble" role="tooltip" id="tip-status" data-i18n="watch.status.tip"
-            >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs about 20 seconds behind the streamer (about 8 seconds with "Lower delay").</span
-          ></span
-        >
-        <span class="tip viewers" id="viewer-count-wrap" hidden
-          ><span id="viewer-count" class="viewers-badge" data-testid="viewer-count"></span
-          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-viewers">i</button
-          ><span class="tip-bubble" role="tooltip" id="tip-viewers" data-i18n="watch.viewers.tip">People watching this stream right now.</span></span
-        >
+    <header class="site-head">
+      <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
+    </header>
+    <main class="stage">
+      <div class="player">
+        <video id="video" controls playsinline muted autoplay></video>
+        <div id="overlay" class="overlay" data-i18n="watch.connecting">Connecting…</div>
       </div>
-      <div class="bar-actions">
-        <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>● LIVE</button>
-        <button id="unmute" type="button" class="secondary" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">🔊 Unmute</button>
-      </div>
-    </section>
-    <section class="panel">
-      <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
-      <div class="toggle-row">
-        <label class="toggle">
-          <input id="p2p" type="checkbox" />
-          <span data-i18n="watch.p2p">Help the stream (P2P)</span>
-        </label>
-        <span class="tip"
-          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p">i</button
-          ><span class="tip-bubble" role="tooltip" id="tip-p2p" data-i18n="watch.p2p.tip"
-            >Shares video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.</span
-          ></span
-        >
-      </div>
-      <div class="info-row" id="p2p-stats-row" hidden>
-        <p id="p2p-stats" class="muted small"></p>
-        <span class="tip" id="p2p-stats-tip"
-          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p-stats">i</button
-          ><span class="tip-bubble" role="tooltip" id="tip-p2p-stats" data-i18n="watch.p2pStats.tip"
-            >Peers: other viewers you are connected to. The percentage is how much of your video came from them instead of the streamer. Shared: megabytes (MB) you sent to others.</span
-          ></span
-        >
-      </div>
-      <div class="info-row">
-        <p class="muted small"><span data-i18n="watch.watchingAs">Watching as</span> <strong id="nick"></strong>.</p>
-        <span class="tip"
-          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
-          ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Only the streamer sees it.</span></span
-        >
-      </div>
-    </section>
+      <section class="bar">
+        <div class="status">
+          <span id="live-dot" class="dot" data-state="wait"></span>
+          <span id="status" data-i18n="watch.connecting">Connecting…</span>
+          <span class="tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-status">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-status" data-i18n="watch.status.tip"
+              >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs about 20 seconds behind the streamer (about 8 seconds with "Lower delay").</span
+            ></span
+          >
+          <span class="tip viewers" id="viewer-count-wrap" hidden
+            ><span id="viewer-count" class="viewers-badge sc-ico-eye" data-testid="viewer-count"></span
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-viewers">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-viewers" data-i18n="watch.viewers.tip">People watching this stream right now.</span></span
+          >
+        </div>
+        <div class="bar-actions">
+          <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>LIVE</button>
+          <button id="unmute" type="button" class="secondary sc-ico-volume" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">Unmute</button>
+        </div>
+      </section>
+      <section class="panel">
+        <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
+        <div class="toggle-row">
+          <label class="toggle">
+            <input id="p2p" type="checkbox" />
+            <span data-i18n="watch.p2p">Help the stream (P2P)</span>
+          </label>
+          <span class="tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-p2p" data-i18n="watch.p2p.tip"
+              >Shares video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.</span
+            ></span
+          >
+        </div>
+        <div class="info-row" id="p2p-stats-row" hidden>
+          <p id="p2p-stats" class="muted small"></p>
+          <span class="tip" id="p2p-stats-tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p-stats">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-p2p-stats" data-i18n="watch.p2pStats.tip"
+              >Peers: other viewers you are connected to. The percentage is how much of your video came from them instead of the streamer. Shared: megabytes (MB) you sent to others.</span
+            ></span
+          >
+        </div>
+        <div class="info-row">
+          <p class="muted small"><span data-i18n="watch.watchingAs">Watching as</span> <strong id="nick"></strong>.</p>
+          <span class="tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Only the streamer sees it.</span></span
+          >
+        </div>
+      </section>
+    </main>
     <div id="ended" class="ended" hidden>
       <div class="card">
+        <span class="sc-mascot sc-mascot-sleep" aria-hidden="true"></span>
         <h1 id="ended-title" data-i18n="watch.ended.title">The stream has ended</h1>
         <p id="ended-text" class="muted" data-i18n="watch.ended.text">Thanks for watching!</p>
       </div>

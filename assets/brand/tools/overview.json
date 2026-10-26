@@ -1,0 +1,13 @@
+{
+  "title": "SwarmCast identity · four directions (Forest & Cream palette)",
+  "rows": [
+    {"label": "A", "title": "Bee mascot\nthe character is the logo\n(face icon + poses)",
+     "files": ["raw/A/zimage_A9-icon_s303.png", "raw/A/zimage_A9-icon_s101.png", "raw/A/zimage_A8-hello_s303.png", "raw/A/zimage_A6-live_s303.png", "raw/A/zimage_A7-sleep_s11.png", "raw/M/zimage_M-forest_s202.png"]},
+    {"label": "B", "title": "Swarm play\ndots / bee become\na play button",
+     "files": ["raw/B/zimage_B4f_s202.png", "raw/B/zimage_B4f_s66.png", "raw/B/zimage_B4f_s101.png", "raw/B/zimage_B5f_s202.png", "raw/B/zimage_B5f_s303.png", "raw/B/zimage_B5f_s66.png"]},
+    {"label": "C", "title": "Hive & cell\nhoneycomb live cell,\nskep broadcast tower",
+     "files": ["raw/C/zimage_C3f_s303.png", "raw/C/zimage_C3f_s11.png", "raw/C/zimage_C3f_s66.png", "raw/C/zimage_C4f_s11.png", "raw/C/zimage_C4f_s303.png", "raw/C/zimage_C4f_s66.png"]},
+    {"label": "D", "title": "Broadcast bee (( ))\nwings are signal waves\nRECOMMENDED: last two\nare the hand-built finals",
+     "files": ["raw/D/zimage_D1f_s202.png", "raw/D/zimage_D1f_s303.png", "raw/D/zimage_D2f_s303.png", "raw/D/zimage_D2f_s202.png", "../symbol/swarmcast-symbol-1024.png", "../icon/app-icon-macos-1024.png"]}
+  ]
+}

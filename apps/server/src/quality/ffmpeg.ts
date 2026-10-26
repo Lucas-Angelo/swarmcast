@@ -109,7 +109,7 @@ export async function installFfmpeg(
   dataDir: string,
   log: Logger,
   onProgress: (p: InstallProgress) => void = () => {},
-  opts: { pin?: FfmpegPin; fetchImpl?: typeof fetch } = {},
+  opts: { pin?: FfmpegPin; fetchImpl?: typeof fetch; /** Aborts the download (the app is quitting). */ signal?: AbortSignal } = {},
 ): Promise<string> {
   const pin = opts.pin ?? ffmpegPin();
   if (!pin) throw new Error(`No ffmpeg build is pinned for ${platformTag()}.`);
@@ -117,7 +117,7 @@ export async function installFfmpeg(
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-ffmpeg-'));
   try {
     const archive = path.join(work, pin.asset);
-    const res = await (opts.fetchImpl ?? fetch)(pin.url, { redirect: 'follow', signal: AbortSignal.timeout(30 * 60_000) });
+    const res = await (opts.fetchImpl ?? fetch)(pin.url, { redirect: 'follow', signal: opts.signal ? AbortSignal.any([opts.signal, AbortSignal.timeout(30 * 60_000)]) : AbortSignal.timeout(30 * 60_000) });
     if (!res.ok || !res.body) throw new Error(`Download failed (HTTP ${res.status}).`);
     const total = Number(res.headers.get('content-length')) || undefined;
     const hash = crypto.createHash('sha256');
@@ -143,7 +143,7 @@ export async function installFfmpeg(
     // bsdtar (macOS, Windows 10+) reads zip and tar.xz; GNU tar (Linux) reads tar.xz.
     // On Windows, Git's GNU tar may come first in PATH and cannot read zip; use the OS's bsdtar.
     const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    await execFileP(tar, ['-xf', archive, '-C', ex], { windowsHide: true, timeout: 5 * 60_000 });
+    await execFileP(tar, ['-xf', archive, '-C', ex], { windowsHide: true, timeout: 5 * 60_000, signal: opts.signal });
     const bin = findFile(ex, path.basename(pin.binary));
     if (!bin) throw new Error(`${pin.binary} not found inside ${pin.asset}.`);
     fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });

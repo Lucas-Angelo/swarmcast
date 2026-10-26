@@ -7,7 +7,7 @@ import { ADMIN_COOKIE, type DesktopUpdate } from '@swarmcast/shared';
 import { createAdminServer } from '../../src/admin/server.js';
 import { defaultConfig } from '../../src/core/config.js';
 import { resolvePaths } from '../../src/core/paths.js';
-import { withRetries } from '../../src/core/retry.js';
+import { abortable, QuitAbortError, sleep, withRetries } from '../../src/core/retry.js';
 import { Autostart } from '../../src/desktop/autostart.js';
 import { createProtocolWriter, DesktopBridge } from '../../src/desktop/bridge.js';
 import {
@@ -222,6 +222,32 @@ describe('ffmpeg install with retries', () => {
     ).rejects.toThrow('fail 4');
     expect(waits).toEqual([2000, 5000, 10_000]);
     expect(await withRetries(async (a) => (a < 2 ? Promise.reject(new Error('x')) : a), [1], { sleep: async () => {} })).toBe(2);
+  });
+
+  it('quitting (signal) stops the retries, the wait between them and anything abortable', async () => {
+    const ac = new AbortController();
+    let n = 0;
+    const t0 = Date.now();
+    const p = withRetries(
+      async () => {
+        n++;
+        throw new Error('offline');
+      },
+      [60_000, 60_000],
+      { signal: ac.signal },
+    );
+    setTimeout(() => ac.abort(), 50);
+    await expect(p).rejects.toThrow('quitting');
+    expect(n).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(2000);
+    // Already aborted: no retry at all, the error of the only try.
+    await expect(withRetries(async () => Promise.reject(new Error('once')), [1], { signal: ac.signal })).rejects.toThrow('once');
+    await expect(sleep(60_000, ac.signal)).rejects.toBeInstanceOf(QuitAbortError);
+    const late = new AbortController();
+    const pending = abortable(new Promise(() => {}), late.signal);
+    late.abort();
+    await expect(pending).rejects.toBeInstanceOf(QuitAbortError);
+    expect(await abortable(Promise.resolve(7), new AbortController().signal)).toBe(7);
   });
 
   it('QualityManager shows "retrying" between tries and "error" (Try again) after the last one', async () => {

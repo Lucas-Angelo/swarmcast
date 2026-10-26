@@ -2,6 +2,7 @@ import dns from 'node:dns';
 import { EventEmitter } from 'node:events';
 import https from 'node:https';
 import type { LookupFunction } from 'node:net';
+import { abortable, sleep } from '../core/retry.js';
 
 export type TunnelEvents = {
   /** Emitted when the public URL becomes reachable (also after a reconnect that changed it). */
@@ -104,23 +105,24 @@ export async function probeHealth(url: string): Promise<string | null> {
   });
 }
 
-/** Poll `url` until it answers with our marker header, with growing delays (DNS can take a while). */
+/** Poll `url` until it answers with our marker header, with growing delays (DNS can take a while). Rejects (QuitAbortError) when `signal` aborts. */
 export async function waitForReachable(
   url: string,
   expectMarker: string,
-  opts: { timeoutMs?: number; fetchImpl?: typeof fetch } = {},
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
 ): Promise<boolean> {
+  const { signal } = opts;
   const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
   let delay = 500;
   while (Date.now() < deadline) {
     try {
       let marker: string | null;
       if (opts.fetchImpl) {
-        const res = await opts.fetchImpl(`${url}/healthz`, { signal: AbortSignal.timeout(5000), cache: 'no-store' });
+        const res = await opts.fetchImpl(`${url}/healthz`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000), cache: 'no-store' });
         await res.body?.cancel();
         marker = res.ok ? res.headers.get('x-swarmcast') : null;
       } else {
-        marker = await probeHealth(url);
+        marker = await abortable(probeHealth(url), signal);
       }
       if (marker === expectMarker) {
         // Reachable through Cloudflare. Before showing the link, make sure the name also
@@ -130,18 +132,18 @@ export async function waitForReachable(
         const host = new URL(url).hostname;
         while (Date.now() < deadline + 30_000) {
           try {
-            if ((await dns.promises.resolve4(host)).length > 0) return true;
+            if ((await abortable(dns.promises.resolve4(host), signal)).length > 0) return true;
           } catch {
             /* not propagated yet */
           }
-          await new Promise((r) => setTimeout(r, 2000));
+          await sleep(2000, signal);
         }
         return true;
       }
     } catch {
       /* not yet */
     }
-    await new Promise((r) => setTimeout(r, delay));
+    await sleep(delay, signal);
     delay = Math.min(delay * 1.5, 4000);
   }
   return false;

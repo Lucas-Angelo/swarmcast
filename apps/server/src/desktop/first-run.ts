@@ -3,6 +3,7 @@ import type { SpeedTestResult } from '@swarmcast/shared';
 import type { App } from '../app.js';
 import { loadConfig } from '../core/config.js';
 import { appVersion } from '../core/version.js';
+import { throwIfAborted } from '../core/retry.js';
 import { ffmpegPin } from '../quality/ffmpeg.js';
 import type { DesktopBridge } from './bridge.js';
 import { needsSystemCheck, runSystemCheck } from './system-check.js';
@@ -13,20 +14,23 @@ export const FFMPEG_RETRY_DELAYS_MS = [2000, 5000, 10_000];
 const SPEED_FRESH_MS = 10 * 60_000;
 
 /** Wait until the startup speed test (scheduleSpeedTests) is over, then reuse it or run one. */
-async function speedForCheck(app: App): Promise<SpeedTestResult | undefined | 'skipped'> {
+async function speedForCheck(app: App, signal?: AbortSignal): Promise<SpeedTestResult | undefined | 'skipped'> {
   const { live, config } = app;
   if (!config.speedTest.enabled) return 'skipped';
   if (live.speedTestRunning) {
     await new Promise<void>((resolve) => {
       const check = (): void => {
-        if (live.speedTestRunning) return;
+        if (live.speedTestRunning && !signal?.aborted) return;
         live.off('state', check);
+        signal?.removeEventListener('abort', check);
         resolve();
       };
       live.on('state', check);
+      signal?.addEventListener('abort', check, { once: true });
       check();
     });
   }
+  throwIfAborted(signal);
   const last = live.speedTest;
   if (last && Date.now() - last.at < SPEED_FRESH_MS) return last;
   return live.runSpeedTest();
@@ -37,8 +41,13 @@ async function speedForCheck(app: App): Promise<SpeedTestResult | undefined | 's
  * system check the start scripts do before installing, then the video converter (ffmpeg),
  * with retries. Runs in the background; nothing here is fatal.
  */
-export async function runDesktopFirstRun(app: App, bridge: DesktopBridge, o: { env?: NodeJS.ProcessEnv; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
+export async function runDesktopFirstRun(
+  app: App,
+  bridge: DesktopBridge,
+  o: { env?: NodeJS.ProcessEnv; sleep?: (ms: number) => Promise<void>; /** The app is quitting: stop. */ signal?: AbortSignal } = {},
+): Promise<void> {
   const env = o.env ?? process.env;
+  const { signal } = o;
   const { log, live, paths } = app;
   const file = path.join(paths.dataDir, 'system-check.json');
   const version = appVersion();
@@ -57,14 +66,17 @@ export async function runDesktopFirstRun(app: App, bridge: DesktopBridge, o: { e
         // The panel is always ours; RTMP, HLS and the public server while the live is on.
         return live.phase === 'off' ? [p.admin] : [p.admin, p.rtmp, p.public, p.mediamtxHls];
       },
-      speed: () => speedForCheck(app),
+      speed: () => speedForCheck(app, signal),
+      signal,
     });
     log.info({ below: c.belowMinimum }, 'desktop first run: system check saved');
     bridge.setSystemCheck('done');
   } catch (err) {
+    if (signal?.aborted) return; // quitting: the next start checks again
     log.warn({ err: (err as Error).message }, 'desktop first run: system check failed');
     bridge.setSystemCheck('failed');
   }
+  if (signal?.aborted) return;
 
   const q = live.quality;
   if (q.ffmpegAvailable || !ffmpegPin() || env.SWARMCAST_NO_FFMPEG_INSTALL === '1') return;

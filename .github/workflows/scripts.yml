@@ -11,6 +11,7 @@ on:
       - 'site/offline-guide.json'
       - 'site/src/content/**'
       - 'docs/img/**'
+      - 'assets/brand/**'
       - '.github/actions/**'
       - '.github/workflows/scripts.yml'
   push:

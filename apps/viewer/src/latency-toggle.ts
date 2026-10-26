@@ -45,6 +45,10 @@ export function createLatencyToggle(
   legend.textContent = labels.title;
   wrap.appendChild(legend);
   const hint = document.createElement('small');
+  // The two options sit together as a segmented control.
+  const segments = document.createElement('div');
+  segments.className = 'segmented';
+  wrap.appendChild(segments);
   const name = `latency-${Math.random().toString(36).slice(2, 8)}`;
   const options: Array<[PlaybackProfileId, string]> = [
     ['stable', labels.stable],
@@ -65,7 +69,7 @@ export function createLatencyToggle(
       onChange?.(id);
     });
     label.append(input, ` ${text}`);
-    wrap.appendChild(label);
+    segments.appendChild(label);
   }
   hint.textContent = labels.hint[value];
   wrap.appendChild(hint);

@@ -44,6 +44,29 @@ export interface AdminOptions {
   desktop?: DesktopBridge;
 }
 
+const SIGNED_IN = {
+  en: { title: 'SwarmCast panel', open: 'Open the panel' },
+  'pt-BR': { title: 'Painel do SwarmCast', open: 'Abrir o painel' },
+} as const;
+
+function pageLang(acceptLanguage: string | undefined): keyof typeof SIGNED_IN {
+  return resolveLang((acceptLanguage ?? '').split(',').map((l) => l.split(';')[0]!.trim()));
+}
+
+/**
+ * Answer of `/auth/<token>`: sets the cookie, then opens `/` from this page (meta refresh,
+ * plus a link). Not a redirect: the panel cookie is SameSite=Strict, and a redirect chain that
+ * started on another site (the desktop app's splash page) does not send it to `/`, while a
+ * navigation started by this 127.0.0.1 page does. No script (the CSP allows none inline), no
+ * token in the page.
+ */
+function signedInPage(acceptLanguage: string | undefined): string {
+  const lang = pageLang(acceptLanguage);
+  const m = SIGNED_IN[lang];
+  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>${m.title}</title></head>
+<body><p><a href="/">${m.open}</a></p></body></html>`;
+}
+
 const NOT_AUTHORIZED = {
   en: { title: 'SwarmCast panel', text: 'Open the panel from the SwarmCast tray/menu bar icon, or run the start script again.' },
   'pt-BR': { title: 'Painel do SwarmCast', text: 'Abra o painel pelo ícone do SwarmCast na bandeja/barra de menus, ou rode o script de início de novo.' },
@@ -51,7 +74,7 @@ const NOT_AUTHORIZED = {
 
 /** Shown without the per-run token. No inline styles (the CSP forbids them). */
 function notAuthorizedPage(acceptLanguage: string | undefined): string {
-  const lang = resolveLang((acceptLanguage ?? '').split(',').map((l) => l.split(';')[0]!.trim()));
+  const lang = pageLang(acceptLanguage);
   const m = NOT_AUTHORIZED[lang];
   return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>SwarmCast</title></head>
 <body><h1>${m.title}</h1>
@@ -73,6 +96,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' data:",
+    // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
+    "font-src 'self'",
     `connect-src 'self' ws://127.0.0.1:${o.port} ws://localhost:${o.port}`,
     "base-uri 'none'",
     "form-action 'self'",
@@ -101,6 +126,12 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     }
   });
 
+  // SWARMCAST_LOG_LEVEL=debug: one line per panel request (the login token is never logged).
+  const logPath = (url: string): string => (url.startsWith('/auth/') ? '/auth/…' : url.split('?')[0]!);
+  app.addHook('onResponse', async (req, reply) => {
+    o.log.debug({ method: req.method, path: logPath(req.url), status: reply.statusCode }, 'panel request');
+  });
+
   const auth = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!tokenOk(req.cookies[ADMIN_COOKIE])) {
       const c = coded('err.notAuthorized');
@@ -112,7 +143,10 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   app.get<{ Params: { token: string } }>('/auth/:token', async (req, reply) => {
     if (!tokenOk(req.params.token)) return reply.code(401).type('text/html').send(notAuthorizedPage(req.headers['accept-language']));
     reply.setCookie(ADMIN_COOKIE, req.params.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: false });
-    return reply.redirect('/', 303);
+    // Also set for every admin response (onRequest); repeated here because this page must never be
+    // cached or leak its URL (the token) as a referrer.
+    reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
+    return reply.type('text/html; charset=utf-8').send(signedInPage(req.headers['accept-language']));
   });
 
   await app.register(fastifyStatic, { root: o.adminDir, prefix: '/', index: false, wildcard: false, serve: false });
@@ -210,9 +244,11 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
       !allowedOrigins.has(req.headers.origin ?? '') ||
       !tokenOk(cookies[ADMIN_COOKIE])
     ) {
+      o.log.debug('panel WebSocket refused');
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
+    o.log.debug('panel WebSocket connected');
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.send(JSON.stringify(L.snapshot()));
       ws.send(JSON.stringify({ type: 'log', reset: true, entries: L.activity.list() } satisfies AdminLogMessage));

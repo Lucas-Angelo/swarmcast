@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use tauri::webview::{NewWindowResponse, PageLoadEvent};
+use tauri::webview::NewWindowResponse;
 use tauri::{App, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
@@ -95,21 +95,6 @@ pub fn create(app: &App, shell: &Arc<Shell>, visible: bool) -> tauri::Result<()>
                 Nav::Block => {
                     crate::logs::shell(format!("blocked navigation to {url}"));
                     false
-                }
-            }
-        })
-        .on_page_load({
-            let shell = shell.clone();
-            move |window, payload| {
-                let admin = shell.admin_origin();
-                let on_panel = admin.read().unwrap().as_ref().is_some_and(|o| *o == payload.url().origin());
-                if payload.event() != PageLoadEvent::Finished || !on_panel {
-                    return;
-                }
-                if let Some(login) = shell.take_login_check() {
-                    crate::logs::shell(format!("panel loaded ({}), checking the login", payload.url().path()));
-                    let login = serde_json::to_string(login.as_str()).unwrap_or_default();
-                    let _ = window.eval(format!("if (!document.getElementById('app')) location.replace({login});"));
                 }
             }
         })
