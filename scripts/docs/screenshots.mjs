@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Regenerates the panel and viewer screenshots in docs/img/ (used by docs/TUTORIAL_*.md and
+// Regenerates the panel and viewer screenshots in docs/img/ (used by the website in site/ and
 // README.md), in English and Portuguese. Reproducible: it starts the Playwright e2e test server
 // (SwarmCast without a tunnel + a synthetic ffmpeg "OBS" stream), joins a few viewers, and
 // captures each page with Google Chrome. Secrets never appear: the stream key stays hidden and

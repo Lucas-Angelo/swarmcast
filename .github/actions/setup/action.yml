@@ -41,8 +41,9 @@ runs:
       run: |
         brew install ffmpeg
         echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
-    # The real ffmpeg.exe, not the Chocolatey shim: the Windows suites run the app with a
-    # bare-OS PATH and hand the test feed this path.
+    # The real ffmpeg.exe goes first on PATH, ahead of the Chocolatey shim: the shim runs
+    # ffmpeg as a child, so tests that kill "ffmpeg" by PID would only kill the shim. The
+    # Windows suites run the app with a bare-OS PATH and hand the test feed FFMPEG_BIN.
     - name: Install ffmpeg (Windows)
       if: inputs.ffmpeg == 'true' && runner.os == 'Windows'
       shell: pwsh
@@ -50,6 +51,7 @@ runs:
         choco install ffmpeg -y --no-progress | Out-Null
         $f = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
         "FFMPEG_BIN=$($f.FullName)" >> $env:GITHUB_ENV
+        Split-Path $f.FullName >> $env:GITHUB_PATH
     - name: ffmpeg version
       if: inputs.ffmpeg == 'true'
       shell: bash

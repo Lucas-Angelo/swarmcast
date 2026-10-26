@@ -1,0 +1,111 @@
+---
+// Vertical diagram: OBS -> SwarmCast on your PC -> secret link -> members' browsers helping each
+// other. Plain HTML (an ordered list), so screen readers read it as four steps.
+import { tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+}
+const { lang } = Astro.props;
+const steps = [
+  { icon: 'obs', title: tr(lang, 'flow.obs'), text: tr(lang, 'flow.obs.d') },
+  { icon: 'pc', title: tr(lang, 'flow.app'), text: tr(lang, 'flow.app.d') },
+  { icon: 'link', title: tr(lang, 'flow.link'), text: tr(lang, 'flow.link.d') },
+  { icon: 'people', title: tr(lang, 'flow.viewers'), text: tr(lang, 'flow.viewers.d') },
+] as const;
+---
+
+<ol class="sc-flow not-content" aria-label={tr(lang, 'flow.label')} data-testid="how-it-works">
+  {
+    steps.map((s) => (
+      <li class:list={['sc-flow-step', `sc-flow-${s.icon}`]}>
+        <span class="sc-flow-icon" aria-hidden="true">
+          {s.icon === 'obs' && (
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><circle cx="12" cy="12" r="3" /></svg>
+          )}
+          {s.icon === 'pc' && (
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2" /><path d="M8 20h8M12 16v4" /></svg>
+          )}
+          {s.icon === 'link' && (
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1" /><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1" /></svg>
+          )}
+          {s.icon === 'people' && (
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="8" r="2.5" /><circle cx="18" cy="8" r="2.5" /><circle cx="12" cy="17" r="2.5" /><path d="M8.2 9.5l2.3 5.4M15.8 9.5l-2.3 5.4M8.5 8h7" /></svg>
+          )}
+        </span>
+        <span class="sc-flow-text">
+          <strong>{s.title}</strong>
+          <span>{s.text}</span>
+        </span>
+      </li>
+    ))
+  }
+</ol>
+
+<style>
+  .sc-flow {
+    list-style: none;
+    margin: 1.5rem auto;
+    padding: 0;
+    max-width: 30rem;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sc-flow-step {
+    position: relative;
+    display: flex;
+    gap: 0.9rem;
+    align-items: center;
+    padding: 0.9rem 1rem;
+    border: 1px solid var(--sc-card-border);
+    border-radius: 0.9rem;
+    background: var(--sc-card);
+  }
+  .sc-flow-step + .sc-flow-step {
+    margin-top: 2.2rem;
+  }
+  /* The arrow between two boxes. */
+  .sc-flow-step + .sc-flow-step::before {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -1.9rem;
+    width: 2px;
+    height: 1.4rem;
+    background: var(--sl-color-accent);
+  }
+  .sc-flow-step + .sc-flow-step::after {
+    content: '';
+    position: absolute;
+    left: calc(50% - 6px);
+    top: -0.75rem;
+    border: 7px solid transparent;
+    border-top-color: var(--sl-color-accent);
+    border-bottom-width: 0;
+  }
+  .sc-flow-icon {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 3rem;
+    height: 3rem;
+    border-radius: 50%;
+    background: var(--sl-color-accent-low);
+    color: var(--sl-color-accent-high);
+  }
+  .sc-flow-text {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    min-width: 0;
+  }
+  .sc-flow-text strong {
+    color: var(--sl-color-white);
+    font-size: var(--sl-text-lg);
+  }
+  .sc-flow-text span {
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+  }
+</style>

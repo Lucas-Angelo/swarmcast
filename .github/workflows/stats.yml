@@ -1,0 +1,78 @@
+name: Usage stats
+
+# Usage numbers WITHOUT telemetry: the SwarmCast app never phones home. Once a day (and when a
+# release is published) this saves a snapshot of GitHub's PUBLIC release download counters:
+# the installers' downloads, and the downloads of `latest.json`, which the desktop app fetches
+# when it starts and every 6 hours to look for updates. scripts/stats/stats.mjs explains the
+# "apps opened this week" estimate; the website explains it to visitors (about/privacy).
+#
+# The data lives on the orphan branch `stats` (history.json + summary.json), not on main:
+# no daily commits on main, and branch protection on main never blocks it. site.yml runs after
+# this workflow and publishes summary.json with the site.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: usage-stats
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Only to push the `stats` data branch (the job never pushes anything else).
+      contents: write
+    env:
+      REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Get the stats branch (or start it)
+        run: |
+          if git ls-remote --exit-code --heads "https://github.com/${REPO}.git" stats >/dev/null; then
+            git clone --quiet --depth 1 --branch stats "https://github.com/${REPO}.git" "$RUNNER_TEMP/stats"
+          else
+            git init --quiet -b stats "$RUNNER_TEMP/stats"
+          fi
+
+      - name: Take today's snapshot
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/stats/update.mjs --repo "$REPO" --history "$RUNNER_TEMP/stats/history.json" --summary "$RUNNER_TEMP/stats/summary.json"
+
+      - name: Save it on the stats branch
+        working-directory: ${{ runner.temp }}/stats
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # shellcheck disable=SC2016 # the backticks are Markdown, not command substitution
+          if [ ! -f README.md ]; then
+            printf '%s\n' '# SwarmCast usage numbers' '' \
+              'Daily snapshots of the public GitHub release download counters, written by `.github/workflows/stats.yml`' \
+              '(see `scripts/stats/stats.mjs` on main). No telemetry: nothing here comes from the app or its users.' > README.md
+          fi
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Nothing changed."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet -m "stats: snapshot $(date -u +%F)"
+          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          git -c http.extraheader="AUTHORIZATION: basic $auth" push --quiet "https://github.com/${REPO}.git" HEAD:stats
+          echo "Saved: $(head -c 300 summary.json)"

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+.astro/
+test-results/
+playwright-report/
+# Written by the site workflow from the `stats` branch (scripts/stats/update.mjs).
+public/stats.json

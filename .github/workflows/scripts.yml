@@ -2,13 +2,15 @@ name: Install scripts
 
 # The start (installer) and uninstall scripts against a fake release on 127.0.0.1, on
 # Windows (PowerShell 5.1), macOS and Linux. Runs on pull requests and pushes to main that
-# touch the scripts or the guides shipped in the installer zips, monthly, manually, and as a
-# gate of release.yml.
+# touch the scripts or the website pages the installer zips' offline guide is made of,
+# monthly, manually, and as a gate of release.yml.
 on:
   pull_request:
     paths: &scripts-paths
       - 'scripts/**'
-      - 'docs/TUTORIAL_*.md'
+      - 'site/offline-guide.json'
+      - 'site/src/content/**'
+      - 'docs/img/**'
       - '.github/actions/**'
       - '.github/workflows/scripts.yml'
   push:
@@ -45,13 +47,14 @@ jobs:
         with:
           npm-ci: 'false'
 
-      # The installer zips carry these guides as HTML (see release.yml). Screenshots are
-      # embedded as data: URIs; anything else with src= would load from outside.
+      # The installer zips carry these guides as HTML, generated from the website's pages
+      # (see release.yml and site/offline-guide.json). Screenshots are embedded as data: URIs;
+      # anything else with src= would load from outside.
       - name: Render the streamer guides
         if: runner.os == 'Linux'
         run: |
-          node scripts/build/guide-html.mjs docs/TUTORIAL_EN.md "$RUNNER_TEMP/guide-en.html" --lang en
-          node scripts/build/guide-html.mjs docs/TUTORIAL_PT-BR.md "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-en.html" --lang en
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
           if grep -qiP '<script|src=(?!"data:)' "$RUNNER_TEMP"/guide-*.html; then
             echo "::error::The guides must stay self-contained (no scripts, no external resources)."
             exit 1

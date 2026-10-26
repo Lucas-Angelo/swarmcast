@@ -58,7 +58,7 @@ Cada zip de instalação tem:
 - o pacote da plataforma;
 - um `SHA256SUMS.txt` só com a linha do pacote;
 - um `README.txt` curto (inglês e português);
-- o guia completo da live em HTML: `LEIA-ME - Como fazer a live.html` e `READ-ME - How to go live.html`. Eles são gerados de `docs/TUTORIAL_PT-BR.md` e `docs/TUTORIAL_EN.md` por `scripts/build/guide-html.mjs`. Para mudar o guia, edite os tutoriais em `docs/`.
+- o guia completo da live em HTML: `LEIA-ME - Como fazer a live.html` e `READ-ME - How to go live.html`. Eles são gerados a partir das páginas do site (`site/src/content/docs/`, lista e ordem em `site/offline-guide.json`) por `scripts/build/guide-html.mjs`. Para mudar o guia, edite as páginas do site: o site e o guia offline sempre dizem a mesma coisa.
 
 Quando o script roda ao lado do `SHA256SUMS.txt` e do pacote, ele instala a partir desses arquivos locais. Ele confere o SHA-256 do mesmo jeito, troca a instalação de forma atômica e não baixa nada. Mesmo assim, consulta uma vez o endereço online padrão: se houver versão mais nova lá, usa a online; se não conseguir acessar (repositório privado dá 404), segue com o zip sem erro.
 
@@ -85,7 +85,7 @@ Na primeira vez, o Windows (SmartScreen) e o macOS (Gatekeeper) avisam que o arq
 
 Com o repositório público (sem espelho), use `Lucas-Angelo/swarmcast` no lugar.
 
-Mande junto o [tutorial](TUTORIAL_PT-BR.md) (ou aponte para o HTML dentro do zip).
+Mande junto o link do guia: <https://lucas-angelo.github.io/swarmcast/pt-br/> (ou aponte para o HTML dentro do zip).
 
 **Atualizações:** com o zip, mande o zip novo; ela extrai e roda o script do mesmo jeito. Com o espelho ou repositório público, basta ela rodar o mesmo script ou comando de novo. Nos dois casos o script confere o SHA-256, troca a instalação de forma atômica (volta para a anterior se algo falhar), mantém as configurações e abre o app. Um zip antigo nunca rebaixa uma versão mais nova já instalada.
 
@@ -141,8 +141,10 @@ O repositório é público, então os runners padrão (Windows, macOS e Linux) s
 | `windows.yml` | matriz completa do Windows (instalador, app em Chrome/Edge/Firefox, qualidade, modo direto, OBS) | Windows Server |
 | `desktop.yml` | instaladores do app desktop e testes deles em cada sistema (pulado até o app desktop entrar na branch) | Windows, macOS, Ubuntu x64 e arm64 |
 | `codeql.yml` | análise de segurança do código e dos workflows | Ubuntu |
+| `site.yml` | site (GitHub Pages): build, links, testes no navegador; publica só a partir da `main` | Ubuntu |
+| `stats.yml` | uma vez por dia: contadores públicos de download das releases (sem telemetria) | Ubuntu |
 | `release.yml` | tag `v*`: roda as suítes acima, compila, assina e publica | todos |
 
-- **Em cada pull request e push na `main`:** todos rodam. Mudanças só em `docs/`, `site/` ou arquivos `.md` não recompilam o app (`scripts.yml` roda quando mudam os scripts ou os tutoriais). Um push novo no mesmo PR cancela a execução anterior; na `main` e nas tags nada é cancelado.
-- **Uma vez por mês (dia 1º):** todos rodam de novo, para pegar downloads de terceiros que sumiram ou mudanças nas imagens dos runners. Nesse dia também roda o aviso de MediaMTX/cloudflared desatualizados.
+- **Em cada pull request e push na `main`:** todos rodam. Mudanças só em `docs/`, `site/` ou arquivos `.md` não recompilam o app (`scripts.yml` roda quando mudam os scripts ou as páginas do site que viram o guia offline dos zips; `site.yml` roda quando muda o site). Um push novo no mesmo PR cancela a execução anterior; na `main` e nas tags nada é cancelado.
+- **Uma vez por mês (dia 1º):** os do app rodam de novo, para pegar downloads de terceiros que sumiram ou mudanças nas imagens dos runners. Nesse dia também roda o aviso de MediaMTX/cloudflared desatualizados.
 - **Rodar de novo:** botão **Re-run** na execução, ou aba **Actions** → escolha o workflow → **Run workflow** (`gh workflow run ci.yml --ref <branch>`). O `windows.yml` aceita outros runners e suítes: `gh workflow run windows.yml -f runners='["windows-latest","windows-2022"]'`.

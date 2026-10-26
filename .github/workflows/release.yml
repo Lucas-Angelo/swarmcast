@@ -327,8 +327,9 @@ jobs:
         run: |
           guides="$RUNNER_TEMP/guides"
           mkdir -p "$guides"
-          node scripts/build/guide-html.mjs docs/TUTORIAL_EN.md "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
-          node scripts/build/guide-html.mjs docs/TUTORIAL_PT-BR.md "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
+          # Generated from the website's pages (site/offline-guide.json): one source for both.
+          node scripts/build/guide-html.mjs "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
+          node scripts/build/guide-html.mjs "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
           if [ "$MIRROR" = true ]; then
             sed -i "s#github.com/${GITHUB_REPOSITORY}/releases#github.com/${RELEASES_REPO}/releases#g" "$guides"/*.html
           fi

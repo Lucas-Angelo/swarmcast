@@ -39,6 +39,15 @@ export function resolveLang(languages: readonly string[], override?: string | nu
   return languages.some((l) => l.toLowerCase().startsWith('pt')) ? 'pt-BR' : 'en';
 }
 
+/** The streamer guide on the website (site/ in this repository). */
+export const GUIDE_URL = 'https://lucas-angelo.github.io/swarmcast/';
+
+/** A page of the guide in `lang` (Portuguese pages live under pt-br/), e.g. guideUrl('pt-BR', 'start/obs'). */
+export function guideUrl(lang: Lang, page = ''): string {
+  const p = page.replace(/^\/+|\/+$/g, '');
+  return `${GUIDE_URL}${lang === 'pt-BR' ? 'pt-br/' : ''}${p ? `${p}/` : ''}`;
+}
+
 /** Decimal numbers follow the language (2.6 / 2,6); integers are left alone (ports, counts). */
 export function formatNumber(n: number, lang: Lang = current): string {
   if (Number.isInteger(n)) return String(n);

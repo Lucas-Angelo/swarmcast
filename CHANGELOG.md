@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Website for streamers and viewers (<https://lucas-angelo.github.io/swarmcast/>, English and Brazilian Portuguese, GitHub Pages from `site/`): download with OS detection, install guides with the Windows/macOS warnings, OBS, going live, P2P, protection, direct mode, updates, uninstall, FAQ. It replaces `docs/TUTORIAL_EN.md` and `docs/TUTORIAL_PT-BR.md`; the offline guide in the installer zips is generated from the same pages. The panel has a "Help" link to it. Usage numbers on the site come only from GitHub's public download counters (no telemetry).
 - English and Brazilian Portuguese for the panel and the viewer pages (from the browser language; `?lang=en|pt-BR` overrides and is remembered). Server texts carry stable codes so clients translate them.
 - Tooltips (accessible (i) buttons that work with mouse, keyboard and touch) on every button, value and setting.
 - Panel: "Activity" console (in-memory, last 500 lines, secrets and IPs scrubbed) with filters, copy and clear; OBS status pill and a hint while waiting for OBS; auto-stop countdown; Discord message language selector; warning when OBS keyframes are more than 3 s apart; setting to show or hide the viewer count.

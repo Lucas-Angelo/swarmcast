@@ -34,6 +34,6 @@ Tests: `bash scripts/test/run.sh` (macOS/Linux) and `scripts\test\run.ps1` (Wind
 - `package.mjs` (`npm run package`): builds the per-platform release package.
 - `archive.mjs`: creates the `.zip` or `.tar.gz`.
 - `checksums.mjs`: writes `SHA256SUMS.txt`.
-- `guide-html.mjs`: renders `docs/TUTORIAL_*.md` to the self-contained HTML guides shipped in the installer zips (no dependencies).
+- `guide-html.mjs`: renders the website's guide pages (`site/src/content/docs/`, list in `site/offline-guide.json`) to the self-contained HTML guides shipped in the installer zips (no dependencies). Edit the site pages, never the generated HTML.
 
-**Docs screenshots** (`docs/`): `screenshots.mjs` (`node scripts/docs/screenshots.mjs`, after `npm run fetch-bins` and `npm run build`; needs ffmpeg and Google Chrome) starts the e2e test server on the ports moved by `SWARMCAST_E2E_PORT_OFFSET` (default 1500), joins a few viewers and regenerates `docs/img/*-en.png` and `*-pt-BR.png` (panel overview, quality, protection, activity; viewer page on desktop and phone; join and "link not valid" pages) for the tutorials and the README. The live link is replaced by a placeholder and the stream key is never shown.
+**Docs screenshots** (`docs/`): `screenshots.mjs` (`node scripts/docs/screenshots.mjs`, after `npm run fetch-bins` and `npm run build`; needs ffmpeg and Google Chrome) starts the e2e test server on the ports moved by `SWARMCAST_E2E_PORT_OFFSET` (default 1500), joins a few viewers and regenerates `docs/img/*-en.png` and `*-pt-BR.png` (panel overview, quality, protection, activity; viewer page on desktop and phone; join and "link not valid" pages) for the website (`site/`) and the README. The live link is replaced by a placeholder and the stream key is never shown.

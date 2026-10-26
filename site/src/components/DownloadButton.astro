@@ -1,0 +1,171 @@
+---
+// The big "Download" button. Without JavaScript it links to the latest release page; in the
+// browser it detects Windows / macOS / Linux and, when the site's stats.json lists the desktop
+// installers of the latest release, links straight to the right file.
+import { links } from '../brand.mjs';
+import { BASE, pagePath, tr, ui, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+}
+const { lang } = Astro.props;
+const strings = ui[lang];
+const installPage = {
+  windows: pagePath(lang, 'install/windows'),
+  macos: pagePath(lang, 'install/macos'),
+  linux: pagePath(lang, 'install/linux'),
+};
+const downloadPage = pagePath(lang, 'download');
+---
+
+<div
+  class="sc-dl not-content"
+  data-testid="download"
+  data-lang={lang}
+  data-releases={links.releases}
+  data-stats={`${BASE}/stats.json`}
+  data-strings={JSON.stringify(strings)}
+  data-install={JSON.stringify(installPage)}
+>
+  <a class="sc-dl-main" href={links.releases} data-testid="download-main" rel="noopener">
+    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 10l6 6 6-6M4 20h16"></path></svg>
+    <span data-label>{tr(lang, 'dl.button')}</span>
+  </a>
+  <p class="sc-dl-meta" data-testid="download-meta" hidden></p>
+  <p class="sc-dl-free">{tr(lang, 'dl.free')}</p>
+  <p class="sc-dl-alt" data-testid="download-alt" hidden></p>
+  <p class="sc-dl-mobile" data-testid="download-mobile" hidden>{tr(lang, 'dl.mobile')}</p>
+  <div class="sc-dl-other" data-testid="download-other">
+    <span>{tr(lang, 'dl.other')}</span>
+    <ul>
+      <li data-os="windows"><a href={`${downloadPage}#windows`}>{tr(lang, 'os.windows')}</a></li>
+      <li data-os="macos"><a href={`${downloadPage}#macos`}>{tr(lang, 'os.macos')}</a></li>
+      <li data-os="linux"><a href={`${downloadPage}#linux`}>{tr(lang, 'os.linux')}</a></li>
+      <li><a href={links.releases} rel="noopener">{tr(lang, 'dl.allFiles')}</a></li>
+    </ul>
+  </div>
+</div>
+
+<script>
+  import { choicesFor, detectOs, type Choice } from '../lib/download';
+  import { loadUsage } from '../lib/stats';
+
+  type Strings = Record<string, string>;
+
+  for (const root of document.querySelectorAll<HTMLElement>('.sc-dl')) {
+    const s = JSON.parse(root.dataset.strings ?? '{}') as Strings;
+    const install = JSON.parse(root.dataset.install ?? '{}') as Record<string, string>;
+    const releases = root.dataset.releases ?? '';
+    const main = root.querySelector<HTMLAnchorElement>('.sc-dl-main')!;
+    const label = main.querySelector<HTMLElement>('[data-label]')!;
+    const meta = root.querySelector<HTMLElement>('.sc-dl-meta')!;
+    const alt = root.querySelector<HTMLElement>('.sc-dl-alt')!;
+    const mobile = root.querySelector<HTMLElement>('.sc-dl-mobile')!;
+    const os = detectOs(navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } });
+    root.dataset.os = os;
+
+    const labelFor = (c: Choice) => s[`dl.for.${c.key === 'windows' ? 'windows' : c.key}`] ?? s['dl.button'];
+
+    const render = (latest: Parameters<typeof choicesFor>[1]) => {
+      const { primary, alternatives } = choicesFor(os, latest, releases);
+      if (!primary) {
+        if (os === 'mobile') {
+          mobile.hidden = false;
+          main.hidden = true;
+        }
+        return;
+      }
+      main.href = primary.href;
+      main.dataset.direct = String(primary.direct);
+      label.textContent = labelFor(primary);
+      meta.hidden = false;
+      const version = latest?.version ? `${(s['dl.version'] ?? '').replace('{version}', latest.version)} · ` : '';
+      meta.textContent = '';
+      meta.append(version);
+      const how = document.createElement('a');
+      how.href = install[primary.os] ?? '';
+      how.textContent = s['dl.howTo'] ?? '';
+      meta.append(how);
+      alt.textContent = '';
+      for (const a of alternatives) {
+        const link = document.createElement('a');
+        link.href = a.href;
+        link.textContent = s[`dl.alt.${a.key}`] ?? a.key;
+        link.dataset.testid = `download-alt-${a.key}`;
+        if (alt.childNodes.length) alt.append(' · ');
+        alt.append(link);
+      }
+      alt.hidden = alternatives.length === 0;
+      root.querySelector(`.sc-dl-other li[data-os="${primary.os}"]`)?.remove();
+    };
+
+    render(null);
+    void loadUsage(root.dataset.stats ?? '').then((u) => {
+      if (u.latest) render(u.latest);
+    });
+  }
+</script>
+
+<style>
+  .sc-dl {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin: 0;
+  }
+  .sc-dl-main {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    max-width: 100%;
+    padding: 0.9rem 1.6rem;
+    border-radius: 999px;
+    background: var(--sc-accent-strong);
+    color: var(--sc-on-accent);
+    font-size: 1.2rem;
+    font-weight: 700;
+    text-decoration: none;
+    box-shadow: 0 6px 20px color-mix(in srgb, var(--sc-accent-strong) 35%, transparent);
+  }
+  .sc-dl-main:hover,
+  .sc-dl-main:focus-visible {
+    background: color-mix(in srgb, var(--sc-accent-strong) 85%, black);
+    color: var(--sc-on-accent);
+  }
+  .sc-dl-main[hidden] {
+    display: none;
+  }
+  .sc-dl p {
+    margin: 0;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+  /* :global: the version and alternative links are created by the script. */
+  .sc-dl :global(a:not(.sc-dl-main)) {
+    color: var(--sl-color-text-accent);
+  }
+  .sc-dl-other {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+  .sc-dl-other ul {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .sc-dl-other li {
+    margin: 0;
+  }
+  .sc-dl-other li + li::before {
+    content: '·';
+    margin-inline-end: 0.35rem;
+    color: var(--sl-color-gray-3);
+  }
+</style>

@@ -159,7 +159,7 @@ export const en = {
   'admin.obs.title': 'OBS settings',
   'admin.obs.help': 'In OBS add a custom server (Settings → Stream → Service "Custom...", or as an extra output). Set the keyframe interval to 2 s.',
   'admin.obs.help.tip':
-    'The keyframe interval (OBS → Settings → Output → Keyframe Interval) must be 2 seconds so the video can be cut into 2-second pieces for viewers. Also streaming to another platform (Twitch, YouTube, Kick…) at the same time: install the "Multiple RTMP outputs" plugin, open its "Multiple output" panel in OBS, click "Add new target", paste the Server and Key from here and choose to share the encoder with the main stream. Your other platform stays in Settings → Stream. When live, click "Start" next to SwarmCast in that panel. Full steps in the tutorial (docs/TUTORIAL_EN.md).',
+    'The keyframe interval (OBS → Settings → Output → Keyframe Interval) must be 2 seconds so the video can be cut into 2-second pieces for viewers. Also streaming to another platform (Twitch, YouTube, Kick…) at the same time: install the "Multiple RTMP outputs" plugin, open its "Multiple output" panel in OBS, click "Add new target", paste the Server and Key from here and choose to share the encoder with the main stream. Your other platform stays in Settings → Stream. When live, click "Start" next to SwarmCast in that panel. Full steps with pictures: "Help" at the bottom of the panel → Set up OBS.',
   'admin.obs.server': 'Server',
   'admin.obs.server.tip': 'Address OBS sends the video to. It only works on this computer (127.0.0.1), so showing it is harmless.',
   'admin.obs.key': 'Stream key',
@@ -303,6 +303,8 @@ export const en = {
   'admin.version': 'SwarmCast {version}',
   'admin.quit': 'Quit SwarmCast',
   'admin.quit.tip': 'Stops everything (like "Stop everything") and closes the SwarmCast app.',
+  'admin.help': 'Help',
+  'admin.help.tip': 'Opens the SwarmCast guide on the website (in your browser): setting up OBS, going live, problems and answers.',
   'admin.lang': 'Language',
   'admin.lang.tip': 'Language of this panel. Viewers see their own browser language.',
 

@@ -1,0 +1,55 @@
+---
+title: SwarmCast
+description: SwarmCast lets you stream a members-only live from your own computer, through a secret link. Free, private and open source, for Windows, macOS and Linux.
+template: splash
+hero:
+  title: SwarmCast
+  tagline: Stream a members-only live straight from your computer, through a secret link. Free, private and open source.
+editUrl: false
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import HowItWorks from '../../components/HowItWorks.astro';
+import UsageStats from '../../components/UsageStats.astro';
+
+## Who is it for?
+
+For **streamers** who want a live just for their members (subscribers, supporters, a Discord community), next to their public stream on Twitch, YouTube or Kick, or on its own. You keep streaming from OBS as usual.
+
+Your members only need the link and a browser, on a computer or a phone. No app, no account.
+
+## How it works
+
+<HowItWorks lang="en" />
+
+Your computer sends the live; members who watch can pass the video along to each other (P2P), so your internet goes further.
+
+## Free, private and safe
+
+<CardGrid>
+  <Card title="Free" icon="star">
+    No subscription, no ads, no account. SwarmCast is open source (MIT license) and runs on your own computer, so there is no server to pay for.
+  </Card>
+  <Card title="Private" icon="seti:lock">
+    Only people with the secret link can watch, and every live gets a new one. SwarmCast has no telemetry: nothing about you or your viewers is sent to us.
+  </Card>
+  <Card title="Safe" icon="approve-check">
+    Your IP address stays hidden behind an encrypted tunnel, the panel only opens on your computer, and SwarmCast protects your live from fake viewers and attacks.
+  </Card>
+  <Card title="Simple" icon="rocket">
+    Install it like any app. A 5-minute tutorial sets up OBS with you, and updates take one click.
+  </Card>
+</CardGrid>
+
+To be honest about the limits: anyone you send the link to can forward it, viewers who help through P2P see each other's IP address (approximate location only), and the free tunnel has no uptime guarantee. [Security and protection](/swarmcast/live/protection/) explains it all.
+
+<UsageStats lang="en" />
+
+## Get started
+
+<CardGrid>
+  <LinkCard title="Download and install" description="Windows, macOS and Linux." href="/swarmcast/download/" />
+  <LinkCard title="Set up OBS" description="Once, with or without Twitch, YouTube or Kick at the same time." href="/swarmcast/start/obs/" />
+  <LinkCard title="Go live and share the link" description="What to do every live." href="/swarmcast/live/go-live/" />
+  <LinkCard title="Got a link? For viewers" description="How to watch: no app, no account." href="/swarmcast/viewers/" />
+</CardGrid>
