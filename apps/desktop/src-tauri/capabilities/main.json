@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The local splash page of the main window: status, Try again, Open logs folder. There is deliberately no `remote` entry: the admin panel (http://127.0.0.1) gets no IPC.",
+  "windows": ["main"],
+  "permissions": ["allow-splash-status", "allow-splash-retry", "allow-splash-open-logs"]
+}

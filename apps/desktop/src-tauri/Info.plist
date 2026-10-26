@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<!-- Merged into the app's Info.plist by the Tauri bundler. The localizations make the
+     webview report the OS language in navigator.language (en or pt-BR), so the panel picks
+     the same language as the rest of the system. -->
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>pt-BR</string>
+  </array>
+</dict>
+</plist>

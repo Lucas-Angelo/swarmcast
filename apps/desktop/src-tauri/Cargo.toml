@@ -1,0 +1,43 @@
+[package]
+name = "swarmcast-desktop"
+version = "0.1.0"
+description = "SwarmCast desktop app: window, tray and auto-update around the SwarmCast server"
+authors = ["Lucas Angelo"]
+license = "MIT"
+edition = "2021"
+rust-version = "1.80"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "^2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "^2.12.5", features = ["tray-icon", "image-png"] }
+tauri-plugin-updater = "^2.14.0"
+tauri-plugin-single-instance = "^2.5.4"
+tauri-plugin-dialog = "^2.8.3"
+tauri-plugin-opener = "^2.7.2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sys-locale = "0.3"
+tokio = { version = "1", features = ["time"] }
+url = "2"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+signal-hook = "0.3"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Threading"] }
+
+[features]
+# Lets the updater use plain http:// endpoints. Only for local update tests
+# (scripts/build/desktop.mjs --insecure-updates); release builds never enable it.
+insecure-updates = []
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
