@@ -1,0 +1,61 @@
+{
+  "defaults": {
+    "width": 1024,
+    "height": 1024,
+    "steps": 30,
+    "guidance": 4.0,
+    "negative": "text, letters, words, typography, watermark, signature, photo, photorealistic, 3d render, gradient, texture, noise, grain, drop shadow, busy background, clutter, glitch effect, speech bubble, blurry, low quality"
+  },
+  "jobs": [
+    {
+      "id": "A1", "dir": "A",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app. Chubby round body with bold violet purple and warm honey amber stripes, big shiny friendly eyes, small happy smile, rosy cheeks, two small rounded wings, wearing a tiny black headset with a microphone, waving hello with one little hand. Flat vector cartoon illustration, bold simple shapes, clean thick dark outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "A2", "dir": "A",
+      "prompt": "A cute chubby round bee mascot holding a tiny retro video camera and filming, broadcasting live, small curved signal waves coming out of the camera. Body with violet purple and honey amber stripes, big friendly eyes, cheerful expression, small rounded wings. Flat vector character illustration, bold simple shapes, clean dark outline, limited palette of violet purple, honey amber, cream and dark ink, centered on a plain white background, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "A3", "dir": "A",
+      "prompt": "Square app icon: the face and round body of a cute friendly bee mascot wearing a tiny headset, honey amber and dark stripes, big eyes, centered on a solid violet purple background. Flat vector icon design, bold simple shapes, very few colors, thick shapes that stay readable at small size, no outlines thinner than the shapes, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "B1", "dir": "B",
+      "prompt": "Minimalist logo symbol: a rounded play button triangle pointing right, formed by a swarm of small round dots that flow together, scattered and small on the left, dense and merging into the solid triangle on the right. Dots in violet purple with a few honey amber dots. Flat vector logo mark, bold simple geometric shapes, centered on a plain white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "B2", "dir": "B",
+      "prompt": "Minimalist logo symbol: a play button triangle made of several tiny stylized bees flying together in formation, each bee a simple rounded shape with stripes and two small wings, together they form the outline of a play triangle pointing right. Violet purple and honey amber, flat vector logo mark, bold simple shapes, centered on a plain white background, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "B3", "dir": "B",
+      "prompt": "Minimalist logo symbol: a cute minimal bee whose body is a rounded play button triangle pointing right, with honey amber and violet purple stripes across the triangle, two small rounded wings on top, a tiny dotted flight trail behind it. Flat vector logo mark, bold geometric shapes, very few colors, centered on a plain white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "C1", "dir": "C",
+      "prompt": "Minimalist logo symbol: a single honeycomb cell drawn as a soft rounded hexagon filled with solid violet purple, with a bright red live recording dot in its center and two curved broadcast signal arcs on each side of the dot, in white. Flat vector logo mark, bold simple geometric shapes, centered on a plain white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "C2", "dir": "C",
+      "prompt": "Minimalist logo symbol: a small cluster of three rounded hexagon honeycomb cells, two in violet purple and one in warm honey amber, the amber cell contains a white play triangle. Flat vector logo mark, bold simple geometric shapes, clean, centered on a plain white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "D1", "dir": "D",
+      "prompt": "Minimalist logo symbol: a traditional dome-shaped beehive (skep) with rounded horizontal bands in warm honey amber, a small dark arched entrance at the bottom, acting as a broadcast tower: violet purple radio signal arcs radiate from the top of the hive. Flat vector logo mark, bold simple shapes, few colors, centered on a plain white background, generous margin, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    },
+    {
+      "id": "D2", "dir": "D",
+      "prompt": "Minimalist logo symbol: a friendly rounded beehive shaped like a little broadcast tower with a short antenna and a glowing red live light on top, violet purple hive with honey amber bands, three tiny bees orbiting around it along a dotted path. Flat vector logo mark, bold simple shapes, few colors, centered on a plain white background, no text.",
+      "seeds": [11, 22, 33, 44, 55, 66]
+    }
+  ]
+}
