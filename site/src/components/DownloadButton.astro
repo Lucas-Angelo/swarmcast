@@ -1,7 +1,10 @@
 ---
-// The big "Download" button. Without JavaScript it links to the latest release page; in the
-// browser it detects Windows / macOS / Linux and, when the site's stats.json lists the desktop
-// installers of the latest release, links straight to the right file.
+// The hero's download block: ONE button for the visitor's system, one muted meta line (version ·
+// size · system), one line of quiet links, one trust line. Without JavaScript the button opens
+// the download page. In the browser it detects Windows / macOS / Linux and, when the site's
+// stats.json lists the installers of the latest release, links straight to the right file.
+// Phones get "SwarmCast runs on your computer" with Copy link / Share instead.
+import Icon from './Icon.astro';
 import { links } from '../brand.mjs';
 import { BASE, pagePath, tr, ui, type SiteLang } from '../lib/i18n';
 
@@ -19,7 +22,7 @@ const downloadPage = pagePath(lang, 'download');
 ---
 
 <div
-  class="sc-dl not-content"
+  class="sc-dl"
   data-testid="download"
   data-lang={lang}
   data-releases={links.releases}
@@ -27,81 +30,112 @@ const downloadPage = pagePath(lang, 'download');
   data-strings={JSON.stringify(strings)}
   data-install={JSON.stringify(installPage)}
 >
-  <a class="sc-dl-main" href={links.releases} data-testid="download-main" rel="noopener">
-    <svg aria-hidden="true" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M6 10l6 6 6-6M4 20h16"></path></svg>
+  <a class="sc-btn sc-btn-primary sc-btn-lg sc-dl-main" href={downloadPage} data-testid="download-main">
+    <Icon name="download" size={18} />
     <span data-label>{tr(lang, 'dl.button')}</span>
   </a>
   <p class="sc-dl-meta" data-testid="download-meta" hidden></p>
-  <p class="sc-dl-free">{tr(lang, 'dl.free')}</p>
-  <p class="sc-dl-alt" data-testid="download-alt" hidden></p>
-  <p class="sc-dl-mobile" data-testid="download-mobile" hidden>{tr(lang, 'dl.mobile')}</p>
-  <div class="sc-dl-other" data-testid="download-other">
-    <span>{tr(lang, 'dl.other')}</span>
-    <ul>
-      <li data-os="windows"><a href={`${downloadPage}#windows`}>{tr(lang, 'os.windows')}</a></li>
-      <li data-os="macos"><a href={`${downloadPage}#macos`}>{tr(lang, 'os.macos')}</a></li>
-      <li data-os="linux"><a href={`${downloadPage}#linux`}>{tr(lang, 'os.linux')}</a></li>
-      <li><a href={links.releases} rel="noopener">{tr(lang, 'dl.allFiles')}</a></li>
-    </ul>
+  <p class="sc-dl-links" data-testid="download-other">
+    <span class="sc-dl-alt" data-testid="download-alt" hidden></span>
+    <a class="sc-link sc-link-muted" href={downloadPage} data-testid="download-other-link">{tr(lang, 'dl.other')}</a>
+    <a class="sc-link sc-link-muted" href={pagePath(lang, 'download')} data-testid="download-howto" hidden>{tr(lang, 'dl.howTo')}</a>
+  </p>
+
+  <div class="sc-dl-mobile" data-testid="download-mobile" hidden>
+    <p class="sc-dl-mobile-title">{tr(lang, 'dl.mobile.title')}</p>
+    <p class="sc-dl-mobile-text">{tr(lang, 'dl.mobile')}</p>
+    <div class="sc-dl-mobile-actions">
+      <button type="button" class="sc-btn sc-btn-primary" data-copy data-testid="download-copy">
+        <Icon name="copy" size={18} />
+        <span data-copy-label>{tr(lang, 'dl.copy')}</span>
+      </button>
+      <button type="button" class="sc-btn sc-btn-secondary" data-share data-testid="download-share" hidden>
+        <Icon name="share" size={18} />
+        {tr(lang, 'dl.share')}
+      </button>
+    </div>
+    <span class="sc-sr-only" role="status" aria-live="polite" data-copy-status></span>
   </div>
+
+  <p class="sc-dl-trust">{tr(lang, 'dl.trust')}</p>
 </div>
 
 <script>
-  import { choicesFor, detectOs, type Choice } from '../lib/download';
+  import { choicesFor, detectOs, formatSize, type Choice } from '../lib/download';
   import { loadUsage } from '../lib/stats';
+  import type { SiteLang } from '../lib/i18n';
 
   type Strings = Record<string, string>;
 
   for (const root of document.querySelectorAll<HTMLElement>('.sc-dl')) {
     const s = JSON.parse(root.dataset.strings ?? '{}') as Strings;
+    const lang = (root.dataset.lang ?? 'en') as SiteLang;
     const install = JSON.parse(root.dataset.install ?? '{}') as Record<string, string>;
     const releases = root.dataset.releases ?? '';
     const main = root.querySelector<HTMLAnchorElement>('.sc-dl-main')!;
     const label = main.querySelector<HTMLElement>('[data-label]')!;
     const meta = root.querySelector<HTMLElement>('.sc-dl-meta')!;
+    const linksRow = root.querySelector<HTMLElement>('.sc-dl-links')!;
     const alt = root.querySelector<HTMLElement>('.sc-dl-alt')!;
+    const howTo = root.querySelector<HTMLAnchorElement>('[data-testid="download-howto"]')!;
     const mobile = root.querySelector<HTMLElement>('.sc-dl-mobile')!;
     const os = detectOs(navigator as Navigator & { userAgentData?: { platform?: string; mobile?: boolean } });
     root.dataset.os = os;
 
-    const labelFor = (c: Choice) => s[`dl.for.${c.key === 'windows' ? 'windows' : c.key}`] ?? s['dl.button'];
-
-    const render = (latest: Parameters<typeof choicesFor>[1]) => {
-      const { primary, alternatives } = choicesFor(os, latest, releases);
-      if (!primary) {
-        if (os === 'mobile') {
-          mobile.hidden = false;
-          main.hidden = true;
+    if (os === 'mobile') {
+      main.hidden = true;
+      mobile.hidden = false;
+      linksRow.classList.add('is-mobile');
+      const copyBtn = mobile.querySelector<HTMLButtonElement>('[data-copy]')!;
+      const copyLabel = mobile.querySelector<HTMLElement>('[data-copy-label]')!;
+      const status = mobile.querySelector<HTMLElement>('[data-copy-status]')!;
+      const shareBtn = mobile.querySelector<HTMLButtonElement>('[data-share]')!;
+      const url = location.href.split('#')[0];
+      copyBtn.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(url);
+          copyLabel.textContent = s['dl.copied'] ?? '';
+          status.textContent = s['dl.copied'] ?? '';
+          setTimeout(() => (copyLabel.textContent = s['dl.copy'] ?? ''), 2500);
+        } catch {
+          window.prompt('', url);
         }
-        return;
+      });
+      if (typeof navigator.share === 'function') {
+        shareBtn.hidden = false;
+        shareBtn.addEventListener('click', () => {
+          navigator.share({ title: s['dl.shareTitle'], url }).catch(() => {});
+        });
       }
-      main.href = primary.href;
-      main.dataset.direct = String(primary.direct);
-      label.textContent = labelFor(primary);
+    }
+
+    const render = (latest: Parameters<typeof choicesFor>[1], version?: string) => {
+      const { primary, alternatives } = choicesFor(os, latest, releases);
+      if (!primary) return;
+      const c: Choice = primary;
+      main.href = c.href;
+      main.dataset.direct = String(c.direct);
+      label.textContent = s[`dl.for.${c.key}`] ?? s['dl.button'] ?? '';
+      const parts = [version ? (s['dl.version'] ?? '').replace('{version}', version) : '', c.size ? formatSize(c.size, lang) : '', s[`dl.note.${c.key}`] ?? ''];
+      meta.textContent = parts.filter(Boolean).join(' · ');
       meta.hidden = false;
-      const version = latest?.version ? `${(s['dl.version'] ?? '').replace('{version}', latest.version)} · ` : '';
-      meta.textContent = '';
-      meta.append(version);
-      const how = document.createElement('a');
-      how.href = install[primary.os] ?? '';
-      how.textContent = s['dl.howTo'] ?? '';
-      meta.append(how);
       alt.textContent = '';
       for (const a of alternatives) {
         const link = document.createElement('a');
         link.href = a.href;
+        link.className = 'sc-link sc-link-muted';
         link.textContent = s[`dl.alt.${a.key}`] ?? a.key;
         link.dataset.testid = `download-alt-${a.key}`;
-        if (alt.childNodes.length) alt.append(' · ');
         alt.append(link);
       }
       alt.hidden = alternatives.length === 0;
-      root.querySelector(`.sc-dl-other li[data-os="${primary.os}"]`)?.remove();
+      howTo.href = install[c.os] ?? howTo.href;
+      howTo.hidden = false;
     };
 
     render(null);
     void loadUsage(root.dataset.stats ?? '').then((u) => {
-      if (u.latest) render(u.latest);
+      if (u.latest) render(u.latest, u.latest.version);
     });
   }
 </script>
@@ -110,62 +144,90 @@ const downloadPage = pagePath(lang, 'download');
   .sc-dl {
     display: flex;
     flex-direction: column;
-    align-items: flex-start;
-    gap: 0.5rem;
-    margin: 0;
+    align-items: center;
+    gap: 0.75rem;
+    text-align: center;
   }
   .sc-dl-main {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.6rem;
+    min-width: 15rem;
     max-width: 100%;
-    padding: 0.9rem 1.6rem;
-    border-radius: 999px;
-    background: var(--sc-accent-strong);
-    color: var(--sc-on-accent);
-    font-size: 1.2rem;
-    font-weight: 700;
-    text-decoration: none;
-    box-shadow: 0 6px 20px color-mix(in srgb, var(--sc-accent-strong) 35%, transparent);
-  }
-  .sc-dl-main:hover,
-  .sc-dl-main:focus-visible {
-    background: color-mix(in srgb, var(--sc-accent-strong) 85%, black);
-    color: var(--sc-on-accent);
-  }
-  .sc-dl-main[hidden] {
-    display: none;
   }
   .sc-dl p {
     margin: 0;
-    font-size: var(--sl-text-sm);
-    color: var(--sl-color-gray-2);
   }
-  /* :global: the version and alternative links are created by the script. */
-  .sc-dl :global(a:not(.sc-dl-main)) {
-    color: var(--sl-color-text-accent);
+  .sc-dl-meta {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+    font-variant-numeric: tabular-nums;
   }
-  .sc-dl-other {
+  .sc-dl-meta[hidden],
+  .sc-dl-alt[hidden],
+  .sc-dl-mobile[hidden],
+  .sc-dl [hidden] {
+    display: none;
+  }
+  .sc-dl-links,
+  .sc-dl-alt {
     display: flex;
     flex-wrap: wrap;
-    gap: 0.35rem;
-    font-size: var(--sl-text-sm);
-    color: var(--sl-color-gray-2);
+    justify-content: center;
+    align-items: center;
+    column-gap: 1rem;
+    row-gap: 0.25rem;
+    font-size: var(--sc-text-small);
   }
-  .sc-dl-other ul {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.35rem;
-    margin: 0;
-    padding: 0;
-    list-style: none;
+  .sc-dl-links {
+    margin-top: 0.25rem;
   }
-  .sc-dl-other li {
-    margin: 0;
-  }
-  .sc-dl-other li + li::before {
+  /* A quiet dot between the links that are shown. */
+  .sc-dl-links > :not([hidden]) ~ :not([hidden])::before,
+  .sc-dl-alt > a + a::before {
     content: '·';
-    margin-inline-end: 0.35rem;
-    color: var(--sl-color-gray-3);
+    margin-inline: 0.625rem;
+    color: var(--sc-muted);
+  }
+  .sc-dl-links {
+    column-gap: 0;
+  }
+  .sc-dl-links.is-mobile {
+    order: 3;
+  }
+  .sc-dl-mobile {
+    order: 2;
+  }
+  .sc-dl-trust {
+    order: 4;
+  }
+  .sc-dl-trust {
+    margin-top: 0.75rem !important;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-micro);
+    letter-spacing: 0.01em;
+  }
+  .sc-dl-mobile {
+    display: grid;
+    gap: 0.5rem;
+    justify-items: center;
+    width: 100%;
+    max-width: 24rem;
+    padding: 1.25rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-lg);
+    background: var(--sc-surface);
+  }
+  .sc-dl-mobile-title {
+    color: var(--sc-ink);
+    font-weight: 600;
+  }
+  .sc-dl-mobile-text {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  .sc-dl-mobile-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
   }
 </style>

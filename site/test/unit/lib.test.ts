@@ -1,6 +1,7 @@
 // Unit tests for the site's browser logic (run by the repo's root `npm test`).
 import { describe, expect, it, vi } from 'vitest';
-import { choicesFor, detectOs } from '../../src/lib/download';
+import { choicesFor, detectOs, formatSize } from '../../src/lib/download';
+import { copy } from '../../src/lib/copy';
 import { otherLangPath, pagePath, tr, ui } from '../../src/lib/i18n';
 import { formatCount, loadUsage, parseSummary } from '../../src/lib/stats';
 
@@ -51,6 +52,19 @@ describe('choicesFor', () => {
     expect(choicesFor('windows', null, RELEASES).primary).toMatchObject({ href: RELEASES, direct: false });
   });
 
+  it('carries the file size when stats.json has it', () => {
+    const sized = { assets: { 'windows-x64': { name: 'a.exe', url: url('a.exe'), size: 9_123_456 } } };
+    expect(choicesFor('windows', sized, RELEASES).primary?.size).toBe(9_123_456);
+    const bad = { assets: { 'windows-x64': { name: 'a.exe', url: url('a.exe'), size: -1 } } };
+    expect(choicesFor('windows', bad, RELEASES).primary).not.toHaveProperty('size');
+  });
+
+  it('formats sizes per language', () => {
+    expect(formatSize(9_123_456, 'en')).toBe('9.1 MB');
+    expect(formatSize(9_123_456, 'pt-BR')).toBe('9,1 MB');
+    expect(formatSize(80_000_000, 'en')).toBe('80 MB');
+  });
+
   it('never links to a file outside github.com', () => {
     const evil = { assets: { 'windows-x64': { name: 'x.exe', url: 'https://example.com/x.exe' } } };
     expect(choicesFor('windows', evil, RELEASES).primary?.href).toBe(RELEASES);
@@ -95,6 +109,7 @@ describe('i18n', () => {
     expect(pagePath('en', 'install/windows')).toBe('/swarmcast/install/windows/');
     expect(pagePath('pt-BR', '/live/p2p/')).toBe('/swarmcast/pt-br/live/p2p/');
     expect(pagePath('pt-BR')).toBe('/swarmcast/pt-br/');
+    expect(pagePath('en', 'download#windows')).toBe('/swarmcast/download/#windows');
     expect(otherLangPath('/swarmcast/live/p2p/')).toEqual({ lang: 'pt-BR', href: '/swarmcast/pt-br/live/p2p/' });
     expect(otherLangPath('/swarmcast/pt-br/live/p2p/')).toEqual({ lang: 'en', href: '/swarmcast/live/p2p/' });
     expect(otherLangPath('/swarmcast/pt-br')).toEqual({ lang: 'en', href: '/swarmcast/' });
@@ -103,6 +118,12 @@ describe('i18n', () => {
 
   it('has the same UI keys in both languages', () => {
     expect(Object.keys(ui['pt-BR']).sort()).toEqual(Object.keys(ui.en).sort());
-    expect(tr('pt-BR', 'stats.downloads', { n: '5' })).toBe('cerca de 5 downloads');
+    expect(tr('pt-BR', 'dl.version', { version: '1.0' })).toBe('Versão 1.0');
+  });
+
+  it('has the same landing and download copy in both languages', () => {
+    const shape = (v: unknown): unknown =>
+      Array.isArray(v) ? v.map(shape) : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [k, shape(x)])) : typeof v;
+    expect(shape(copy['pt-BR'])).toEqual(shape(copy.en));
   });
 });

@@ -1,6 +1,7 @@
 ---
-// "About N downloads · about M apps opened this week", from site/public/stats.json (GitHub's
-// public counters, see scripts/stats/). Hidden until the numbers exist; no third-party request.
+// "1,230 downloads · 40 apps opened this week", from site/public/stats.json (GitHub's public
+// counters, see scripts/stats/). Hidden until the numbers exist; no third-party request.
+import Icon from './Icon.astro';
 import { BASE, pagePath, tr, type SiteLang } from '../lib/i18n';
 
 interface Props {
@@ -9,21 +10,24 @@ interface Props {
 const { lang } = Astro.props;
 ---
 
-<section
-  class="sc-stats not-content"
-  data-testid="usage-stats"
-  data-lang={lang}
-  data-stats={`${BASE}/stats.json`}
-  data-downloads={tr(lang, 'stats.downloads')}
-  data-apps={tr(lang, 'stats.apps')}
-  aria-label={tr(lang, 'stats.title')}
-  hidden
->
-  <ul>
-    <li data-testid="stats-downloads" hidden></li>
-    <li data-testid="stats-apps" hidden></li>
-  </ul>
-  <a href={pagePath(lang, 'about/privacy')}>{tr(lang, 'stats.how')}</a>
+<section class="sc-stats" data-testid="usage-stats" data-lang={lang} data-stats={`${BASE}/stats.json`} aria-label={tr(lang, 'stats.title')} hidden>
+  <dl>
+    <div data-testid="stats-downloads" hidden>
+      <dt>{tr(lang, 'stats.downloads')}</dt>
+      <dd data-n></dd>
+    </div>
+    <div data-testid="stats-apps" hidden>
+      <dt>{tr(lang, 'stats.apps')}</dt>
+      <dd data-n></dd>
+    </div>
+  </dl>
+  <p>
+    <span>{tr(lang, 'stats.note')}</span>
+    <a class="sc-link" href={pagePath(lang, `about/privacy#${tr(lang, 'anchor.stats')}`)}>
+      {tr(lang, 'stats.how')}
+      <Icon name="arrow-right" size={14} class="sc-arrow" />
+    </a>
+  </p>
 </section>
 
 <script>
@@ -33,53 +37,64 @@ const { lang } = Astro.props;
   for (const root of document.querySelectorAll<HTMLElement>('.sc-stats')) {
     const lang = (root.dataset.lang ?? 'en') as SiteLang;
     void loadUsage(root.dataset.stats ?? '').then((u) => {
-      const fill = (sel: string, template: string | undefined, n: number | null) => {
-        const li = root.querySelector<HTMLElement>(sel);
-        if (!li || n === null || !template) return false;
-        li.textContent = template.replace('{n}', formatCount(n, lang));
-        li.hidden = false;
+      const fill = (id: string, n: number | null) => {
+        const item = root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        if (!item || n === null) return false;
+        item.querySelector<HTMLElement>('[data-n]')!.textContent = formatCount(n, lang);
+        item.hidden = false;
         return true;
       };
-      const a = fill('[data-testid="stats-downloads"]', root.dataset.downloads, u.downloads);
-      const b = fill('[data-testid="stats-apps"]', root.dataset.apps, u.appsWeek);
+      const a = fill('stats-downloads', u.downloads);
+      const b = fill('stats-apps', u.appsWeek);
       root.hidden = !(a || b);
     });
   }
 </script>
 
 <style>
-  .sc-stats {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: center;
-    gap: 0.4rem 1.2rem;
-    margin: 1.5rem 0 0;
-    padding: 0.9rem 1rem;
-    border: 1px dashed var(--sc-card-border);
-    border-radius: 0.9rem;
-    text-align: center;
-  }
   .sc-stats[hidden],
-  .sc-stats li[hidden] {
+  .sc-stats [hidden] {
     display: none;
   }
-  .sc-stats ul {
+  .sc-stats {
+    display: grid;
+    gap: 1.25rem;
+  }
+  dl {
     display: flex;
     flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.4rem 1.2rem;
+    gap: 1.5rem 3rem;
     margin: 0;
-    padding: 0;
-    list-style: none;
+  }
+  dl > div {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.125rem;
+  }
+  dd {
+    margin: 0;
+    color: var(--sc-ink);
+    font-size: clamp(2rem, 1.6rem + 1.5vw, 2.75rem);
     font-weight: 600;
-    color: var(--sl-color-white);
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
   }
-  .sc-stats li {
-    margin: 0;
+  dt {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
   }
-  .sc-stats a {
-    font-size: var(--sl-text-sm);
-    color: var(--sl-color-text-accent);
+  p {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
   }
 </style>

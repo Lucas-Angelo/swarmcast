@@ -1,0 +1,337 @@
+/*
+ * The docs (Starlight) on the shared tokens. Every --sl-* colour is derived from --sc-* (see
+ * assets/brand/tokens.css); greys are --sc-ink mixed into --sc-bg, so light and dark follow the
+ * tokens without a second palette. Unlayered, so it wins over Starlight's cascade layers.
+ */
+:root {
+  --sl-font: var(--sc-font-text);
+  --sl-font-system: var(--sc-font-text);
+  --sl-font-mono: var(--sc-font-mono);
+
+  --sl-color-white: var(--sc-ink);
+  --sl-color-gray-1: color-mix(in srgb, var(--sc-ink) 88%, var(--sc-bg));
+  --sl-color-gray-2: var(--sc-text);
+  --sl-color-gray-3: var(--sc-muted);
+  --sl-color-gray-4: color-mix(in srgb, var(--sc-muted) 55%, var(--sc-bg));
+  --sl-color-gray-5: var(--sc-border-strong);
+  --sl-color-gray-6: var(--sc-surface-2);
+  --sl-color-gray-7: var(--sc-surface);
+  --sl-color-black: var(--sc-bg);
+
+  --sl-color-accent-low: var(--sc-accent-soft);
+  --sl-color-accent: var(--sc-accent);
+  --sl-color-accent-high: var(--sc-accent-strong);
+
+  --sl-color-text: var(--sc-text);
+  --sl-color-text-accent: var(--sc-accent-strong);
+  --sl-color-text-invert: var(--sc-bg);
+  --sl-color-bg: var(--sc-bg);
+  --sl-color-bg-nav: var(--sc-bg);
+  --sl-color-bg-sidebar: var(--sc-bg);
+  --sl-color-bg-inline-code: var(--sc-surface-2);
+  --sl-color-bg-accent: var(--sc-accent);
+  --sl-color-hairline-light: var(--sc-border);
+  --sl-color-hairline: var(--sc-border);
+  --sl-color-hairline-shade: var(--sc-border);
+  --sl-color-backdrop-overlay: color-mix(in srgb, var(--sc-ink) 35%, transparent);
+
+  /* Status colours (asides, badges). No purple anywhere: "tip" is the success colour. */
+  --sl-color-blue: var(--sc-muted);
+  --sl-color-blue-low: var(--sc-surface);
+  --sl-color-blue-high: var(--sc-ink);
+  --sl-color-purple: var(--sc-success);
+  --sl-color-purple-low: color-mix(in srgb, var(--sc-success) 10%, var(--sc-bg));
+  --sl-color-purple-high: color-mix(in srgb, var(--sc-success) 65%, var(--sc-ink));
+  --sl-color-green: var(--sc-success);
+  --sl-color-green-low: color-mix(in srgb, var(--sc-success) 10%, var(--sc-bg));
+  --sl-color-green-high: color-mix(in srgb, var(--sc-success) 65%, var(--sc-ink));
+  --sl-color-orange: var(--sc-warning);
+  --sl-color-orange-low: color-mix(in srgb, var(--sc-warning) 10%, var(--sc-bg));
+  --sl-color-orange-high: color-mix(in srgb, var(--sc-warning) 65%, var(--sc-ink));
+  --sl-color-red: var(--sc-live);
+  --sl-color-red-low: color-mix(in srgb, var(--sc-live) 10%, var(--sc-bg));
+  --sl-color-red-high: color-mix(in srgb, var(--sc-live) 65%, var(--sc-ink));
+
+  --sl-shadow-sm: var(--sc-shadow-sm);
+  --sl-shadow-md: var(--sc-shadow);
+  --sl-shadow-lg: var(--sc-shadow);
+
+  /* Type and measure: ~70 characters per line. */
+  --sl-text-h1: 2.25rem;
+  --sl-text-h2: 1.5rem;
+  --sl-text-h3: 1.1875rem;
+  --sl-text-h4: 1.0625rem;
+  --sl-text-h5: 1rem;
+  --sl-line-height: 1.7;
+  --sl-line-height-headings: 1.25;
+  --sl-content-width: 42rem;
+  --sl-nav-height: 4rem;
+}
+
+/* Phones: 16 px gutters and nothing wider than the screen. */
+html,
+body {
+  overflow-x: hidden;
+}
+@media (max-width: 50rem) {
+  :root {
+    --sl-content-pad-x: 1rem;
+    --sl-nav-pad-x: 1rem;
+    --sl-text-h1: 1.875rem;
+    --sl-text-h2: 1.375rem;
+  }
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+:focus-visible {
+  outline-color: var(--sc-focus);
+}
+
+/* ---------- Header ---------- */
+.header {
+  border-bottom-color: var(--sc-border);
+}
+site-search button[data-open-modal] {
+  border-color: var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: var(--sc-surface);
+  color: var(--sc-muted);
+}
+site-search button[data-open-modal]:hover {
+  border-color: var(--sc-border-strong);
+  color: var(--sc-ink);
+}
+site-search kbd {
+  background: var(--sc-bg);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+}
+
+/* ---------- Sidebar ---------- */
+.sidebar-content .group-label .large,
+.sidebar-content summary .large {
+  font-size: var(--sc-text-micro);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--sc-ink);
+}
+.sidebar-content a {
+  border-radius: var(--sc-radius-sm);
+  color: var(--sc-muted);
+}
+.sidebar-content a:hover {
+  color: var(--sc-ink);
+}
+.sidebar-content a[aria-current='page'],
+.sidebar-content a[aria-current='page']:hover,
+.sidebar-content a[aria-current='page']:focus {
+  background: var(--sc-accent-soft);
+  color: var(--sc-accent-strong);
+  font-weight: 600;
+}
+
+/* ---------- Page title and prose ---------- */
+.content-panel h1#_top {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  color: var(--sc-ink);
+}
+.sl-markdown-content {
+  font-size: 1.0625rem;
+  color: var(--sc-text);
+}
+.sl-markdown-content :is(h2, h3, h4, h5) {
+  color: var(--sc-ink);
+  font-weight: 600;
+}
+.sl-markdown-content h2 {
+  letter-spacing: -0.02em;
+}
+.sl-markdown-content h3 {
+  letter-spacing: -0.01em;
+}
+.sl-markdown-content :is(h2, .sl-heading-wrapper.level-h2) {
+  margin-top: 2.75rem;
+}
+.sl-markdown-content strong {
+  color: var(--sc-ink);
+  font-weight: 600;
+}
+.sl-markdown-content a:not(.sc-btn):not(.sl-link-card a, .card a) {
+  color: var(--sc-accent-strong);
+  text-decoration-line: underline;
+  text-decoration-color: color-mix(in srgb, var(--sc-accent) 45%, var(--sc-bg));
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 0.22em;
+}
+.sl-markdown-content a:not(.sc-btn):hover {
+  text-decoration-color: currentColor;
+}
+.sl-markdown-content :is(ul, ol) > li::marker {
+  color: var(--sc-muted);
+}
+.sl-markdown-content ol > li::marker {
+  font-variant-numeric: tabular-nums;
+}
+.sl-anchor-link {
+  color: var(--sc-muted);
+}
+
+/* Inline code, keyboard keys and button names in the guides. */
+.sl-markdown-content code:not(pre code) {
+  padding: 0.1em 0.35em;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-surface);
+  color: var(--sc-ink);
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+}
+.sl-markdown-content kbd {
+  font-family: var(--sc-font-text);
+  font-size: 0.85em;
+  padding: 0.05em 0.4em;
+  border: 1px solid var(--sc-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-bg);
+  color: var(--sc-ink);
+}
+
+/* Screenshots: a clean frame. */
+.sl-markdown-content img {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius);
+  background: var(--sc-surface);
+}
+
+/* Tables */
+.sl-markdown-content table {
+  font-size: 0.9375rem;
+}
+.sl-markdown-content :is(th, td) {
+  border-color: var(--sc-border);
+}
+.sl-markdown-content th {
+  background: var(--sc-surface);
+  color: var(--sc-ink);
+  font-weight: 600;
+}
+
+/* ---------- Asides: flat, neutral, a thin status bar on the left ---------- */
+.starlight-aside {
+  --sc-aside: var(--sc-muted);
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--sc-border);
+  border-inline-start: 3px solid var(--sc-aside);
+  border-radius: var(--sc-radius);
+  background: var(--sc-surface);
+  color: var(--sc-text);
+}
+.starlight-aside--note {
+  --sc-aside: var(--sc-accent);
+}
+.starlight-aside--tip {
+  --sc-aside: var(--sc-success);
+}
+.starlight-aside--caution {
+  --sc-aside: var(--sc-warning);
+}
+.starlight-aside--danger {
+  --sc-aside: var(--sc-live);
+}
+.starlight-aside__title {
+  color: var(--sc-ink);
+  font-size: 1rem;
+  font-weight: 600;
+}
+.starlight-aside__icon {
+  color: var(--sc-aside);
+}
+
+/* ---------- Cards, link cards, pagination ---------- */
+.card {
+  --sl-card-border: var(--sc-border);
+  --sl-card-bg: var(--sc-bg);
+  border: 1px solid var(--sc-border) !important;
+  border-radius: var(--sc-radius-lg);
+  background: var(--sc-bg) !important;
+}
+.card .icon {
+  color: var(--sc-ink) !important;
+  background: var(--sc-surface) !important;
+  border-color: var(--sc-border) !important;
+}
+.sl-link-card {
+  border: 1px solid var(--sc-border) !important;
+  border-radius: var(--sc-radius-lg) !important;
+  background: var(--sc-bg) !important;
+  box-shadow: none !important;
+}
+.sl-link-card:hover {
+  border-color: var(--sc-border-strong) !important;
+  background: var(--sc-surface) !important;
+}
+.sl-link-card .title {
+  color: var(--sc-ink);
+  font-weight: 600;
+}
+.sl-link-card .description {
+  color: var(--sc-muted);
+}
+.sl-link-card svg {
+  color: var(--sc-muted) !important;
+}
+.pagination-links a {
+  border-color: var(--sc-border) !important;
+  border-radius: var(--sc-radius-lg) !important;
+  box-shadow: none !important;
+  color: var(--sc-muted);
+}
+.pagination-links a:hover {
+  border-color: var(--sc-border-strong) !important;
+}
+.pagination-links .link-title {
+  color: var(--sc-ink);
+  font-weight: 600;
+}
+
+/* Table of contents */
+starlight-toc a,
+mobile-starlight-toc a {
+  color: var(--sc-muted);
+}
+starlight-toc a:hover {
+  color: var(--sc-ink);
+}
+starlight-toc a[aria-current='true'],
+mobile-starlight-toc a[aria-current='true'] {
+  color: var(--sc-accent-strong);
+  font-weight: 600;
+}
+
+/* Footer of the docs page */
+.meta a {
+  color: var(--sc-muted);
+}
+
+@media (max-width: 50rem) {
+  site-search button[data-open-modal] {
+    border: 1px solid var(--sc-border);
+    background: transparent;
+  }
+}
+/* Narrow phones: logo without the "Guide" label, so the header never crowds. */
+@media (max-width: 25rem) {
+  .sc-site-title .sc-logo-suffix {
+    display: none;
+  }
+}

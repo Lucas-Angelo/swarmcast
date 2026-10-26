@@ -1,0 +1,11 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+import Landing from '../components/Landing.astro';
+import { copy } from '../lib/copy';
+
+const c = copy.en;
+---
+
+<SiteLayout lang="en" slug="" title={c.meta.title} description={c.meta.description}>
+  <Landing lang="en" />
+</SiteLayout>
