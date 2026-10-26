@@ -28,10 +28,12 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
       configOverrides: {
         ports: PORTS,
         speedTest: { enabled: false, intervalMinutes: 15 },
-        // The system ffmpeg; manual ladder so the test also runs on machines without a GPU encoder.
+        // The system ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
+        // on machines without a GPU encoder and with fewer than 6 CPU threads (CI runners), where
+        // `encoder: 'auto'` keeps only the original quality to protect OBS.
         ffmpegPath: 'ffmpeg',
         quality: {
-          ladder: { mode: 'manual', enabled: true, heights: [720, 480], encoder: 'auto' },
+          ladder: { mode: 'manual', enabled: true, heights: [720, 480], encoder: 'libx264' },
           upload: { mode: 'manual', otherStreamKbps: null, headroomPercent: 15 },
           obsWebsocket: { enabled: false, url: 'ws://127.0.0.1:4455' },
         },

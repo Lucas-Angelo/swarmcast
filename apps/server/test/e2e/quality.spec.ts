@@ -33,8 +33,9 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   test.setTimeout(240_000);
 
   try {
-    // Turn on 480p + 360p (manual: works with a GPU encoder or x264), then OBS reconnects at 720p.
-    await adminApi('PUT', '/api/quality', update(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'auto' }));
+    // Turn on 480p + 360p (manual, x264 forced: `auto` keeps only the original on a PC without a
+    // GPU encoder and with fewer than 6 CPU threads, like the CI runners), then OBS reconnects at 720p.
+    await adminApi('PUT', '/api/quality', update(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
     reconnectObs({ size: '1280x720', kbps: 2500 });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
