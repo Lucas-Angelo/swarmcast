@@ -5,6 +5,8 @@ import { formatNumber, getLang, humanDuration, LANGS, t, tc, toLang, translate, 
 import { applyLang, rememberLang } from '@swarmcast/shared/i18n/browser';
 import { ActivityConsole } from './Activity.js';
 import { api, errorText, post, subscribe } from './api.js';
+import { DesktopCard, UpdateBanner } from './DesktopCard.js';
+import { loadDesktop, setDesktop } from './desktop.js';
 import { Info } from './Info.js';
 import { Onboarding, RedoTutorialButton } from './onboarding/Onboarding.js';
 import { QualityCard } from './QualityCard.js';
@@ -50,11 +52,20 @@ export function App() {
 
   useEffect(
     () =>
-      subscribe(setS, setDown, (m: AdminLogMessage) =>
-        setActivity((prev) => (m.reset ? m.entries : [...prev, ...m.entries]).slice(-ACTIVITY_KEEP)),
+      subscribe(
+        setS,
+        setDown,
+        (m: AdminLogMessage) => setActivity((prev) => (m.reset ? m.entries : [...prev, ...m.entries]).slice(-ACTIVITY_KEEP)),
+        setDesktop,
       ),
     [],
   );
+  // Desktop app only (null in script mode: its card and banner stay hidden).
+  useEffect(() => {
+    void loadDesktop((p, m) => api(p, m)).then((d) => {
+      if (d) setDesktop(d);
+    });
+  }, []);
 
   const changeLang = (l: Lang): void => {
     applyLang(l);
@@ -150,6 +161,7 @@ export function App() {
 
       {down && <div class="err">{t('admin.lostConnection')}</div>}
       {error !== null && <div class="err" data-testid="error">{errorText(error)}</div>}
+      <UpdateBanner phase={s.phase} />
       {s.warnings.map((w, i) => (
         <div class="warn" key={w}>{tc(s.warningCodes?.[i], w)}</div>
       ))}
@@ -328,6 +340,8 @@ export function App() {
       </div>
 
       <QualityCard live={s.phase === 'live'} />
+
+      <DesktopCard />
 
       <section class="card mt">
         <h2 class="row-title">

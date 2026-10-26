@@ -5,7 +5,7 @@ import { formatNumber, t, tc, type MessageKey } from '@swarmcast/shared/i18n';
 import { api, errorText, post } from './api.js';
 import { Info } from './Info.js';
 
-type Install = { phase: string; receivedBytes: number; totalBytes?: number; message?: string } | null;
+type Install = { phase: string; receivedBytes: number; totalBytes?: number; message?: string; attempt?: number; attempts?: number } | null;
 type State = QualityState & { install: Install };
 
 const PHASE_KEY: Record<QualityState['upload']['phase'], MessageKey> = {
@@ -108,6 +108,7 @@ export function QualityCard({ live = false }: { live?: boolean }) {
   const u = q.upload;
   const pc = q.pc;
   const installing = !!q.install && !['done', 'error'].includes(q.install.phase);
+  const failed = q.install?.phase === 'error';
   const srcHeight = q.source?.height ?? 1080;
   const manual = s.ladder.mode === 'manual';
   const supported = q.supportedHeights;
@@ -154,16 +155,26 @@ export function QualityCard({ live = false }: { live?: boolean }) {
                 <div class="pc-detail">
                   <p class="muted small">{t('quality.pc.ffmpegInstallerNote')}</p>
                   <div class="row tight">
-                    <button class="small primary" disabled={busy || installing} onClick={() => void run('/api/quality/ffmpeg/install')} data-testid="install-ffmpeg">
+                    <button
+                      class="small primary"
+                      disabled={busy || installing}
+                      title={failed ? t('quality.install.retry.tip') : t('quality.install.tip')}
+                      onClick={() => void run('/api/quality/ffmpeg/install')}
+                      data-testid="install-ffmpeg"
+                    >
                       {installing
-                        ? q.install!.totalBytes
-                          ? t('quality.install.progressOf', { mb: mb(q.install!.receivedBytes), total: mb(q.install!.totalBytes) })
-                          : t('quality.install.progress', { mb: mb(q.install!.receivedBytes) })
-                        : t('quality.install.button')}
+                        ? q.install!.phase === 'retrying'
+                          ? t('quality.install.retrying', { attempt: q.install!.attempt ?? 2, attempts: q.install!.attempts ?? 4 })
+                          : q.install!.totalBytes
+                            ? t('quality.install.progressOf', { mb: mb(q.install!.receivedBytes), total: mb(q.install!.totalBytes) })
+                            : t('quality.install.progress', { mb: mb(q.install!.receivedBytes) })
+                        : failed
+                          ? t('quality.install.retry')
+                          : t('quality.install.button')}
                     </button>
-                    <Info text={t('quality.install.tip')} />
+                    <Info text={failed ? t('quality.install.retry.tip') : t('quality.install.tip')} />
                   </div>
-                  {q.install?.phase === 'error' && <div class="err small">{t('quality.install.failed', { error: q.install.message ?? '?' })}</div>}
+                  {failed && <div class="err small">{t('quality.install.failed', { error: q.install!.message ?? '?' })}</div>}
                 </div>
               )}
             </li>

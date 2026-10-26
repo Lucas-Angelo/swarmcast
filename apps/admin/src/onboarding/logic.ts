@@ -77,6 +77,25 @@ export function videoSupport(q: Partial<QualityState> | null | undefined): Video
   return encoders.length > 0 ? 'none' : 'unknown';
 }
 
+/** The video converter install progress of GET /api/quality (`install`). */
+export interface InstallLike {
+  phase: string;
+  receivedBytes?: number;
+  totalBytes?: number;
+  message?: string;
+  attempt?: number;
+  attempts?: number;
+}
+
+/** Where the ffmpeg install stands: installing, retrying (automatic, desktop first run), failed, or null (none / done). */
+export function converterInstall(q: { install?: InstallLike | null } | null | undefined): 'installing' | 'retrying' | 'failed' | null {
+  const phase = q?.install?.phase;
+  if (!phase || phase === 'done') return null;
+  if (phase === 'error') return 'failed';
+  if (phase === 'retrying') return 'retrying';
+  return 'installing';
+}
+
 type Get = (path: string, method: string) => Promise<unknown>;
 type Post = (path: string, body: unknown) => Promise<unknown>;
 
