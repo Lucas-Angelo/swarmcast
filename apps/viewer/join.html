@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title data-i18n="join.pageTitle">Join the stream · SwarmCast</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main class="card">
+      <h1 data-i18n="join.title">Join the stream</h1>
+      <p class="muted" data-i18n="join.intro">Pick a nickname so the streamer knows who is watching.</p>
+      <form id="join-form" novalidate>
+        <div class="label-row">
+          <label for="nickname" data-i18n="join.nickname">Nickname</label>
+          <span class="tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="join.nickname.tip"
+              >Only the streamer sees it, not other viewers. Up to 24 characters: letters, numbers, spaces, "-", "_" or ".".</span
+            ></span
+          >
+        </div>
+        <input id="nickname" name="nickname" maxlength="24" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
+        <p id="check" class="muted check" role="status" hidden>
+          <span data-i18n="join.checking">Checking your browser…</span>
+          <span class="tip"
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-check">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-check" data-i18n="join.checking.tip"
+              >A quick automatic check that protects the stream from fake mass joins. It runs only in your browser, sends nothing to anyone else and takes about a second.</span
+            ></span
+          >
+        </p>
+        <p id="error" class="error" role="alert" hidden></p>
+        <button id="join" type="submit" title="Join the stream with this nickname." data-i18n="join.watch" data-i18n-title="join.watch.tip">Watch</button>
+      </form>
+    </main>
+    <script type="module" src="/src/join.ts"></script>
+  </body>
+</html>

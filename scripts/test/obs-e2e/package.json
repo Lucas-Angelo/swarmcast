@@ -1,0 +1,14 @@
+{
+  "name": "swarmcast-obs-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Manual end-to-end test: real OBS Studio + real Cloudflare quick tunnel + real browsers (Playwright).",
+  "type": "module",
+  "scripts": {
+    "setup-obs": "node setup-obs.mjs",
+    "test": "node run.mjs"
+  },
+  "dependencies": {
+    "obs-websocket-js": "^5.0.6"
+  }
+}

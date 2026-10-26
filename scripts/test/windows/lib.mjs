@@ -1,0 +1,661 @@
+// Shared helpers for the Windows end-to-end matrix (.github/workflows/windows.yml).
+//
+// Every suite (installer.mjs, app.mjs, quality.mjs, direct.mjs, obs.mjs) records each check
+// with record()/check(), keeps going after a failed section, and at the end writes
+// <out>.json plus a Markdown table to $GITHUB_STEP_SUMMARY. Exit code 1 when any check failed.
+//
+// The installer and the app always run with a bare-OS PATH (System32, Windows, Wbem,
+// WindowsPowerShell), never with the runner's Git/Node/Chocolatey tooling.
+import { spawn, spawnSync } from 'node:child_process';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import http from 'node:http';
+import net from 'node:net';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const isWin = process.platform === 'win32';
+export const here = path.dirname(fileURLToPath(import.meta.url));
+export const repoRoot = path.resolve(here, '..', '..', '..');
+export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const args = process.argv.slice(2);
+export const opt = (n, d) => {
+  const i = args.indexOf(`--${n}`);
+  return i >= 0 ? args[i + 1] : d;
+};
+export const flag = (n) => args.includes(`--${n}`);
+
+export const ART = path.resolve(process.env.SC_ARTIFACTS ?? path.join(os.tmpdir(), 'sc-win-artifacts'));
+fs.mkdirSync(ART, { recursive: true });
+export const SUITE = opt('suite', path.basename(process.argv[1] ?? 'suite', '.mjs'));
+export const RUNNER = process.env.SC_RUNNER_LABEL ?? process.env.ImageOS ?? os.release();
+const harnessLog = path.join(ART, `${SUITE}-harness.log`);
+
+export function log(...a) {
+  const line = `[${new Date().toISOString().slice(11, 19)}] ${a.join(' ')}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(harnessLog, line + '\n');
+  } catch {
+    /* ignore */
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Results
+// ---------------------------------------------------------------------------
+
+export const results = [];
+let currentSection = '';
+
+/** status: pass | fail | warn (a finding that does not fail the job) | skip | info */
+export function record(name, status, detail = '') {
+  const r = { section: currentSection, name, status, detail: String(detail ?? '').slice(0, 1500) };
+  results.push(r);
+  const sym = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', skip: 'SKIP', info: 'INFO' }[status] ?? status;
+  log(`${sym} [${currentSection}] ${name}${r.detail ? ` -- ${r.detail}` : ''}`);
+  return status === 'pass';
+}
+export const check = (name, ok, detail = '') => record(name, ok ? 'pass' : 'fail', detail);
+export const info = (name, detail) => record(name, 'info', detail);
+/**
+ * A check that currently fails because of a reported app bug: recorded as a finding (warn,
+ * prefixed "BUG") instead of failing the job, and as a plain pass once the bug is fixed.
+ */
+export const bug = (name, ok, detail = '') => record(name, ok ? 'pass' : 'warn', ok ? '' : `BUG: ${detail}`);
+/** Like check(), but aborts the current section when it fails. */
+export function must(name, ok, detail = '') {
+  check(name, ok, detail);
+  if (!ok) throw new Error(`${name}${detail ? `: ${detail}` : ''}`);
+}
+
+const openPages = new Set();
+export function trackPage(page, label) {
+  openPages.add({ page, label });
+}
+async function screenshotAll(tag) {
+  for (const p of [...openPages]) {
+    if (p.page.isClosed()) {
+      openPages.delete(p);
+      continue;
+    }
+    const file = path.join(ART, `${SUITE}-${tag}-${p.label}.png`.replace(/[^\w.-]+/g, '_'));
+    await p.page.screenshot({ path: file, timeout: 10_000 }).catch(() => {});
+  }
+}
+
+const cleanups = [];
+/** Registered cleanups run after each section (LIFO), even when it failed. */
+export function onCleanup(fn) {
+  cleanups.push(fn);
+}
+
+export async function section(name, fn) {
+  currentSection = name;
+  log(`===== ${name}`);
+  const t0 = Date.now();
+  try {
+    await fn();
+  } catch (e) {
+    record('section aborted', 'fail', e?.stack?.split('\n').slice(0, 3).join(' | ') ?? String(e));
+    await screenshotAll(name.slice(0, 40));
+  } finally {
+    while (cleanups.length) {
+      const c = cleanups.pop();
+      try {
+        await c();
+      } catch (e) {
+        log(`cleanup failed: ${e.message}`);
+      }
+    }
+    openPages.clear();
+    closeStrayBrowsers();
+    log(`===== ${name} done in ${Math.round((Date.now() - t0) / 1000)} s`);
+  }
+}
+
+/**
+ * SwarmCast opens the panel in the default browser at every start (`cmd /c start <url>`).
+ * Close those windows between sections; Playwright's own browsers are left alone.
+ */
+export function closeStrayBrowsers() {
+  if (!isWin) return;
+  try {
+    for (const p of processes()) {
+      if (!/^(msedge|chrome|firefox|iexplore)\.exe$/i.test(p.name)) continue;
+      if (/remote-debugging-pipe|juggler|playwright/i.test(p.cmd)) continue;
+      spawnSync('taskkill', ['/F', '/PID', String(p.pid)], { stdio: 'ignore', windowsHide: true });
+    }
+  } catch {
+    /* best effort */
+  }
+}
+
+export function finish() {
+  const out = opt('out', path.join(ART, `${SUITE}.json`));
+  const failed = results.filter((r) => r.status === 'fail');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, results }, null, 2));
+  const icon = { pass: '✅', fail: '❌', warn: '⚠️', skip: '⏭️', info: 'ℹ️' };
+  const md = [
+    `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'warn').length} findings`,
+    '',
+    '| | Section | Check | Detail |',
+    '|---|---|---|---|',
+    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${r.detail.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').slice(0, 300)} |`),
+    '',
+  ].join('\n');
+  if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
+  log(`\n${SUITE}: ${results.length} checks, ${failed.length} failed`);
+  for (const f of failed) log(`  FAILED: [${f.section}] ${f.name} -- ${f.detail}`);
+  process.exit(failed.length ? 1 : 0);
+}
+
+// ---------------------------------------------------------------------------
+// Files, hashes, processes, ports
+// ---------------------------------------------------------------------------
+
+export const sha256File = (f) => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex');
+export const readText = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+export const pkgVersion = () => JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+
+export async function until(fn, timeoutMs, what, every = 500) {
+  const end = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < end) {
+    try {
+      last = await fn();
+      if (last) return last;
+    } catch (e) {
+      last = e;
+    }
+    await sleep(every);
+  }
+  throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: ${what}${last instanceof Error ? ` (${last.message})` : ''}`);
+}
+
+/** Runs a PowerShell 5.1 snippet; stdout is forced to UTF-8 so non-ASCII paths survive. */
+export function ps(script, { timeout = 120_000, allowFail = false } = {}) {
+  const exe = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const r = spawnSync(exe, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', `[Console]::OutputEncoding = [Text.Encoding]::UTF8; $ProgressPreference='SilentlyContinue'; ${script}`], {
+    encoding: 'utf8',
+    timeout,
+    windowsHide: true,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (r.status !== 0 && !allowFail) throw new Error(`powershell failed (${r.status}): ${(r.stderr || r.stdout || '').slice(0, 800)}`);
+  return (r.stdout ?? '').trim();
+}
+export function psJson(script, opts) {
+  const out = ps(`${script} | ConvertTo-Json -Depth 4 -Compress`, opts);
+  if (!out) return [];
+  const v = JSON.parse(out);
+  return Array.isArray(v) ? v : [v];
+}
+
+/** All processes: { pid, ppid, name, path, cmd }. */
+export function processes() {
+  return psJson('Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="ppid";e={$_.ParentProcessId}},@{n="name";e={$_.Name}},@{n="path";e={$_.ExecutablePath}},@{n="cmd";e={$_.CommandLine}}').map((p) => ({ ...p, path: p.path ?? '', cmd: p.cmd ?? '' }));
+}
+/** Processes whose executable lives under `dir` (SwarmCast, its reaper, MediaMTX, cloudflared, tray, ffmpeg). */
+export function processesUnder(dir) {
+  const d = path.resolve(dir).toLowerCase() + path.sep;
+  return processes().filter((p) => p.path && p.path.toLowerCase().startsWith(d));
+}
+export const describeProcs = (list) => list.map((p) => `${p.name}#${p.pid}${/--reaper/.test(p.cmd) ? '(reaper)' : ''}`).join(', ');
+/** The main SwarmCast process (not its --reaper twin) installed under `home`. */
+export function appProcess(home) {
+  return processesUnder(home).find((p) => /^swarmcast\.exe$/i.test(p.name) && !/--reaper/.test(p.cmd));
+}
+export function killTree(pid) {
+  spawnSync('taskkill', ['/F', '/T', '/PID', String(pid)], { stdio: 'ignore', windowsHide: true });
+}
+export function killUnder(dir) {
+  for (const p of processesUnder(dir)) killTree(p.pid);
+}
+
+/** TCP listeners (and UDP endpoints) owned by the given pids. */
+export function socketsOf(pids) {
+  if (!pids.length) return { tcp: [], udp: [] };
+  const list = pids.join(',');
+  const tcp = psJson(`Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { @(${list}) -contains $_.OwningProcess } | Select-Object LocalAddress,LocalPort,OwningProcess`, { allowFail: true });
+  const udp = psJson(`Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Where-Object { @(${list}) -contains $_.OwningProcess } | Select-Object LocalAddress,LocalPort,OwningProcess`, { allowFail: true });
+  return { tcp, udp };
+}
+export const isLoopback = (a) => a === '127.0.0.1' || a === '::1' || /^127\./.test(a);
+
+export function listening(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const s = net.connect({ port, host });
+    s.setTimeout(800, () => (s.destroy(), resolve(false)));
+    s.once('connect', () => (s.destroy(), resolve(true)));
+    s.once('error', () => resolve(false));
+  });
+}
+
+/** Occupy host:port with a plain TCP listener (simulates another program). */
+export function occupy(port, host) {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer((s) => s.destroy());
+    srv.once('error', reject);
+    srv.listen({ port, host, exclusive: true }, () => resolve({ close: () => new Promise((r) => srv.close(() => r())) }));
+  });
+}
+
+/** PE header subsystem: 2 = Windows GUI (no console window), 3 = console. */
+export function peSubsystem(file) {
+  const b = fs.readFileSync(file);
+  const pe = b.readUInt32LE(0x3c);
+  return b.readUInt16LE(pe + 4 + 20 + 68);
+}
+
+// ---------------------------------------------------------------------------
+// Release server
+// ---------------------------------------------------------------------------
+
+export function serve(root) {
+  root = path.resolve(root);
+  const requests = [];
+  return new Promise((resolve) => {
+    const srv = http.createServer((req, res) => {
+      const file = path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://x').pathname));
+      requests.push(req.url);
+      if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+        res.writeHead(404).end();
+        return;
+      }
+      res.writeHead(200, { 'Content-Length': fs.statSync(file).size });
+      fs.createReadStream(file).pipe(res);
+    });
+    srv.listen(0, '127.0.0.1', () =>
+      resolve({ url: `http://127.0.0.1:${srv.address().port}`, requests, close: () => new Promise((r) => srv.close(() => r())) }),
+    );
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Installer / app
+// ---------------------------------------------------------------------------
+
+export const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+export const powershellExe = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+export const cmdExe = path.join(systemRoot, 'System32', 'cmd.exe');
+
+/** PATH of a fresh Windows install (no Git, Node, Chocolatey or other CI tooling). */
+export function barePath() {
+  return [`${systemRoot}\\System32`, systemRoot, `${systemRoot}\\System32\\Wbem`, `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\`].join(';');
+}
+
+/** Environment for the installer/app: bare PATH, SwarmCast variables only as requested. */
+export function bareEnv({ home, releaseUrl, extra = {} } = {}) {
+  const drop = /^(path|swarmcast_.*|node_options|npm_.*)$/i;
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.test(k)));
+  env.Path = barePath();
+  env.SWARMCAST_NO_PAUSE = '1';
+  env.SWARMCAST_NO_OPEN = '1';
+  if (home) env.SWARMCAST_HOME = home;
+  if (releaseUrl) env.SWARMCAST_RELEASE_URL = releaseUrl;
+  return { ...env, ...extra };
+}
+
+let instCount = 0;
+/**
+ * Starts the installer.
+ *   entry 'ps'   powershell.exe (5.1) -NoProfile -ExecutionPolicy Bypass -File start-windows.ps1 <args>
+ *   entry 'cmd'  cmd.exe /d /s /c ""<dir>\start-windows.cmd" <args>"  (what a double-click runs)
+ *   entry 'iex'  powershell.exe -NoProfile -Command "irm <url>/start-windows.ps1 | iex"
+ */
+export function runInstaller({ entry = 'ps', dir, releaseUrl, home, args = [], iexUrl, extraEnv = {}, label = entry }) {
+  const env = bareEnv({ home, releaseUrl, extra: extraEnv });
+  const n = ++instCount;
+  const logFile = path.join(ART, `${SUITE}-installer-${String(n).padStart(2, '0')}-${label}.log`.replace(/[^\w.\\:-]+/g, '_'));
+  let child;
+  if (entry === 'ps') {
+    child = spawn(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 'start-windows.ps1'), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  } else if (entry === 'cmd') {
+    const line = `""${path.join(dir, 'start-windows.cmd')}"${args.length ? ' ' + args.join(' ') : ''}"`;
+    child = spawn(cmdExe, ['/d', '/s', '/c', line], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: true });
+  } else if (entry === 'iex') {
+    child = spawn(powershellExe, ['-NoProfile', '-Command', `irm ${iexUrl}/start-windows.ps1 | iex`], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  } else throw new Error(`unknown entry ${entry}`);
+  let out = '';
+  const onData = (d) => {
+    out += d;
+    fs.appendFileSync(logFile, d);
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  const exit = new Promise((r) => child.on('exit', (c) => r(c)));
+  log(`installer #${n} (${label}) pid ${child.pid}: ${entry} ${args.join(' ')} home=${home ?? '(default)'} url=${releaseUrl ?? iexUrl ?? '(none)'}`);
+  return { child, out: () => out, exit, logFile, exited: () => child.exitCode !== null };
+}
+
+/** Waits for the installer to finish (non-starting runs). */
+export async function installerResult(inst, timeoutMs = 300_000) {
+  const code = await Promise.race([inst.exit, sleep(timeoutMs).then(() => 'timeout')]);
+  if (code === 'timeout') inst.child.kill();
+  return { code, out: inst.out() };
+}
+
+/** Parses "Panel: http://127.0.0.1:<port>/auth/<token>" from `text()`, logs in, returns an API client. */
+export async function adminLogin(text, timeoutMs = 300_000, exited = () => false) {
+  const m = await until(() => {
+    const r = /Panel: (http:\/\/127\.0\.0\.1:(\d+))\/auth\/(\S+)/.exec(text());
+    if (!r && exited()) throw new Error('installer exited before printing the panel URL');
+    return r;
+  }, timeoutMs, 'panel URL in installer output');
+  const base = m[1];
+  const res = await fetch(`${base}/auth/${m[3]}`, { redirect: 'manual' });
+  const cookie = res.headers.getSetCookie()[0].split(';')[0];
+  const call = async (p, body, method) => {
+    const init = body === undefined && !method ? { headers: { cookie } } : { method: method ?? 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) };
+    const r = await fetch(base + p, init);
+    const text = await r.text();
+    let json;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = { raw: text };
+    }
+    if (json && typeof json === 'object' && !Array.isArray(json)) Object.defineProperty(json, '__status', { value: r.status });
+    return json;
+  };
+  return { base, port: Number(m[2]), loginUrl: `${base}/auth/${m[3]}`, cookie, api: call, state: () => call('/api/state') };
+}
+
+/** Starts the installed app through the installer and logs into the panel. */
+export async function startApp(o) {
+  const inst = runInstaller(o);
+  const home = o.home ?? path.join(process.env.LOCALAPPDATA ?? '', 'SwarmCast');
+  // Registered first, so it runs after the section's other cleanups (process kills).
+  onCleanup(() => copyAppLogs(home, `${o.label ?? 'app'}-${inst.child.pid}`));
+  // The start script restarts SwarmCast when it exits within 10 s: stop the script itself too,
+  // unless the app is meant to outlive this section (o.persist).
+  if (!o.persist) onCleanup(() => inst.child.exitCode === null && killTree(inst.child.pid));
+  try {
+    const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, inst.exited);
+    return { inst, ...admin };
+  } catch (e) {
+    inst.child.kill();
+    throw new Error(`${e.message}\n--- installer output tail ---\n${inst.out().slice(-3000)}`, { cause: e });
+  }
+}
+
+export async function waitLiveLink(app, timeoutMs = 120_000) {
+  return until(async () => {
+    const s = await app.state();
+    if (s.phase === 'off' && s.steps?.some((x) => x.status === 'error')) throw new Error(`start failed: ${JSON.stringify(s.steps)}`);
+    return s.liveLink && (s.phase === 'waiting-obs' || s.phase === 'live') ? s : null;
+  }, timeoutMs, 'live link');
+}
+
+/** Quits through the panel API and checks: exit code, no process under home, ports closed. */
+export async function quitAndVerify(app, home, label, { via = 'api' } = {}) {
+  if (via === 'api') await app.api('/api/app/quit', {}).catch(() => {});
+  const code = await Promise.race([app.inst.exit, sleep(60_000).then(() => 'timeout')]);
+  check(`${label}: app quits cleanly (installer exit code 0)`, code === 0, `exit ${code}`);
+  await sleep(1500);
+  const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 15_000, 'no leftovers').catch(() => processesUnder(home));
+  check(`${label}: no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg/tray process left`, left.length === 0, describeProcs(left));
+  check(`${label}: port 1935 closed`, !(await listening(1935)));
+  if (code === 'timeout') killTree(app.inst.child.pid);
+  killUnder(home);
+}
+
+/**
+ * Runs `cmd /c uninstall-windows.cmd [args]` (double-click equivalent, SWARMCAST_NO_PAUSE) from
+ * `dir` and verifies: exit 0, no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg/tray process,
+ * the data folder gone (or only config.json + secrets.json with -KeepSettings), ports free.
+ * `envHome: false` leaves SWARMCAST_HOME unset (default %LOCALAPPDATA%\SwarmCast).
+ */
+export async function uninstallAndVerify({ dir, home, args = [], label, envHome = true, alsoPorts = [] }) {
+  const cmdFile = path.join(dir, 'uninstall-windows.cmd');
+  if (!fs.existsSync(cmdFile)) {
+    record(`${label}: uninstaller`, 'skip', 'uninstall-windows.cmd not in this release');
+    return null;
+  }
+  const before = processesUnder(home);
+  const env = bareEnv({ home: envHome ? home : undefined });
+  const line = `""${cmdFile}"${args.length ? ' ' + args.join(' ') : ''}"`;
+  const child = spawn(cmdExe, ['/d', '/s', '/c', line], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: true });
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  child.stderr.on('data', (d) => (out += d));
+  const t0 = Date.now();
+  const code = await Promise.race([new Promise((r) => child.on('exit', (c) => r(c))), sleep(240_000).then(() => 'timeout')]);
+  const secs = Math.round((Date.now() - t0) / 1000);
+  fs.writeFileSync(path.join(ART, `${SUITE}-uninstall-${label}.log`.replace(/[^\w.\\:-]+/g, '_')), out);
+  if (code === 'timeout') killTree(child.pid);
+  const keep = args.some((a) => /keep-?settings/i.test(a));
+  check(`${label}: uninstall-windows.cmd${args.length ? ' ' + args.join(' ') : ''} exits 0`, code === 0, `exit ${code} after ${secs} s; was running: ${describeProcs(before) || 'nothing'}; ${(/SwarmCast uninstall finished: .*/.exec(out) ?? [''])[0]}`);
+  const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 10_000, 'no process').catch(() => processesUnder(home));
+  check(`${label}: no SwarmCast/MediaMTX/cloudflared/ffmpeg/tray process left`, left.length === 0, describeProcs(left));
+  if (keep) {
+    const kept = fs.existsSync(home) ? fs.readdirSync(home).sort() : [];
+    check(`${label}: -KeepSettings keeps only config.json + secrets.json`, JSON.stringify(kept) === JSON.stringify(['config.json', 'secrets.json']), kept.join(', ') || '(folder gone)');
+  } else {
+    check(`${label}: data folder removed`, !fs.existsSync(home), fs.existsSync(home) ? fs.readdirSync(home).join(', ') : home);
+  }
+  const busy = [];
+  for (const p of [1935, 8080, 8081, 8888, ...alsoPorts]) if (await listening(p)) busy.push(p);
+  check(`${label}: ports free after uninstall`, busy.length === 0, busy.length ? `still listening: ${busy.join(', ')}` : `1935 8080 8081 8888${alsoPorts.length ? ' ' + alsoPorts.join(' ') : ''}`);
+  check(`${label}: uninstaller says OBS settings were not changed`, /OBS settings were not changed/.test(out));
+  return { code, out };
+}
+
+/**
+ * The panel's capacity line and the adaptive upload cap (docs/QUALITY.md). Flags the case of a
+ * "your upload is too low" warning while the measured upload is far above the stream bitrate.
+ */
+export async function uploadCapCheck(app, label) {
+  const s = await app.state();
+  const q = await app.api('/api/quality').catch(() => null);
+  const u = q?.upload ?? {};
+  const detail = `capacity "${s.capacity?.code}" (${s.capacity?.directViewers} direct viewers); measured upload ${s.speedTest?.uploadMbps ?? '?'} Mbps; cap ${u.capMbps} Mbps (${u.mode}/${u.phase}), ceiling ${u.ceilingMbps}; last back-off: ${u.lastBackoff ? `${u.lastBackoff.reason} ${u.lastBackoff.fromMbps}->${u.lastBackoff.toMbps}` : 'none'}; rtt ${u.signals?.rttMs}/${u.signals?.baseRttMs} ms`;
+  const bogus = s.capacity?.code === 'capacity.tooLow' && (s.speedTest?.uploadMbps ?? 0) >= 50;
+  record(`${label}: no "upload too low" warning on a fast uplink`, bogus ? 'warn' : 'pass', bogus ? `BUG: ${detail}` : detail);
+}
+
+export function copyAppLogs(home, tag) {
+  const dir = path.join(home, 'logs');
+  if (!fs.existsSync(dir)) return;
+  const dest = path.join(ART, `${SUITE}-logs-${tag}`.replace(/[^\w.-]+/g, '_'));
+  fs.mkdirSync(dest, { recursive: true });
+  for (const f of fs.readdirSync(dir)) {
+    try {
+      fs.copyFileSync(path.join(dir, f), path.join(dest, f));
+    } catch {
+      /* ignore */
+    }
+  }
+}
+/** pino log lines (JSON) of the app. */
+export function appLog(home) {
+  return readText(path.join(home, 'logs', 'swarmcast.log'));
+}
+
+export function editConfig(home, fn) {
+  const file = path.join(home, 'config.json');
+  const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  fn(cfg);
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+}
+
+// ---------------------------------------------------------------------------
+// OBS-like feed
+// ---------------------------------------------------------------------------
+
+export const ffmpegBin = () => process.env.FFMPEG_BIN || 'ffmpeg';
+
+export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200, rate = 30 } = {}) {
+  const child = spawn(
+    ffmpegBin(),
+    ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}`, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', String(rate * 2), '-keyint_min', String(rate * 2), '-sc_threshold', '0', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`, '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`],
+    { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
+  );
+  let err = '';
+  child.stderr.on('data', (d) => (err += d));
+  const handle = { child, stderr: () => err, stop: () => killTree(child.pid) };
+  onCleanup(() => handle.stop());
+  return handle;
+}
+
+export async function waitPhase(app, phase, timeoutMs = 90_000) {
+  return until(async () => {
+    const s = await app.state();
+    return s.phase === phase ? s : null;
+  }, timeoutMs, `phase ${phase}`);
+}
+
+// ---------------------------------------------------------------------------
+// Browsers (Playwright: Google Chrome, Microsoft Edge, Firefox)
+// ---------------------------------------------------------------------------
+
+let pw;
+async function playwright() {
+  pw ??= await import('playwright');
+  return pw;
+}
+
+/** kind: chrome | msedge | firefox */
+export async function launchBrowser(kind) {
+  const { chromium, firefox } = await playwright();
+  let b;
+  if (kind === 'firefox') {
+    b = await firefox.launch({
+      firefoxUserPrefs: {
+        'media.peerconnection.ice.obfuscate_host_addresses': false,
+        'media.autoplay.default': 0,
+        'media.autoplay.blocking_policy': 0,
+      },
+    });
+  } else {
+    b = await chromium.launch({ channel: kind, args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'] });
+  }
+  b.__kind = kind;
+  onCleanup(() => b.close().catch(() => {}));
+  log(`launched ${kind} ${b.version()}`);
+  return b;
+}
+
+export async function newPage(browser, label, ctxOpts = {}) {
+  const context = await browser.newContext(ctxOpts);
+  const page = await context.newPage();
+  page.on('console', (m) => {
+    if (m.type() === 'error') log(`[${label} console] ${m.text().slice(0, 300)}`);
+  });
+  trackPage(page, label);
+  return { context, page };
+}
+
+export async function gotoRetry(page, url) {
+  // A brand-new trycloudflare name may still be negatively cached by the OS resolver.
+  for (let i = 0; ; i++) {
+    try {
+      await page.goto(url, { timeout: 60_000 });
+      return;
+    } catch (e) {
+      if (!/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ERR_CONNECTION|NS_ERROR_NET|NS_ERROR_CONNECTION/.test(String(e)) || i >= 18) throw e;
+      await sleep(5000);
+    }
+  }
+}
+
+/** Opens the join link, picks a nickname and waits for the watch page (no playback wait). */
+export async function join(browser, link, nickname, ctxOpts = {}) {
+  const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
+  await gotoRetry(v.page, link);
+  await v.page.waitForURL(/\/join$/, { timeout: 60_000 });
+  await v.page.fill('#nickname', nickname);
+  await v.page.click('#join');
+  return v;
+}
+
+export async function waitPlaying(page, timeoutMs = 90_000, minTime = 1.5) {
+  await page.waitForFunction(
+    (t) => {
+      const v = document.querySelector('video');
+      return v && v.currentTime > t && !v.paused && v.readyState >= 2;
+    },
+    minTime,
+    { timeout: timeoutMs },
+  );
+}
+
+export async function joinAndPlay(browser, link, nickname, ctxOpts = {}) {
+  const v = await join(browser, link, nickname, ctxOpts);
+  await v.page.waitForURL(/\/watch$/, { timeout: 60_000 });
+  await waitPlaying(v.page);
+  return v;
+}
+
+export const stats = (page) => page.evaluate(() => window.__swarmcast.stats);
+
+/** Panel page logged in through the per-run URL. */
+export async function openPanel(browser, loginUrl, label = 'panel', ctxOpts = {}) {
+  const v = await newPage(browser, label, ctxOpts);
+  await v.page.goto(loginUrl);
+  await v.page.waitForSelector('[data-testid=status]', { timeout: 30_000 });
+  return v;
+}
+
+/** Health probe that resolves trycloudflare hosts through DNS-over-HTTPS. */
+export async function probe(base) {
+  const u = new URL('/healthz', base);
+  let lookup;
+  if (u.protocol === 'https:') {
+    const r = await fetch(`https://1.1.1.1/dns-query?name=${u.hostname}&type=A`, { headers: { accept: 'application/dns-json' } }).then((x) => x.json(), () => ({}));
+    const ip = r.Answer?.find((a) => a.type === 1)?.data;
+    if (ip) lookup = (_h, o, cb) => (o.all ? cb(null, [{ address: ip, family: 4 }]) : cb(null, ip, 4));
+  }
+  const mod = await import(u.protocol === 'https:' ? 'node:https' : 'node:http');
+  return new Promise((resolve) => {
+    const req = mod.get(u, { lookup, timeout: 8000, rejectUnauthorized: false }, (res) => {
+      res.resume();
+      resolve(res.statusCode === 200 ? (res.headers['x-swarmcast'] ?? 'ok') : null);
+    });
+    req.on('timeout', () => req.destroy());
+    req.on('error', () => resolve(null));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// UI strings (read from the shared i18n dictionaries)
+// ---------------------------------------------------------------------------
+
+const dicts = {};
+/** String for `key` in `lang` ('en' | 'pt-BR') straight from packages/shared/src/i18n/<lang>.ts. */
+export function ui(lang, key) {
+  dicts[lang] ??= readText(path.join(repoRoot, 'packages', 'shared', 'src', 'i18n', `${lang}.ts`));
+  const esc = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const m = new RegExp(`'${esc}':\\s*'((?:[^'\\\\]|\\\\.)*)'`).exec(dicts[lang]) ?? new RegExp(`'${esc}':\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(dicts[lang]);
+  return m ? m[1].replace(/\\'/g, "'") : null;
+}
+
+// ---------------------------------------------------------------------------
+// Environment facts (recorded as info rows)
+// ---------------------------------------------------------------------------
+
+export function environmentFacts() {
+  const facts = {};
+  const tryPs = (k, s) => {
+    try {
+      facts[k] = ps(s, { allowFail: true });
+    } catch (e) {
+      facts[k] = `error: ${e.message}`;
+    }
+  };
+  tryPs('os', '(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version) build $($_.BuildNumber)" })');
+  tryPs('powershell', '"Windows PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"');
+  tryPs('elevated', '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)');
+  tryPs('uac', '(Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System).EnableLUA');
+  tryPs('session', '"session $((Get-Process -Id $PID).SessionId); explorer running: $([bool](Get-Process explorer -ErrorAction SilentlyContinue)); interactive: $([Environment]::UserInteractive)"');
+  tryPs('firewall', '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "');
+  tryPs('gpu', '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "');
+  tryPs('cpu', '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"');
+  tryPs('mediaFoundation', 'try { (Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState } catch { "n/a: $($_.Exception.Message)" }');
+  return facts;
+}

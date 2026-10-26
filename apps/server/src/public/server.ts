@@ -1,0 +1,409 @@
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { IncomingMessage, Server as HttpServer } from 'node:http';
+import type { Duplex } from 'node:stream';
+import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import cookie from '@fastify/cookie';
+import rateLimit from '@fastify/rate-limit';
+import fastifyStatic from '@fastify/static';
+import {
+  DEVICE_COOKIE,
+  SEGMENT_DURATION_S,
+  SESSION_COOKIE,
+  SESSION_TTL_S,
+  TICKET_COOKIE,
+  JOIN_TICKET_TTL_S,
+  joinRequestSchema,
+  nicknameError,
+  type ApiErrorBody,
+  type JoinChallengeResponse,
+  type MessageKey,
+  type ViewerConfig,
+} from '@swarmcast/shared';
+import { translate } from '@swarmcast/shared/i18n';
+import type { AccessControl, Session } from '../access/access.js';
+import type { ControlChannel } from '../control/control.js';
+import type { HlsOrigin } from '../hls/origin.js';
+import type { ManifestSigner } from '../hls/manifest.js';
+import type { BandwidthLimiter } from '../hls/throttle.js';
+import { SAFE_NAME } from '../hls/playlist.js';
+import type { TrackerService } from '../tracker/tracker.js';
+import type { Logger } from '../core/logger.js';
+import { scrub } from '../core/logger.js';
+import type { PublicSecurity } from '../security/shield.js';
+import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
+
+export interface PublicDeps {
+  access: AccessControl;
+  origin: HlsOrigin;
+  signer: ManifestSigner;
+  tracker: TrackerService;
+  control: ControlChannel;
+  limiter: BandwidthLimiter;
+  viewerDir: string;
+  log: Logger;
+  stunServers: () => string[];
+  /** Swarm id of the current live (used by viewers' streamSwarmIdBuilder). */
+  swarmId: () => string;
+  /** Admission limits (read on every join so panel/config changes apply immediately). */
+  limits: () => { maxViewers: number; maxSessionsPerDevice: number };
+  /** Called for every viewer-facing request, for in-flight/limit statistics. */
+  stats: { inFlight: number; served: number };
+  /** Attack detection feed, public blocklists and the join proof-of-work. */
+  security: PublicSecurity;
+}
+
+export interface PublicServerOptions {
+  /** "secure" = behind the tunnel on 127.0.0.1; "direct" = exposed on the public IP. */
+  mode: 'secure' | 'direct';
+  /** Cookies get the Secure attribute (always true except plain-HTTP local testing). */
+  secureCookies: boolean;
+  /** Trust CF-Connecting-IP from the local tunnel connector. */
+  trustTunnel: boolean;
+  /**
+   * Direct mode TLS. `key`/`cert` are the default certificate: browsers never send SNI when the
+   * address is a bare IP (https://203.0.113.7:port), so an SNI callback alone would fail every
+   * handshake.
+   */
+  https?: {
+    key: string;
+    cert: string;
+    SNICallback: (servername: string, cb: (err: Error | null, ctx?: import('node:tls').SecureContext) => void) => void;
+  };
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    viewer?: Session;
+  }
+}
+
+const INVALID_STATUS = 404;
+
+/**
+ * Join rate limits per client IP. Generous on purpose: mobile carriers put many subscribers
+ * behind one public IP (CGNAT), and most of them join in the first minutes of a stream. The
+ * attack shield divides these automatically when it detects abuse.
+ */
+const JOIN_LINK_PER_IP_PER_MIN = 120;
+const JOIN_CHALLENGE_PER_IP_PER_MIN = 120;
+const JOIN_PER_IP_PER_MIN = 60;
+
+/** Viewer API error body: English `error` plus a stable `code` the page translates. */
+function apiError(code: MessageKey): ApiErrorBody {
+  return { error: translate('en', code), code };
+}
+
+export async function createPublicServer(deps: PublicDeps, opts: PublicServerOptions): Promise<FastifyInstance> {
+  const { access, origin, signer, log } = deps;
+  const direct = opts.mode === 'direct';
+
+  const app = Fastify({
+    logger: false,
+    trustProxy: false,
+    bodyLimit: 4 * 1024,
+    forceCloseConnections: true,
+    // Bound slow or abusive clients (slowloris, connection reuse floods).
+    maxRequestsPerSocket: direct ? 200 : 2000,
+    // Short timeouts; much shorter in direct mode where the server faces the internet.
+    connectionTimeout: direct ? 15_000 : 60_000,
+    keepAliveTimeout: direct ? 5_000 : 30_000,
+    requestTimeout: direct ? 15_000 : 60_000,
+    // handshakeTimeout: Node's default (120 s) is generous to slow-handshake attackers.
+    ...(opts.https ? { https: { key: opts.https.key, cert: opts.https.cert, SNICallback: opts.https.SNICallback, minVersion: 'TLSv1.2' as const, handshakeTimeout: 10_000 } } : {}),
+  } as Parameters<typeof Fastify>[0]) as unknown as FastifyInstance;
+
+  // Headers must arrive quickly; Node's default (60 s) is generous for a slowloris.
+  app.server.headersTimeout = direct ? 8_000 : 15_000;
+  const pages = loadPages(deps.viewerDir);
+  const ip = (req: FastifyRequest): string => clientIp(req, opts.trustTunnel && !direct);
+  const sec = deps.security;
+  app.server.on('connection', (socket: Duplex) => {
+    sec.connection(1);
+    socket.once('close', () => sec.connection(-1));
+  });
+  if (opts.https) app.server.on('tlsClientError', () => sec.tlsError());
+  // Connections refused because of maxConnections (Direct mode) count like our own 429s.
+  app.server.on('drop', () => sec.rateLimited());
+  const cookieBase = { path: '/', httpOnly: true, secure: opts.secureCookies, sameSite: 'lax' as const };
+
+  await app.register(cookie);
+  await app.register(rateLimit, {
+    global: true,
+    max: direct ? 300 : 900,
+    timeWindow: '1 minute',
+    keyGenerator: (req) => req.cookies?.[SESSION_COOKIE]?.slice(-24) ?? ip(req),
+    errorResponseBuilder: () => {
+      sec.rateLimited();
+      return { statusCode: 429, error: 'Too Many Requests', message: 'Slow down.', code: 'viewer.err.tooMany' };
+    },
+  });
+
+  app.addHook('onRequest', async (req, reply) => {
+    deps.stats.inFlight += 1;
+    sec.request(ip(req));
+    const host = req.headers.host ?? '';
+    applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers()), opts.secureCookies);
+    reply.header('Cache-Control', 'private, no-store');
+  });
+  app.addHook('onResponse', async () => {
+    deps.stats.inFlight -= 1;
+    deps.stats.served += 1;
+  });
+  app.setErrorHandler((err, req, reply) => {
+    const status = (err as { statusCode?: number }).statusCode ?? 500;
+    if (status >= 500) log.warn({ err: (err as Error).message, url: scrub(req.url) }, 'public request failed');
+    reply.code(status).send(apiError(status === 429 ? 'viewer.err.tooMany' : 'viewer.err.failed'));
+  });
+
+  /** Resolve the viewer session from the cookie, renewing it when half-expired. */
+  async function sessionOf(req: FastifyRequest, reply: FastifyReply): Promise<Session | null> {
+    const res = await access.verifySessionToken(req.cookies[SESSION_COOKIE]);
+    if (!res) return null;
+    if (res.renew) {
+      reply.setCookie(SESSION_COOKIE, await access.issueSessionToken(res.session), { ...cookieBase, maxAge: SESSION_TTL_S });
+    }
+    if (direct) res.session.ip = ip(req);
+    return res.session;
+  }
+
+  const requireSession = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    const s = await sessionOf(req, reply);
+    if (!s) {
+      reply.code(401).send(apiError('viewer.err.sessionInvalid'));
+      return reply;
+    }
+    req.viewer = s;
+  };
+
+  const sendInvalid = (reply: FastifyReply, status = INVALID_STATUS): FastifyReply =>
+    reply.code(status).type('text/html; charset=utf-8').send(pages.invalid);
+  /** The IP is on a public blocklist: the invalid page with an explanation instead. */
+  const sendBlocked = (reply: FastifyReply): FastifyReply => {
+    sec.joinFailed();
+    return reply.code(403).header('X-SwarmCast-Refused', 'blocklist').type('text/html; charset=utf-8').send(pages.blocked);
+  };
+  const blockedJson = (reply: FastifyReply): FastifyReply => {
+    sec.joinFailed();
+    return reply.code(403).send(apiError('viewer.err.blocked'));
+  };
+
+  // ---- health (used to confirm the tunnel reaches this process) ----
+  app.get('/healthz', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (_req, reply) => {
+    reply.header('X-SwarmCast', access.live ? access.liveId : 'off');
+    return { ok: true };
+  });
+
+  // ---- join flow ----
+  app.get<{ Params: { secret: string } }>(
+    '/join/:secret',
+    { config: { rateLimit: { max: () => sec.joinRateMax(JOIN_LINK_PER_IP_PER_MIN), timeWindow: '1 minute', keyGenerator: ip } } },
+    async (req, reply) => {
+      sec.joinAttempt();
+      if (sec.blocked(ip(req))) return sendBlocked(reply);
+      const deviceId = req.cookies[DEVICE_COOKIE];
+      if (!access.checkSecret(req.params.secret)) {
+        sec.joinFailed();
+        return sendInvalid(reply);
+      }
+      if (access.isBanned(deviceId)) {
+        sec.joinFailed();
+        return sendInvalid(reply, 403);
+      }
+      if (!deviceId || !/^[A-Za-z0-9_-]{16,64}$/.test(deviceId)) {
+        reply.setCookie(DEVICE_COOKIE, crypto.randomBytes(16).toString('base64url'), { ...cookieBase, maxAge: 400 * 24 * 3600 });
+      }
+      reply.setCookie(TICKET_COOKIE, await access.issueTicket(), { ...cookieBase, maxAge: JOIN_TICKET_TTL_S });
+      // Drop the secret from the address bar (and history) right away.
+      return reply.redirect('/join', 303);
+    },
+  );
+
+  app.get('/join', async (req, reply) => {
+    if (await sessionOf(req, reply)) return reply.redirect('/watch', 303);
+    if (!(await access.verifyTicket(req.cookies[TICKET_COOKIE]))) return sendInvalid(reply);
+    return reply.type('text/html; charset=utf-8').send(pages.join);
+  });
+
+  // Proof-of-work challenge for the join page (only when the browser check is on).
+  app.get('/api/join/challenge', { config: { rateLimit: { max: () => sec.joinRateMax(JOIN_CHALLENGE_PER_IP_PER_MIN), timeWindow: '1 minute', keyGenerator: ip } } }, async (req, reply) => {
+    if (sec.blocked(ip(req))) return blockedJson(reply);
+    if (!(await access.verifyTicket(req.cookies[TICKET_COOKIE]))) return reply.code(403).send(apiError('viewer.err.linkInvalid'));
+    const body: JoinChallengeResponse = sec.powLevel() > 0 ? { required: true, challenge: await sec.issuePow() } : { required: false };
+    return body;
+  });
+
+  app.post('/api/join', { config: { rateLimit: { max: () => sec.joinRateMax(JOIN_PER_IP_PER_MIN), timeWindow: '1 minute', keyGenerator: ip } } }, async (req, reply) => {
+    sec.joinAttempt();
+    if (sec.blocked(ip(req))) return blockedJson(reply);
+    if (!(await access.verifyTicket(req.cookies[TICKET_COOKIE]))) {
+      sec.joinFailed();
+      return reply.code(403).send(apiError('viewer.err.linkInvalid'));
+    }
+    const deviceId = req.cookies[DEVICE_COOKIE];
+    if (!deviceId || access.isBanned(deviceId)) {
+      sec.joinFailed();
+      return reply.code(403).send(apiError('viewer.err.linkInvalid'));
+    }
+    const parsed = joinRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      const e = nicknameError(parsed.error.issues[0]?.message);
+      return reply.code(400).send({ error: e.text, code: e.code, ...(e.params ? { params: e.params } : {}) } satisfies ApiErrorBody);
+    }
+    if (sec.powLevel() > 0) {
+      const verdict = await sec.verifyPow((req.body as { pow?: unknown } | null)?.pow);
+      if (verdict !== 'ok') {
+        sec.joinFailed();
+        // A fresh challenge comes with the refusal, so the page can solve it and retry.
+        return reply.code(403).send({ ...apiError('viewer.err.checkRequired'), pow: await sec.issuePow() });
+      }
+    }
+    if (access.admit(deviceId, deps.limits().maxViewers, deps.limits().maxSessionsPerDevice) === 'full') {
+      sec.joinFailed();
+      return reply.code(503).header('Retry-After', '30').send(apiError('viewer.err.full'));
+    }
+    const session = access.createSession({
+      nickname: parsed.data.nickname,
+      deviceId,
+      device: isMobileUserAgent(req.headers['user-agent']) ? 'mobile' : 'desktop',
+      ip: ip(req),
+    });
+    reply.setCookie(SESSION_COOKIE, await access.issueSessionToken(session), { ...cookieBase, maxAge: SESSION_TTL_S });
+    reply.clearCookie(TICKET_COOKIE, cookieBase);
+    log.info({ viewer: session.nickname }, 'viewer joined');
+    return { ok: true, redirect: '/watch' };
+  });
+
+  app.get('/watch', async (req, reply) => {
+    if (!(await sessionOf(req, reply))) return sendInvalid(reply);
+    return reply.type('text/html; charset=utf-8').send(pages.watch);
+  });
+
+  app.get('/', async (_req, reply) => sendInvalid(reply));
+
+  // ---- viewer API ----
+  app.get('/api/config', { preHandler: requireSession }, async (req): Promise<ViewerConfig> => {
+    const s = req.viewer!;
+    const host = req.headers.host ?? '';
+    const ws = opts.secureCookies ? 'wss' : 'ws';
+    return {
+      sessionId: s.id,
+      nickname: s.nickname,
+      manifestPublicKey: signer.publicKeyRaw,
+      playlistUrl: '/hls/index.m3u8',
+      manifestUrl: '/hls/manifest.json',
+      trackerUrl: `${ws}://${host}/tracker`,
+      controlUrl: `${ws}://${host}/control`,
+      stunServers: deps.stunServers(),
+      swarmId: deps.swarmId(),
+      p2pAllowed: s.p2pAllowed,
+      segmentDurationS: SEGMENT_DURATION_S,
+    };
+  });
+
+  app.post('/api/session/refresh', { preHandler: requireSession }, async () => ({ ok: true }));
+
+  app.post('/api/leave', { preHandler: requireSession }, async (req, reply) => {
+    access.sessions.delete(req.viewer!.id);
+    reply.clearCookie(SESSION_COOKIE, cookieBase);
+    return { ok: true };
+  });
+
+  // ---- HLS ----
+  app.get('/hls/manifest.json', { preHandler: requireSession }, async (_req, reply) => {
+    const jws = await signer.sign(access.liveId, origin.version, origin.segmentHashes());
+    return reply.type('application/jose').send(jws);
+  });
+
+  app.get<{ Params: { file: string } }>('/hls/:file', { preHandler: requireSession }, async (req, reply) => {
+    const name = req.params.file;
+    if (!SAFE_NAME.test(name)) return reply.code(404).send(apiError('viewer.err.notFound'));
+    if (name.endsWith('.m3u8')) {
+      const pl = origin.getPlaylist(name);
+      // 503 + Retry-After (not 404): players retry 5xx, so viewers who join before OBS
+      // starts (or while it reconnects) pick the stream up as soon as it exists.
+      if (!pl) return reply.code(503).header('Retry-After', '2').send(apiError('viewer.err.notStarted'));
+      return reply.type('application/vnd.apple.mpegurl').send(pl);
+    }
+    const f = origin.getFile(name);
+    if (!f) return reply.code(404).send(apiError('viewer.err.notFound'));
+    // Segments are immutable; "private" keeps the tunnel/CDN from caching them.
+    reply.header('Cache-Control', 'private, max-age=120, immutable');
+    reply.header('Content-Length', f.data.length);
+    reply.type(f.contentType);
+    return reply.send(deps.limiter.stream(f.data));
+  });
+
+  // ---- static assets of the viewer app (no secrets in them) ----
+  await app.register(fastifyStatic, {
+    root: path.join(deps.viewerDir, 'assets'),
+    prefix: '/assets/',
+    decorateReply: false,
+    index: false,
+    setHeaders: (reply) => void reply.header('Cache-Control', 'public, max-age=31536000, immutable'),
+  });
+
+  app.setNotFoundHandler((_req, reply) => sendInvalid(reply));
+
+  // ---- WebSockets: /control and /tracker ----
+  app.server.on('upgrade', (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    void handleUpgrade(req, socket, head).catch(() => socket.destroy());
+  });
+
+  async function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://x');
+    const reject = (code: number, msg: string): void => {
+      socket.end(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+    };
+    sec.upgrade();
+    if (sec.blocked(clientIp(req, opts.trustTunnel && !direct))) return reject(403, 'Forbidden');
+    if (url.pathname !== '/control' && url.pathname !== '/tracker') return reject(404, 'Not Found');
+    if (!originMatchesHost(req.headers.origin, req.headers.host)) return reject(403, 'Forbidden');
+    const cookies = app.parseCookie(req.headers.cookie ?? '');
+    const res = await access.verifySessionToken(cookies[SESSION_COOKIE]);
+    if (!res) return reject(401, 'Unauthorized');
+    if (url.pathname === '/control') {
+      deps.control.handleUpgrade(req, socket, head, res.session);
+    } else {
+      if (!res.session.p2pAllowed) return reject(403, 'Forbidden');
+      deps.tracker.handleUpgrade(req, socket, head, res.session);
+    }
+  }
+
+  return app;
+}
+
+interface Pages {
+  join: string;
+  watch: string;
+  invalid: string;
+  /** The invalid page explaining a public-blocklist refusal. */
+  blocked: string;
+}
+
+function loadPages(dir: string): Pages {
+  const read = (name: string, fallback: string): string => {
+    try {
+      return fs.readFileSync(path.join(dir, name), 'utf8');
+    } catch {
+      return fallback;
+    }
+  };
+  const invalid =
+    '<!doctype html><meta charset="utf-8"><title>SwarmCast</title><p>This stream link is no longer valid. Ask the streamer for the current link.</p>';
+  const invalidPage = read('invalid.html', invalid);
+  const blockedText = translate('en', 'viewer.err.blocked');
+  // Same page, other message key (the page translates it on load).
+  const blocked = invalidPage.includes('data-i18n="viewer.err.linkInvalid"')
+    ? invalidPage.replace(/data-i18n="viewer\.err\.linkInvalid">[^<]*</, `data-i18n="viewer.err.blocked">${blockedText}<`)
+    : invalidPage.replace(/<p>[^<]*<\/p>/, `<p>${blockedText}</p>`);
+  return {
+    join: read('join.html', invalid),
+    watch: read('watch.html', invalid),
+    invalid: invalidPage,
+    blocked,
+  };
+}
+
+export type { HttpServer };

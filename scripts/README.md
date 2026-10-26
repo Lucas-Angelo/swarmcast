@@ -1,0 +1,39 @@
+# scripts
+
+**Start scripts.** Each one checks the computer, installs or updates for the current user without admin rights, verifies SHA-256, updates atomically with rollback, and starts SwarmCast. They are published as release assets.
+
+| File | Platform |
+|------|----------|
+| `start-windows.ps1` | Windows (PowerShell; also `irm …/start-windows.ps1 \| iex`) |
+| `start-windows.cmd` | Windows double-click wrapper for the `.ps1` |
+| `start-macos.command` | macOS double-click (published also as `start-macos.sh` for `curl \| bash`) |
+| `start-linux.sh` | Linux |
+
+Flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest`, `--no-ffmpeg`, `--ask`, `--yes`, `--help` (PowerShell also accepts `-NoTunnel`, `-NoFfmpeg`, `-Ask`, `-Yes`, …).
+
+**No questions by default.** The users are not technical, so the scripts never wait for input in normal runs: a computer below the minimum gets a ⚠ warning (also in `install.log`) and the setup continues. `--ask` restores the old "Continue anyway? (y/N)" question; `--yes` answers it (kept so existing automation with `--yes`/`-Yes` keeps working). On Linux, missing `curl`/`tar` still need `sudo` (an OS requirement): the script says why in one sentence right before the password prompt. On errors the window stays open with what to do and "Press Enter to close" (the `.cmd` and `.command` wrappers), the only key the setup ever waits for.
+
+**Video converter (ffmpeg).** After installing SwarmCast, the scripts read `binaries.json` (a release asset generated from `build/versions.json` by `build/binaries-json.mjs`, listed in `SHA256SUMS.txt`; the installer zips carry it too), download the pinned ffmpeg for the OS/arch **from its publisher**, verify its SHA-256 and install it into `<data>/tools/ffmpeg/` with a `PIN` stamp (`<version> <sha256>`) and `SOURCE.txt`. It lives outside `app/`, so updates do not download it again; a new pin downloads it once. Offline, a checksum mismatch, a missing `binaries.json` (older release) or `--no-ffmpeg` only skip it with a note: SwarmCast works with the original quality, and the panel keeps an "Install the video converter" button. SwarmCast never redistributes ffmpeg.
+
+**Resilience.** Network calls keep their retries (2 s, 4 s, 8 s). Every local step (unpacking, the new-version check, the atomic swap/renames that antivirus scanners can briefly lock, the ffmpeg download+verify/unpack/copy, file writes) retries up to 3 times after 2 s, 5 s and 10 s, each attempt logged. If SwarmCast exits with an error within 10 s of starting it is started again (same waits); if that version was installed by this run, the previous version is put back first and started, with a one-sentence note. Only when the retries are exhausted does the script stop with a plain error.
+
+**`<data>/system-check.json`.** The report the scripts print, saved atomically for the panel's first-run tutorial: `{ "version": 1, "at", "os", "arch", "results": [{ "id": "os|ram|cpu|upload|download|disk|ports|obs|github|release", "status": "ok|warn|fail|skipped", "value", "min", "recommended", "detail" }], "uploadMbps", "downloadMbps", "viewerEstimate", "belowMinimum": [ids] }`. Values are English; the panel translates by id and status.
+
+Install source, first match wins (the script prints which one it uses):
+1. `SWARMCAST_RELEASE_URL`, when set.
+2. A **local bundle**: `SHA256SUMS.txt` and this platform's `SwarmCast-v*-<os>-<arch>.<zip|tar.gz>` in the script's own folder, as in the extracted `SwarmCast-vX.Y.Z-<target>-installer.zip`. Same SHA-256 check, atomic swap, rollback and "Already up to date" logic; the user's files are never deleted, and an older bundle never downgrades a newer install. The default URL is still checked once (no retries) for a newer version; HTTP 401/404 from a private repository or being offline is not an error. On macOS the quarantine attribute is removed from the package only after it is verified. Piped runs (`curl | bash`, `irm | iex`) have no script folder and skip this.
+3. The default release URL (`https://github.com/Lucas-Angelo/swarmcast/releases/latest/download`). When the optional public mirror is enabled, the release workflow rewrites it to the mirror in the published copies only (see `docs/PUBLICACAO_PT-BR.md`).
+
+Tests: `bash scripts/test/run.sh` (macOS/Linux) and `scripts\test\run.ps1` (Windows PowerShell 5.1) run the scripts against a fake release on 127.0.0.1 (`test/make-fake-release.mjs`, which also writes `binaries.json` and a fake ffmpeg archive), including local bundle, ffmpeg (install, same pin, new pin, checksum mismatch, `--no-ffmpeg`, offline zip), no-questions/`--ask`, transient unpacking failure, crash-on-start rollback and `system-check.json` cases. Test-only hooks: `SWARMCAST_TEST_BELOW` (pretend a check is below the minimum) and `SWARMCAST_TEST_FAIL_ONCE=extract` (fail one step once).
+
+**Uninstall scripts.** `uninstall-windows.cmd` (+ `.ps1`), `uninstall-macos.command` and `uninstall-linux.sh` are published as release assets and shipped in each installer zip. Double-click, no questions by default: they find the data folder (same rules as the start scripts, including `SWARMCAST_HOME`), stop the SwarmCast processes whose executable lives inside it (graceful first, forced after ~10 s; nothing outside the data folder is touched), run `swarmcast --cleanup` (removes a router port mapping a crash left in `state.json`), then delete the data folder, retrying busy files and listing anything that could not be removed. A folder with no SwarmCast files in it, the home folder and system folders are refused. Flags: `--keep-settings` (keeps `config.json` and `secrets.json`, so the stream key stays the same), `--ask` (confirm first), `--yes` (no-op), `--help`; PowerShell also accepts `-KeepSettings`, `-Ask`. OBS is never changed. Tests: `bash scripts/test/uninstall.sh` and `scripts\test\uninstall.ps1`.
+
+**Build scripts** (`build/`):
+- `fetch-binaries.mjs` (`npm run fetch-bins`): downloads MediaMTX and cloudflared for one target into `vendor/<target>/`, checked against the SHA-256 pinned in `versions.json` (`--with-ffmpeg` also bundles ffmpeg, for a packager who accepts the redistribution obligations).
+- `binaries-json.mjs`: writes `binaries.json`, the pins of the tools SwarmCast does not ship (`"bundle": false`, i.e. ffmpeg), one asset per line so the bash scripts can read it without `jq`. The release workflow publishes it and puts it in the installer zips.
+- `package.mjs` (`npm run package`): builds the per-platform release package.
+- `archive.mjs`: creates the `.zip` or `.tar.gz`.
+- `checksums.mjs`: writes `SHA256SUMS.txt`.
+- `guide-html.mjs`: renders `docs/TUTORIAL_*.md` to the self-contained HTML guides shipped in the installer zips (no dependencies).
+
+**Docs screenshots** (`docs/`): `screenshots.mjs` (`node scripts/docs/screenshots.mjs`, after `npm run fetch-bins` and `npm run build`; needs ffmpeg and Google Chrome) starts the e2e test server on the ports moved by `SWARMCAST_E2E_PORT_OFFSET` (default 1500), joins a few viewers and regenerates `docs/img/*-en.png` and `*-pt-BR.png` (panel overview, quality, protection, activity; viewer page on desktop and phone; join and "link not valid" pages) for the tutorials and the README. The live link is replaced by a placeholder and the stream key is never shown.

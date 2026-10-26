@@ -1,0 +1,17 @@
+# Minimal image for the "missing tools" checks: only a non-root user, no curl.
+#   docker build -f Dockerfile.bare --build-arg BASE=debian:12 [--build-arg WITH_SUDO=1] .
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+ARG WITH_SUDO=0
+RUN set -e; \
+    useradd -m -s /bin/bash tester; \
+    if [ "$WITH_SUDO" = 1 ]; then \
+      apt-get update; \
+      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends sudo; \
+      echo 'tester ALL=(ALL) NOPASSWD:ALL' >/etc/sudoers.d/tester; \
+      chmod 0440 /etc/sudoers.d/tester; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi; \
+    if command -v curl; then echo "curl should not be installed in the bare image" >&2; exit 1; fi
+USER tester
+WORKDIR /home/tester

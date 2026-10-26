@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title data-i18n="invalid.pageTitle">Link not valid · SwarmCast</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <main class="card">
+      <h1>
+        <span data-i18n="invalid.title">Link not valid</span>
+        <span class="tip"
+          ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-invalid">i</button
+          ><span class="tip-bubble" role="tooltip" id="tip-invalid" data-i18n="invalid.tip"
+            >Stream links change every stream, and the streamer can replace the link at any time. Kicked viewers cannot use the link again.</span
+          ></span
+        >
+      </h1>
+      <p id="invalid-message" data-i18n="viewer.err.linkInvalid">This stream link is no longer valid. Ask the streamer for the current link.</p>
+    </main>
+    <script type="module" src="/src/invalid.ts"></script>
+  </body>
+</html>

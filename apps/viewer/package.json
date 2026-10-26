@@ -1,0 +1,18 @@
+{
+  "name": "@swarmcast/viewer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@swarmcast/shared": "*",
+    "altcha-lib": "^2.8.0",
+    "hls.js": "^1.7.3",
+    "p2p-media-loader-core": "^4.0.0",
+    "p2p-media-loader-hlsjs": "^4.0.0"
+  }
+}

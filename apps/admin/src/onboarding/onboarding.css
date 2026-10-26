@@ -1,0 +1,148 @@
+/* First-run setup tutorial (apps/admin/src/onboarding). Uses the panel's tokens from style.css. */
+
+.onb-bg {
+  position: fixed; inset: 0; z-index: 900; display: flex; align-items: center; justify-content: center;
+  padding: 16px; background: rgba(0, 0, 0, 0.55);
+}
+.onb {
+  width: min(760px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px);
+  display: flex; flex-direction: column; background: var(--card); color: var(--fg);
+  border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35);
+}
+/* Tour: the dialog moves to the bottom right and stops dimming the panel, so the highlighted area is visible. */
+.onb-bg.onb-docked { background: transparent; pointer-events: none; align-items: flex-end; justify-content: flex-end; }
+.onb-bg.onb-docked .onb { pointer-events: auto; width: min(520px, 100%); max-height: 62vh; }
+
+.onb-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 0.75rem; padding: 1rem 1.25rem 0.5rem; }
+.onb-head-text { min-width: 0; }
+.onb-kicker { color: var(--muted); font-size: 0.82rem; font-weight: 600; }
+.onb-head h2 { margin: 0.15rem 0 0; font-size: 1.25rem; line-height: 1.3; }
+.onb-head h2:focus { outline: none; }
+.onb-head h2:focus-visible { outline: none; }
+button.onb-x { flex: none; width: 2.2rem; height: 2.2rem; padding: 0; font-size: 1.4rem; line-height: 1; border-radius: 50%; }
+
+.onb-body { padding: 0.25rem 1.25rem 0.75rem; overflow-y: auto; overscroll-behavior: contain; line-height: 1.45; }
+.onb-body p { margin: 0.5rem 0; }
+
+.onb-foot {
+  display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 0.5rem;
+  padding: 0.75rem 1.25rem; border-top: 1px solid var(--border);
+}
+button.onb-skip { background: transparent; border-color: transparent; color: var(--muted); padding-left: 0.4rem; padding-right: 0.4rem; }
+button.onb-skip:hover { color: var(--fg); }
+.onb-nav { display: flex; gap: 0.5rem; }
+.onb-dots { display: flex; gap: 0.15rem; list-style: none; margin: 0; padding: 0; flex-wrap: wrap; justify-content: center; }
+button.onb-dot { width: 1.5rem; height: 1.5rem; padding: 0; border: none; background: transparent; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; }
+button.onb-dot::before { content: ''; width: 0.6rem; height: 0.6rem; border-radius: 50%; background: var(--border); transition: transform 0.15s; }
+button.onb-dot.done::before { background: var(--accent); opacity: 0.5; }
+button.onb-dot.current::before { background: var(--accent); transform: scale(1.35); }
+button.onb-dot:focus-visible { outline: 2px solid var(--accent); }
+
+.onb-lines { margin: 0.5rem 0; padding-left: 1.2rem; }
+.onb-lines li { margin: 0.35rem 0; }
+.onb-steps { margin: 0.5rem 0; padding-left: 1.4rem; }
+.onb-steps > li { margin: 0.5rem 0; }
+.onb-steps > li::marker { font-weight: 700; color: var(--accent); }
+.onb-callout { background: rgba(109, 74, 255, 0.1); border: 1px solid rgba(109, 74, 255, 0.35); border-radius: 10px; padding: 0.55rem 0.75rem; }
+.onb-why { color: var(--muted); border-left: 3px solid var(--accent); padding-left: 0.6rem; }
+.onb-links { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.3rem; }
+.onb-links a { color: var(--accent); font-weight: 600; }
+
+/* Copyable values (server, key, link) */
+.onb-field { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; margin: 0.35rem 0; }
+.onb-field-label { min-width: 8rem; font-weight: 600; font-size: 0.9rem; }
+.onb-field code.value { flex: 1 1 14rem; }
+
+/* Screenshots: click to enlarge */
+.onb-fig { margin: 0.6rem 0; }
+.onb-figs { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-start; }
+.onb-figs .onb-fig { flex: 0 1 auto; }
+button.onb-fig-btn { display: block; padding: 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: #1d1f26; cursor: zoom-in; max-width: 100%; }
+.onb-fig img { display: block; max-width: 100%; height: auto; }
+.onb-fig-wide img { max-height: 55vh; width: auto; }
+.onb-fig-narrow img { max-height: 32vh; width: auto; }
+.onb-fig.zoomed img { max-height: none; }
+.onb-fig.zoomed button.onb-fig-btn { cursor: zoom-out; }
+.onb-fig figcaption { margin-top: 0.25rem; }
+
+/* PC check / test status */
+.onb-checks { margin: 0.5rem 0; }
+.onb-check { display: grid; grid-template-columns: 9rem 1fr; gap: 0.5rem; align-items: start; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+.onb-check dt { font-weight: 700; }
+.onb-check dd { margin: 0; }
+.onb-status { display: inline-flex; align-items: flex-start; gap: 0.5rem; }
+.onb-body > .onb-status { display: flex; margin: 0.75rem 0; padding: 0.6rem 0.8rem; border-radius: 10px; border: 1px solid var(--border); font-weight: 600; }
+.onb-status-dot { flex: none; width: 0.7rem; height: 0.7rem; margin-top: 0.35rem; border-radius: 50%; background: #9ca3af; }
+.onb-status-ok .onb-status-dot { background: var(--ok); }
+.onb-status-wait .onb-status-dot { background: var(--warn); animation: onb-pulse 1.2s ease-in-out infinite; }
+.onb-status-warn .onb-status-dot { background: var(--danger); }
+.onb-body > .onb-status-ok { border-color: var(--ok); background: rgba(22, 163, 74, 0.12); color: var(--ok); }
+.onb-body > .onb-status-wait { border-color: rgba(217, 119, 6, 0.5); background: rgba(217, 119, 6, 0.1); }
+@keyframes onb-pulse { 50% { opacity: 0.35; } }
+
+/* Installer system check */
+.onb-sub { font-size: 0.95rem; margin: 0.9rem 0 0.35rem; }
+.onb-sys-banner { margin: 0.5rem 0; }
+.onb-sys-list { list-style: none; margin: 0.25rem 0; padding: 0; }
+.onb-sys-row { display: flex; gap: 0.6rem; align-items: flex-start; padding: 0.35rem 0; border-bottom: 1px solid var(--border); }
+.onb-sys-icon { flex: none; width: 1.4rem; height: 1.4rem; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; font-size: 0.85rem; background: var(--bg); color: var(--muted); }
+.onb-sys-ok .onb-sys-icon { color: #fff; background: var(--ok); }
+.onb-sys-warn .onb-sys-icon { color: #fff; background: var(--warn); }
+.onb-sys-fail .onb-sys-icon { color: #fff; background: var(--danger); }
+.onb-sys-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.2rem 0.5rem; min-width: 0; }
+.onb-sys-label { font-weight: 700; }
+.onb-sys-value { font-variant-numeric: tabular-nums; }
+.onb-sys-detail, .onb-sys-advice { flex-basis: 100%; }
+.onb-sys-warn .onb-sys-advice { color: var(--warn); }
+.onb-sys-fail .onb-sys-advice { color: var(--danger); }
+
+/* Route choice */
+.onb-choices { border: none; margin: 0.5rem 0; padding: 0; display: grid; gap: 0.6rem; }
+.onb-choice { display: flex; gap: 0.75rem; align-items: flex-start; padding: 0.8rem 0.9rem; border: 2px solid var(--border); border-radius: 12px; cursor: pointer; }
+.onb-choice.selected { border-color: var(--accent); background: rgba(109, 74, 255, 0.08); }
+.onb-choice input { margin-top: 0.3rem; accent-color: var(--accent); }
+.onb-choice-text { display: flex; flex-direction: column; gap: 0.2rem; }
+.onb-choice-title { font-weight: 700; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+
+/* Tour: labeled mini-map of the panel (also the area picker) */
+.onb-map {
+  display: grid; gap: 0.35rem; grid-template-columns: repeat(3, 1fr);
+  grid-template-areas: 'top top top' 'link p2p quality' 'mode security security' 'viewers viewers viewers' 'activity activity activity';
+  padding: 0.5rem; border: 1px dashed var(--border); border-radius: 12px; background: var(--bg);
+}
+.onb-map button { font-size: 0.85rem; padding: 0.45rem 0.4rem; min-height: 2.4rem; }
+.onb-map button.active { background: var(--accent); color: #fff; border-color: transparent; }
+.onb-map button.absent { opacity: 0.6; border-style: dashed; }
+.onb-map-top { grid-area: top; }
+.onb-map-link { grid-area: link; }
+.onb-map-p2p { grid-area: p2p; }
+.onb-map-quality { grid-area: quality; }
+.onb-map-mode { grid-area: mode; }
+.onb-map-security { grid-area: security; }
+.onb-map-viewers { grid-area: viewers; }
+.onb-map-activity { grid-area: activity; }
+.onb-area-desc { margin: 0.4rem 0 0.6rem; min-height: 2.9em; }
+
+/* Highlight on the real panel area */
+.onb-spot { outline: 3px solid var(--accent); outline-offset: 4px; box-shadow: 0 0 0 8px rgba(109, 74, 255, 0.25); scroll-margin-top: 16px; animation: onb-spot 1.4s ease-in-out 2; }
+@keyframes onb-spot { 50% { box-shadow: 0 0 0 14px rgba(109, 74, 255, 0.1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .onb-spot, .onb-status-wait .onb-status-dot { animation: none; }
+}
+
+/* Small laptops / short windows */
+@media (max-height: 760px) {
+  .onb-head { padding-top: 0.75rem; }
+  .onb-head h2 { font-size: 1.1rem; }
+  .onb-fig-wide img { max-height: 50vh; }
+  .onb-fig-narrow img { max-height: 24vh; }
+}
+@media (max-width: 560px) {
+  .onb-bg { padding: 8px; }
+  .onb-check { grid-template-columns: 1fr; gap: 0.15rem; }
+  .onb-field-label { min-width: 100%; }
+  .onb-foot { justify-content: center; }
+  .onb-map { grid-template-columns: 1fr 1fr; grid-template-areas: 'top top' 'link p2p' 'quality mode' 'security security' 'viewers viewers' 'activity activity'; }
+}

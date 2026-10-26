@@ -1,0 +1,84 @@
+name: Pre-release check
+
+# "Clean machine" verification of a real package on every supported OS, run before tagging
+# a release: builds the package, installs it with the real start script into an empty data
+# folder, streams a synthetic OBS feed, watches with Google Chrome (Playwright), checks P2P,
+# kick, link rotation, "Stop everything", quitting, no leftover process/port, and playback
+# through a real Cloudflare quick tunnel. See scripts/test/preflight/verify.mjs.
+
+# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
+# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
+# private repo.
+on:
+  schedule:
+    - cron: '27 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: '1'
+  NODE_VERSION: 24.x
+  GO_VERSION: 1.27.x
+
+jobs:
+  preflight:
+    name: ${{ matrix.target }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: windows-x64, os: windows-latest }
+          - { target: macos-arm64, os: macos-latest }
+          - { target: macos-x64, os: macos-15-intel }
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-x64, os: ubuntu-22.04 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/tray/go.sum
+      - name: Install ffmpeg (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - name: Install ffmpeg (macOS)
+        if: runner.os == 'macOS'
+        run: brew install ffmpeg
+      - name: Install ffmpeg (Windows)
+        if: runner.os == 'Windows'
+        run: choco install ffmpeg -y --no-progress
+
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target "${{ matrix.target }}" --vendor
+      - name: Build the real package
+        run: node scripts/build/package.mjs --target "${{ matrix.target }}"
+      - name: Assemble a local release folder
+        run: |
+          cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
+          cp scripts/start-macos.command release/start-macos.sh
+          node scripts/build/checksums.mjs release
+          ls -la release
+      - name: Clean-machine check (install, stream, watch, P2P, kick, stop, tunnel)
+        run: node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome

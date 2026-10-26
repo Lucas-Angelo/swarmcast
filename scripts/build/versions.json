@@ -1,0 +1,116 @@
+{
+  "mediamtx": {
+    "version": "v1.21.3",
+    "license": "MIT",
+    "url": "https://github.com/bluenviron/mediamtx/releases/download/{version}/{asset}",
+    "assets": {
+      "windows-x64": {
+        "asset": "mediamtx_v1.21.3_windows_amd64.zip",
+        "sha256": "b2f5246b07cb72961df03b8d5e8cad43dc657bcf3f49a87bb031bdf22721af74",
+        "binary": "mediamtx.exe"
+      },
+      "macos-arm64": {
+        "asset": "mediamtx_v1.21.3_darwin_arm64.tar.gz",
+        "sha256": "bc1a0762fd18ffb413bcd81dcb9a072ac159fbd1f27e79ac6f14598aaac5ed3f",
+        "binary": "mediamtx"
+      },
+      "macos-x64": {
+        "asset": "mediamtx_v1.21.3_darwin_amd64.tar.gz",
+        "sha256": "8a8416ee2ff5d17d9366498b6d88b76ab6d3afcda50b6d7321ccddb349bdbaf2",
+        "binary": "mediamtx"
+      },
+      "linux-x64": {
+        "asset": "mediamtx_v1.21.3_linux_amd64.tar.gz",
+        "sha256": "0a2ea7eba96023631efa1bea7804823a9145b043b6646a8a05798d4ac24ed635",
+        "binary": "mediamtx"
+      },
+      "linux-arm64": {
+        "asset": "mediamtx_v1.21.3_linux_arm64.tar.gz",
+        "sha256": "27f038237cb5f77a724f6afc58eca2798f2bc4edf9989895631a80eeb41a4fe2",
+        "binary": "mediamtx"
+      }
+    }
+  },
+  "cloudflared": {
+    "version": "2026.10.3",
+    "license": "Apache-2.0",
+    "url": "https://github.com/cloudflare/cloudflared/releases/download/{version}/{asset}",
+    "assets": {
+      "windows-x64": {
+        "asset": "cloudflared-windows-amd64.exe",
+        "sha256": "76b2805253d0d6ffacb092a7acfbee99e7af6917835c0c5410e23f3ef5052da2",
+        "binary": "cloudflared.exe"
+      },
+      "macos-arm64": {
+        "asset": "cloudflared-darwin-arm64.tgz",
+        "sha256": "1165d14b6f6360a3b8c283d7d1100024d6ec7cd9bc9e32519e96150645f3ec55",
+        "binary": "cloudflared",
+        "binarySha256": "f249139e0541fa589c987397d867cc16c83ab1236d31eb6782f2e4552ee9cf80"
+      },
+      "macos-x64": {
+        "asset": "cloudflared-darwin-amd64.tgz",
+        "sha256": "81b7b85f2376815c4f59b1aa323887b62e16ce8b67555c2e1577dc23f2a82000",
+        "binary": "cloudflared",
+        "binarySha256": "947e2942d6a59922d80190d23b12f3ade8da16e23e3bd937182a48993b7c00db"
+      },
+      "linux-x64": {
+        "asset": "cloudflared-linux-amd64",
+        "sha256": "053b80b0a23031a038fdbf3c073f59f82b8f1f152aa67971d7383ffafc0dbab0",
+        "binary": "cloudflared"
+      },
+      "linux-arm64": {
+        "asset": "cloudflared-linux-arm64",
+        "sha256": "89297ebfb9e8c99c0dc013a1140601453cf3798d8306c5591651f4a3f5210be8",
+        "binary": "cloudflared"
+      }
+    }
+  },
+  "ffmpeg": {
+    "version": "9.0.2",
+    "bundle": false,
+    "license": "LGPL-3.0-or-later (Windows/Linux: BtbN LGPL builds) / GPL-3.0-or-later (macOS: Martin Riedl builds)",
+    "notes": "Not bundled by default: the streamer installs it from the panel (downloaded from the publisher, SHA-256 verified against this file). Month-end BtbN autobuilds are kept for 2 years. Bundling it (fetch-binaries --with-ffmpeg) makes the packager a redistributor: ship the license and the corresponding source. See docs/QUALITY.md.",
+    "url": "{assetUrl}",
+    "assets": {
+      "windows-x64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-9.0.zip",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-win64-lgpl-9.0.zip",
+        "sha256": "6b264b9e6019103f601d98c292bd332fd87acf1c5e941ddff4fb71760fe63432",
+        "binary": "ffmpeg.exe",
+        "license": "LGPL-3.0-or-later"
+      },
+      "macos-arm64": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "asset": "ffmpeg.zip",
+        "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+        "binary": "ffmpeg",
+        "license": "GPL-3.0-or-later"
+      },
+      "macos-x64": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "asset": "ffmpeg.zip",
+        "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+        "binary": "ffmpeg",
+        "license": "GPL-3.0-or-later"
+      },
+      "linux-x64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-lgpl-9.0.tar.xz",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-linux64-lgpl-9.0.tar.xz",
+        "sha256": "2d41cbea0ca1a15029b638330740f78d6f5aeb062355bf425433fc938705350a",
+        "binary": "ffmpeg",
+        "license": "LGPL-3.0-or-later"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-lgpl-9.0.tar.xz",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-lgpl-9.0.tar.xz",
+        "sha256": "b8cc09200780d37801179c803f597c22440b0b06c556addd2e6a07b27475ce37",
+        "binary": "ffmpeg",
+        "license": "LGPL-3.0-or-later"
+      }
+    },
+    "source": {
+      "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+      "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+    }
+  }
+}
