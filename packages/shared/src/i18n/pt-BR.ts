@@ -155,7 +155,7 @@ export const ptBR: Messages = {
   'admin.obs.title': 'Configuração do OBS',
   'admin.obs.help': 'No OBS, adicione um servidor personalizado (Configurações → Transmissão → Serviço "Personalizado...", ou como saída extra). Coloque o intervalo de keyframe em 2 s.',
   'admin.obs.help.tip':
-    'O intervalo de keyframe (OBS → Configurações → Saída → Intervalo de quadro-chave) precisa ser 2 segundos para o vídeo ser cortado em pedaços de 2 segundos. Para transmitir em outra plataforma (Twitch, YouTube, Kick…) ao mesmo tempo: instale o plugin "Multiple RTMP outputs", abra o painel "Multiple output" no OBS, clique em "Add new target", cole o Servidor e a Chave daqui e escolha usar o mesmo encoder da transmissão principal. A outra plataforma continua em Configurações → Transmissão. Na live, clique em "Start" ao lado do SwarmCast nesse painel. Passo a passo completo no tutorial (docs/TUTORIAL_PT-BR.md).',
+    'O intervalo de keyframe (OBS → Configurações → Saída → Intervalo de quadro-chave) precisa ser 2 segundos para o vídeo ser cortado em pedaços de 2 segundos. Para transmitir em outra plataforma (Twitch, YouTube, Kick…) ao mesmo tempo: instale o plugin "Multiple RTMP outputs", abra o painel "Multiple output" no OBS, clique em "Add new target", cole o Servidor e a Chave daqui e escolha usar o mesmo encoder da transmissão principal. A outra plataforma continua em Configurações → Transmissão. Na live, clique em "Start" ao lado do SwarmCast nesse painel. Passo a passo com imagens: "Ajuda" no fim do painel → Configurar o OBS.',
   'admin.obs.server': 'Servidor',
   'admin.obs.server.tip': 'Endereço para onde o OBS manda o vídeo. Só funciona neste computador (127.0.0.1), então pode aparecer sem problema.',
   'admin.obs.key': 'Chave de transmissão',
@@ -299,6 +299,8 @@ export const ptBR: Messages = {
   'admin.version': 'SwarmCast {version}',
   'admin.quit': 'Fechar o SwarmCast',
   'admin.quit.tip': 'Desliga tudo (como "Desligar tudo") e fecha o app do SwarmCast.',
+  'admin.help': 'Ajuda',
+  'admin.help.tip': 'Abre o guia do SwarmCast no site (no navegador): configurar o OBS, fazer a live, problemas e dúvidas.',
   'admin.lang': 'Idioma',
   'admin.lang.tip': 'Idioma deste painel. Os espectadores veem o idioma do navegador deles.',
 

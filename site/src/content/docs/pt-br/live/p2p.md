@@ -1,0 +1,34 @@
+---
+title: Ajudar a transmissão (P2P)
+description: Como os espectadores se ajudam com o P2P, o que isso mostra sobre eles (uma localização aproximada) e como desligar.
+---
+
+**Ajudar a transmissão (P2P)** é uma opção na página de quem assiste. Ela vem **ligada**. Quem deixa ligada passa pedaços do vídeo para os outros espectadores, então o seu computador manda menos e a live fica mais lisa para todo mundo. P2P quer dizer "peer to peer": de um espectador para outro.
+
+![A página de quem assiste no celular: Ajudar a transmissão (P2P) é a caixinha abaixo do vídeo.](../../../../../../docs/img/viewer-phone-pt-BR.png)
+
+## O que isso mostra, sem rodeios
+
+Para passar vídeo entre si, os navegadores de dois espectadores se conectam direto. **Quem está com o P2P ligado consegue ver o IP dos outros que também estão** (o endereço de internet da conexão).
+
+- Um IP só mostra uma **localização aproximada** (normalmente a cidade ou a região) e a **operadora de internet**.
+- Ele **não** mostra nome, endereço de casa nem nada do aparelho.
+- Jogos online e chamadas de vídeo funcionam do mesmo jeito.
+- **O seu IP continua escondido** no modo seguro, que é o normal: o vídeo chega aos espectadores por um túnel criptografado, nunca direto do seu computador.
+
+## Ninguém consegue mandar vídeo adulterado
+
+Cada pedaço de vídeo tem uma impressão digital assinada pelo seu SwarmCast. O navegador de cada espectador confere cada pedaço que recebe de outro espectador antes de tocar. Um pedaço errado é jogado fora e baixado de novo de você, e quem mandou é desconectado e denunciado. Com três denúncias, o SwarmCast tira essa pessoa do P2P sozinho.
+
+## Como desligar
+
+- **Quem assiste:** desmarca **Ajudar a transmissão (P2P)**. Continua assistindo normalmente, direto de você, e a escolha fica salva. O **ⓘ** ao lado da opção explica a mesma coisa.
+- **Você:** clica em **Tirar do P2P** ao lado da pessoa na lista de espectadores. Ela continua assistindo, mas para de compartilhar.
+
+Alguns navegadores ou redes não conseguem usar P2P (algumas redes de empresa ou de escola, por exemplo). Essas pessoas veem "P2P não está disponível neste aparelho" e assistem normalmente.
+
+## Por que isso importa para você
+
+Sem P2P, cada espectador baixa o vídeo inteiro do seu computador, e o seu upload decide quantas pessoas conseguem assistir. Com P2P, os espectadores dividem parte desse trabalho. O painel mostra quantos estão ajudando e mais ou menos quantas pessoas o seu upload aguenta.
+
+Se aparecer **"Espectadores demais para o seu upload"**, peça para o pessoal deixar o P2P ligado.
