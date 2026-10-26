@@ -53,14 +53,28 @@ export interface DesktopFatalMessage {
   message: string;
 }
 
+/** Answer to the shell's `export-logs`: where the ZIP was written (the shell reveals it), or why not. */
+export interface DesktopExportLogsMessage {
+  type: 'export-logs';
+  ok: boolean;
+  path?: string;
+  error?: string;
+}
+
 /** Messages the server writes to stdout for the shell. */
-export type DesktopOutMessage = DesktopReadyMessage | DesktopStateMessage | DesktopFatalMessage | { type: 'update-check' } | { type: 'update-install' };
+export type DesktopOutMessage =
+  | DesktopReadyMessage
+  | DesktopStateMessage
+  | DesktopFatalMessage
+  | DesktopExportLogsMessage
+  | { type: 'update-check' }
+  | { type: 'update-install' };
 
 export const DESKTOP_CLICK_IDS = ['start', 'stop', 'quit'] as const;
 export type DesktopClickId = (typeof DESKTOP_CLICK_IDS)[number];
 
 /** Messages the shell writes to the server's stdin. */
-export type ShellMessage = { type: 'click'; id: DesktopClickId } | { type: 'quit' } | { type: 'update'; update: DesktopUpdate };
+export type ShellMessage = { type: 'click'; id: DesktopClickId } | { type: 'quit' } | { type: 'update'; update: DesktopUpdate } | { type: 'export-logs' };
 
 /** Longest stdin line accepted (release notes included); longer lines are ignored. */
 export const MAX_SHELL_LINE = 256 * 1024;
@@ -108,6 +122,7 @@ export function decodeShellMessage(line: string): ShellMessage | null {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return null;
   const { type, id, ...rest } = msg as { type?: unknown; id?: unknown };
   if (type === 'quit') return { type: 'quit' };
+  if (type === 'export-logs') return { type: 'export-logs' };
   if (type === 'click' && typeof id === 'string' && (DESKTOP_CLICK_IDS as readonly string[]).includes(id)) {
     return { type: 'click', id: id as DesktopClickId };
   }

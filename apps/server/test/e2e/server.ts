@@ -13,6 +13,9 @@ const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
 export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
+// "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
+process.env.SWARMCAST_DOWNLOADS_DIR = path.join(dataDir, 'downloads');
+fs.mkdirSync(process.env.SWARMCAST_DOWNLOADS_DIR, { recursive: true });
 const app = await createApp({
   dataDir,
   noTunnel: true,
@@ -73,7 +76,7 @@ await new Promise<void>((r) => control.listen(0, '127.0.0.1', r));
 const testControlUrl = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
 
 fs.mkdirSync('test-results', { recursive: true });
-fs.writeFileSync(path.join('test-results', 'e2e-env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, dataDir, pid: process.pid, testControlUrl }));
+fs.writeFileSync(path.join('test-results', 'e2e-env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, dataDir, downloadsDir: process.env.SWARMCAST_DOWNLOADS_DIR, pid: process.pid, testControlUrl }));
 console.log('e2e server ready');
 
 const shutdown = async (): Promise<void> => {

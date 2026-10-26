@@ -5,10 +5,10 @@ import { scrub } from './logger.js';
 
 export const ACTIVITY_MAX = 500;
 
-const IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
+export const IPV4 = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 // Full IPv6 (4+ groups, so clock times like 12:30:45 are left alone) and "::" compressed forms.
-const IPV6_FULL = /\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi;
-const IPV6_SHORT = /(?:\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*\b)?/gi;
+export const IPV6_FULL = /\b(?:[0-9a-f]{1,4}:){4,7}[0-9a-f]{1,4}\b/gi;
+export const IPV6_SHORT = /(?:\b[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*\b)?/gi;
 
 /** Remove link secrets, tokens, stream keys (see scrub) and IP addresses (except loopback). */
 export function scrubActivity(text: string): string {

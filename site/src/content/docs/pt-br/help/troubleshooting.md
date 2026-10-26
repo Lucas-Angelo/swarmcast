@@ -23,7 +23,7 @@ Outro app de transmissão, ou um segundo SwarmCast, está usando a porta 1935 (a
 
 ### "O SwarmCast não conseguiu abrir"
 
-Clique em **Tentar de novo**. Se continuar falhando, clique em **Abrir pasta de logs** e mande o arquivo mais recente quando for pedir ajuda (veja o fim desta página).
+Clique em **Tentar de novo**. Se continuar falhando, clique em **Abrir pasta de logs** e mande os arquivos mais recentes quando for pedir ajuda (veja [Enviar seus logs](#enviar-seus-logs)).
 
 ## OBS
 
@@ -106,7 +106,29 @@ Não. O SwarmCast não tem telemetria nem estatísticas de uso. Veja [Privacidad
 
 O SwarmCast é testado com o OBS Studio. Qualquer programa que mande para um servidor RTMP personalizado, com chave de transmissão e quadro-chave de 2 segundos, deve funcionar, mas os guias mostram o OBS.
 
+## Enviar seus logs
+
+Quando algo dá errado, os logs mostram o que aconteceu. O SwarmCast junta tudo num arquivo para você:
+
+1. No painel, desça até o cartão **Relatório de problema** e clique em **Exportar logs**. No app para computador, também dá para usar o ícone da bandeja (no Mac, o ícone da barra de menus) → **Exportar logs…**.
+2. O SwarmCast salva um arquivo ZIP com um nome como `SwarmCast-logs-0.1.0-20261026-1430.zip` na sua pasta **Downloads** e mostra onde ele está. Clique em **Mostrar na pasta** para achar o arquivo.
+3. Anexe o ZIP numa issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), ou mande para a pessoa que está te ajudando. Conte o que você fez e o que esperava que acontecesse.
+
+**O que vai dentro:** os logs dos últimos 14 dias (do SwarmCast, do app para computador, do receptor de vídeo, do túnel e do conversor de vídeo), um resumo do seu computador e das configurações do SwarmCast, a verificação do seu PC e o cartão **Atividade**.
+
+**O que nunca vai dentro:** a sua chave de transmissão, o link da live, o login do painel, senhas ou chaves. O arquivo é **anonimizado**: os endereços IP e os apelidos dos espectadores são trocados por rótulos como `ip-3f9a1c2b` e `viewer-8d02e4aa`. Nada é enviado sozinho: você escolhe quem recebe o arquivo. Em **Avançado** tem uma opção para manter os endereços IP completos; ligue só se o desenvolvedor pedir.
+
+Se o painel nem abrir, mande os arquivos mais recentes da pasta de logs:
+
+| Sistema | Pasta de logs |
+|---|---|
+| Windows | `%LOCALAPPDATA%\SwarmCast\logs` (cole na barra de endereço do Explorador de Arquivos) |
+| macOS | `~/Library/Application Support/SwarmCast/logs` (Finder → **Ir** → **Ir para a Pasta…**) |
+| Linux | `~/.local/share/swarmcast/logs` |
+
+O SwarmCast apaga sozinho os arquivos de log com mais de 14 dias (dá para mudar de 3 a 90 dias em **Relatório de problema** → **Avançado**).
+
 ## Pedir ajuda
 
-1. No cartão **Atividade** do painel, clique em **Copiar tudo**. Os segredos (chave de transmissão, link) já vêm escondidos.
-2. Abra uma issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues) e cole o texto, dizendo o seu sistema (Windows, macOS ou Linux) e o que você fez. Pode escrever em português.
+1. [Exporte seus logs](#enviar-seus-logs), ou no cartão **Atividade** do painel, clique em **Copiar tudo**. Os segredos (chave de transmissão, link) já vêm escondidos.
+2. Abra uma issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), anexe o ZIP ou cole o texto, e diga o seu sistema (Windows, macOS ou Linux) e o que você fez. Pode escrever em português.

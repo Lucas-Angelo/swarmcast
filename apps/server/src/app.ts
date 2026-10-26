@@ -26,6 +26,8 @@ import { QuickTunnel } from './tunnel/quick.js';
 import { PublicBlocklists, blocklistSources } from './security/blocklists.js';
 import type { DesktopBridge } from './desktop/bridge.js';
 import { desktopPreflight } from './desktop/preflight.js';
+import { Diagnostics } from './diagnostics/diagnostics.js';
+import type { RotatingLogFile } from './core/log-files.js';
 import { StartupError } from './desktop/protocol.js';
 
 export interface AppOptions {
@@ -54,6 +56,8 @@ export interface App {
   adminLoginUrl: string;
   direct: DirectMode;
   reaper: Reaper | null;
+  /** Log retention and "Export logs". */
+  diagnostics: Diagnostics;
   close(): Promise<void>;
 }
 
@@ -75,7 +79,8 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
   const paths = resolvePaths(opts.dataDir);
   // In-memory activity log for the panel; warnings/errors from the logger feed it too.
   const activity = new ActivityLog();
-  const log = createLogger({ logsDir: paths.logsDir, stdout: opts.logToStdout ?? true, sink: activity.logStream() });
+  let logFile: RotatingLogFile | undefined;
+  const log = createLogger({ logsDir: paths.logsDir, stdout: opts.logToStdout ?? true, sink: activity.logStream(), onFile: (f) => (logFile = f) });
   const config = { ...loadConfig(paths.configFile), ...opts.configOverrides };
   if (opts.noTunnel) config.tunnel = { provider: 'none' };
   if (opts.desktop) await desktopPreflight(config.ports);
@@ -173,6 +178,19 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
   if (adminPort !== config.ports.admin) log.warn({ wanted: config.ports.admin, using: adminPort }, 'admin port busy, using another one');
   config.ports = { ...config.ports, admin: adminPort };
   const token = crypto.randomBytes(24).toString('base64url');
+  // Log retention runs now and once a day; the panel's "Export logs" writes a ZIP to Downloads.
+  const diagnostics = new Diagnostics({
+    paths,
+    config,
+    persist: () => saveConfig(paths.configFile, persistableConfig(config, loadConfig(paths.configFile), { noTunnel: opts.noTunnel })),
+    live,
+    log,
+    version,
+    desktopVersion: opts.desktop ? opts.desktop.snapshot().version : undefined,
+    panelToken: token,
+    currentLogFile: () => logFile?.file,
+  });
+  diagnostics.start();
   let closing: Promise<void> | null = null;
   const app: App = {
     paths,
@@ -181,6 +199,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     live,
     direct,
     reaper,
+    diagnostics,
     admin: undefined as unknown as FastifyInstance,
     adminUrl: `http://127.0.0.1:${config.ports.admin}`,
     adminLoginUrl: `http://127.0.0.1:${config.ports.admin}/auth/${token}`,
@@ -189,6 +208,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
         log.info('shutting down: stopping the live');
         await live.shutdown();
         blocklists.stop();
+        diagnostics.stop();
         log.info('shutting down: closing the panel server');
         // A browser or HTTP client can hold a keep-alive connection open; never let it block quitting.
         await Promise.race([app.admin.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000).unref())]);
@@ -209,6 +229,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     cleanupStale: () => direct.cleanupStale(),
     systemCheckFile: path.join(paths.dataDir, 'system-check.json'),
     desktop: opts.desktop,
+    diagnostics,
   });
   await app.admin.listen({ host: '127.0.0.1', port: config.ports.admin });
   void direct.init().catch(() => {});

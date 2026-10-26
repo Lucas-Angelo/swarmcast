@@ -78,6 +78,10 @@ export const configSchema = z.object({
   ffmpegPath: z.string().min(1).optional(),
   /** The admin panel's first-run setup tutorial was finished or skipped (it opens until then). */
   onboardingDone: z.boolean().default(false),
+  /** Log files and old log exports are deleted after this many days (panel: Diagnostics). */
+  diagnostics: z
+    .object({ logRetentionDays: z.number().int().min(3).max(90).default(14) })
+    .prefault({}),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

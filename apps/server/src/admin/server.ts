@@ -19,11 +19,13 @@ import {
 import { resolveLang } from '@swarmcast/shared/i18n';
 import type { CheckResult } from '../direct/direct.js';
 import type { DesktopBridge } from '../desktop/bridge.js';
+import type { Diagnostics } from '../diagnostics/diagnostics.js';
 import type { LiveController } from '../core/live.js';
 import type { Logger } from '../core/logger.js';
 import { codeOf, coded } from '../core/messages.js';
 import { applySecurityHeaders } from '../public/security.js';
 import { registerDesktopRoutes } from './desktop-routes.js';
+import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
 import { registerOnboardingRoutes } from './onboarding-routes.js';
 import { registerQualityRoutes } from './quality-routes.js';
 import { registerSystemCheckRoutes } from './system-check-routes.js';
@@ -42,6 +44,8 @@ export interface AdminOptions {
   systemCheckFile?: string;
   /** Desktop mode only (`--desktop`): autostart, updates, first-run check. */
   desktop?: DesktopBridge;
+  /** Log retention setting and "Export logs" (diagnostics-routes.ts). */
+  diagnostics?: Diagnostics;
 }
 
 const SIGNED_IN = {
@@ -229,6 +233,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   registerOnboardingRoutes(app, L, auth, wrap);
   registerSystemCheckRoutes(app, o.systemCheckFile, auth);
   registerDesktopRoutes(app, o.desktop, auth, wrap);
+  registerDiagnosticsRoutes(app, o.diagnostics, auth, wrap);
   app.post('/api/app/quit', { preHandler: auth }, wrap(() => {
     setTimeout(o.onQuit, 100);
     return { ok: true };

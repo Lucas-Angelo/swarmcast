@@ -1,6 +1,5 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import pino, { type Logger } from 'pino';
+import { RotatingLogFile } from './log-files.js';
 import { ensurePrivateDir } from './paths.js';
 
 export type { Logger };
@@ -36,14 +35,17 @@ export function createLogger(opts: {
   stdout?: boolean;
   /** Extra in-memory destination for warnings and errors (the admin activity log). */
   sink?: { write(line: string): void };
+  /** Receives the server log file (rotated daily and by size), e.g. to keep it from retention. */
+  onFile?: (file: RotatingLogFile) => void;
 }): Logger {
   const level = (opts.level ?? process.env.SWARMCAST_LOG_LEVEL ?? 'info') as pino.Level;
   const streams: pino.StreamEntry[] = [];
   if (opts.logsDir) {
     ensurePrivateDir(opts.logsDir);
-    const file = path.join(opts.logsDir, 'swarmcast.log');
-    rotate(file);
-    streams.push({ level, stream: pino.destination({ dest: file, sync: true, mkdir: true }) });
+    // swarmcast-YYYY-MM-DD.log, cut at 5 MB while running (see log-files.ts).
+    const file = new RotatingLogFile(opts.logsDir);
+    opts.onFile?.(file);
+    streams.push({ level, stream: file });
   }
   if (opts.stdout !== false) streams.push({ level, stream: safeStdout() });
   if (opts.sink) streams.push({ level: 'warn', stream: opts.sink });
@@ -62,15 +64,6 @@ export function createLogger(opts: {
     },
     pino.multistream(streams),
   );
-}
-
-/** Keep the log file small: rotate at 5 MB, keep one previous file. */
-function rotate(file: string): void {
-  try {
-    if (fs.statSync(file).size > 5 * 1024 * 1024) fs.renameSync(file, `${file}.1`);
-  } catch {
-    /* no file yet */
-  }
 }
 
 /**
