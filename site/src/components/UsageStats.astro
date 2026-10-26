@@ -1,0 +1,85 @@
+---
+// "About N downloads · about M apps opened this week", from site/public/stats.json (GitHub's
+// public counters, see scripts/stats/). Hidden until the numbers exist; no third-party request.
+import { BASE, pagePath, tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+}
+const { lang } = Astro.props;
+---
+
+<section
+  class="sc-stats not-content"
+  data-testid="usage-stats"
+  data-lang={lang}
+  data-stats={`${BASE}/stats.json`}
+  data-downloads={tr(lang, 'stats.downloads')}
+  data-apps={tr(lang, 'stats.apps')}
+  aria-label={tr(lang, 'stats.title')}
+  hidden
+>
+  <ul>
+    <li data-testid="stats-downloads" hidden></li>
+    <li data-testid="stats-apps" hidden></li>
+  </ul>
+  <a href={pagePath(lang, 'about/privacy')}>{tr(lang, 'stats.how')}</a>
+</section>
+
+<script>
+  import { formatCount, loadUsage } from '../lib/stats';
+  import type { SiteLang } from '../lib/i18n';
+
+  for (const root of document.querySelectorAll<HTMLElement>('.sc-stats')) {
+    const lang = (root.dataset.lang ?? 'en') as SiteLang;
+    void loadUsage(root.dataset.stats ?? '').then((u) => {
+      const fill = (sel: string, template: string | undefined, n: number | null) => {
+        const li = root.querySelector<HTMLElement>(sel);
+        if (!li || n === null || !template) return false;
+        li.textContent = template.replace('{n}', formatCount(n, lang));
+        li.hidden = false;
+        return true;
+      };
+      const a = fill('[data-testid="stats-downloads"]', root.dataset.downloads, u.downloads);
+      const b = fill('[data-testid="stats-apps"]', root.dataset.apps, u.appsWeek);
+      root.hidden = !(a || b);
+    });
+  }
+</script>
+
+<style>
+  .sc-stats {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.4rem 1.2rem;
+    margin: 1.5rem 0 0;
+    padding: 0.9rem 1rem;
+    border: 1px dashed var(--sc-card-border);
+    border-radius: 0.9rem;
+    text-align: center;
+  }
+  .sc-stats[hidden],
+  .sc-stats li[hidden] {
+    display: none;
+  }
+  .sc-stats ul {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.4rem 1.2rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .sc-stats li {
+    margin: 0;
+  }
+  .sc-stats a {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-text-accent);
+  }
+</style>

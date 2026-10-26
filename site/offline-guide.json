@@ -1,0 +1,33 @@
+{
+  "$comment": "Pages of the website that make up the offline guide inside the installer zips (scripts/build/guide-html.mjs). Order = order in the guide. Edit the pages in src/content/docs (English) and src/content/docs/pt-br, never a copy.",
+  "pages": [
+    "advanced/script-install",
+    "start/obs",
+    "live/go-live",
+    "live/kick-and-new-link",
+    "live/quality",
+    "live/p2p",
+    "live/protection",
+    "live/direct-mode",
+    "help/troubleshooting",
+    "app/uninstall"
+  ],
+  "languages": {
+    "en": {
+      "contentDir": "src/content/docs",
+      "sitePrefix": "/swarmcast/",
+      "title": "SwarmCast: how to go live",
+      "intro": "This is the offline copy of the SwarmCast guide for the install scripts. The full guide, always up to date, is on the website:",
+      "contents": "Contents",
+      "asides": { "note": "Note", "tip": "Tip", "caution": "Caution", "danger": "Danger" }
+    },
+    "pt-BR": {
+      "contentDir": "src/content/docs/pt-br",
+      "sitePrefix": "/swarmcast/pt-br/",
+      "title": "SwarmCast: como fazer a live",
+      "intro": "Esta é a cópia offline do guia do SwarmCast para os scripts de instalação. O guia completo, sempre atualizado, está no site:",
+      "contents": "Conteúdo",
+      "asides": { "note": "Nota", "tip": "Dica", "caution": "Cuidado", "danger": "Perigo" }
+    }
+  }
+}

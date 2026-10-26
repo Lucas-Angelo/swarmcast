@@ -1,0 +1,65 @@
+---
+// Home page hero: title, one-sentence tagline (both from the page's `hero` frontmatter), the
+// download button and the mascot.
+// Starlight's page title id (PAGE_TITLE_ID, not exported).
+const PAGE_TITLE_ID = '_top';
+import DownloadButton from './DownloadButton.astro';
+import Mascot from './Mascot.astro';
+import { siteLang } from '../lib/i18n';
+
+const route = Astro.locals.starlightRoute;
+const { data } = route.entry;
+const { title = data.title, tagline } = data.hero || {};
+const lang = siteLang(route.locale);
+---
+
+<div class="sc-hero">
+  <div class="sc-hero-copy">
+    <h1 id={PAGE_TITLE_ID} data-page-title set:html={title} />
+    {tagline && <p class="sc-tagline" set:html={tagline} />}
+    <DownloadButton lang={lang} />
+  </div>
+  <div class="sc-hero-art"><Mascot lang={lang} /></div>
+</div>
+
+<style>
+  .sc-hero {
+    display: grid;
+    gap: 1.5rem;
+    align-items: center;
+    padding-block: 1rem 2rem;
+  }
+  .sc-hero-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    min-width: 0;
+  }
+  h1 {
+    margin: 0;
+    font-size: clamp(2.2rem, 7vw, 3.6rem);
+    line-height: 1.1;
+    font-weight: 800;
+    color: var(--sl-color-white);
+  }
+  .sc-tagline {
+    margin: 0;
+    font-size: clamp(1.1rem, 3.4vw, 1.4rem);
+    color: var(--sl-color-gray-2);
+    max-width: 34ch;
+  }
+  .sc-hero-art {
+    order: -1;
+    display: flex;
+    justify-content: center;
+  }
+  @media (min-width: 50rem) {
+    .sc-hero {
+      grid-template-columns: 3fr 2fr;
+      padding-block: 2.5rem 3rem;
+    }
+    .sc-hero-art {
+      order: 0;
+    }
+  }
+</style>

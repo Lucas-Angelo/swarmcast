@@ -56,7 +56,7 @@ Cada zip de instalação tem:
 - o pacote da plataforma;
 - um `SHA256SUMS.txt` só com a linha do pacote;
 - um `README.txt` curto (inglês e português);
-- o guia completo da live em HTML: `LEIA-ME - Como fazer a live.html` e `READ-ME - How to go live.html`. Eles são gerados de `docs/TUTORIAL_PT-BR.md` e `docs/TUTORIAL_EN.md` por `scripts/build/guide-html.mjs`. Para mudar o guia, edite os tutoriais em `docs/`.
+- o guia completo da live em HTML: `LEIA-ME - Como fazer a live.html` e `READ-ME - How to go live.html`. Eles são gerados a partir das páginas do site (`site/src/content/docs/`, lista e ordem em `site/offline-guide.json`) por `scripts/build/guide-html.mjs`. Para mudar o guia, edite as páginas do site: o site e o guia offline sempre dizem a mesma coisa.
 
 Quando o script roda ao lado do `SHA256SUMS.txt` e do pacote, ele instala a partir desses arquivos locais. Ele confere o SHA-256 do mesmo jeito, troca a instalação de forma atômica e não baixa nada. Mesmo assim, consulta uma vez o endereço online padrão: se houver versão mais nova lá, usa a online; se não conseguir acessar (repositório privado dá 404), segue com o zip sem erro.
 
@@ -83,7 +83,7 @@ Na primeira vez, o Windows (SmartScreen) e o macOS (Gatekeeper) avisam que o arq
 
 Com o repositório público (sem espelho), use `Lucas-Angelo/swarmcast` no lugar.
 
-Mande junto o [tutorial](TUTORIAL_PT-BR.md) (ou aponte para o HTML dentro do zip).
+Mande junto o link do guia: <https://lucas-angelo.github.io/swarmcast/pt-br/> (ou aponte para o HTML dentro do zip).
 
 **Atualizações:** com o zip, mande o zip novo; ela extrai e roda o script do mesmo jeito. Com o espelho ou repositório público, basta ela rodar o mesmo script ou comando de novo. Nos dois casos o script confere o SHA-256, troca a instalação de forma atômica (volta para a anterior se algo falhar), mantém as configurações e abre o app. Um zip antigo nunca rebaixa uma versão mais nova já instalada.
 

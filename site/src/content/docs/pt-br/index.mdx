@@ -1,0 +1,55 @@
+---
+title: SwarmCast
+description: Com o SwarmCast você faz uma live só para membros direto do seu computador, por um link secreto. Gratuito, privado e de código aberto, para Windows, macOS e Linux.
+template: splash
+hero:
+  title: SwarmCast
+  tagline: Faça uma live só para membros direto do seu computador, por um link secreto. Grátis, privado e de código aberto.
+editUrl: false
+---
+
+import { Card, CardGrid, LinkCard } from '@astrojs/starlight/components';
+import HowItWorks from '../../../components/HowItWorks.astro';
+import UsageStats from '../../../components/UsageStats.astro';
+
+## Para quem é?
+
+Para quem faz **live** e quer uma transmissão só para os membros (subs, apoiadores, uma comunidade no Discord), junto com a live pública na Twitch, no YouTube ou na Kick, ou sozinha. Você continua transmitindo pelo OBS, como sempre.
+
+Os seus membros só precisam do link e de um navegador, no computador ou no celular. Sem app e sem conta.
+
+## Como funciona
+
+<HowItWorks lang="pt-BR" />
+
+O seu computador manda a live, e quem está assistindo pode passar o vídeo adiante para os outros (P2P), então a sua internet rende mais.
+
+## Grátis, privado e seguro
+
+<CardGrid>
+  <Card title="Grátis" icon="star">
+    Sem assinatura, sem anúncio, sem conta. O SwarmCast é de código aberto (licença MIT) e roda no seu próprio computador, então não tem servidor para pagar.
+  </Card>
+  <Card title="Privado" icon="seti:lock">
+    Só quem tem o link secreto assiste, e cada live tem um link novo. O SwarmCast não tem telemetria: nada sobre você ou sobre quem assiste é enviado para nós.
+  </Card>
+  <Card title="Seguro" icon="approve-check">
+    O seu IP fica escondido atrás de um túnel criptografado, o painel só abre no seu computador e o SwarmCast protege a sua live contra espectadores falsos e ataques.
+  </Card>
+  <Card title="Simples" icon="rocket">
+    Instala como qualquer app. Um tutorial de 5 minutos configura o OBS junto com você, e atualizar é um clique.
+  </Card>
+</CardGrid>
+
+Sendo honesto sobre os limites: quem recebe o link pode repassar, quem ajuda pelo P2P vê o IP dos outros (só a localização aproximada) e o túnel gratuito não tem garantia de funcionamento. [Segurança e proteção](/swarmcast/pt-br/live/protection/) explica tudo.
+
+<UsageStats lang="pt-BR" />
+
+## Por onde começar
+
+<CardGrid>
+  <LinkCard title="Baixar e instalar" description="Windows, macOS e Linux." href="/swarmcast/pt-br/download/" />
+  <LinkCard title="Configurar o OBS" description="Uma vez só, com ou sem Twitch, YouTube ou Kick ao mesmo tempo." href="/swarmcast/pt-br/start/obs/" />
+  <LinkCard title="Fazer a live e mandar o link" description="O que fazer em toda live." href="/swarmcast/pt-br/live/go-live/" />
+  <LinkCard title="Recebeu um link? Para quem assiste" description="Como assistir: sem app e sem conta." href="/swarmcast/pt-br/viewers/" />
+</CardGrid>

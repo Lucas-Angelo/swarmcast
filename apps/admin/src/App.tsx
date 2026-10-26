@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { HASH_FAILURE_THRESHOLD } from '@swarmcast/shared/constants';
 import type { ActivityEntry, AdminLogMessage, AdminState, DirectCheckResponse, Settings, ViewerInfo } from '@swarmcast/shared';
-import { formatNumber, getLang, humanDuration, LANGS, t, tc, toLang, translate, type Lang } from '@swarmcast/shared/i18n';
+import { formatNumber, getLang, guideUrl, humanDuration, LANGS, t, tc, toLang, translate, type Lang } from '@swarmcast/shared/i18n';
 import { applyLang, rememberLang } from '@swarmcast/shared/i18n/browser';
 import { ActivityConsole } from './Activity.js';
 import { api, errorText, post, subscribe } from './api.js';
@@ -397,6 +397,9 @@ export function App() {
             ))}
           </select>
           <Info text={t('admin.lang.tip')} />
+          <a class="button" href={guideUrl(lang)} target="_blank" rel="noopener noreferrer" title={t('admin.help.tip')} data-testid="help-link">
+            {t('admin.help')}
+          </a>
           <RedoTutorialButton />
           <button title={t('admin.quit.tip')} onClick={() => act('quit', () => post('/api/app/quit'))}>{t('admin.quit')}</button>
         </span>

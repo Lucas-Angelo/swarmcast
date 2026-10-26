@@ -78,12 +78,13 @@ if (V2) await releaseDir('rel-new', [V2]);
   fs.copyFileSync(path.join(repoRoot, 'release', pkgName(V)), path.join(dir, pkgName(V)));
   writeBinariesJson(dir);
   fs.writeFileSync(path.join(dir, 'SHA256SUMS.txt'), `${sha256File(path.join(dir, pkgName(V)))}  ${pkgName(V)}\n${sha256File(path.join(dir, 'binaries.json'))}  binaries.json\n`);
+  // The offline guides are generated from the website's pages (site/offline-guide.json).
   const guides = [
-    ['docs/TUTORIAL_EN.md', 'READ-ME - How to go live.html', 'en'],
-    ['docs/TUTORIAL_PT-BR.md', 'LEIA-ME - Como fazer a live.html', 'pt-BR'],
+    ['READ-ME - How to go live.html', 'en'],
+    ['LEIA-ME - Como fazer a live.html', 'pt-BR'],
   ];
-  for (const [md, html, lang] of guides) {
-    execFileSync(process.execPath, [path.join(repoRoot, 'scripts/build/guide-html.mjs'), path.join(repoRoot, md), path.join(dir, html), '--lang', lang, '--version', V], { stdio: 'inherit' });
+  for (const [html, lang] of guides) {
+    execFileSync(process.execPath, [path.join(repoRoot, 'scripts/build/guide-html.mjs'), path.join(dir, html), '--lang', lang, '--version', V], { stdio: 'inherit' });
   }
   const readme = [
     'EN: 1) Extract this zip (right-click > Extract All). 2) In the extracted folder, double-click start-windows.cmd.',
