@@ -1,6 +1,6 @@
 # scripts
 
-**Start scripts.** Each one checks the computer, installs or updates for the current user without admin rights, verifies SHA-256, updates atomically with rollback, and starts SwarmCast. They are published as release assets.
+**Start scripts** (script mode; most streamers use the desktop app instead, [docs/DESKTOP.md](../docs/DESKTOP.md)). Each one checks the computer, installs or updates for the current user without admin rights, verifies SHA-256, updates atomically with rollback, and starts SwarmCast. They are published as release assets.
 
 | File | Platform |
 |------|----------|
@@ -21,8 +21,8 @@ Flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest`, `--n
 
 Install source, first match wins (the script prints which one it uses):
 1. `SWARMCAST_RELEASE_URL`, when set.
-2. A **local bundle**: `SHA256SUMS.txt` and this platform's `SwarmCast-v*-<os>-<arch>.<zip|tar.gz>` in the script's own folder, as in the extracted `SwarmCast-vX.Y.Z-<target>-installer.zip`. Same SHA-256 check, atomic swap, rollback and "Already up to date" logic; the user's files are never deleted, and an older bundle never downgrades a newer install. The default URL is still checked once (no retries) for a newer version; HTTP 401/404 from a private repository or being offline is not an error. On macOS the quarantine attribute is removed from the package only after it is verified. Piped runs (`curl | bash`, `irm | iex`) have no script folder and skip this.
-3. The default release URL (`https://github.com/Lucas-Angelo/swarmcast/releases/latest/download`). When the optional public mirror is enabled, the release workflow rewrites it to the mirror in the published copies only (see `docs/PUBLICACAO_PT-BR.md`).
+2. A **local bundle**: `SHA256SUMS.txt` and this platform's `SwarmCast-v*-<os>-<arch>.<zip|tar.gz>` in the script's own folder, as in the extracted `SwarmCast-vX.Y.Z-<target>-installer.zip`. Same SHA-256 check, atomic swap, rollback and "Already up to date" logic; the user's files are never deleted, and an older bundle never downgrades a newer install. The default URL is still checked once (no retries) for a newer version; being offline, or an HTTP 401/403/404 answer, is not an error (the bundle is used). On macOS the quarantine attribute is removed from the package only after it is verified. Piped runs (`curl | bash`, `irm | iex`) have no script folder and skip this.
+3. The default release URL (`https://github.com/Lucas-Angelo/swarmcast/releases/latest/download`). Releases: [docs/RELEASING.md](../docs/RELEASING.md).
 
 Tests: `bash scripts/test/run.sh` (macOS/Linux) and `scripts\test\run.ps1` (Windows PowerShell 5.1) run the scripts against a fake release on 127.0.0.1 (`test/make-fake-release.mjs`, which also writes `binaries.json` and a fake ffmpeg archive), including local bundle, ffmpeg (install, same pin, new pin, checksum mismatch, `--no-ffmpeg`, offline zip), no-questions/`--ask`, transient unpacking failure, crash-on-start rollback and `system-check.json` cases. Test-only hooks: `SWARMCAST_TEST_BELOW` (pretend a check is below the minimum) and `SWARMCAST_TEST_FAIL_ONCE=extract` (fail one step once).
 

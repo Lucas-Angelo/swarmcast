@@ -6,7 +6,7 @@
 #   curl -fsSL https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/start-linux.sh | bash
 #   curl -fsSL .../start-linux.sh | bash -s -- --no-tunnel
 #
-# Installer zip (works while the repository is private): when this script sits
+# Installer zip (offline install): when this script sits
 # next to SHA256SUMS.txt and the matching SwarmCast-v*-<os>-<arch>.tar.gz (as in
 # SwarmCast-vX.Y.Z-<os>-<arch>-installer.zip), it installs from those files.
 #
@@ -90,7 +90,7 @@ Install source, first match wins:
   2. A local bundle: SHA256SUMS.txt and this system's SwarmCast-v*.tar.gz in the
      same folder as this script (the extracted installer zip). The default
      release URL is still checked once for a newer version; if it cannot be
-     reached (offline, or a private repository), the local bundle is used.
+     reached (offline, or an HTTP error), the local bundle is used.
   3. The default release URL.
 
 Video converter: the extra viewer qualities (720p/480p/360p) need ffmpeg. It is
@@ -230,7 +230,7 @@ with_retry() {
 }
 
 # fetch_small URL OUTFILE: small downloads (checksum list), errors go to the log.
-# An HTTP 401/403/404 answer (e.g. a private repository) is final: no retries.
+# An HTTP 401/403/404 answer (nothing to download there) is final: no retries.
 fetch_small() {
   local code rc=0
   rm -f "$2"
@@ -633,8 +633,8 @@ find_local_bundle() {
 }
 
 # With a local bundle, look once (no retries) at the default release URL for a
-# newer version. Not reaching it (offline, or HTTP 404/401 while the repository
-# is private) is fine: the local bundle is used.
+# newer version. Not reaching it (offline, or an HTTP 404/401 answer) is fine:
+# the local bundle is used.
 check_online_newer() {
   local sums="$TMP_DIR/online-SHA256SUMS.txt"
   ONLINE_STATE="unreachable"
@@ -649,7 +649,7 @@ check_online_newer() {
       return 0
     fi
   elif [ -n "$FETCH_HTTP" ]; then
-    log_to_file "Online release check: HTTP $FETCH_HTTP (expected while the repository is private); using the local bundle"
+    log_to_file "Online release check: HTTP $FETCH_HTTP; using the local bundle"
   fi
   PKG_NAME="$LOCAL_NAME"; PKG_SHA="$LOCAL_SHA"; PKG_VERSION="$LOCAL_VERSION"
 }
@@ -884,7 +884,7 @@ install_or_update() {
   if [ "$RELEASE_OK" != 1 ]; then
     local why="offline, or the release server is unreachable"
     if [ -n "$FETCH_HTTP" ]; then
-      why="the release server answered HTTP $FETCH_HTTP; the repository may be private"
+      why="the release server answered HTTP $FETCH_HTTP"
     fi
     if [ -n "$installed" ]; then
       warn "Could not check for updates ($why: $RELEASE_URL)."
@@ -894,8 +894,8 @@ install_or_update() {
     if [ -n "$FETCH_HTTP" ]; then
       die "Could not download SwarmCast: the release server answered HTTP $FETCH_HTTP.
   ($RELEASE_URL/SHA256SUMS.txt)
-  If the repository is private, ask for the SwarmCast installer zip, extract it
-  and run $SC_SCRIPT_NAME from the extracted folder."
+  If you have the SwarmCast installer zip, extract it and run $SC_SCRIPT_NAME
+  from the extracted folder. Or get the SwarmCast app: https://lucas-angelo.github.io/swarmcast/"
     fi
     die "Could not download SwarmCast: the release server is unreachable.
   ($RELEASE_URL/SHA256SUMS.txt)

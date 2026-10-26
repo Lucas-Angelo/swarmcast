@@ -2,13 +2,11 @@
 // radii and shadows are NOT here: they come from the shared tokens in assets/brand/tokens.css
 // (repo root), which the site maps onto Starlight in src/styles/starlight.css.
 //
-//   logo     undefined = the placeholder mark (src/components/LogoMark.astro) + the "SwarmCast"
-//            wordmark set in the site font. To use the real logo, put the SVG files in
-//            assets/brand/ (repo root) and set e.g.
-//              { mark: 'mark.svg', alt: 'SwarmCast' }
-//            The mark is shown next to the wordmark (text, so it stays crisp and translatable).
-//            With `full: 'logo.svg'` (and optionally `fullDark: 'logo-dark.svg'`) the full lockup
-//            replaces mark + wordmark.
+//   logo     Files in assets/brand/ (repo root): `mark` (+ `markDark` for the dark theme) is the
+//            symbol, shown next to the "SwarmCast" wordmark set in the display font (text, so it
+//            stays crisp and translatable). With `full` (and optionally `fullDark`) a full lockup
+//            replaces mark + wordmark. undefined = a placeholder mark drawn by
+//            src/components/Logo.astro (for forks without the brand files).
 //   favicon  A file in site/public/ (served at /swarmcast/<name>): SVG, PNG or ICO.
 //   mascot   { file: 'mascot.png', alt: { en: '…', 'pt-BR': '…' } } with the file in
 //            assets/brand/. Shown in the landing page's closing section. undefined = no mascot.

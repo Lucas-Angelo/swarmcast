@@ -1,4 +1,9 @@
-# SwarmCast
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/wordmark/swarmcast-lockup-dark.svg">
+    <img src="assets/brand/wordmark/swarmcast-lockup-light.svg" alt="SwarmCast" width="320">
+  </picture>
+</h1>
 
 Stream a members-only live straight from your own computer, through a secret link. Your members watch in any browser, with no app and no account, and help each other through optional P2P. Free, private (no telemetry) and open source, for Windows, macOS and Linux, in English and Brazilian Portuguese.
 
@@ -8,14 +13,14 @@ Stream a members-only live straight from your own computer, through a secret lin
 
 ## Download
 
-Get the installer for your system from the [latest release](https://github.com/Lucas-Angelo/swarmcast/releases/latest), then follow the install guide for [Windows](https://lucas-angelo.github.io/swarmcast/install/windows/), [macOS](https://lucas-angelo.github.io/swarmcast/install/macos/) or [Linux](https://lucas-angelo.github.io/swarmcast/install/linux/). Got a link from a streamer? See [For viewers](https://lucas-angelo.github.io/swarmcast/viewers/).
+Get the SwarmCast app for your system from the [download page](https://lucas-angelo.github.io/swarmcast/download/) (or the [latest release](https://github.com/Lucas-Angelo/swarmcast/releases/latest)), then follow the install guide for [Windows](https://lucas-angelo.github.io/swarmcast/install/windows/), [macOS](https://lucas-angelo.github.io/swarmcast/install/macos/) or [Linux](https://lucas-angelo.github.io/swarmcast/install/linux/). The app updates itself. Got a link from a streamer? See [For viewers](https://lucas-angelo.github.io/swarmcast/viewers/).
 
 ## For developers
 
-- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, configuration, version policy, releases and the website.
-- [docs/](docs/README.md): architecture, threat model, security research, quality, desktop app and the maintainer guide.
-- [SECURITY.md](SECURITY.md): reporting a vulnerability.
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, configuration, version policy and the website.
+- [docs/](docs/README.md): architecture, threat model, security research, quality, the desktop app and the [release guide](docs/RELEASING.md).
+- [CHANGELOG.md](CHANGELOG.md) and [SECURITY.md](SECURITY.md) (reporting a vulnerability).
 
 ## License
 
-[MIT](LICENSE). Bundled third-party software (MediaMTX: MIT, cloudflared: Apache-2.0, Node.js and npm dependencies) is listed in `THIRD_PARTY_LICENSES.txt` inside each release package.
+[MIT](LICENSE). Bundled third-party software (MediaMTX: MIT, cloudflared: Apache-2.0, Node.js and npm dependencies) is listed in `THIRD_PARTY_LICENSES.txt` inside each release package. The Fredoka font is under the SIL Open Font License ([assets/brand/font/OFL.txt](assets/brand/font/OFL.txt)).

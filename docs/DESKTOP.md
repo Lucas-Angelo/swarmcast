@@ -1,7 +1,8 @@
 # SwarmCast Desktop (installer + app window + auto-update)
 
-Status: in development on branch `feat/desktop-app`. This document is the design and the
-contract between the desktop shell (`apps/desktop`, Rust/Tauri) and the server (`apps/server`).
+Status: shipped in v0.2.0. This document is the design and the contract between the desktop shell
+(`apps/desktop`, Rust/Tauri) and the server (`apps/server`). Build and develop: [apps/desktop/README.md](../apps/desktop/README.md);
+releasing and the updater key: [RELEASING.md](RELEASING.md).
 
 ## Goals
 
@@ -284,5 +285,5 @@ mode the server does it on first start (no `system-check.json`, or a different a
 | Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, WebDriver (tauri-driver) E2E of the panel, autostart file, AppImage update, uninstall |
 | Windows (CI) | NSIS silent install, launch, WebDriver E2E, autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
-CI for this branch runs only on demand (`/run desktop` on the PR, or a commit message containing
-`[desktop-ci]` on this branch). macOS is tested locally only (macOS runners cost 10× more).
+CI runs automatically on pull requests and on `main`, and the release builds the installers and tests
+them before anything is published ([RELEASING.md](RELEASING.md)).

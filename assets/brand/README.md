@@ -1,8 +1,8 @@
 # SwarmCast brand
 
 The visual identity of SwarmCast: symbol, wordmark, app icon, tray icons, favicon, mascot and design
-tokens. **Forest & Cream** is the chosen palette. Nothing in `apps/` uses these files yet; integration
-is a separate step.
+tokens. **Forest & Cream** is the chosen palette: the panel, the viewer pages, the desktop app, the
+website and the offline guide all use it (see [How the apps use it](#how-the-apps-use-it)).
 
 ![Overview of the four directions](explorations/overview-ABCD.jpg)
 
@@ -49,7 +49,7 @@ Sheets:
 Round 1 was generated in the old purple UI colour. The user rejected purple, so those images are not
 kept; their prompts are still in `tools/prompts/round1.json`.
 
-## Palette: Forest & Cream (default)
+## Palette: Forest & Cream (chosen)
 
 | Token | Light | Dark | Use |
 |---|---|---|---|
@@ -67,6 +67,7 @@ kept; their prompts are still in `tools/prompts/round1.json`.
 | warning | `#A15C00` | `#F2B441` | Warnings (5.1:1) |
 | live | `#D63A2F` | `#FF5A4E` | LIVE badge, white text 4.7:1 |
 | danger | `#B9302A` | `#FF7A70` | Destructive actions (5.9:1) |
+| on-danger | `#FFFFFF` | `#0C1716` | Text and icons on a danger fill (5.9:1 / 7.2:1) |
 | focus | `#9A6200` | `#F2B441` | Focus ring (4.5:1 on bg) |
 
 The single source of truth is **`tokens.json`** and **`tokens.css`** (`--sc-*` custom properties,
@@ -80,6 +81,22 @@ non-default options (`<html data-palette="honey|onair">`). Their sheets are in `
 
 Illustration colours (symbol and mascot): honey `#F2B441`, pine `#0F5C53`, pine-deep `#0F3D38`
 (stripes, eyes), cream `#F6F1E6` (waves on pine or dark backgrounds).
+
+## How the apps use it
+
+Everything reads the generated files above; nothing copies a colour by hand. To change the brand,
+edit `tools/palettes.py` (or the art), regenerate (see [Regenerate](#regenerate)), then run the
+consumers' own steps below and commit the results.
+
+| Consumer | Tokens | Images |
+|---|---|---|
+| Panel and viewer pages (`apps/admin`, `apps/viewer`) | [`packages/shared/web/brand.css`](../../packages/shared/web/brand.css) imports `tokens.css`; each app's `style.css` imports `brand.css` first and uses only `--sc-*` tokens (plus the few derived values `brand.css` builds from them). Vite bundles it all into `/assets`, so the strict CSP needs nothing but `'self'` | `brand.css` sets the symbol (`symbol/swarmcast-symbol.svg`, `-on-dark.svg` in the dark theme) and the mascot (256 px WebP copies in `packages/shared/web/img/`); the HTML pages link `favicon/favicon.svg`. Details: [packages/shared/README.md](../../packages/shared/README.md) |
+| Desktop app (`apps/desktop`) | The splash page: `src-tauri/build.rs` copies `tokens.css` next to it at every build | [`apps/desktop/icons.mjs`](../../apps/desktop/icons.mjs) (`npm run desktop:icons`) makes every app icon from `icon/app-icon-1024.png` (small `.ico` sizes from `icon/sizes/`) and copies `tray/tray-{off,waiting,live}-32.png`. The window shows the panel, so it follows the panel |
+| Website (`site/`) | `site/src/styles/tokens.css` imports `tokens.css`; `starlight.css` maps Starlight onto it; `site/src/tokens.mjs` reads literal values at build time (theme colour, contrast test) | [`site/src/brand.mjs`](../../site/src/brand.mjs) names the files used from this folder (symbol light/dark, mascot); `site/public/favicon.svg` is a copy of `favicon/favicon.svg`. Fredoka is subset into `site/src/fonts/` |
+| Offline guide (installer zips) | `scripts/build/guide-html.mjs` reads the light and dark values from `tokens.css` | — |
+
+The script-mode tray helper (`apps/tray`) still draws its own plain status circles
+(`apps/tray/icons/gen`); it does not use `tray/` yet.
 
 ## Type
 

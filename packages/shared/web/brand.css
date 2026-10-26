@@ -23,7 +23,7 @@
  *   ok / done             --ok            -> --sc-success
  *   warnings              --warn          -> --sc-warning
  *   LIVE                  --live          -> --sc-live         (text on it: --sc-on-live)
- *   errors, destructive   --danger        -> --sc-danger       (text on it: --on-status, see below)
+ *   errors, destructive   --danger        -> --sc-danger       (text on it: --sc-on-danger)
  *   keyboard focus        purple ring     -> --sc-focus
  *   body + headline font  system-ui       -> --sc-font-text    (Inter Variable, @fontsource-variable/inter)
  *   wordmark only         (none)          -> --sc-font-display (Fredoka SemiBold, ./fonts)
@@ -133,8 +133,6 @@
   --line-warning: color-mix(in srgb, var(--sc-warning) 45%, var(--sc-border));
   --line-danger: color-mix(in srgb, var(--sc-danger) 45%, var(--sc-border));
   --hover: color-mix(in srgb, var(--sc-ink) 5%, var(--sc-surface));
-  /* Text on success / warning / danger fills: same contrast pair as the accent (no --sc-on-danger token). */
-  --on-status: var(--sc-on-accent);
   /* Not brand colours: the video letterbox and the dimmer behind dialogs are plain black. */
   --video-bg: #000;
   --on-video: #fff;

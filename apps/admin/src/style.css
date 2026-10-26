@@ -151,7 +151,7 @@ button.primary:hover {
 button.danger {
   background: var(--sc-danger);
   border-color: var(--sc-danger);
-  color: var(--on-status);
+  color: var(--sc-on-danger);
 }
 button.danger:hover {
   background: color-mix(in srgb, var(--sc-danger) 86%, var(--sc-ink));
