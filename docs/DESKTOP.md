@@ -1,7 +1,8 @@
 # SwarmCast Desktop (installer + app window + auto-update)
 
-Status: in development on branch `feat/desktop-app`. This document is the design and the
-contract between the desktop shell (`apps/desktop`, Rust/Tauri) and the server (`apps/server`).
+Status: shipped in v0.2.0. This document is the design and the contract between the desktop shell
+(`apps/desktop`, Rust/Tauri) and the server (`apps/server`). Build and develop: [apps/desktop/README.md](../apps/desktop/README.md);
+releasing and the updater key: [RELEASING.md](RELEASING.md).
 
 ## Goals
 
@@ -294,4 +295,5 @@ the NSIS uninstaller / `apt remove` and `scripts/uninstall-*`, and an update fro
 (0.0.0-test.1) to B (0.0.0-test.2) served on 127.0.0.1, with config and secrets kept. A and B are built
 with `--insecure-updates --updater-pubkey` and a key pair generated in the job. Only `release.yml` passes
 the real `TAURI_SIGNING_PRIVATE_KEY` and publishes the tested installers, their `.sig` files and
-`latest.json`; other builds of the real installers have no updater artifacts.
+`latest.json` ([RELEASING.md](RELEASING.md)); other builds of the real installers have no updater
+artifacts.

@@ -74,3 +74,71 @@ describe('panel login: GET /auth/<token>', () => {
     expect(logged.join('\n')).not.toContain(TOKEN);
   });
 });
+
+describe('panel pages: brand styling and caching', () => {
+  let app: FastifyInstance;
+  const port = PORT + 1;
+  const h = `127.0.0.1:${port}`;
+  beforeAll(async () => {
+    const adminDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-admin-'));
+    fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html><div id="app"></div><script type="module" src="/assets/index-AbC123.js"></script>');
+    fs.mkdirSync(path.join(adminDir, 'assets'));
+    fs.writeFileSync(path.join(adminDir, 'assets', 'index-AbC123.js'), 'export {};');
+    fs.writeFileSync(path.join(adminDir, 'assets', 'gate-Xy_9.css'), 'body{}');
+    // What the admin build writes (apps/admin/gate.html), plus a link the server must not copy.
+    fs.writeFileSync(
+      path.join(adminDir, 'gate.html'),
+      '<!doctype html><html><head><link rel="icon" href="/assets/favicon-Q1.svg" type="image/svg+xml" />' +
+        '<link rel="stylesheet" crossorigin href="/assets/gate-Xy_9.css"><link rel="stylesheet" href="https://evil.example/x.css"></head></html>',
+    );
+    const { live } = makeController({} as DirectMode);
+    app = await createAdminServer({ port, adminDir, live, log: pino({ level: 'silent' }), token: TOKEN, onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn() });
+  });
+  afterAll(() => app.close());
+
+  it('"not authorized": branded page with how to reopen the panel, no inline style or script', async () => {
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: h } });
+    expect(res.statusCode).toBe(401);
+    expect(res.headers['content-type']).toBe('text/html; charset=utf-8');
+    expect(res.headers['cache-control']).toBe('no-store');
+    expect(res.body).toContain('lang="en"');
+    expect(res.body).toContain('<link rel="stylesheet" href="/assets/gate-Xy_9.css">');
+    expect(res.body).toContain('<link rel="icon" href="/assets/favicon-Q1.svg" type="image/svg+xml">');
+    expect(res.body).not.toContain('evil.example');
+    expect(res.body).toContain('class="sc-symbol"');
+    expect(res.body).toContain('only opens from the SwarmCast app or window on this computer');
+    expect(res.body).toContain('How to open it again');
+    expect(res.body).toMatch(/Open SwarmCast/);
+    expect(res.body).toMatch(/run the start script again/);
+    expect(res.body).not.toMatch(/<script|<style|style=/i);
+    // The stylesheet itself loads without the cookie.
+    expect((await app.inject({ method: 'GET', url: '/assets/gate-Xy_9.css', headers: { host: h } })).statusCode).toBe(200);
+  });
+
+  it('"not authorized" follows Accept-Language (pt-BR), also for a wrong /auth token', async () => {
+    const res = await app.inject({ method: 'GET', url: '/auth/nope', headers: { host: h, 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' } });
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toContain('lang="pt-BR"');
+    expect(res.body).toContain('Abra o painel pelo aplicativo SwarmCast');
+    expect(res.body).toContain('Como abrir de novo');
+    expect(res.body).toContain('/assets/gate-Xy_9.css');
+  });
+
+  it('the sign-in page uses the same stylesheet', async () => {
+    const res = await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host: h } });
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toContain('<link rel="stylesheet" href="/assets/gate-Xy_9.css">');
+    expect(res.body).toContain('<a href="/">Open the panel</a>');
+  });
+
+  it('index.html is never cached; hashed assets are cached for a long time', async () => {
+    const cookie = `${ADMIN_COOKIE}=${TOKEN}`;
+    const index = await app.inject({ method: 'GET', url: '/', headers: { host: h, cookie } });
+    expect(index.statusCode).toBe(200);
+    expect(index.body).toContain('id="app"');
+    expect(index.headers['cache-control']).toBe('no-store');
+    const asset = await app.inject({ method: 'GET', url: '/assets/index-AbC123.js', headers: { host: h } });
+    expect(asset.statusCode).toBe(200);
+    expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+});

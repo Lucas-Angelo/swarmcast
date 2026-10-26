@@ -273,12 +273,6 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ github.ref_name }}
-      # Optional public mirror for the release assets (off unless both are set): the
-      # repository variable RELEASES_REPO (e.g. Lucas-Angelo/swarmcast-releases) and the
-      # secret RELEASES_REPO_TOKEN (fine-grained PAT, contents:write on that repo only).
-      # Only "true"/"false" here; the token is mapped into the mirror step alone.
-      RELEASES_REPO: ${{ vars.RELEASES_REPO }}
-      MIRROR: ${{ vars.RELEASES_REPO != '' && secrets.RELEASES_REPO_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -310,28 +304,9 @@ jobs:
             fi
           done
 
-      # With the mirror, the one-liners and the scripts' online update check must point at
-      # the public repository: rewrite the default release URL in the published copies
-      # (never in the source). Without the mirror, nothing changes.
-      - name: Point the published start scripts at the public mirror
-        if: env.MIRROR == 'true'
-        run: |
-          if ! [[ "$RELEASES_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::Repository variable RELEASES_REPO must look like owner/repo (got '$RELEASES_REPO')."
-            exit 1
-          fi
-          from="github.com/${GITHUB_REPOSITORY}/releases"
-          to="github.com/${RELEASES_REPO}/releases"
-          sed -i "s#${from}#${to}#g" release/start-windows.ps1 release/start-linux.sh release/start-macos.command release/start-macos.sh
-          grep -q "^\$SC_DefaultReleaseUrl = 'https://${to}/latest/download'" release/start-windows.ps1
-          for f in release/start-linux.sh release/start-macos.command release/start-macos.sh; do
-            grep -q "^SC_DEFAULT_RELEASE_URL=\"https://${to}/latest/download\"" "$f"
-          done
-          echo "Published start scripts now download from https://${to}/latest/download"
-
-      # One zip per platform to send to the streamer while the repository is private: the
-      # start script(s), the package, a one-line SHA256SUMS.txt (the scripts install from
-      # these local files), a short README.txt and the full guide in both languages.
+      # One zip per platform for an offline script install: the start script(s), the package,
+      # a one-line SHA256SUMS.txt (the scripts install from these local files), a short
+      # README.txt and the full guide in both languages.
       - name: Build installer bundles
         run: |
           guides="$RUNNER_TEMP/guides"
@@ -339,9 +314,6 @@ jobs:
           # Generated from the website's pages (site/offline-guide.json): one source for both.
           node scripts/build/guide-html.mjs "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
           node scripts/build/guide-html.mjs "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
-          if [ "$MIRROR" = true ]; then
-            sed -i "s#github.com/${GITHUB_REPOSITORY}/releases#github.com/${RELEASES_REPO}/releases#g" "$guides"/*.html
-          fi
 
           # README.txt: UTF-8 with BOM (Notepad/TextEdit pick the encoding), CRLF for Windows.
           readme() {
@@ -428,8 +400,7 @@ jobs:
 
       # --- uninstallers (scripts/uninstall-*) ---
       # Release assets, and each installer zip gets its platform's uninstaller (zip adds
-      # the files to the archive built above). They never download anything, so the
-      # public-mirror URL rewrite does not apply to them.
+      # the files to the archive built above).
       - name: Add uninstall scripts
         run: |
           cp scripts/uninstall-windows.ps1 scripts/uninstall-windows.cmd scripts/uninstall-linux.sh scripts/uninstall-macos.command release/
@@ -516,16 +487,3 @@ jobs:
           prerelease=()
           if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$TAG" release/* --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
-
-      # Same assets and notes in the public mirror, so the one-liners work while this
-      # repository stays private. The mirror needs at least one commit (e.g. a README):
-      # the tag is created on its default branch.
-      - name: Publish to the public mirror
-        if: env.MIRROR == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-        run: |
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" release/* -R "$RELEASES_REPO" --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
-          echo "Mirror: https://github.com/${RELEASES_REPO}/releases/tag/${TAG}"

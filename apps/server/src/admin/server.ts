@@ -16,7 +16,6 @@ import {
   type ApiErrorBody,
   type DirectCheckResponse,
 } from '@swarmcast/shared';
-import { resolveLang } from '@swarmcast/shared/i18n';
 import type { CheckResult } from '../direct/direct.js';
 import type { DesktopBridge } from '../desktop/bridge.js';
 import type { Diagnostics } from '../diagnostics/diagnostics.js';
@@ -26,6 +25,7 @@ import { codeOf, coded } from '../core/messages.js';
 import { applySecurityHeaders } from '../public/security.js';
 import { registerDesktopRoutes } from './desktop-routes.js';
 import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
+import { gateHead, notAuthorizedPage, signedInPage } from './gate.js';
 import { registerOnboardingRoutes } from './onboarding-routes.js';
 import { registerQualityRoutes } from './quality-routes.js';
 import { registerSystemCheckRoutes } from './system-check-routes.js';
@@ -46,43 +46,6 @@ export interface AdminOptions {
   desktop?: DesktopBridge;
   /** Log retention setting and "Export logs" (diagnostics-routes.ts). */
   diagnostics?: Diagnostics;
-}
-
-const SIGNED_IN = {
-  en: { title: 'SwarmCast panel', open: 'Open the panel' },
-  'pt-BR': { title: 'Painel do SwarmCast', open: 'Abrir o painel' },
-} as const;
-
-function pageLang(acceptLanguage: string | undefined): keyof typeof SIGNED_IN {
-  return resolveLang((acceptLanguage ?? '').split(',').map((l) => l.split(';')[0]!.trim()));
-}
-
-/**
- * Answer of `/auth/<token>`: sets the cookie, then opens `/` from this page (meta refresh,
- * plus a link). Not a redirect: the panel cookie is SameSite=Strict, and a redirect chain that
- * started on another site (the desktop app's splash page) does not send it to `/`, while a
- * navigation started by this 127.0.0.1 page does. No script (the CSP allows none inline), no
- * token in the page.
- */
-function signedInPage(acceptLanguage: string | undefined): string {
-  const lang = pageLang(acceptLanguage);
-  const m = SIGNED_IN[lang];
-  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=/"><title>${m.title}</title></head>
-<body><p><a href="/">${m.open}</a></p></body></html>`;
-}
-
-const NOT_AUTHORIZED = {
-  en: { title: 'SwarmCast panel', text: 'Open the panel from the SwarmCast tray/menu bar icon, or run the start script again.' },
-  'pt-BR': { title: 'Painel do SwarmCast', text: 'Abra o painel pelo ícone do SwarmCast na bandeja/barra de menus, ou rode o script de início de novo.' },
-} as const;
-
-/** Shown without the per-run token. No inline styles (the CSP forbids them). */
-function notAuthorizedPage(acceptLanguage: string | undefined): string {
-  const lang = pageLang(acceptLanguage);
-  const m = NOT_AUTHORIZED[lang];
-  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>SwarmCast</title></head>
-<body><h1>${m.title}</h1>
-<p>${m.text}</p></body></html>`;
 }
 
 /**
@@ -108,6 +71,9 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     "frame-ancestors 'none'",
     "object-src 'none'",
   ].join('; ');
+
+  // Stylesheet + favicon of the sign-in and "not authorized" pages (gate.ts), read once.
+  const gate = gateHead(o.adminDir);
 
   const tokenOk = (t: string | undefined): boolean =>
     !!t && t.length < 200 && crypto.timingSafeEqual(crypto.createHash('sha256').update(t).digest(), tokenHash);
@@ -145,21 +111,26 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
 
   app.get<{ Params: { token: string } }>('/auth/:token', async (req, reply) => {
-    if (!tokenOk(req.params.token)) return reply.code(401).type('text/html').send(notAuthorizedPage(req.headers['accept-language']));
+    if (!tokenOk(req.params.token)) return reply.code(401).type('text/html; charset=utf-8').send(notAuthorizedPage(req.headers['accept-language'], gate));
     reply.setCookie(ADMIN_COOKIE, req.params.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: false });
     // Also set for every admin response (onRequest); repeated here because this page must never be
     // cached or leak its URL (the token) as a referrer.
     reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
-    return reply.type('text/html; charset=utf-8').send(signedInPage(req.headers['accept-language']));
+    return reply.type('text/html; charset=utf-8').send(signedInPage(req.headers['accept-language'], gate));
   });
 
   await app.register(fastifyStatic, { root: o.adminDir, prefix: '/', index: false, wildcard: false, serve: false });
   app.get('/', async (req, reply) => {
-    if (!tokenOk(req.cookies[ADMIN_COOKIE])) return reply.code(401).type('text/html').send(notAuthorizedPage(req.headers['accept-language']));
-    return reply.sendFile('index.html', o.adminDir);
+    if (!tokenOk(req.cookies[ADMIN_COOKIE])) return reply.code(401).type('text/html; charset=utf-8').send(notAuthorizedPage(req.headers['accept-language'], gate));
+    // Never cached: after an update, the window or tab must load the new index.html, whose
+    // hashed /assets names point at the new code. (Without cacheControl: false, the static
+    // plugin would replace the no-store set in onRequest with its own `public, max-age=0`.)
+    reply.header('Cache-Control', 'no-store');
+    return reply.sendFile('index.html', o.adminDir, { cacheControl: false });
   });
+  // Vite gives every file in /assets a content hash, so its URL never changes meaning.
   app.get<{ Params: { '*': string } }>('/assets/*', async (req, reply) => {
-    return reply.sendFile(path.posix.join('assets', req.params['*']), o.adminDir);
+    return reply.sendFile(path.posix.join('assets', req.params['*']), o.adminDir, { maxAge: '365d', immutable: true });
   });
 
   const L = o.live;

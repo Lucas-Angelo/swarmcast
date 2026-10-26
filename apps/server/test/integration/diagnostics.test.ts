@@ -106,7 +106,7 @@ describe('log export (real server)', () => {
     const base = login[1]!;
     const token = login[2]!;
     const jar = new Jar(base);
-    // /auth/<token> answers 200 with a page that sets the cookie and moves on (meta refresh).
+    // /auth/<token> answers 200 with a page that opens / itself (not a redirect: SameSite=Strict).
     expect((await jar.fetch(`/auth/${token}`)).status).toBe(200);
     const json = { origin: base, 'content-type': 'application/json' };
 

@@ -20,7 +20,7 @@ flowchart TB
   - `sidecar.rs`: spawns the server (env of the contract, Windows Job object + no console), reads stdout/stderr, quit with 35 s grace then kill.
   - `protocol.rs`: `@@swarmcast` messages (unit-tested); `window.rs`: window, navigation policy (only the admin origin stays inside), WebView2 `--lang`.
   - `tray.rs`, `updater.rs` (endpoint `UPDATE_ENDPOINT`, checks, dialog, download with retries, relaunch), `i18n.rs` (EN / pt-BR, test: same keys), `logs.rs` (data dir like the server, `desktop.log` rotation).
-- `splash/`: local page shown while the server starts, on errors and during updates (the only page with IPC). Colors, radius and font come only from the brand tokens: `src-tauri/build.rs` copies `assets/brand/tokens.css` to `splash/tokens.css` (not committed) at every build, or `splash/tokens.stub.css` (same names, Forest & Cream values) while the brand file does not exist.
+- `splash/`: local page shown while the server starts, on errors and during updates (the only page with IPC). Colors, radius and font come only from the brand tokens: `src-tauri/build.rs` copies `assets/brand/tokens.css` to `splash/tokens.css` (not committed) at every build. `splash/tokens.stub.css` (same names, Forest & Cream values) is only a fallback for a checkout without `assets/brand/`.
 - `src-tauri/windows/hooks.nsh`: NSIS hooks (install folder, stop processes, `--cleanup`, autostart entry, "delete app data"). `Info.plist`: macOS localizations (en, pt-BR) so `navigator.language` follows the system.
 - `src-tauri/icons/`: app icons and tray icons, all made by `icons.mjs` (see "Icons").
 - `test/mock-server.mjs`: a fake `swarmcast-server --desktop` (modes: ok, crash, fatal, no-ready, ignore quit, self-test of links / language / IPC). `test/dev.mjs`: debug run with the mock.
@@ -70,8 +70,8 @@ One command regenerates every icon (app window, Dock / taskbar, `icon.icns` for 
 node apps/desktop/icons.mjs            # or: npm run desktop:icons
 ```
 
-- App icon source: `assets/brand/app-icon-1024.png` (1024×1024 PNG, transparent corners like a macOS icon). Without it, a placeholder (Forest & Cream colors) drawn by `src-tauri/icons/gen.mjs`. Under the hood: `npx tauri icon <source> -o apps/desktop/src-tauri/icons`, minus the mobile / Store sizes.
-- Tray icons: `assets/brand/tray/{off,waiting,live}.png` (32×32, shown at 16 pt in the macOS menu bar), else `apps/tray/icons/*.png`, copied to `src-tauri/icons/tray/`.
+- App icon source: `assets/brand/icon/app-icon-1024.png` (the full-bleed square app icon of the brand, [assets/brand/README.md](../../assets/brand/README.md)). Under the hood: `npx tauri icon <source> -o apps/desktop/src-tauri/icons`, minus the mobile / Store sizes. The small sizes of the Windows `.ico` (16–48 px) and `32x32.png` come from the hand-tuned `assets/brand/icon/sizes/`, since a plain downscale blurs. Without the brand files (a fork), `src-tauri/icons/gen.mjs` draws a placeholder.
+- Tray icons: `assets/brand/tray/tray-{off,waiting,live}-32.png` (shown at 16 pt in the macOS menu bar), else `apps/tray/icons/*.png`, copied to `src-tauri/icons/tray/`.
 - The installers have no other images: NSIS uses `icon.ico`, the DMG the app icon.
 
 Commit the generated files.
