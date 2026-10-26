@@ -136,14 +136,16 @@ jobs:
 
       # Update test builds: A (0.0.0-test.1) and B (0.0.0-test.2), signed with a key pair made
       # for this job only and trusting its public key, plus B's latest.json for a local server.
+      # macOS: hdiutil sometimes cannot eject the new DMG ("Resource busy"), so one retry there.
       - name: Update test builds A and B (throwaway key)
         run: |
+          build() { node scripts/build/desktop.mjs "$@" || { [ "$RUNNER_OS" = macOS ] && node scripts/build/desktop.mjs "$@"; }; }
           key="$RUNNER_TEMP/update-test.key"
           node node_modules/@tauri-apps/cli/tauri.js signer generate --ci --password test --write-keys "$key"
           TAURI_SIGNING_PRIVATE_KEY="$(cat "$key")"
           export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test
           for v in 0.0.0-test.1 0.0.0-test.2; do
-            node scripts/build/desktop.mjs --target "$TARGET" --version "$v" --insecure-updates --updater-pubkey "$key.pub"
+            build --target "$TARGET" --version "$v" --insecure-updates --updater-pubkey "$key.pub"
             mkdir -p release/update-test
             mv "release/desktop/$TARGET" "release/update-test/$v"
           done
@@ -157,7 +159,9 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-        run: node scripts/build/desktop.mjs --target "$TARGET" --version "$VERSION"
+        run: |
+          build() { node scripts/build/desktop.mjs "$@" || { [ "$RUNNER_OS" = macOS ] && node scripts/build/desktop.mjs "$@"; }; }
+          build --target "$TARGET" --version "$VERSION"
       - run: ls -la "release/desktop/$TARGET" release/update-test/*
 
       # The .app bundle stays out: the .dmg and the updater's .app.tar.gz carry it.
