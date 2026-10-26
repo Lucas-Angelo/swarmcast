@@ -61,7 +61,7 @@ jobs:
       matrix:
         os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 40
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -70,6 +70,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: 'false'
       - name: Rust toolchain
         run: rustup toolchain install stable --profile minimal --component rustfmt,clippy --no-self-update && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -89,9 +92,6 @@ jobs:
         run: cargo test --locked
       # Licences of the crates compiled into the app (this OS's target): fails on a crate with no
       # licence or one outside the allowed list, like the installer build does.
-      - uses: ./.github/actions/setup
-        with:
-          npm-ci: 'false'
       - name: Crate licences
         working-directory: .
         run: node scripts/build/crate-licenses.mjs --check
@@ -110,7 +110,7 @@ jobs:
           - { target: linux-x64, os: ubuntu-22.04 }
           - { target: linux-arm64, os: ubuntu-22.04-arm }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -206,7 +206,7 @@ jobs:
           - { target: linux-x64, os: ubuntu-24.04 }
           - { target: linux-arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 20
     defaults:
       run:
         shell: bash

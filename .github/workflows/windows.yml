@@ -51,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Real OBS on a GPU-less VM is best effort until it is proven to work.
     continue-on-error: ${{ matrix.suite == 'obs' }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash

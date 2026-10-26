@@ -47,7 +47,7 @@ jobs:
           - { target: linux-x64, os: ubuntu-latest }
           - { target: linux-x64, os: ubuntu-22.04 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash

@@ -17,6 +17,13 @@ inputs:
 runs:
   using: composite
   steps:
+    # A stalled download from the Ubuntu mirror is retried instead of waiting for minutes
+    # (this also covers `playwright install --with-deps` and the desktop build dependencies).
+    - name: apt retries and timeouts (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null
+
     # One npm cache for the root workspace and the website (site/ has its own lockfile).
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
