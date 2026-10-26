@@ -155,3 +155,10 @@ button.chip.active { background: var(--accent); color: #fff; border-color: trans
 .stats.stats-4 { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); }
 .stats-4 .stat .muted.small { display: block; }
 .text-input { font: inherit; padding: 0.3rem 0.5rem; border-radius: 8px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); }
+
+/* Desktop app: update banner */
+.update-banner { margin: 0.6rem 0; }
+.update-notes { margin-top: 0.3rem; }
+.update-notes summary { cursor: pointer; font-weight: 600; }
+.update-notes-text { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 14rem; overflow-y: auto; margin-top: 0.3rem; }
+.update-banner progress { width: 12rem; max-width: 100%; }
