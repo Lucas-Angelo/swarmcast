@@ -20,7 +20,7 @@ Desinstalar nunca mexe no OBS. Se quiser, apague você mesmo o destino do SwarmC
 
 ## Linux
 
-- **.deb:** no terminal, `sudo apt remove swarmcast-desktop`.
+- **.deb:** no terminal, `sudo apt remove swarm-cast`.
 - **AppImage:** desligue **Iniciar com o computador** no painel, feche o SwarmCast e apague o arquivo `.AppImage`.
 
 As suas configurações continuam em `~/.local/share/swarmcast`. Para apagar tudo, use o script de desinstalação abaixo.

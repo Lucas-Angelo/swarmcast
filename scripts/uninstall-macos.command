@@ -34,7 +34,7 @@ SC_OBS_NOTE="Your OBS settings were not changed. Remove the SwarmCast target/ser
 SC_MARKERS="app config.json secrets.json state.json logs run bin tools cache blocklists system-check.json"
 # Desktop app (docs/DESKTOP.md).
 SC_APP_ID="io.github.lucas-angelo.swarmcast"
-SC_DEB_PACKAGE="swarmcast-desktop"
+SC_DEB_PACKAGE="swarm-cast"
 SC_BOOTOUT_TIMEOUT=15                          # seconds for "launchctl bootout"
 # macOS: the system-wide Applications folder (the tests point it at a fake one).
 SC_SYSTEM_APPS="${SWARMCAST_APPLICATIONS_DIR:-/Applications}"
@@ -391,7 +391,7 @@ list_processes() {
 # Processes whose executable lives inside a SwarmCast folder: the data folder
 # (swarmcast, its reaper, mediamtx, cloudflared, swarmcast-tray, ffmpeg...) and the
 # desktop app (SwarmCast.app, a SwarmCast AppImage and the folder it mounts, the
-# swarmcast-desktop package's files). Nothing else is ever touched.
+# swarm-cast package's files). Nothing else is ever touched.
 find_swarmcast_processes() {
   list_processes | SC_SELF="$$" SC_DIRS="$PROC_DIRS" SC_FILES="$PROC_FILES" SC_LINUX="$([ "$SC_OS" = linux ] && echo 1)" awk -F '\t' '
     BEGIN { nd = split(ENVIRON["SC_DIRS"], dirs, "\n"); nf = split(ENVIRON["SC_FILES"], files, "\n") }

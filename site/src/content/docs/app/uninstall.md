@@ -20,7 +20,7 @@ Uninstalling never changes OBS. If you want, remove the SwarmCast target (Multip
 
 ## Linux
 
-- **.deb:** in a terminal, `sudo apt remove swarmcast-desktop`.
+- **.deb:** in a terminal, `sudo apt remove swarm-cast`.
 - **AppImage:** turn off **Start with the computer** in the panel, quit SwarmCast and delete the `.AppImage` file.
 
 Your settings stay in `~/.local/share/swarmcast`. To remove everything, use the uninstall script below.

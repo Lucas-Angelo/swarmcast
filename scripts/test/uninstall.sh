@@ -655,9 +655,9 @@ else
   assert_no_file "$WORK/xdg config/autostart/swarmcast.desktop"
   assert_file "$HOME/.config/autostart/swarmcast.desktop"
   assert_no_file "$DATA"
-  assert_contains "$OUT" "Desktop app: package swarmcast-desktop"
-  assert_contains "$OUT" "    sudo apt remove swarmcast-desktop" "the exact apt command is shown"
-  assert_contains "$OUT" "still installed: package swarmcast-desktop" "summary line names the package"
+  assert_contains "$OUT" "Desktop app: package swarm-cast"
+  assert_contains "$OUT" "    sudo apt remove swarm-cast" "the exact apt command is shown"
+  assert_contains "$OUT" "still installed: package swarm-cast" "summary line names the package"
   assert_contains "$STUB_LOG" "dpkg-query -W" "dpkg-query was asked"
   assert_not_contains "$STUB_LOG" "sudo" "sudo was not run"
   rm -rf "$WORK/xdg config" "$HOME/.config"
@@ -665,7 +665,7 @@ else
   : >"$STUB_LOG"
   FAKE_DEB_INSTALLED=1 run_uninstall
   assert_eq "$RC" 0 "package only: exit code 0"
-  assert_contains "$OUT" "sudo apt remove swarmcast-desktop"
+  assert_contains "$OUT" "sudo apt remove swarm-cast"
   assert_not_contains "$STUB_LOG" "sudo" "sudo was not run"
 fi
 end
