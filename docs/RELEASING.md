@@ -133,7 +133,8 @@ See section 7. Without those secrets the release is unsigned, which is the defau
    testing.
 5. **Watch the release workflow** in the **Actions** tab. It runs by itself on the tag and:
    1. checks that the tag matches `package.json`, that `CHANGELOG.md` has a section for the version and
-      that the updater signing secrets exist;
+      that the updater signing secrets exist, and that no GitHub release exists yet for the tag (a published
+      release is never changed);
    2. runs the full test suites (the same checks as pull requests, plus the install-script, pre-release,
       Windows and desktop-installer tests). If anything fails, nothing is published;
    3. builds and smoke-tests the server package on each platform, and signs the binaries when the

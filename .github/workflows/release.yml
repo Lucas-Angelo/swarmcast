@@ -39,6 +39,16 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # A published release is never changed or replaced (installed apps and the scripts may
+      # already have it): a re-pushed or moved tag of a released version stops here.
+      - name: No release exists for this tag yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A GitHub release for ${GITHUB_REF_NAME} already exists; it is never changed. Ship the next version instead (see docs/RELEASING.md)."
+            exit 1
+          fi
       # The desktop app's updater only installs packages signed with this key.
       - name: The updater signing key must be set
         env:
