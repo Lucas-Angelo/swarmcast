@@ -294,10 +294,13 @@ async function updateTest(dirA, dirB, port) {
     const secrets = path.join(dataDir, 'secrets.json');
     await until(() => fs.existsSync(config) && fs.existsSync(secrets), 30_000, 'config.json and secrets.json');
     const before = [fs.readFileSync(config, 'utf8'), fs.readFileSync(secrets, 'utf8')];
+    // Like a streamer, click "Update now" once the panel has had time to show in the app window
+    // (an update started while the webview is still loading crashed the macOS shell: wry panic).
+    await sleep(5000);
+    const log = path.join(dataDir, 'logs', 'desktop.log');
     fs.rmSync(loginFile, { force: true });
     await api(panel, 'POST', '/api/desktop/update/install');
     console.log('"Update now" sent; waiting for the new version to start by itself');
-    const log = path.join(dataDir, 'logs', 'desktop.log');
     const restarted = (t) => {
       const i = t.lastIndexOf(`SwarmCast desktop ${manifest.version} starting`);
       return i >= 0 && t.indexOf('ready, opening the panel', i) > 0;
