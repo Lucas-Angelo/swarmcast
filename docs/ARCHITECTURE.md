@@ -1,0 +1,284 @@
+# Architecture
+
+## Components
+
+| Process | Listens on | Role |
+|---------|-----------|------|
+| `swarmcast` (Node 24, single executable) | 127.0.0.1:8080 (public server), 127.0.0.1:8081 (admin) | Everything below |
+| MediaMTX (child) | 127.0.0.1:1935 (RTMP), 127.0.0.1:8888 (HLS) | Receives OBS and produces fMP4 HLS |
+| cloudflared (child) | — (outbound only) | Quick tunnel `https://<random>.trycloudflare.com` → 127.0.0.1:8080 |
+| `swarmcast --reaper <pid>` (child) | — | Watchdog: kills the other children if the app dies |
+| `swarmcast-tray` (child, Go) | — | Tray / menu bar icon over stdin/stdout JSON lines |
+
+```mermaid
+flowchart TB
+  subgraph pc["Streamer's PC · everything binds to 127.0.0.1"]
+    obs["OBS"]
+    mtx["MediaMTX child<br/>RTMP :1935 · HLS :8888"]
+    subgraph app["swarmcast · public server :8080"]
+      origin["HlsOrigin<br/>memory cache + SHA-256"]
+      hls["Routes: /hls/*<br/>signed manifest<br/>upload limiter"]
+      acc["Access control<br/>link · ticket · session"]
+      ws["WebSockets<br/>/tracker + /control"]
+    end
+    admin["Admin panel :8081<br/>+ tray helper"]
+    reaper["Reaper watchdog"]
+    cfd["cloudflared child<br/>outbound only"]
+  end
+  subgraph net["Internet"]
+    edge["Cloudflare edge<br/>random.trycloudflare.com"]
+    subgraph viewers["Viewers' browsers"]
+      direction LR
+      v1["hls.js +<br/>p2p-media-loader"]
+      v2["hls.js +<br/>p2p-media-loader"]
+      v1 <-. "optional P2P<br/>STUN only" .-> v2
+    end
+  end
+  obs -- "RTMP + stream key" --> mtx
+  mtx -- "HLS poll ~1 s" --> origin
+  origin --> hls
+  acc -. "session check" .-> hls
+  acc -. "session check" .-> ws
+  admin -. "start/stop, kick, link" .-> acc
+  reaper -. "kills children<br/>if the app dies" .-> cfd
+  reaper -.-> mtx
+  hls --> cfd
+  ws --> cfd
+  cfd -- "quick tunnel" --> edge
+  edge -- "HTTPS + WSS" --> viewers
+```
+
+Source map (`apps/server/src`):
+- `core/live.ts` handles start/stop, steps, link and viewer control.
+- `public/server.ts` is the viewer-facing server.
+- `access/access.ts` holds links, tickets, sessions and kicks.
+- `hls/` contains the origin cache, playlists, signed manifest and upload limiter.
+- `tracker/tracker.ts` and `control/control.ts` are the two WebSocket services.
+- `media/mediamtx.ts`, `tunnel/` and `process/children.ts` manage the child processes.
+- `direct/` implements direct mode.
+- `admin/server.ts` is the admin panel server.
+- `quality/` holds the quality ladder (ffmpeg renditions), encoder probing and the adaptive upload cap; see [QUALITY.md](QUALITY.md).
+- `tray/tray.ts` drives the tray helper.
+
+## Media path
+
+1. OBS publishes to `rtmp://127.0.0.1:1935/live` with key `sc_…`. The generated MediaMTX config allows exactly one path, `live/<key>`, so publishing to any other path is rejected. Every protocol except RTMP ingest and local HLS is disabled, including `moq`, `rtsp`, `webrtc`, `srt`, `api`, `metrics`, `pprof` and `playback`.
+2. MediaMTX remuxes the stream to standard fMP4 HLS (not LL-HLS) with a 15-segment playlist. It cuts segments at the first keyframe after `hlsSegmentDuration: 1s`, so with OBS keyframes every 2 s each segment is 2 s long.
+3. `HlsOrigin` polls MediaMTX about once a second. It passes MediaMTX's cookie check and `hlsSession` cookie, caches the segments in memory (about 60 s are kept) and hashes each one with SHA-256. It then rewrites the playlists so they list only segments that are already cached and hashed.
+   - With quality options on (a GPU encoder, or chosen by hand), one ffmpeg process reads the stream from MediaMTX, copies the source and encodes 720p/480p into one multivariant playlist; the origin then pulls from that directory instead. Playlists are stitched, so a restart becomes an `EXT-X-DISCONTINUITY`. See [QUALITY.md](QUALITY.md).
+4. `/hls/manifest.json` is a compact JWS (EdDSA/Ed25519, `typ: swarmcast-manifest`). Its payload is `{liveId, version, issuedAt, segments: {"/hls/<file>": sha256}}`.
+5. All `/hls/*` routes require a session. Segment bodies pass through one global token-bucket limiter (`uploadLimitMbps`). They are sent with `Cache-Control: private` so the tunnel or CDN never caches them.
+
+## Viewer
+
+- hls.js 1.7 with p2p-media-loader 4.0 (`HlsJsP2PEngine.injectMixin`). The player stays about 14 s behind live (`liveSyncDurationCount: 7`), so segments can travel between peers before they are needed. Segments close to the playhead always come over HTTPS.
+- P2P ("Help the stream (P2P)") is **on by default**; a viewer who turns it off keeps it off on later visits (remembered in the browser), and the streamer can remove anyone from P2P. When it is on, peers connect only through our tracker (`wss://<host>/tracker`) and use STUN only (`stun:stun.cloudflare.com:3478`); there is no TURN relay.
+- `validateP2PSegment` hashes every P2P segment and compares it with the signed manifest. Any mismatch or missing hash is rejected and the segment is fetched over HTTPS instead. A rejection also sends a `hash-fail` report naming the peer on the control channel.
+- The manifest signature is verified with WebCrypto Ed25519. If `importKey` fails on an older browser, the viewer trusts the manifest because it came from the same-origin HTTPS response. In that case integrity rests on TLS to the origin, but still never on peers.
+- The **peer guard** (`apps/viewer/src/peer-guard.ts`) works around a gap in p2p-media-loader, which has no API to disconnect a peer. The guard links tracker peer ids to `RTCPeerConnection`s by matching the ICE ufrags in signaling, then closes the connections of blocked peers and drops their signaling.
+
+```mermaid
+flowchart TB
+  seg["Segment from a peer"] --> known{"Hash in the<br/>signed manifest?"}
+  known -- "no, even after<br/>a manifest refresh" --> https["Refuse it<br/>fetch over HTTPS"]
+  known -- yes --> match{"SHA-256<br/>matches?"}
+  match -- yes --> player["Player"]
+  match -- no --> reject["Reject segment<br/>peer connection closed"]
+  reject --> https
+  reject --> report["hash-fail report<br/>on /control"]
+  report --> strikes{"3 reports against<br/>that session?"}
+  strikes -- no --> logged["Logged on the server"]
+  strikes -- yes --> removed["Auto removed from P2P<br/>tracker drops it, viewers block it<br/>panel warning"]
+  https --> player
+```
+
+## Live lifecycle
+
+```mermaid
+flowchart TB
+  subgraph start["Start"]
+    off1(["Off"]) --> server["1 · Local server<br/>new live id, JWT key, link secret"]
+    server --> mtx["2 · Start MediaMTX"]
+    mtx --> tunnel["3 · Open the tunnel"]
+    tunnel --> reach{"Public URL answers<br/>with our marker?"}
+    reach -- "no, first try:<br/>new tunnel" --> tunnel
+    reach -- "no, second try" --> failed["Start failed<br/>quiet cleanup, back to Off"]
+    reach -- yes --> link["Link shown in the panel"]
+    link --> waiting["Waiting for OBS"]
+    waiting -- "video arrives" --> live(["Live"])
+  end
+  live -- "Stop everything, or<br/>no video for 10 min" --> viewers
+  subgraph stop["Stop everything"]
+    viewers["1 · Disconnect viewers and peers"] --> close["2 · Close tunnel<br/>and direct-mode port"]
+    close --> stopm["3 · Stop MediaMTX"]
+    stopm --> wipe["4 · Wipe the cache"]
+    wipe --> verify{"5 · No child pid, ports closed,<br/>old URL silent?"}
+    verify -- yes --> off2(["Off"])
+    verify -- "no, after 15 s" --> problem["Step shows what is left"]
+  end
+```
+
+- **Start**:
+  1. Start the local server, with a new live id, JWT key and link secret.
+  2. Start MediaMTX.
+  3. Open the tunnel and wait until `https://…/healthz` returns our `X-SwarmCast` marker (one retry with a new tunnel).
+- **Stop everything**:
+  1. Disconnect viewers and peers.
+  2. Close the tunnel and the direct-mode port.
+  3. Stop MediaMTX.
+  4. Delete the cache.
+  5. Verify that no child pid is alive, that ports 1935/8888/8080 are closed and that the old public URL no longer answers with our marker. Only then does the panel show "Off".
+- **Auto stop**: after `autoStopMinutes` (default 10) without new video.
+- **Tunnel drop**: cloudflared is restarted with backoff. The address usually changes, so the panel and a desktop notification ask the streamer to send the new link.
+- **Reaper**: the reaper runs the same executable with `--reaper`. It keeps a list of child pids on its stdin. When stdin closes (crash or SIGKILL) or the parent pid disappears, it kills the children (with process groups on POSIX, `taskkill /T /F` on Windows). It was chosen over Windows Job Objects and `PR_SET_PDEATHSIG` because the app is a single executable without native addons.
+
+## Access control
+
+- **Link**: `/join/<secret>`, where the secret is 256-bit, compared in constant time and generated anew on every Start or "Generate new link". The old link stops new joins; people already watching stay.
+- **Join**: opening the link sets a 10-min join-ticket cookie and redirects with 303 to `/join`, so the secret leaves the address bar. The viewer then chooses a nickname (1–24 characters: letters, digits, spaces, `_`, `-`, `.`).
+- **Session**: a JWT (HS256) signed with a per-live random key, valid 10 minutes and renewed while the viewer is active. The cookie is HttpOnly, Secure (except in plain-HTTP local testing), SameSite=Lax. All state lives in memory and is wiped on Stop.
+- **Kick**: drops the session immediately, blocks the device cookie until the stream ends and blocks the viewer's peer ids. IPs are never banned, because mobile CGNAT shares one IP among many people.
+- **Remove from P2P**: the session becomes watch-only. The tracker refuses it and closes its sockets, and every viewer is told to drop its peer ids. Three `hash-fail` reports against the same session remove it from P2P automatically and show a warning in the panel.
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor V as Viewer's browser
+  participant S as Public server
+  participant A as Access control
+  V->>S: GET /join/:secret
+  S->>A: secret valid? device banned?
+  alt wrong or old secret, or banned device
+    S-->>V: 404 or 403, link no longer valid
+  else valid
+    A-->>S: join ticket, HS256, 10 min
+    S-->>V: 303 to /join + ticket cookie
+    Note over V,S: The secret leaves the address bar and history
+  end
+  V->>S: GET /join with ticket cookie
+  S->>A: verify ticket
+  S-->>V: nickname form
+  V->>S: POST /api/join with nickname
+  S->>A: verify ticket and device, create session
+  A-->>S: session JWT, 10 min, renewed while active
+  S-->>V: session cookie, ticket cleared, go to /watch
+  V->>S: GET /watch, then GET /api/config
+  S-->>V: playlist, manifest URL + key, WS URLs, STUN
+  V->>S: GET /hls/* with session cookie
+  V->>S: WS /control, Origin must match Host
+  opt Viewer turns on P2P and is allowed
+    V->>S: WS /tracker
+  end
+```
+
+## Network services
+
+- **Tracker**: an embedded `bittorrent-tracker` 11, WebSocket only. Our own `ws` server (with the session cookie checked at upgrade) hands sockets to `onWebSocketConnection`. The filter rejects announces from sessions without a valid session or P2P permission, and accepts only the two infohashes for this live (`swarmcast-<liveId>-main|secondary`). Each socket's peer id is pinned at its first announce, which stops spoofed "stopped" events. Each socket is limited to 60 messages per 10 s and 64 KB per message.
+- **Control channel** `/control` (WebSocket, because quick tunnels do not support SSE):
+  - from the server: hello, kick, P2P on/off, block or unblock peers, ended;
+  - from viewers: stats and hash-fail reports;
+  - limits: 30 messages per 10 s and 4 KB per message.
+- **Public server hardening**:
+  - CSP without inline scripts (`connect-src 'self' wss://<host> <stun>`), HSTS, `Referrer-Policy: no-referrer`, Permissions-Policy, nosniff, `frame-ancestors 'none'`.
+  - WebSocket `Origin` must match `Host`.
+  - Rate limits: `/join/*` 20/min/IP, `/api/join` 10/min/IP, 900/min per session overall (300 in direct mode).
+  - The client IP is taken from `CF-Connecting-IP` only when the request comes from the local tunnel connector. `X-Forwarded-For` is never read.
+- **Admin panel**:
+  - binds to 127.0.0.1:8081 and is never routed through the tunnel;
+  - accepts only `Host` 127.0.0.1/localhost:8081, and the `Origin` must match on every non-GET request (blocks DNS rebinding and CSRF);
+  - authenticates with a per-run token cookie that the app or tray sets by opening `/auth/<token>`;
+  - pushes live state over a WebSocket.
+
+## Direct mode (opt-in)
+
+Direct mode is never automatic. The panel only suggests it after repeated tunnel drops or many 429 responses, and turning it on requires ticking "I understand the risks".
+
+```mermaid
+flowchart TB
+  click(["Streamer clicks Direct mode<br/>and ticks 'I understand the risks'"]) --> cgnat{"CGNAT check<br/>router WAN IP vs public IP"}
+  cgnat -- "CGNAT, no public IPv6" --> refuse["Refused"]
+  cgnat -- "router does not answer" --> manual{"Streamer confirms a<br/>manual port forward?"}
+  manual -- no --> refuse
+  cgnat -- "public IP, UPnP or NAT-PMP" --> map["Map one random port<br/>20000-60000, renewed every 30 min"]
+  map --> le["Let's Encrypt IP certificate<br/>port 80 or 443 mapped only<br/>during validation"]
+  le -- "issuance fails" --> self["Self-signed certificate<br/>browsers warn"]
+  manual -- yes --> self
+  cgnat -- "public IPv6 only" --> self
+  le -- ok --> serve["HTTPS server on the random port"]
+  self --> serve
+  serve --> newlink["Tunnel closed, new link<br/>old sessions dropped"]
+  newlink --> leave(["Leave direct mode, or Stop"])
+  leave --> unmap["Close server, unmap port<br/>forget certificate"]
+  unmap --> verify["Verify: router listing<br/>+ hairpin TCP probe"]
+```
+
+1. **CGNAT check**: compare the router's WAN IP (UPnP-IGD or NAT-PMP) with the public IP from Cloudflare's trace endpoint.
+   - If the WAN IP is private or in 100.64/10, the connection is behind CGNAT and direct mode is refused.
+   - If the router does not answer, CGNAT cannot be ruled out. Direct mode is offered only with an explicit manual port forward.
+   - A public IPv6 address on a local interface is offered as an alternative.
+2. **One port**: a random external port between 20000 and 60000 (never 1935 or 8081) is mapped through our own minimal UPnP-IGD (SSDP + SOAP) or NAT-PMP client and renewed every 30 min. PCP is not implemented.
+3. **Certificate**: a Let's Encrypt IP certificate (`shortlived` profile, about 160 h). IP certificates validate only over port 80 (http-01) or 443 (tls-alpn-01), so that port is mapped just for the seconds of validation and then removed. An IP certificate is valid on any port. If issuance fails, or the port was forwarded manually, the app falls back to a self-signed certificate and browsers show a warning.
+4. **Switching modes** creates a new link and drops all sessions.
+5. **Leaving direct mode, or Stop**:
+   1. Close the server.
+   2. Remove the mapping and confirm the router no longer lists it.
+   3. Forget the certificate.
+   4. Run a hairpin TCP probe on the public IP and port. No true external probe is done.
+6. **After a crash**: a mapping left open is shown as a warning with a **Close it now** button, which uses the identifier saved in `state.json`. The app also remembers the last exposed IP and says whether the IP has changed since.
+
+## Packaging
+
+`@yao-pkg/pkg` embeds the Node 24 runtime. It was chosen over Node SEA because official SEA is still in active development and untested upstream on macOS x64. Each release package contains `swarmcast[.exe]`, `bin/{mediamtx,cloudflared,swarmcast-tray}`, `web/{viewer,admin}`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` and `VERSION`. MediaMTX and cloudflared are downloaded by `scripts/build/fetch-binaries.mjs` and pinned by SHA-256 in `scripts/build/versions.json`.
+
+## Verified facts (2026-10-25)
+
+- **MediaMTX v1.21.3** (released 2026-10-25).
+  - Keys used: `rtmp`/`rtmpAddress`, `hls`/`hlsAddress`, `hlsVariant: fmp4`, `hlsSegmentCount`, `hlsSegmentDuration`, `hlsAlwaysRemux`, `hlsAllowOrigins` (a list; the singular form is deprecated), `authMethod: internal` + `authInternalUsers`.
+  - `hlsSegmentDuration` is a minimum: segments are cut at the next keyframe, so we set 1 s and OBS's 2 s keyframes give 2 s segments.
+  - `moq` (Media over QUIC) is on by default in new versions, so we disable it explicitly along with `rtsp`, `webrtc`, `srt`, `api`, `metrics`, `pprof` and `playback`.
+  - Unknown keys are fatal.
+  - HLS reading requires a cookie-check redirect and an `hlsSession` cookie.
+  - Sources: [mediamtx.yml v1.21.3](https://raw.githubusercontent.com/bluenviron/mediamtx/v1.21.3/mediamtx.yml), [authentication](https://mediamtx.org/docs/features/authentication), [read/hls](https://mediamtx.org/docs/read/hls).
+- **cloudflared 2026.10.3**.
+  - Quick tunnels need no account or domain. They are meant "for testing and development", have no uptime guarantee, accept up to 200 in-flight requests (429 beyond that), do not support SSE, and get a new hostname every time.
+  - WebSockets work: Cloudflare's Sandbox SDK tunnel docs say so, and our own test over a real quick tunnel confirmed it.
+  - A `~/.cloudflared/config.yml` can override `--url`, so we pass an empty `--config` file owned by the app.
+  - The URL is printed on stderr inside an ASCII box.
+  - Releases have no checksum file, so we use the GitHub asset digests. For darwin, the checksums in the release notes refer to the binary inside the archive.
+  - Sources: [quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Sandbox SDK tunnels](https://developers.cloudflare.com/sandbox/sdk/api/tunnels/), [release 2026.10.3](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.3).
+- **Cloudflare terms**.
+  - The Service-Specific Terms (Application Services, updated 2026-09-28), CDN section, say that unless you are on Enterprise, serving video and other large files through the CDN requires paid services (Stream etc.), and Cloudflare may limit or disable it.
+  - The terms do not say whether this applies to Tunnel traffic. Quick tunnels fall under the [Website & Online Services Terms](https://www.cloudflare.com/website-terms/), and cloudflared's banner says Cloudflare may investigate use.
+  - Our position: treat quick tunnels as best-effort for small and medium audiences. P2P reduces tunnel traffic, and the tunnel provider can be swapped (`tunnel.provider`).
+  - Source: [Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/).
+- **altcha-lib 2.8** (MIT): join proof-of-work. The server uses `createChallenge`/`verifySolution` (SHA-256, deterministic counter with an HMAC key signature); the join page runs `solveChallenge` with `algorithms/web/sha` in a Vite-built same-origin worker. The `altcha` widget is not used (see `docs/SECURITY_RESEARCH.md`). Attack detection, reactions and public blocklists live in `apps/server/src/security/`.
+- **bittorrent-tracker 11.2.3** (ESM).
+  - Import `bittorrent-tracker/server`; this avoids the client's native webrtc dependency.
+  - `filter(infoHash, params, cb)` runs for every announce, and `params` includes `socket` and `peer_id` (hex).
+  - We hand our own `noServer` `ws` sockets to `server.onWebSocketConnection`.
+  - Peer ids must be pinned per socket to stop spoofed "stopped" events.
+- **p2p-media-loader 4.0.0** (core + hlsjs).
+  - Options used: `HlsJsP2PEngine.injectMixin(Hls)`, `announceTrackers` (Safari uses only the first), `rtcConfig`, `isP2PDisabled` (changed at runtime via `applyDynamicConfig`), `swarmId` + `streamSwarmIdBuilder`.
+  - `validateP2PSegment(url, byteRange, data)` returns `Promise<boolean>` and gets no peerId. On failure the core closes the peer and fires `onPeerError` with type `validation-failed` and the peerId.
+  - The server helper `computeInfoHash` is exported from `p2p-media-loader-core/server`. The tracker reports the infohash as the hex of its 20 ASCII characters.
+  - Defaults: `highDemandTimeWindow` is 15 s (we use 6). `cachedSegmentsCount` no longer exists; its replacement is `segmentMemoryStorageLimit`.
+- **hls.js 1.7.3**: `preferManagedMediaSource` defaults to false, but ManagedMediaSource is still used automatically on iPhone, which has no MSE. hls.js sets `disableRemotePlayback` itself, and we set it too.
+- **WebCrypto Ed25519** is supported in Chrome/Edge/Android 137+, Firefox 129+ and Safari (macOS/iOS) 17+, which covers all our targets. The fallback is described above. Sources: MDN browser-compat-data, [Chrome 137 release notes](https://developer.chrome.com/release-notes/137).
+- **Let's Encrypt IP certificates**.
+  - Generally available since 2026-01-15 for any account, with the `shortlived` profile (about 160 h).
+  - Only the http-01 and tls-alpn-01 challenges work. Production directory: `https://acme-v02.api.letsencrypt.org/directory`.
+  - Rate limits: 50 certificates per IP per 7 days, and 5 per identical set per 7 days.
+  - acme-client 5.4.0 has no profile support, so we pass `profile` to `createOrder` manually and avoid `auto()`.
+  - No other free ACME CA is confirmed to issue IP certificates.
+  - Sources: [GA announcement](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability), [profiles](https://letsencrypt.org/docs/profiles/), [challenge types](https://letsencrypt.org/docs/challenge-types/), [rate limits](https://letsencrypt.org/docs/rate-limits/).
+- **speed.cloudflare.com**.
+  - `__down?bytes=N` and `__up` (POST) are used by the official MIT-licensed `@cloudflare/speedtest` library. They are not a documented public API and come with no explicit usage grant; Cloudflare's website terms cover them.
+  - We keep each test small (about 30 MB). Tests run automatically only at app launch and every 15 min while the stream is off; during a live they run only when started by hand.
+  - Sources: [cloudflare/speedtest](https://github.com/cloudflare/speedtest), [website terms](https://www.cloudflare.com/website-terms/).
+- **OBS Studio 33.0.0** (2026-10-23).
+  - Still has no native multi-destination streaming; Multitrack Video / Enhanced Broadcasting targets one service only.
+  - Recommended setup when also streaming to another platform (Twitch, YouTube, Kick…): keep that platform in Settings → Stream and add SwarmCast with the [Multiple RTMP outputs](https://obsproject.com/forum/resources/multiple-rtmp-outputs-plugin.964/) or [Aitum Multistream](https://obsproject.com/forum/resources/aitum-multistream.1991/) plugin. OBS 33 changed plugin locations, so check that the plugin is compatible.
+  - Keyframe interval: Settings → Output → Advanced → Streaming → 2 s.
+- **Node.js**: Node 24 (LTS, in maintenance since 2026-10-20, EOL 2028-04) is the runtime embedded via @yao-pkg/pkg. Node 26 becomes Active LTS on 2026-10-28. Official SEA is at stability "1.1 active development" and is not tested on macOS x64 upstream.
+- **Tray**: there is no maintained pure-Node cross-platform tray library (systray2's macOS helper is x86_64 only). We use our own Go helper with fyne.io/systray v1.12.2: cgo on macOS, pure Go on Windows and Linux. On Linux it uses the DBus StatusNotifierItem protocol and needs a tray host; GNOME needs the AppIndicator extension, otherwise the app runs with the panel only.
+- **Port mapping**: we wrote our own minimal UPnP-IGD and NAT-PMP clients so they can be tested against a mock IGD. PCP is not implemented.

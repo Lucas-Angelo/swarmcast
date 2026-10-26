@@ -1,0 +1,492 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+# One release run per tag. A re-pushed tag supersedes the previous run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: '1'
+  NODE_VERSION: 24.x
+  GO_VERSION: 1.27.x
+
+jobs:
+  verify:
+    name: Verify tag and changelog
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Tag must match package.json version
+        id: version
+        shell: bash
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package.json version ${version} (expected tag v${version})."
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+      - name: CHANGELOG.md must have a section for this version
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! grep -qF "## [${VERSION}]" CHANGELOG.md; then
+            echo "::error file=CHANGELOG.md::No '## [${VERSION}]' section in CHANGELOG.md."
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: verify
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - target: windows-x64
+            os: windows-latest
+            smoke: true
+          - target: macos-arm64
+            os: macos-latest
+            smoke: true
+          - target: macos-x64
+            os: macos-15-intel
+            smoke: true
+          - target: linux-x64
+            os: ubuntu-latest
+            smoke: true
+          # Cross-built: private repositories get no free arm64 runners, so no smoke test.
+          - target: linux-arm64
+            os: ubuntu-latest
+            smoke: false
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      TARGET: ${{ matrix.target }}
+      STAGING: release/staging/${{ matrix.target }}
+      # Only "true"/"false" here: the secrets themselves are mapped into the signing steps
+      # alone, so `npm ci` lifecycle scripts and the build never see them.
+      MACOS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
+      MACOS_NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
+      WINDOWS_SIGNING: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/tray/go.sum
+
+      - run: npm ci
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target "$TARGET" --vendor
+      - name: Assemble release/staging/${{ matrix.target }}
+        run: node scripts/build/package.mjs --target "$TARGET" --version "$VERSION" --no-archive
+
+      # ---- macOS code signing (skipped unless the MACOS_* secrets exist) ----
+      - name: Import macOS signing certificate
+        if: runner.os == 'macOS' && env.MACOS_SIGNING == 'true'
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/swarmcast-signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          cert="$RUNNER_TEMP/certificate.p12"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | base64 --decode > "$cert"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$cert" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain" > /dev/null
+          # Put the temporary keychain first in the search list, keeping the existing ones.
+          existing="$(security list-keychains -d user | tr -d '"' | xargs)"
+          # shellcheck disable=SC2086 # word splitting of the keychain list is intended
+          security list-keychains -d user -s "$keychain" $existing
+          rm -f "$cert"
+          echo "MACOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+
+      - name: Sign macOS binaries
+        if: runner.os == 'macOS' && env.MACOS_SIGNING == 'true'
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          # The swarmcast binary embeds Node.js: V8's JIT needs these entitlements under the
+          # hardened runtime (same set as the official Node.js macOS builds).
+          entitlements="$RUNNER_TEMP/node-entitlements.plist"
+          cat > "$entitlements" <<'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>com.apple.security.cs.allow-jit</key><true/>
+            <key>com.apple.security.cs.allow-unsigned-executable-memory</key><true/>
+            <key>com.apple.security.cs.disable-library-validation</key><true/>
+          </dict>
+          </plist>
+          PLIST
+          found=0
+          while IFS= read -r -d '' bin; do
+            found=$((found + 1))
+            extra=()
+            if [ "$(basename "$bin")" = swarmcast ]; then extra=(--entitlements "$entitlements"); fi
+            echo "Signing $bin"
+            codesign --force --options runtime --timestamp --keychain "$MACOS_KEYCHAIN" \
+              --sign "$MACOS_SIGN_IDENTITY" "${extra[@]}" "$bin"
+            codesign --verify --strict --verbose=2 "$bin"
+          done < <(find "$STAGING" -type f \( -name swarmcast -o -name mediamtx -o -name cloudflared -o -name swarmcast-tray \) -print0)
+          if [ "$found" -ne 4 ]; then
+            echo "::error::Expected 4 binaries to sign in $STAGING, found $found."
+            exit 1
+          fi
+
+      # ---- Windows code signing (skipped unless the WINDOWS_* secrets exist) ----
+      - name: Sign Windows binaries
+        if: runner.os == 'Windows' && env.WINDOWS_SIGNING == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $pfx = Join-Path $env:RUNNER_TEMP 'certificate.pfx'
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
+          try {
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+              Where-Object { $_.FullName -match '\\x64\\' } |
+              Sort-Object FullName -Descending |
+              Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe not found' }
+            $ours = @('swarmcast.exe', 'swarmcast-tray.exe')
+            $names = $ours + @('mediamtx.exe', 'cloudflared.exe')
+            $files = Get-ChildItem $env:STAGING -Recurse -File | Where-Object { $names -contains $_.Name }
+            if ($files.Count -ne $names.Count) { throw "Expected $($names.Count) binaries in $env:STAGING, found $($files.Count)" }
+            foreach ($file in $files) {
+              # Keep a third-party vendor's valid Authenticode signature instead of replacing it.
+              if (($ours -notcontains $file.Name) -and (Get-AuthenticodeSignature $file.FullName).Status -eq 'Valid') {
+                Write-Host "Already signed by its vendor: $($file.FullName)"
+                continue
+              }
+              Write-Host "Signing $($file.FullName)"
+              & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd sha256 /tr http://timestamp.digicert.com /td sha256 $file.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signtool sign failed for $($file.Name)" }
+              & $signtool.FullName verify /pa $file.FullName
+              if ($LASTEXITCODE -ne 0) { throw "signtool verify failed for $($file.Name)" }
+            }
+          } finally {
+            Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+          }
+
+      # Runs the (signed, when signing is configured) staged build on its own platform.
+      - name: Smoke test
+        if: matrix.smoke
+        run: |
+          exe=swarmcast
+          if [ "$RUNNER_OS" = Windows ]; then exe=swarmcast.exe; fi
+          "$STAGING/$exe" --smoke-test
+
+      - name: Notarize macOS build
+        if: runner.os == 'macOS' && env.MACOS_SIGNING == 'true' && env.MACOS_NOTARIZE == 'true'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+        run: |
+          zip="$RUNNER_TEMP/swarmcast-notarize.zip"
+          ditto -c -k --keepParent "$STAGING" "$zip"
+          xcrun notarytool submit "$zip" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" --wait --timeout 30m --output-format json > "$RUNNER_TEMP/notary.json" || true
+          cat "$RUNNER_TEMP/notary.json"
+          status="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).status" "$RUNNER_TEMP/notary.json")"
+          if [ "$status" != Accepted ]; then
+            id="$(node -p "JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8')).id" "$RUNNER_TEMP/notary.json")"
+            xcrun notarytool log "$id" --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" || true
+            echo "::error::Notarization finished with status '$status'."
+            exit 1
+          fi
+
+      - name: Remove temporary keychain
+        if: always() && env.MACOS_KEYCHAIN != ''
+        run: security delete-keychain "$MACOS_KEYCHAIN" || true
+
+      - name: Archive
+        run: node scripts/build/archive.mjs --target "$TARGET" --version "$VERSION"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: swarmcast-${{ matrix.target }}
+          path: release/SwarmCast-v${{ env.VERSION }}-${{ matrix.target }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub release
+    needs: [verify, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      # Optional public mirror for the release assets (off unless both are set): the
+      # repository variable RELEASES_REPO (e.g. Lucas-Angelo/swarmcast-releases) and the
+      # secret RELEASES_REPO_TOKEN (fine-grained PAT, contents:write on that repo only).
+      # Only "true"/"false" here; the token is mapped into the mirror step alone.
+      RELEASES_REPO: ${{ vars.RELEASES_REPO }}
+      MIRROR: ${{ vars.RELEASES_REPO != '' && secrets.RELEASES_REPO_TOKEN != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: swarmcast-*
+          merge-multiple: true
+          path: release
+      # binaries.json: publisher URLs + SHA-256 of the tools SwarmCast does not ship (ffmpeg,
+      # "bundle": false in versions.json). The standalone start scripts read it to download
+      # ffmpeg on the user's machine straight from its publisher. Listed in SHA256SUMS.txt.
+      - name: Add binaries.json (ffmpeg pins)
+        run: node scripts/build/binaries-json.mjs release/binaries.json
+      - name: Add start scripts
+        run: |
+          cp scripts/start-windows.ps1 scripts/start-windows.cmd scripts/start-linux.sh scripts/start-macos.command release/
+          # Same script under a .sh name, for `curl ... | bash`-style use on macOS.
+          cp scripts/start-macos.command release/start-macos.sh
+          chmod 755 release/start-macos.command release/start-macos.sh release/start-linux.sh
+          # .gitattributes checks these out with CRLF; cmd.exe needs it for the .cmd.
+          for f in release/start-windows.ps1 release/start-windows.cmd; do
+            if grep -q $'[^\r]$' "$f" || grep -qx '' "$f"; then
+              echo "::error::$f does not have CRLF line endings."
+              exit 1
+            fi
+          done
+
+      # With the mirror, the one-liners and the scripts' online update check must point at
+      # the public repository: rewrite the default release URL in the published copies
+      # (never in the source). Without the mirror, nothing changes.
+      - name: Point the published start scripts at the public mirror
+        if: env.MIRROR == 'true'
+        run: |
+          if ! [[ "$RELEASES_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::Repository variable RELEASES_REPO must look like owner/repo (got '$RELEASES_REPO')."
+            exit 1
+          fi
+          from="github.com/${GITHUB_REPOSITORY}/releases"
+          to="github.com/${RELEASES_REPO}/releases"
+          sed -i "s#${from}#${to}#g" release/start-windows.ps1 release/start-linux.sh release/start-macos.command release/start-macos.sh
+          grep -q "^\$SC_DefaultReleaseUrl = 'https://${to}/latest/download'" release/start-windows.ps1
+          for f in release/start-linux.sh release/start-macos.command release/start-macos.sh; do
+            grep -q "^SC_DEFAULT_RELEASE_URL=\"https://${to}/latest/download\"" "$f"
+          done
+          echo "Published start scripts now download from https://${to}/latest/download"
+
+      # One zip per platform to send to the streamer while the repository is private: the
+      # start script(s), the package, a one-line SHA256SUMS.txt (the scripts install from
+      # these local files), a short README.txt and the full guide in both languages.
+      - name: Build installer bundles
+        run: |
+          guides="$RUNNER_TEMP/guides"
+          mkdir -p "$guides"
+          node scripts/build/guide-html.mjs docs/TUTORIAL_EN.md "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
+          node scripts/build/guide-html.mjs docs/TUTORIAL_PT-BR.md "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
+          if [ "$MIRROR" = true ]; then
+            sed -i "s#github.com/${GITHUB_REPOSITORY}/releases#github.com/${RELEASES_REPO}/releases#g" "$guides"/*.html
+          fi
+
+          # README.txt: UTF-8 with BOM (Notepad/TextEdit pick the encoding), CRLF for Windows.
+          readme() {
+            local guide_en='Full step-by-step guide (OBS, going live, problems): open "READ-ME - How to go live.html".'
+            local guide_pt='Guia completo passo a passo (OBS, live, problemas): abra "LEIA-ME - Como fazer a live.html".'
+            printf '\xef\xbb\xbf'
+            case "$1" in
+              windows-*)
+                sed 's/$/\r/' <<EOF
+          EN: 1) Extract this zip (right-click > Extract All). 2) In the extracted folder, double-click start-windows.cmd.
+          EN: First run: if "Windows protected your PC" appears, click "More info" > "Run anyway" (and "Run" if asked).
+          EN: It installs or updates SwarmCast and opens the panel in your browser. Keep its window open while you stream.
+          EN: $guide_en
+          PT: 1) Extraia este zip (botão direito > Extrair tudo). 2) Na pasta extraída, dê dois cliques em start-windows.cmd.
+          PT: Primeira vez: se aparecer "O Windows protegeu o computador", clique em "Mais informações" > "Executar assim mesmo".
+          PT: Ele instala ou atualiza o SwarmCast e abre o painel no navegador. Deixe a janela aberta durante a live.
+          PT: $guide_pt
+          EOF
+                ;;
+              macos-*)
+                cat <<EOF
+          EN: 1) Double-click this zip to extract it. 2) In the extracted folder, double-click start-macos.command.
+          EN: First run: macOS blocks it. Right-click the file > Open > Open. macOS 15+: System Settings > Privacy & Security > Open Anyway.
+          EN: It installs or updates SwarmCast and opens the panel in your browser. Keep its window open while you stream.
+          EN: $guide_en
+          PT: 1) Dê dois cliques neste zip para extrair. 2) Na pasta extraída, dê dois cliques em start-macos.command.
+          PT: Primeira vez: o macOS bloqueia. Botão direito no arquivo > Abrir > Abrir. macOS 15+: Ajustes > Privacidade e Segurança > Abrir Mesmo Assim.
+          PT: Ele instala ou atualiza o SwarmCast e abre o painel no navegador. Deixe a janela aberta durante a live.
+          PT: $guide_pt
+          EOF
+                ;;
+              linux-*)
+                cat <<EOF
+          EN: 1) Extract this zip. 2) Open a terminal in the extracted folder and run: ./start-linux.sh
+          EN: No sudo needed; only if curl/tar are missing it explains why and asks for your password to install them.
+          EN: It installs or updates SwarmCast and opens the panel in your browser. Keep the terminal open while you stream.
+          EN: $guide_en
+          PT: 1) Extraia este zip. 2) Abra um terminal na pasta extraída e rode: ./start-linux.sh
+          PT: Não precisa de sudo; só se curl/tar estiverem faltando ele explica o motivo e pede sua senha para instalá-los.
+          PT: Ele instala ou atualiza o SwarmCast e abre o painel no navegador. Deixe o terminal aberto durante a live.
+          PT: $guide_pt
+          EOF
+                ;;
+            esac
+          }
+
+          for target in windows-x64 macos-arm64 macos-x64 linux-x64 linux-arm64; do
+            case "$target" in
+              windows-*) pkg="SwarmCast-v${VERSION}-${target}.zip"; scripts=(start-windows.cmd start-windows.ps1) ;;
+              macos-*) pkg="SwarmCast-v${VERSION}-${target}.tar.gz"; scripts=(start-macos.command) ;;
+              *) pkg="SwarmCast-v${VERSION}-${target}.tar.gz"; scripts=(start-linux.sh) ;;
+            esac
+            if [ ! -f "release/$pkg" ]; then
+              echo "::error::Missing release/$pkg"
+              exit 1
+            fi
+            dir="$RUNNER_TEMP/bundles/$target"
+            rm -rf "$dir"
+            mkdir -p "$dir"
+            for f in "${scripts[@]}"; do cp "release/$f" "$dir/"; done
+            cp "release/$pkg" release/binaries.json "$guides"/*.html "$dir/"
+            # The package and binaries.json (the zip downloads ffmpeg online when it can).
+            (cd release && sha256sum "$pkg" binaries.json) > "$dir/SHA256SUMS.txt"
+            readme "$target" > "$dir/README.txt"
+            chmod 644 "$dir"/*
+            case "$target" in
+              macos-*) chmod 755 "$dir/start-macos.command" ;;
+              linux-*) chmod 755 "$dir/start-linux.sh" ;;
+            esac
+            # Info-ZIP stores the Unix permissions, so the start script stays executable.
+            out="$GITHUB_WORKSPACE/release/SwarmCast-v${VERSION}-${target}-installer.zip"
+            files=("${scripts[@]}" "$pkg" binaries.json SHA256SUMS.txt README.txt "READ-ME - How to go live.html" "LEIA-ME - Como fazer a live.html")
+            (cd "$dir" && zip -X -q "$out" "${files[@]}")
+            unzip -Z "$out"
+          done
+          for t in macos-arm64 macos-x64; do
+            unzip -Z "release/SwarmCast-v${VERSION}-${t}-installer.zip" start-macos.command | grep -q '^-rwxr-xr-x' ||
+              { echo "::error::start-macos.command lost its executable bit in the $t zip."; exit 1; }
+          done
+          for t in linux-x64 linux-arm64; do
+            unzip -Z "release/SwarmCast-v${VERSION}-${t}-installer.zip" start-linux.sh | grep -q '^-rwxr-xr-x' ||
+              { echo "::error::start-linux.sh lost its executable bit in the $t zip."; exit 1; }
+          done
+
+      # --- uninstallers (scripts/uninstall-*) ---
+      # Release assets, and each installer zip gets its platform's uninstaller (zip adds
+      # the files to the archive built above). They never download anything, so the
+      # public-mirror URL rewrite does not apply to them.
+      - name: Add uninstall scripts
+        run: |
+          cp scripts/uninstall-windows.ps1 scripts/uninstall-windows.cmd scripts/uninstall-linux.sh scripts/uninstall-macos.command release/
+          chmod 755 release/uninstall-linux.sh release/uninstall-macos.command
+          for f in release/uninstall-windows.ps1 release/uninstall-windows.cmd; do
+            if grep -q $'[^\r]$' "$f" || grep -qx '' "$f"; then
+              echo "::error::$f does not have CRLF line endings."
+              exit 1
+            fi
+          done
+          for target in windows-x64 macos-arm64 macos-x64 linux-x64 linux-arm64; do
+            case "$target" in
+              windows-*) files=(uninstall-windows.cmd uninstall-windows.ps1) ;;
+              macos-*) files=(uninstall-macos.command) ;;
+              *) files=(uninstall-linux.sh) ;;
+            esac
+            dir="$RUNNER_TEMP/uninstall/$target"
+            rm -rf "$dir"
+            mkdir -p "$dir"
+            for f in "${files[@]}"; do cp "release/$f" "$dir/"; done
+            chmod 644 "$dir"/*
+            case "$target" in
+              macos-*) chmod 755 "$dir/uninstall-macos.command" ;;
+              linux-*) chmod 755 "$dir/uninstall-linux.sh" ;;
+            esac
+            out="$GITHUB_WORKSPACE/release/SwarmCast-v${VERSION}-${target}-installer.zip"
+            if [ ! -f "$out" ]; then
+              echo "::error::Missing $out"
+              exit 1
+            fi
+            (cd "$dir" && zip -X -q "$out" "${files[@]}")
+            for f in "${files[@]}"; do
+              unzip -Z "$out" "$f" >/dev/null || { echo "::error::$f is missing from the $target installer zip."; exit 1; }
+            done
+            case "$target" in
+              macos-*) f=uninstall-macos.command ;;
+              linux-*) f=uninstall-linux.sh ;;
+              *) f="" ;;
+            esac
+            if [ -n "$f" ]; then
+              unzip -Z "$out" "$f" | grep -q '^-rwxr-xr-x' ||
+                { echo "::error::$f lost its executable bit in the $target zip."; exit 1; }
+            fi
+          done
+      # --- end uninstallers ---
+
+      - name: Generate SHA256SUMS.txt
+        run: node scripts/build/checksums.mjs release
+      - name: Extract release notes from CHANGELOG.md
+        run: |
+          awk -v header="## [${VERSION}]" '
+            /^## \[/ { if (found) exit; if (index($0, header) == 1) { found = 1; next } }
+            # Stop at the link reference definitions at the bottom of the file.
+            found && /^\[[^]]+\]: / { exit }
+            found { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error file=CHANGELOG.md::The '## [${VERSION}]' section in CHANGELOG.md is empty."
+            exit 1
+          fi
+          cat notes.md
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ls -l release
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" release/* --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
+
+      # Same assets and notes in the public mirror, so the one-liners work while this
+      # repository stays private. The mirror needs at least one commit (e.g. a README):
+      # the tag is created on its default branch.
+      - name: Publish to the public mirror
+        if: env.MIRROR == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
+        run: |
+          prerelease=()
+          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
+          gh release create "$TAG" release/* -R "$RELEASES_REPO" --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
+          echo "Mirror: https://github.com/${RELEASES_REPO}/releases/tag/${TAG}"

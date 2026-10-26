@@ -1,0 +1,141 @@
+name: Windows E2E
+
+# Exhaustive Windows end-to-end matrix on fresh GitHub-hosted VMs (Windows Server 2025 and
+# 2022): every job builds the real windows-x64 package and installer zip like release.yml,
+# serves them locally and drives the real start script with a bare-OS PATH, then the app with
+# Google Chrome, Microsoft Edge and Firefox (Playwright), the real Cloudflare quick tunnel,
+# direct mode, the quality ladder and (best effort) real OBS Studio.
+
+# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
+# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
+# private repo.
+on:
+  schedule:
+    - cron: '47 6 1 * *'
+  workflow_dispatch:
+    inputs:
+      runners:
+        description: 'JSON list of Windows runners'
+        default: '["windows-latest"]'
+      suites:
+        description: 'JSON list of suites'
+        default: '["installer","app","quality","direct","obs"]'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_COLOR: '1'
+  NODE_VERSION: 24.x
+  GO_VERSION: 1.27.x
+
+jobs:
+  e2e:
+    name: ${{ matrix.suite }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(inputs.runners || '["windows-latest"]') }}
+        suite: ${{ fromJSON(inputs.suites || '["installer","app","quality","direct","obs"]') }}
+    runs-on: ${{ matrix.os }}
+    # Real OBS on a GPU-less VM is best effort until it is proven to work.
+    continue-on-error: ${{ matrix.suite == 'obs' }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: apps/tray/go.sum
+
+      - name: Prepare
+        run: |
+          echo "SC_ARTIFACTS=$RUNNER_TEMP/sc-artifacts" >> "$GITHUB_ENV"
+          echo "SC_RUNNER_LABEL=${{ matrix.os }}" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/sc-artifacts"
+
+      # Only the test harness uses this ffmpeg (OBS-like feed); the installer and the app run
+      # with a bare-OS PATH and never see it.
+      - name: Install ffmpeg (test feed)
+        shell: pwsh
+        run: |
+          choco install ffmpeg -y --no-progress | Out-Null
+          $f = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          & $f.FullName -hide_banner -version | Select-Object -First 1
+          "FFMPEG_BIN=$($f.FullName)" >> $env:GITHUB_ENV
+
+      # Firefox decodes H.264/AAC through Media Foundation, which Windows Server only has as an
+      # optional feature (Windows 10/11 have it, except the "N" editions).
+      - name: Media Foundation for Firefox
+        if: matrix.suite == 'app'
+        shell: pwsh
+        run: |
+          $f = Get-WindowsFeature Server-Media-Foundation
+          "Server-Media-Foundation: $($f.InstallState)"
+          if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
+
+      - run: npm ci
+      - name: Playwright Firefox
+        if: matrix.suite == 'app'
+        run: npx playwright install firefox
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target windows-x64 --vendor
+      - name: Build a newer package (update tests)
+        if: matrix.suite == 'installer'
+        run: |
+          newer="$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")"
+          node scripts/build/package.mjs --target windows-x64 --version "$newer"
+          echo "SC_NEWER=$newer" >> "$GITHUB_ENV"
+      - name: Build the real package
+        run: node scripts/build/package.mjs --target windows-x64
+      - name: Assemble release folders and the installer zip
+        run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
+
+      - name: Run the ${{ matrix.suite }} suite
+        run: node scripts/test/windows/${{ matrix.suite }}.mjs --work release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"} --out "$SC_ARTIFACTS/results-${{ matrix.suite }}-${{ matrix.os }}.json"
+
+      - name: Upload results, logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: win-${{ matrix.suite }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/sc-artifacts
+          if-no-files-found: warn
+          retention-days: 14
+
+  summary:
+    name: Summary table
+    needs: e2e
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: win-*
+          path: results
+      - run: node scripts/test/windows/summarize.mjs results
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: windows-e2e-summary
+          path: results/summary.md

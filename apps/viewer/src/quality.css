@@ -1,0 +1,14 @@
+/* Quality menu and Stable / Lower-delay toggle (quality-menu.ts, latency-toggle.ts). */
+.player-controls { display: flex; flex-wrap: wrap; gap: 0.75rem 1.25rem; align-items: center; margin: 0.5rem 0; }
+.player-controls:empty { display: none; }
+.control-group { display: inline-flex; align-items: center; gap: 0.35rem; }
+/* The menu hides itself when there is only one quality; hide its tooltip too. */
+.control-group:has(select[hidden]) { display: none; }
+.quality-menu {
+  font: inherit; padding: 0.3rem 0.5rem; border-radius: 8px;
+  border: 1px solid rgba(127, 127, 127, 0.4); background: transparent; color: inherit;
+}
+.latency-toggle { border: 0; padding: 0; margin: 0; display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; }
+.latency-toggle legend { float: left; margin-right: 0.2rem; font-weight: 600; padding: 0; }
+.latency-toggle .tip { margin-right: 0.3rem; }
+.latency-toggle small { flex-basis: 100%; opacity: 0.75; }

@@ -1,0 +1,8 @@
+{
+  "name": "ip",
+  "version": "2.0.1-swarmcast.0",
+  "private": true,
+  "description": "Minimal stand-in for the `ip` package used by bittorrent-tracker's UDP parser (UDP is disabled in SwarmCast). Replaces ip@2.0.1, which has an unfixed advisory (GHSA-2p57-rm9w-gvfp) in isPublic(), a function never used here.",
+  "license": "MIT",
+  "main": "index.js"
+}

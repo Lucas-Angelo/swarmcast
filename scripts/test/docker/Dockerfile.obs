@@ -1,0 +1,15 @@
+# OBS Studio (Ubuntu package, includes obs-websocket) running headless under Xvfb with
+# Mesa software rendering (llvmpipe), plus what obs-test.sh needs.
+#   docker build -f Dockerfile.obs -t swarmcast-test-obs .
+FROM ubuntu:24.04
+RUN set -e; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      obs-studio xvfb xauth libgl1-mesa-dri libegl-mesa0 libglx-mesa0 mesa-utils \
+      fonts-dejavu-core ffmpeg curl ca-certificates tar gzip jq procps iproute2 util-linux \
+      python3 python3-websockets; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd -m -s /bin/bash tester
+ENV LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb
+USER tester
+WORKDIR /home/tester

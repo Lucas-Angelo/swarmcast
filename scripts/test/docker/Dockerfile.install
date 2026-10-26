@@ -1,0 +1,13 @@
+# Image for the installer / app checks: the tools start-linux.sh needs, plus ffmpeg
+# (stands in for OBS), jq (JSON) and procps/iproute2 (process and port checks).
+#   docker build -f Dockerfile.install --build-arg BASE=ubuntu:22.04 .
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+RUN set -e; \
+    apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      curl ca-certificates tar gzip procps iproute2 jq ffmpeg util-linux; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd -m -s /bin/bash tester
+USER tester
+WORKDIR /home/tester

@@ -1,0 +1,16 @@
+node_modules/
+dist/
+/build/
+release/
+.cache/
+coverage/
+playwright-report/
+test-results/
+*.log
+.DS_Store
+.env
+.env.*
+/vendor/
+*.blob
+apps/tray/bin/
+.claude/

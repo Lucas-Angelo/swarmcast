@@ -1,0 +1,49 @@
+# Dependabot version updates.
+#
+# Minor and patch releases are batched into one weekly PR per ecosystem. Major versions
+# are ignored on purpose: they are upgraded deliberately, by hand, after reading the
+# changelog and running the full test matrix (breaking changes in Node tooling, Vite,
+# Vitest, Playwright or Go modules rarely land as a drop-in bump). Vulnerable
+# dependencies are still surfaced by Dependabot alerts and by the `npm audit` CI job.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    commit-message:
+      prefix: deps
+
+  # Actions are pinned by commit SHA; Dependabot bumps the SHA and its `# vX.Y.Z` comment.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      github-actions:
+        patterns: ['*']
+    commit-message:
+      prefix: ci
+
+  - package-ecosystem: gomod
+    directory: /apps/tray
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      gomod-minor-and-patch:
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: '*'
+        update-types: ['version-update:semver-major']
+    commit-message:
+      prefix: deps(tray)

@@ -1,0 +1,73 @@
+// Test server for Playwright: SwarmCast without tunnel + a synthetic OBS stream.
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { ChildProcess } from 'node:child_process';
+import { createApp } from '../../src/app.js';
+import { pushTestStream } from '../integration/helpers.js';
+
+// SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
+const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
+export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
+
+const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
+const app = await createApp({
+  dataDir,
+  noTunnel: true,
+  logToStdout: false,
+  configOverrides: {
+    ports: E2E_PORTS,
+    speedTest: { enabled: false, intervalMinutes: 15 },
+    // The setup tutorial would cover the panel in other specs; onboarding.spec.ts turns it back on via the API.
+    onboardingDone: true,
+    // The quality ladder uses the same ffmpeg that plays OBS here (SWARMCAST_FFMPEG overrides
+    // it). Off at start, so the other specs see one quality; quality.spec.ts turns it on.
+    ffmpegPath: 'ffmpeg',
+    quality: {
+      ladder: { mode: 'manual', enabled: false, heights: [480, 360], encoder: 'auto' },
+      upload: { mode: 'manual', otherStreamKbps: null, headroomPercent: 15 },
+      obsWebsocket: { enabled: false, url: 'ws://127.0.0.1:4455' },
+    },
+  },
+});
+await app.live.start();
+
+let ffmpeg: ChildProcess | null = null;
+let stopping = false;
+// What the fake OBS sends; quality.spec.ts changes it (file + SIGUSR2) to make OBS reconnect
+// with a bigger picture, which is when a new rendition plan applies.
+const PUSH_FILE = path.join('test-results', 'e2e-push.json');
+const pushOptions = (): { size?: string; kbps?: number } => {
+  try {
+    return JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')) as { size?: string; kbps?: number };
+  } catch {
+    return {};
+  }
+};
+const push = (): void => {
+  const child = pushTestStream(`rtmp://127.0.0.1:${E2E_PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, pushOptions());
+  ffmpeg = child;
+  child.on('exit', () => {
+    if (!stopping && ffmpeg === child) setTimeout(push, 1000);
+  });
+};
+fs.mkdirSync('test-results', { recursive: true });
+fs.rmSync(PUSH_FILE, { force: true });
+push();
+process.on('SIGUSR2', () => {
+  // Reconnect "OBS" with the options in PUSH_FILE.
+  ffmpeg?.kill('SIGKILL');
+});
+
+fs.mkdirSync('test-results', { recursive: true });
+fs.writeFileSync(path.join('test-results', 'e2e-env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, dataDir, pid: process.pid }));
+console.log('e2e server ready');
+
+const shutdown = async (): Promise<void> => {
+  stopping = true;
+  ffmpeg?.kill('SIGKILL');
+  await app.close();
+  process.exit(0);
+};
+process.on('SIGTERM', () => void shutdown());
+process.on('SIGINT', () => void shutdown());

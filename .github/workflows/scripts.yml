@@ -1,0 +1,66 @@
+name: Install scripts
+
+# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
+# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
+# private repo.
+on:
+  schedule:
+    - cron: '37 6 1 * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scripts-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      # The installer zips carry these guides as HTML (see release.yml).
+      - name: Render the streamer guides
+        if: runner.os == 'Linux'
+        run: |
+          node scripts/build/guide-html.mjs docs/TUTORIAL_EN.md "$RUNNER_TEMP/guide-en.html" --lang en
+          node scripts/build/guide-html.mjs docs/TUTORIAL_PT-BR.md "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
+          if grep -qiE '<script|src=' "$RUNNER_TEMP"/guide-*.html; then
+            echo "::error::The guides must stay self-contained (no scripts, no external resources)."
+            exit 1
+          fi
+
+      - name: Run installer tests (macOS / Linux)
+        if: runner.os != 'Windows'
+        run: bash scripts/test/run.sh
+
+      - name: Run installer tests (Windows PowerShell 5.1)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\run.ps1
+
+      # --- uninstallers (scripts/uninstall-*) ---
+      - name: Run uninstaller tests (macOS / Linux)
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        run: bash scripts/test/uninstall.sh
+
+      - name: Run uninstaller tests (Windows PowerShell 5.1)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        shell: cmd
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\uninstall.ps1
+      # --- end uninstallers ---
