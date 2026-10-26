@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
-import { DEFAULT_PORTS, DEFAULT_STUN, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
+import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
 import { writePrivateFile } from './paths.js';
 
 export const tunnelProviderSchema = z.enum(['cloudflare-quick', 'none', 'external']);
@@ -11,8 +11,14 @@ export type TunnelProviderName = z.infer<typeof tunnelProviderSchema>;
  * 2: the browser check is on by default. v0.1.0 saved its old default (`false`) in every file,
  *    so a `false` from version 1 is switched on once; a `false` saved at version 2 or later is
  *    the streamer's choice and stays.
+ * 3: `maxViewers` defaults to QUICK_TUNNEL_MAX_VIEWERS (120) instead of 500, the audience a
+ *    free quick tunnel really holds (docs/ARCHITECTURE.md). A 500 saved before version 3 is the
+ *    old default and becomes 120 once; other values are the streamer's choice and stay.
  */
-export const CONFIG_VERSION = 2;
+export const CONFIG_VERSION = 3;
+
+/** `maxViewers` default before config version 3. */
+const OLD_DEFAULT_MAX_VIEWERS = 500;
 
 export const configSchema = z.object({
   configVersion: z.number().int().min(1).default(CONFIG_VERSION),
@@ -31,7 +37,7 @@ export const configSchema = z.object({
   /** Viewers see how many people are watching (only the number, never names). */
   showViewerCount: z.boolean().default(true),
   /** Hard cap on simultaneous viewer sessions; new joins get "full" beyond it (app-level DoS guard). */
-  maxViewers: z.number().int().min(1).max(100_000).default(500),
+  maxViewers: z.number().int().min(1).max(100_000).default(QUICK_TUNNEL_MAX_VIEWERS),
   /** Sessions one browser (device cookie) may hold; the oldest is replaced beyond it. */
   maxSessionsPerDevice: z.number().int().min(1).max(20).default(3),
   tunnel: z
@@ -119,6 +125,7 @@ export function migrateConfig(raw: unknown): { config: unknown; changed: boolean
       cfg.security = { ...(sec as Record<string, unknown>), requireBrowserCheck: true };
     }
   }
+  if (version < 3 && cfg.maxViewers === OLD_DEFAULT_MAX_VIEWERS) cfg.maxViewers = QUICK_TUNNEL_MAX_VIEWERS;
   cfg.configVersion = CONFIG_VERSION;
   return { config: cfg, changed: true };
 }

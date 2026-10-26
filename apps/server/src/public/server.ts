@@ -36,6 +36,30 @@ import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
 import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
 
+/** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
+export interface HttpStats {
+  inFlight: number;
+  served: number;
+  /** Highest `inFlight` since `peakAt` (a window of PEAK_WINDOW_MS). */
+  peak: number;
+  peakAt: number;
+}
+
+/** Peaks are short (segment downloads start together), so the panel looks at the last ~10 s. */
+export const PEAK_WINDOW_MS = 10_000;
+
+export function notePeak(s: HttpStats, now = Date.now()): void {
+  if (now - s.peakAt > PEAK_WINDOW_MS) {
+    s.peak = s.inFlight;
+    s.peakAt = now;
+  } else if (s.inFlight > s.peak) s.peak = s.inFlight;
+}
+
+/** Highest HTTP in-flight count of the current or the previous window. */
+export function recentPeak(s: HttpStats, now = Date.now()): number {
+  return now - s.peakAt <= 2 * PEAK_WINDOW_MS ? Math.max(s.peak, s.inFlight) : s.inFlight;
+}
+
 export interface PublicDeps {
   access: AccessControl;
   origin: HlsOrigin;
@@ -51,7 +75,7 @@ export interface PublicDeps {
   /** Admission limits (read on every join so panel/config changes apply immediately). */
   limits: () => { maxViewers: number; maxSessionsPerDevice: number };
   /** Called for every viewer-facing request, for in-flight/limit statistics. */
-  stats: { inFlight: number; served: number };
+  stats: HttpStats;
   /** Attack detection feed, public blocklists and the join proof-of-work. */
   security: PublicSecurity;
 }
@@ -144,6 +168,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
 
   app.addHook('onRequest', async (req, reply) => {
     deps.stats.inFlight += 1;
+    notePeak(deps.stats);
     sec.request(ip(req));
     const host = req.headers.host ?? '';
     applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers()), opts.secureCookies);

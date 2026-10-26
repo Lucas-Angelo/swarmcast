@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { FastifyInstance } from 'fastify';
 import {
   QUICK_TUNNEL_CONCURRENCY_LIMIT,
+  QUICK_TUNNEL_WARN_SHARE,
   estimateCapacity,
   type AccessMode,
   type AdminState,
@@ -24,7 +25,7 @@ import { BandwidthLimiter } from '../hls/throttle.js';
 import { MediaMtx, streamPath } from '../media/mediamtx.js';
 import { isAlive, type Reaper } from '../process/children.js';
 import { QualityManager } from '../quality/manager.js';
-import { createPublicServer, type PublicDeps } from '../public/server.js';
+import { createPublicServer, recentPeak, type HttpStats, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
 import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
@@ -104,7 +105,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   private startedAt = 0;
   private autoStopTimer: NodeJS.Timeout | null = null;
   private statsTimer: NodeJS.Timeout | null = null;
-  readonly httpStats = { inFlight: 0, served: 0 };
+  readonly httpStats: HttpStats = { inFlight: 0, served: 0, peak: 0, peakAt: 0 };
   speedTest?: SpeedTestResult;
   speedTestRunning = false;
   private speedTimer: NodeJS.Timeout | null = null;
@@ -134,6 +135,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.limiter = BandwidthLimiter.fromMbps(d.config.uploadLimitMbps);
     this.tracker = new TrackerService(this.access, d.log);
     this.control = new ControlChannel(this.access, d.log);
+    // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
+    this.control.tracker = this.tracker;
     const q = d.quality ?? { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
     this.quality = new QualityManager({
       config: d.config,
@@ -746,6 +749,14 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   // ---- state for the admin panel ----
 
+  /**
+   * What a quick tunnel counts against its 200-in-flight limit: open WebSockets (/control, plus
+   * any plain /tracker socket) and HTTP requests in progress (the peak of the last ~10 s).
+   */
+  tunnelInFlight(): number {
+    return this.control.connectionCount + this.tracker.plainSocketCount + recentPeak(this.httpStats);
+  }
+
   snapshot(): AdminState {
     const sessions = [...this.access.sessions.values()];
     const connected = this.connectedSessions();
@@ -764,10 +775,15 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     });
     const warnings: CodedText[] = [...this.warnings];
     const withoutP2P = connected.length - helping.length;
+    const tunnelInFlight = this.tunnelInFlight();
     if (this.mode === 'secure' && this.d.tunnel.name === 'cloudflare-quick') {
-      // Each viewer without P2P keeps ~2-3 requests in flight at peaks.
-      if (withoutP2P * 2.5 > QUICK_TUNNEL_CONCURRENCY_LIMIT * 0.6 || this.httpStats.inFlight > QUICK_TUNNEL_CONCURRENCY_LIMIT * 0.6) {
-        warnings.push(coded('warn.tunnelLimit'));
+      // The quick tunnel counts every open WebSocket (one per viewer) and every HTTP request in
+      // progress. Measured peaks, or an estimate: a viewer without P2P keeps about 1.5 video
+      // requests in flight at peaks, one with P2P about 0.5.
+      const estimate = Math.round(connected.length + withoutP2P * 1.5 + helping.length * 0.5);
+      const used = Math.max(tunnelInFlight, estimate);
+      if (used >= QUICK_TUNNEL_CONCURRENCY_LIMIT * QUICK_TUNNEL_WARN_SHARE) {
+        warnings.push(coded('warn.tunnelLimit', { used: Math.min(used, QUICK_TUNNEL_CONCURRENCY_LIMIT), limit: QUICK_TUNNEL_CONCURRENCY_LIMIT }));
       }
     }
     const keyframes = this.keyframeWarning();
@@ -813,6 +829,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         p2pSharePercent: Math.round(share * 100),
         originUploadMbps: Math.round(this.limiter.currentMbps() * 10) / 10,
         httpInFlight: this.httpStats.inFlight,
+        tunnelInFlight,
         rateLimited429: http429,
       },
       warnings: allWarnings.map((w) => w.text),

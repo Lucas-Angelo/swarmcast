@@ -6,8 +6,9 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { TRACKER_MAX_MESSAGE, variantStreamSwarmId } from '@swarmcast/shared';
 import type { AccessControl, Session } from '../access/access.js';
 import type { Logger } from '../core/logger.js';
+import { TrackerChannel } from './channel.js';
 
-type TrackerSocket = WebSocket & { peerId?: string; sessionId?: string; upgradeReq?: IncomingMessage };
+type TrackerSocket = (WebSocket | TrackerChannel) & { peerId?: string; sessionId?: string; upgradeReq?: IncomingMessage | null };
 
 /** Stream types p2p-media-loader uses: video (+muxed audio) is "main", alternate audio is "secondary". */
 const STREAM_TYPES = ['main', 'secondary'] as const;
@@ -42,7 +43,7 @@ export class TrackerService {
   private readonly wss: WebSocketServer;
   private allowed = new Set<string>();
   private sockets = new Map<string, Set<TrackerSocket>>();
-  private messageCounts = new WeakMap<TrackerSocket, { n: number; at: number }>();
+  private messageCounts = new WeakMap<object, { n: number; at: number }>();
   swarmId = '';
 
   constructor(
@@ -122,30 +123,61 @@ export class TrackerService {
     return null;
   }
 
-  /** Handle an HTTP upgrade for /tracker. The caller already validated the session cookie. */
+  /**
+   * Handle an HTTP upgrade for /tracker. The caller already validated the session cookie.
+   * The viewer page no longer opens it (it uses a channel inside /control, see openChannel);
+   * it stays for tools and tests that speak the plain WebTorrent tracker protocol.
+   */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, session: Session): void {
-    this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const s = ws as TrackerSocket;
-      s.upgradeReq = req;
-      s.sessionId = session.id;
-      let set = this.sockets.get(session.id);
-      if (!set) this.sockets.set(session.id, (set = new Set()));
-      set.add(s);
-      s.on('close', () => set.delete(s));
-      // Simple per-socket message rate limit: 60 messages / 10 s.
-      s.on('message', () => {
-        const now = Date.now();
-        const c = this.messageCounts.get(s) ?? { n: 0, at: now };
-        if (now - c.at > 10_000) {
-          c.n = 0;
-          c.at = now;
-        }
-        c.n += 1;
-        this.messageCounts.set(s, c);
-        if (c.n > 60) s.terminate();
-      });
-      this.server.onWebSocketConnection(s, { trustProxy: false });
+    this.wss.handleUpgrade(req, socket, head, (ws) => this.attach(ws as TrackerSocket, req, session));
+  }
+
+  /**
+   * A tracker channel inside a viewer's /control socket (packages/shared/src/mux.ts), so each
+   * viewer holds one WebSocket through the quick tunnel instead of two. Null when the session
+   * may not use P2P (the refusal /tracker answers with 403).
+   */
+  openChannel(carrier: WebSocket, id: number, req: IncomingMessage, session: Session): TrackerChannel | null {
+    if (!session.p2pAllowed) return null;
+    const channel = new TrackerChannel(id, carrier, req);
+    this.attach(channel as TrackerSocket, req, session);
+    return channel;
+  }
+
+  private attach(s: TrackerSocket, req: IncomingMessage, session: Session): void {
+    s.upgradeReq = req;
+    s.sessionId = session.id;
+    let set = this.sockets.get(session.id);
+    if (!set) this.sockets.set(session.id, (set = new Set()));
+    set.add(s);
+    s.on('close', () => set.delete(s));
+    // Simple per-socket message rate limit: 60 messages / 10 s.
+    s.on('message', () => {
+      const now = Date.now();
+      const c = this.messageCounts.get(s) ?? { n: 0, at: now };
+      if (now - c.at > 10_000) {
+        c.n = 0;
+        c.at = now;
+      }
+      c.n += 1;
+      this.messageCounts.set(s, c);
+      if (c.n > 60) s.terminate();
     });
+    this.server.onWebSocketConnection(s as WebSocket, { trustProxy: false });
+  }
+
+  /** Tracker connections open now (plain sockets and channels). */
+  get socketCount(): number {
+    let n = 0;
+    for (const set of this.sockets.values()) n += set.size;
+    return n;
+  }
+
+  /** Plain /tracker WebSockets open now (each one is a request in flight through the tunnel; channels are not). */
+  get plainSocketCount(): number {
+    let n = 0;
+    for (const set of this.sockets.values()) for (const s of set) if (!(s instanceof TrackerChannel)) n += 1;
+    return n;
   }
 
   /** Remove a session from every swarm and close its tracker sockets. */

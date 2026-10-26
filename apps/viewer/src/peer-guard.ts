@@ -12,6 +12,8 @@
  * Installed before the player starts (import './peer-guard-install' first).
  */
 
+import { trackerMux } from './tracker-mux.js';
+
 export function asciiToHex(s: string): string {
   let out = '';
   for (let i = 0; i < s.length; i++) out += (s.charCodeAt(i) & 0xff).toString(16).padStart(2, '0');
@@ -28,7 +30,6 @@ class Guard {
   private blocked = new Set<string>();
   private ufragToPeer = new Map<string, string>();
   private connections = new Map<RTCPeerConnection, string | null>();
-  trackerUrl = '';
 
   isBlocked(peerHex: string): boolean {
     return this.blocked.has(peerHex);
@@ -116,17 +117,18 @@ export function installPeerGuard(): void {
       return (original as (...a: unknown[]) => Promise<void>).call(this, desc, ...rest);
     } as typeof proto.setRemoteDescription;
   }
+  // Tracker connections become channels inside the /control socket (tracker-mux.ts): one
+  // WebSocket per viewer through the quick tunnel. Every tracker message passes the guard first.
+  trackerMux.filter = (data) => peerGuard.onTrackerMessage(data);
   const NativeWS = window.WebSocket;
-  class GuardedWebSocket extends NativeWS {
+  class MuxedWebSocket extends NativeWS {
     constructor(url: string | URL, protocols?: string | string[]) {
-      super(url, protocols);
-      if (peerGuard.trackerUrl && String(url).startsWith(peerGuard.trackerUrl)) {
-        // Registered before the library sets onmessage, so it runs first and can stop it.
-        this.addEventListener('message', (ev) => {
-          if (!peerGuard.onTrackerMessage(ev.data)) ev.stopImmediatePropagation();
-        });
+      if (trackerMux.handles(String(url))) {
+        // A derived constructor may return another object instead of calling super().
+        return trackerMux.create(String(url)) as unknown as MuxedWebSocket;
       }
+      super(url, protocols);
     }
   }
-  window.WebSocket = GuardedWebSocket as typeof WebSocket;
+  window.WebSocket = MuxedWebSocket as typeof WebSocket;
 }

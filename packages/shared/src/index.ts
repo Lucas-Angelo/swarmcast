@@ -4,3 +4,4 @@ export * from './capacity.js';
 export type { Lang, MessageKey, MessageParams } from './i18n/index.js';
 export * from './quality.js';
 export * from './diagnostics.js';
+export * from './mux.js';

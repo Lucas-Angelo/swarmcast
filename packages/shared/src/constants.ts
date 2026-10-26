@@ -32,8 +32,21 @@ export const TRACKER_MAX_MESSAGE = 64 * 1024;
 /** Hash failures from one session before it is removed from P2P automatically. */
 export const HASH_FAILURE_THRESHOLD = 3;
 
-/** Cloudflare quick tunnels reject above ~200 concurrent in-flight requests. */
+/**
+ * A Cloudflare quick tunnel answers 429 above 200 requests in flight, and every open
+ * WebSocket counts as one until it closes (measured 2026-10-26, docs/ARCHITECTURE.md).
+ */
 export const QUICK_TUNNEL_CONCURRENCY_LIMIT = 200;
+
+/**
+ * Viewers one quick tunnel holds with headroom: each keeps one WebSocket open (/control, which
+ * also carries the tracker) and, at peaks, about half a video request in flight on average.
+ * Default of `maxViewers`.
+ */
+export const QUICK_TUNNEL_MAX_VIEWERS = 120;
+
+/** Share of QUICK_TUNNEL_CONCURRENCY_LIMIT in use at which the panel warns. */
+export const QUICK_TUNNEL_WARN_SHARE = 0.8;
 
 /**
  * How long a browser that passed the join browser check (proof-of-work) is remembered: it is not

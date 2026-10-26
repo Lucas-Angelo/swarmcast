@@ -9,6 +9,7 @@ import { createLatencyToggle } from './latency-toggle.js';
 import { asciiToHex, peerGuard } from './peer-guard.js';
 import { createManifestReloader, hlsConfigFor, type applyProfile, loadProfile, p2pCoreConfigFor, saveEstimate, streamSwarmIdBuilder } from './player-config.js';
 import { createQualityMenu } from './quality-menu.js';
+import { trackerMux } from './tracker-mux.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const video = $<HTMLVideoElement>('video');
@@ -127,6 +128,10 @@ const stats = {
   get stats() {
     return { ...stats, peers: [...stats.peers] };
   },
+  /** Tracker channels open inside /control (tracker-mux.ts). */
+  get trackerChannels() {
+    return trackerMux.openCount;
+  },
 };
 
 let ended = false;
@@ -172,7 +177,8 @@ async function main(): Promise<void> {
   }
   $('nick').textContent = cfg.nickname;
   stats.p2pAllowed = cfg.p2pAllowed;
-  peerGuard.trackerUrl = cfg.trackerUrl;
+  // p2p-media-loader's tracker socket becomes a channel inside /control (tracker-mux.ts).
+  trackerMux.trackerUrl = cfg.trackerUrl;
 
   const verifier = new IntegrityVerifier(cfg.manifestUrl, cfg.manifestPublicKey);
   await verifier.init();
@@ -385,11 +391,14 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean)
     control = ws;
     ws.onopen = () => {
       attempts = 0;
+      trackerMux.attach(ws);
     };
     ws.onmessage = (ev) => {
+      const text = String(ev.data);
+      if (trackerMux.onFrame(text)) return;
       let msg: ServerMessage;
       try {
-        msg = JSON.parse(String(ev.data)) as ServerMessage;
+        msg = JSON.parse(text) as ServerMessage;
       } catch {
         return;
       }
@@ -426,6 +435,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean)
     };
     ws.onclose = (ev) => {
       control = null;
+      trackerMux.detach(ws);
       if (ended) return;
       if (ev.code === 4003) {
         endScreen('watch.removed.title', 'watch.removed.text');

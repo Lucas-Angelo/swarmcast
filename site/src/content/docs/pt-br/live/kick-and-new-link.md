@@ -36,7 +36,7 @@ Toda live ganha um link novo automaticamente. O link que você mandou ontem não
 
 Duas opções abaixo da configuração de upload impedem que alguém encha a sua live de entradas falsas:
 
-- **Máximo de espectadores ao mesmo tempo:** quando a live lota, quem chega vê que ela está lotada. Ninguém que já está assistindo cai.
+- **Máximo de espectadores ao mesmo tempo:** quando a live lota, quem chega vê que ela está lotada. Ninguém que já está assistindo cai. Começa em 120, mais ou menos o que o túnel grátis aguenta.
 - **Sessões por navegador:** quantas abas um mesmo navegador pode deixar abertas (a mais antiga é substituída).
 
 Mais em [Segurança e proteção](/swarmcast/pt-br/live/protection/).

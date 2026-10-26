@@ -36,7 +36,7 @@ Every live gets a new link automatically. A link you shared yesterday does not w
 
 Two settings below the upload setting stop someone from flooding your live with fake joins:
 
-- **Max viewers at once:** when the live is full, new people see "This stream is full". Nobody already watching is dropped.
+- **Max viewers at once:** when the live is full, new people see "This stream is full". Nobody already watching is dropped. It starts at 120, about what the free tunnel holds.
 - **Sessions per browser:** how many tabs one browser may keep open (the oldest is replaced).
 
 More in [Security and protection](/swarmcast/live/protection/).

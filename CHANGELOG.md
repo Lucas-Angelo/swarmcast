@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Twice the audience on the free tunnel.** We measured that a Cloudflare quick tunnel counts every open WebSocket against its 200-requests-in-flight limit, so with two sockets per viewer it filled up at about 100 viewers. Viewers now keep one WebSocket (the P2P tracker rides on the control connection), and the tunnel holds about 120 viewers with room for the video. "Max viewers at once" now starts at 120 (a saved 500, the old default, becomes 120 once), and the panel warns when the tunnel gets close to its limit, counting open connections and requests. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26); measuring tool: `scripts/test/tunnel-limit/`.
+
 ## [0.2.0] - Unreleased
 
 The desktop app release: SwarmCast now installs like any other app, opens in its own window and updates itself. The website is the single guide for streamers.

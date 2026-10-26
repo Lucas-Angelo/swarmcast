@@ -76,7 +76,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 |-----|---------|---------|
 | `ports.rtmp` / `public` / `admin` / `mediamtxHls` | 1935 / 8080 / 8081 / 8888 | Local ports (all bound to 127.0.0.1). If `public` or `admin` is busy, the next free port is used for that run; `rtmp` must be free because OBS points at it |
 | `uploadLimitMbps` | 100 | Hard global cap on what the PC uploads to viewers |
-| `maxViewers` | 500 | Cap on simultaneous viewer sessions; further joins see "stream is full" (panel; lowering it never drops anyone watching) |
+| `maxViewers` | 120 | Cap on simultaneous viewer sessions; further joins see "stream is full" (panel; lowering it never drops anyone watching). 120 is what a free quick tunnel holds (docs/ARCHITECTURE.md, "Quick tunnel limit"); config version 3 turns a saved 500 (the old default) into 120 once |
 | `maxSessionsPerDevice` | 3 | Sessions one browser may hold (the oldest is replaced) (panel) |
 | `security.blockKnownBadIps` | true | Refuse IPs on free public blocklists (Spamhaus DROP + DROPv6, FireHOL level1), downloaded at start and every 24 h, cached in `blocklists/` (panel) |
 | `security.requireBrowserCheck` | true | Ask new viewers' browsers for a short proof-of-work (ALTCHA protocol, self-hosted), once per browser: a signed `sc_verified` cookie remembers it for 30 days (panel) |

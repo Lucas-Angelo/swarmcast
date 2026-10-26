@@ -41,7 +41,7 @@ Being honest about the limits helps you decide:
 - **Anyone with the link can watch,** and a member can forward it. Make a new link if it leaks.
 - **Nothing stops screen recording.** There is no copy protection.
 - **Viewers with P2P on see each other's IP** (approximate location only). See [Help the stream](/swarmcast/live/p2p/).
-- **Cloudflare is in the path.** The free tunnel is run by Cloudflare, which can see traffic information. It has no uptime guarantee and can struggle with very big audiences.
+- **Cloudflare is in the path.** The free tunnel is run by Cloudflare, which can see traffic information. It has no uptime guarantee and holds about **120 viewers at once**; past that, new viewers cannot join. SwarmCast stops joins at 120 by default (you can change it in the panel) and warns you when the tunnel gets close to its limit.
 - **Direct mode shows your IP** to everyone with the link. Use it only in emergencies: [Direct mode](/swarmcast/live/direct-mode/).
 - **Attack detection is a best effort.** A very slow or very spread-out attack can stay below the alarms.
 

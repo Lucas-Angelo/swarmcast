@@ -3,7 +3,9 @@ import http from 'node:http';
 import type { ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
+import { encodeTrackerFrame, parseTrackerFrame } from '@swarmcast/shared';
 import { createApp, type App } from '../../src/app.js';
+import { infoHashHexFor } from '../../src/tracker/tracker.js';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
 import { hasFfmpeg, joinAs, pushTestStream, tmpDir, waitFor } from './helpers.js';
@@ -84,6 +86,32 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
       });
       expect(code, p).toBe(401);
     }
+  });
+
+  it('carries the tracker inside /control: one WebSocket per viewer (quick tunnel limit)', async () => {
+    const jar = await joinAs(BASE, app.live.snapshot().liveLink!, 'OneSocket');
+    const ws = new WebSocket(`ws://127.0.0.1:${PORTS.public}/control`, { origin: BASE, headers: { cookie: jar.header() } });
+    const frames: string[] = [];
+    ws.on('message', (d) => frames.push(d.toString()));
+    await new Promise((r) => ws.on('open', r));
+    const peer = '-PM0400-000000000042';
+    const infoHash = Buffer.from(infoHashHexFor(app.live.access.liveId, 'main'), 'hex').toString('latin1');
+    ws.send(encodeTrackerFrame({ op: 'open', id: 1 }));
+    ws.send(encodeTrackerFrame({ op: 'data', id: 1, payload: JSON.stringify({ action: 'announce', info_hash: infoHash, peer_id: peer, numwant: 0, offers: [], event: 'started' }) }));
+    await waitFor(() => frames.some((f) => f.startsWith('~d1 ')), 5000, 'tracker answer on the control socket');
+    const frame = parseTrackerFrame(frames.find((f) => f.startsWith('~d1 '))!);
+    const answer = JSON.parse(frame?.op === 'data' ? frame.payload : '{}') as Record<string, unknown>;
+    expect(answer['failure reason']).toBeUndefined();
+    expect(answer.action).toBe('announce');
+    // Control messages share the socket (hello came first).
+    expect(JSON.parse(frames[0]!).t).toBe('hello');
+    expect(app.live.tracker.peerCount()).toBeGreaterThanOrEqual(1);
+    expect(app.live.tracker.plainSocketCount).toBe(0);
+    expect(app.live.snapshot().stats.tunnelInFlight).toBeGreaterThanOrEqual(1);
+    const closed = new Promise((r) => ws.on('close', r));
+    ws.close();
+    await closed;
+    await waitFor(() => app.live.tracker.socketCount === 0, 5000, 'channel closed with the control socket');
   });
 
   it('rejects cross-origin WebSocket upgrades even with a session', async () => {

@@ -72,7 +72,7 @@ describe('"remove from P2P"', () => {
     const reporter = live.access.createSession({ nickname: 'honest', deviceId: 'd1', device: 'desktop', ip: 'ip1' });
     const bad = live.access.createSession({ nickname: 'evil', deviceId: 'd2', device: 'desktop', ip: 'ip2' });
     bad.peerIds.add('cc'.repeat(20));
-    const sock = { sessionId: reporter.id, msgs: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
+    const sock = { sessionId: reporter.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
     const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
     for (let i = 0; i < 3; i++) onMessage(sock, JSON.stringify({ t: 'hash-fail', peerId: 'cc'.repeat(20), segment: 'p2p' }), false);
     expect(bad.hashFailures).toBe(3);
@@ -86,7 +86,7 @@ describe('"remove from P2P"', () => {
     live.access.begin();
     const s = live.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });
     s.peerIds.add('dd'.repeat(20));
-    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
+    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
     const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
     for (let i = 0; i < 5; i++) onMessage(sock, JSON.stringify({ t: 'hash-fail', peerId: 'dd'.repeat(20), segment: 'x' }), false);
     onMessage(sock, '{not json', false);
@@ -99,7 +99,7 @@ describe('"remove from P2P"', () => {
     const live = makeLive();
     live.access.begin();
     const s = live.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });
-    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
+    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
     const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
     for (let i = 0; i < 40; i++) onMessage(sock, JSON.stringify({ t: 'pong' }), false);
     expect(sock.terminate).toHaveBeenCalled();

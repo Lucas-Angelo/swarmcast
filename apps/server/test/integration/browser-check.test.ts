@@ -3,7 +3,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { VERIFIED_COOKIE } from '@swarmcast/shared';
 import { createApp, type App } from '../../src/app.js';
-import { defaultConfig } from '../../src/core/config.js';
+import { CONFIG_VERSION, defaultConfig } from '../../src/core/config.js';
 import { generateSecrets } from '../../src/core/secrets.js';
 import { Jar, joinAs, tmpDir } from './helpers.js';
 
@@ -39,7 +39,7 @@ describe('browser check with the real app: v0.1.0 upgrade and restarts', () => {
 
     let a = await boot(dir);
     expect(a.live.snapshot().security.settings.requireBrowserCheck).toBe(true);
-    expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'))).toMatchObject({ configVersion: 2, security: { requireBrowserCheck: true } });
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8'))).toMatchObject({ configVersion: CONFIG_VERSION, security: { requireBrowserCheck: true } });
     const key = (JSON.parse(fs.readFileSync(path.join(dir, 'secrets.json'), 'utf8')) as { browserCheckKey: string; streamKey: string });
     expect(key.browserCheckKey).toMatch(/^[0-9a-f]{64}$/);
     expect(key.streamKey).toBe(oldSecrets.streamKey);

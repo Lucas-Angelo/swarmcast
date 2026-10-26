@@ -46,7 +46,7 @@ They have an old link. Every live gets a new link, and **Generate new link** rep
 
 ### Viewers see "This stream is full"
 
-You reached **Max viewers at once**. Raise it in the panel if your upload allows it.
+You reached **Max viewers at once** (120 unless you changed it). Raise it in the panel if your upload allows it, but the free tunnel (Secure mode) holds about 120 viewers: beyond that, use Direct mode or your own domain.
 
 ### The video starts without sound
 

@@ -46,7 +46,7 @@ Eles estão com um link antigo. Cada live tem um link novo, e **Gerar novo link*
 
 ### Os espectadores veem que a live está lotada
 
-Você chegou no **Máximo de espectadores ao mesmo tempo**. Aumente no painel se o seu upload aguentar.
+Você chegou no **Máximo de espectadores ao mesmo tempo** (120, se você não mudou). Aumente no painel se o seu upload aguentar, mas o túnel grátis (modo seguro) aguenta umas 120 pessoas: acima disso, use o modo direto ou o seu próprio domínio.
 
 ### O vídeo começa sem som
 

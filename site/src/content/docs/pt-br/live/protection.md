@@ -41,7 +41,7 @@ Ser honesto sobre os limites ajuda você a decidir:
 - **Quem tem o link consegue assistir,** e um membro pode repassar o link. Troque o link se ele vazar.
 - **Nada impede alguém de gravar a tela.** Não existe proteção contra cópia.
 - **Quem está com P2P ligado vê o IP dos outros** (só a localização aproximada). Veja [Ajudar a transmissão](/swarmcast/pt-br/live/p2p/).
-- **A Cloudflare está no caminho.** O túnel gratuito é da Cloudflare, que consegue ver informações do tráfego. Ele não tem garantia de funcionamento e pode sofrer com públicos muito grandes.
+- **A Cloudflare está no caminho.** O túnel gratuito é da Cloudflare, que consegue ver informações do tráfego. Ele não tem garantia de funcionamento e aguenta umas **120 pessoas assistindo ao mesmo tempo**; passando disso, quem chega não consegue entrar. O SwarmCast para de aceitar entradas em 120 por padrão (dá para mudar no painel) e avisa quando o túnel chega perto do limite.
 - **O modo direto mostra o seu IP** para todo mundo que tem o link. Use só em emergência: [Modo direto](/swarmcast/pt-br/live/direct-mode/).
 - **A detecção de ataques faz o melhor possível.** Um ataque muito lento ou muito espalhado pode passar abaixo dos alarmes.
 

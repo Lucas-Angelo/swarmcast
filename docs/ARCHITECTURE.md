@@ -168,17 +168,22 @@ sequenceDiagram
   V->>S: GET /hls/* with session cookie
   V->>S: WS /control, Origin must match Host
   opt Viewer turns on P2P and is allowed
-    V->>S: WS /tracker
+    V->>S: tracker channel inside the same /control socket
   end
 ```
 
 ## Network services
 
-- **Tracker**: an embedded `bittorrent-tracker` 11, WebSocket only. Our own `ws` server (with the session cookie checked at upgrade) hands sockets to `onWebSocketConnection`. The filter rejects announces from sessions without a valid session or P2P permission, and accepts only the two infohashes for this live (`swarmcast-<liveId>-main|secondary`). Each socket's peer id is pinned at its first announce, which stops spoofed "stopped" events. Each socket is limited to 60 messages per 10 s and 64 KB per message.
+- **Tracker**: an embedded `bittorrent-tracker` 11, WebSocket only. The filter rejects announces from sessions without a valid session or P2P permission, and accepts only the infohashes for this live. Each connection's peer id is pinned at its first announce, which stops spoofed "stopped" events. Each connection is limited to 60 messages per 10 s and 64 KB per message.
 - **Control channel** `/control` (WebSocket, because quick tunnels do not support SSE):
   - from the server: hello, kick, P2P on/off, block or unblock peers, ended;
   - from viewers: stats and hash-fail reports;
-  - limits: 30 messages per 10 s and 4 KB per message.
+  - limits: 30 control messages per 10 s and 4 KB per control message; 200 frames of any kind per 10 s.
+- **One WebSocket per viewer.** A quick tunnel counts every open WebSocket against its 200-requests-in-flight limit (measured, see [Quick tunnel limit](#quick-tunnel-limit-measured-2026-10-26)). So the tracker connection rides on `/control` as a channel (`packages/shared/src/mux.ts`):
+  - control messages stay JSON objects; tracker frames start with `~`: `~o<id>` opens a channel, `~d<id> <payload>` carries one tracker message, `~c<id>` closes it;
+  - in the viewer, `new WebSocket(trackerUrl)` (p2p-media-loader's own call) returns a `ChannelSocket`, a WebSocket look-alike (`apps/viewer/src/tracker-mux.ts`, installed by `peer-guard.ts`). It opens when the control socket is open, closes when it drops, and p2p-media-loader reconnects with its usual back-off. The peer guard filters each message before the library sees it;
+  - on the server, `ControlChannel` hands channels to `TrackerService.openChannel`, which gives bittorrent-tracker an object with the `ws` socket API (`tracker/channel.ts`), so the tracker logic is the same as for a plain socket. A session without P2P gets its channel closed at once (the old `/tracker` answered 403). At most 2 channels per socket and 12 opens per minute;
+  - the plain `/tracker` upgrade still exists (same cookie and origin checks) for tools; the viewer page no longer uses it.
 - **Public server hardening**:
   - CSP without inline scripts (`connect-src 'self' wss://<host> <stun>`), HSTS, `Referrer-Policy: no-referrer`, Permissions-Policy, nosniff, `frame-ancestors 'none'`.
   - WebSocket `Origin` must match `Host`.
@@ -241,7 +246,7 @@ flowchart TB
   - HLS reading requires a cookie-check redirect and an `hlsSession` cookie.
   - Sources: [mediamtx.yml v1.21.3](https://raw.githubusercontent.com/bluenviron/mediamtx/v1.21.3/mediamtx.yml), [authentication](https://mediamtx.org/docs/features/authentication), [read/hls](https://mediamtx.org/docs/read/hls).
 - **cloudflared 2026.10.3**.
-  - Quick tunnels need no account or domain. They are meant "for testing and development", have no uptime guarantee, accept up to 200 in-flight requests (429 beyond that), do not support SSE, and get a new hostname every time.
+  - Quick tunnels need no account or domain. They are meant "for testing and development", have no uptime guarantee, accept up to 200 in-flight requests (429 beyond that), do not support SSE, and get a new hostname every time. **Open WebSockets count as in-flight requests** for as long as they are open: see [Quick tunnel limit](#quick-tunnel-limit-measured-2026-10-26).
   - WebSockets work: Cloudflare's Sandbox SDK tunnel docs say so, and our own test over a real quick tunnel confirmed it.
   - A `~/.cloudflared/config.yml` can override `--url`, so we pass an empty `--config` file owned by the app.
   - The URL is printed on stderr inside an ASCII box.
@@ -283,3 +288,36 @@ flowchart TB
 - **Node.js**: Node 24 (LTS, in maintenance since 2026-10-20, EOL 2028-04) is the runtime embedded via @yao-pkg/pkg. Node 26 becomes Active LTS on 2026-10-28. Official SEA is at stability "1.1 active development" and is not tested on macOS x64 upstream.
 - **Tray**: there is no maintained pure-Node cross-platform tray library (systray2's macOS helper is x86_64 only). We use our own Go helper with fyne.io/systray v1.12.2: cgo on macOS, pure Go on Windows and Linux. On Linux it uses the DBus StatusNotifierItem protocol and needs a tray host; GNOME needs the AppIndicator extension, otherwise the app runs with the panel only.
 - **Port mapping**: we wrote our own minimal UPnP-IGD and NAT-PMP clients so they can be tested against a mock IGD. PCP is not implemented.
+
+## Quick tunnel limit (measured 2026-10-26)
+
+Cloudflare documents "200 in-flight requests" for quick tunnels, without saying whether an open WebSocket is one. We measured it once with `scripts/test/tunnel-limit/` (a local origin, one quick tunnel, one machine, 281 s): **cloudflared 2026.10.3** (macOS arm64, QUIC, one tunnel connection, edge `gig09`), Node 24.19.
+
+**Idle WebSockets** (25 more every 10 s, a small message every 2 s on each):
+
+| Open WebSockets | New upgrades | HTTP probe while open | Existing sockets dropped |
+|---|---|---|---|
+| 25 … 175 | all 101 | 200 | 0 |
+| 200 | all 101 | **429** | 0 |
+| 225 (attempted) | **all 429** (stayed at 200) | **429** | 0 |
+
+**Concurrent HTTP requests** (each held 2.5 s at the origin, two waves per step), alone and next to K open WebSockets:
+
+| Open WebSockets K | Requests fired | Answered 200 | 429 | Most at the origin at once |
+|---|---|---|---|---|
+| 0 | 100 / 150 / 180 / 195 | all | 0 | = fired |
+| 0 | 205 / 220 / 250 / 300 | 200 | 5 / 20 / 50 / 100 | 200 |
+| 0, slow body (headers sent, body 2.5 s) | 175 / 225 | 175 / 200 | 0 / 25 | 175 / 200 |
+| 50 | 125 / 165 / 175 | 125 / 150 / 150 | 0 / 15 / 25 | 125 / 150 / 150 |
+| 100 | 75 / 115 / 175 | 75 / 100 / 100 | 0 / 15 / 75 | 75 / 100 / 100 |
+| 150 | 25 / 65 | 25 / 50 | 0 / 15 | 25 / 50 |
+
+300 KB GETs in a closed loop showed the same ceiling: 170 workers next to 50 sockets got 150 answers and 320 × 429; 120 workers next to 100 sockets got 100 and 245 × 429.
+
+What this means:
+
+- **The limit is exactly 200 per tunnel, and every open WebSocket takes one slot for its whole life.** HTTP headroom is 200 − open WebSockets. A request is in flight until its response body ends (slow downloads count). Idle keep-alive connections do not count (hundreds stayed open between waves).
+- The 429 comes from Cloudflare's edge (`server: cloudflare`, empty body, no `Retry-After`); the request never reaches cloudflared or the origin, so only viewers can report it (`http429` in their stats). Sockets already open are not dropped when the limit is hit.
+- With the old two WebSockets per viewer (`/control` + `/tracker`), 100 viewers filled the tunnel before any video request. Now each viewer holds one (the tracker rides on `/control`), so the tunnel holds 200 − V − (video requests in flight). Video requests in flight per viewer are an estimate, not yet measured with real viewers: about 0.5 at peaks with P2P (a playlist every ~2 s, segment downloads not served by peers) and 1.5–3 without. **Practical maximum: about 120 viewers** (`QUICK_TUNNEL_MAX_VIEWERS`, the default `maxViewers`; about 80 if most viewers turn P2P off). The panel shows `warn.tunnelLimit` at 80 % of 200, from the measured open WebSockets + HTTP peak (`tunnelInFlight`) or that estimate, whichever is higher.
+- Side observation: under our heaviest load (about 40 Mbit/s up), the tunnel's single QUIC connection timed out once ("no recent network activity") and reconnected in about 1 s to another edge (`gig08`) with the same hostname. Every open WebSocket (150) dropped at once and the requests in flight failed (502 / connection reset). Viewers reconnect `/control` with back-off; this is one more reason not to run the tunnel near its limit.
+- For a bigger audience: a named tunnel on your own domain (no documented in-flight cap), Direct mode, or another provider (`tunnel.provider`).

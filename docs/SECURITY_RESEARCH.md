@@ -66,7 +66,7 @@ Sizing for a big stream: 300 viewers × 3 Mbps × 2 h ≈ **810 GB at about 900 
 
 | Rank | Option | Account (who) | Free limits that matter for video | WebSocket | Hides IP | DDoS absorption | Brazil PoP | Bundle/automate | Verdict |
 |---|---|---|---|---|---|---|---|---|---|
-| A | **Cloudflare quick tunnel** (current default) | None | No byte cap published; **200 in-flight requests**, then 429; no SSE; no uptime guarantee; "testing and development" [11] | Yes [66] | Yes | Unmetered L3–L7 on all plans [14] (that quick tunnels get it is inferred) | Yes | `cloudflared` Apache-2.0, already bundled | **Keep as default.** ToS risk: free plans must use paid services for video [12]; the Tunnel FAQ applies this to public hostnames [13] |
+| A | **Cloudflare quick tunnel** (current default) | None | No byte cap published; **200 in-flight requests**, then 429 (open WebSockets count: measured 2026-10-26, ARCHITECTURE.md); no SSE; no uptime guarantee; "testing and development" [11] | Yes [66] | Yes | Unmetered L3–L7 on all plans [14] (that quick tunnels get it is inferred) | Yes | `cloudflared` Apache-2.0, already bundled | **Keep as default.** ToS risk: free plans must use paid services for video [12]; the Tunnel FAQ applies this to public hostnames [13] |
 | A | localhost.run (plain `ssh -R`) | None | "There is a speed limit" (number unpublished); domain changes "after a few hours" [16] | Unverified | Yes | Unknown | Unknown | No binary (system `ssh`) | Fallback candidate; **measure throughput first** |
 | A | Pinggy free (plain `ssh`) | None | "Unlimited data", but **60-minute timeout and a new URL** [17] | Unverified | Yes | Unknown | Yes [17] | No binary | Only for short lives (or reconnect plus re-announce) |
 | A | Serveo | None | Interstitial page on free; ToS says dev/testing/demos only [18] | Unverified | Yes | Unknown | Unknown | No binary | Not suitable |
@@ -176,7 +176,7 @@ Sizing for a big stream: 300 viewers × 3 Mbps × 2 h ≈ **810 GB at about 900 
 | Slow requests | Fastify timeouts set | Also Node `headersTimeout` 5–10 s, `maxRequestsPerSocket` 100, `maxHeaderSize` 8 KiB (Node/Fastify docs warn to set timeouts when no proxy is in front) | [55][56] |
 | Overload | — | `@fastify/under-pressure` (MIT): 503 when event-loop delay is over ~1 s or heap is over ~75% | [57] |
 | WebSocket | `maxPayload` 64 KB/4 KB, 60 and 30 msgs/10 s, deflate off | Good (`ws` default is 100 MiB, so keep it explicit) | [58] |
-| Tunnel concurrency | 200 in-flight (warning exists) | P2P keeps HTTP load down; keep `errorRetry` backoff on 429 | [11] |
+| Tunnel concurrency | 200 in flight, WebSockets included (measured); one WebSocket per viewer (tracker inside `/control`); `maxViewers` 120; panel warning from open sockets + HTTP peak | P2P keeps HTTP load down; keep `errorRetry` backoff on 429 | [11] |
 | Join challenge | **✅ Implemented** (ALTCHA protocol, see below) | **ALTCHA** (MIT): `/dist/external` build ≈ 31 KB gzipped plus a 2 KB worker served from `'self'`; works with `script-src 'self'; style-src 'self'; worker-src 'self'` (SHA/PBKDF2 only); server `altcha-lib` (MIT) | [59] |
 | Panic: rotate under attack | Manual "Generate new link" | One click: new secret + new quick-tunnel hostname; current sessions get a one-time re-join ticket via `/control`; the attacker's target vanishes | design |
 | Members-only edge gate | — | Spike only: "Protected Quick Tunnels" (`--allowed-mail`, Oct 2026) puts an email one-time PIN at Cloudflare's edge, so floods never reach the PC. But it needs member emails and sessions end after **4 h** | [15] |

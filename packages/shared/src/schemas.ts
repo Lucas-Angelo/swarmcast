@@ -398,6 +398,8 @@ export interface AdminState {
     p2pSharePercent: number;
     originUploadMbps: number;
     httpInFlight: number;
+    /** Open WebSockets + HTTP requests in progress (recent peak): what a quick tunnel limits to 200. */
+    tunnelInFlight: number;
     rateLimited429: number;
   };
   /** English warning texts. */
