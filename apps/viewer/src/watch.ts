@@ -296,6 +296,12 @@ async function main(): Promise<void> {
     const { video, audio } = liveDetails();
     return mismatchWindow(video, audio);
   };
+  // The shortest playlist in use, mismatch or not (short at stream start, or a server keeping
+  // fewer segments): the adaptive delay must stay inside it.
+  const shortestWindow = (): PlaylistWindow | null => {
+    const d = Object.values(liveDetails());
+    return d.length === 0 ? null : { windowS: Math.min(...d.map((x) => x.totalduration)), targetDurationS: Math.max(...d.map((x) => x.targetduration)) };
+  };
   const windowStart = (): number | null => {
     const d = Object.values(liveDetails());
     return d.length === 0 ? null : Math.max(...d.map((x) => x.fragmentStart));
@@ -310,7 +316,10 @@ async function main(): Promise<void> {
     const w = playlistWindow();
     const fit = latencyFor(loadProfile(), w);
     const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
-    adaptive?.setCeiling(w ? Math.max(2 * w.targetDurationS, Math.floor(fit.liveMaxLatencyDuration - 2 * w.targetDurationS)) : null);
+    // Same rule as latencyFor, on the shortest window: liveSyncDuration ≤ min(max, window − 2 TD) − 2 TD.
+    const sw = shortestWindow();
+    const top = sw ? latencyFor(loadProfile(), sw).liveMaxLatencyDuration : null;
+    adaptive?.setCeiling(sw && top !== null ? Math.max(2 * sw.targetDurationS, Math.floor(top - 2 * sw.targetDurationS)) : null);
     if (hls.config.liveMaxLatencyDuration !== max) {
       debugLog(`live delay max ${max}s for window ${JSON.stringify(w)}`);
       hls.config.liveMaxLatencyDuration = max;

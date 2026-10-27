@@ -247,7 +247,7 @@ export class DelayController {
     this.profile = profile;
     this.bounds = this.boundsOverride ?? ADAPTIVE_DELAY[profile];
     this.tuning = scaledTuning(TUNING[profile], this.speed);
-    this.targetS = clamp(this.bounds.initial, this.minS, this.maxS);
+    this.targetS = clamp(this.bounds.initial, this.bounds.min, this.bounds.max);
     this.state = 'steady';
     this.rateMode = 'normal';
     this.frags = [];
@@ -258,8 +258,9 @@ export class DelayController {
     // Stall and P2P memory survive a profile switch: the network did not change.
   }
 
+  /** The target to play at: the network's target, capped by the playlist ceiling. */
   get target(): number {
-    return this.targetS;
+    return clamp(this.targetS, this.minS, this.maxS);
   }
 
   get networkState(): NetworkState {
@@ -271,8 +272,9 @@ export class DelayController {
    * older server whose audio playlist is shorter than the video one), null = none.
    */
   setCeiling(seconds: number | null): void {
+    // Only caps what is played: the network's own target is kept, so a window that grows (the
+    // stream just started) lets the delay go back to it.
     this.ceiling = seconds !== null && Number.isFinite(seconds) && seconds > 0 ? seconds : null;
-    this.targetS = clamp(this.targetS, this.minS, this.maxS);
   }
 
   /** Highest target now: the profile bound, lowered by the playlist ceiling if any. */
@@ -314,13 +316,13 @@ export class DelayController {
     this.lastStallAt = now;
     const step = tu.stallStepS * Math.min(3, severity);
     const base = Math.max(this.targetS, latency ?? this.targetS);
-    this.targetS = clamp(base + step, this.minS, this.maxS);
+    this.targetS = clamp(base + step, this.bounds.min, this.bounds.max);
     this.enterUnstable(now);
     this.rateMode = 'normal';
-    if (latency === null || !Number.isFinite(latency)) return { target: this.targetS, holdS: 0 };
+    if (latency === null || !Number.isFinite(latency)) return { target: this.target, holdS: 0 };
     const room = this.maxS - latency;
-    const holdS = clamp(Math.min(this.targetS - latency, room), 0, tu.maxHoldS);
-    return { target: this.targetS, holdS: holdS >= 0.5 ? Math.round(holdS * 10) / 10 : 0 };
+    const holdS = clamp(Math.min(this.target - latency, room), 0, tu.maxHoldS);
+    return { target: this.target, holdS: holdS >= 0.5 ? Math.round(holdS * 10) / 10 : 0 };
   }
 
   /** Playback resumed: the delay the stall added stays (the target never sits below it). */
@@ -328,7 +330,7 @@ export class DelayController {
     const last = this.stalls[this.stalls.length - 1];
     if (last) last.durationS = Math.max(0, durationS);
     this.lastStallAt = now;
-    if (latency !== null && Number.isFinite(latency)) this.targetS = clamp(Math.max(this.targetS, latency), this.minS, this.maxS);
+    if (latency !== null && Number.isFinite(latency)) this.targetS = clamp(Math.max(this.targetS, latency), this.bounds.min, this.bounds.max);
   }
 
   tick(input: TickInput): Decision {
@@ -342,7 +344,7 @@ export class DelayController {
     this.updateState(now, sig, input);
 
     // Target.
-    const floor = input.p2pEnabled !== false && now - this.lastP2PAt <= tu.p2pMemoryS ? Math.min(this.maxS, Math.max(this.minS, this.bounds.p2pMin)) : this.minS;
+    const floor = input.p2pEnabled !== false && now - this.lastP2PAt <= tu.p2pMemoryS ? Math.max(this.bounds.min, this.bounds.p2pMin) : this.bounds.min;
     if (this.state === 'firm') {
       if (this.targetS > floor) {
         let next = Math.max(floor, this.targetS - tu.decayPerS * dt);
@@ -353,11 +355,11 @@ export class DelayController {
         this.targetS = next;
       } else this.targetS = Math.min(floor, this.targetS + tu.decayPerS * dt);
     } else if (this.state === 'unstable' && this.unstableNow(sig)) {
-      this.targetS = Math.min(this.maxS, this.targetS + tu.raisePerS * dt);
+      this.targetS = Math.min(this.bounds.max, this.targetS + tu.raisePerS * dt);
     }
-    this.targetS = clamp(this.targetS, this.minS, this.maxS);
+    this.targetS = clamp(this.targetS, this.bounds.min, this.bounds.max);
 
-    return { target: this.targetS, playbackRate: this.rate(input), state: this.state, rateMode: this.rateMode };
+    return { target: this.target, playbackRate: this.rate(input), state: this.state, rateMode: this.rateMode };
   }
 
   private record(input: TickInput): void {
@@ -494,7 +496,7 @@ export class DelayController {
       this.rateMode = 'normal';
       return 1;
     }
-    const d = input.latency - this.targetS;
+    const d = input.latency - this.target;
     const overMax = input.latency > this.maxS + tu.catchUp.stopBelow;
     // Catch up (lower the delay): never while the network is unstable unless the delay is past
     // the bounds, and never on a thin buffer.

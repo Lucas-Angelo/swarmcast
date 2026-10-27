@@ -67,7 +67,9 @@ export async function startStallMonitor(page: Page): Promise<void> {
     const st = { last: v.currentTime, at: performance.now(), max: 0, timer: 0 };
     st.timer = window.setInterval(() => {
       const now = performance.now();
-      if (v.paused || v.currentTime > st.last + 0.05) {
+      // The adaptive delay's hold inside a stall pauses the video, but the viewer sees a freeze.
+      const held = (window as unknown as { __swarmcast?: { delay?: { holding?: boolean } | null } }).__swarmcast?.delay?.holding === true;
+      if ((v.paused && !held) || v.currentTime > st.last + 0.05) {
         st.last = v.currentTime;
         st.at = now;
       } else {
@@ -82,7 +84,8 @@ export async function stallReport(page: Page): Promise<{ maxStallMs: number; cur
   return page.evaluate(() => {
     const st = (window as unknown as { __stall: { last: number; at: number; max: number } }).__stall;
     const v = document.querySelector('video')!;
-    const current = v.paused || v.currentTime > st.last + 0.05 ? 0 : performance.now() - st.at;
+    const held = (window as unknown as { __swarmcast?: { delay?: { holding?: boolean } | null } }).__swarmcast?.delay?.holding === true;
+    const current = (v.paused && !held) || v.currentTime > st.last + 0.05 ? 0 : performance.now() - st.at;
     return { maxStallMs: Math.max(st.max, current), currentStallMs: current, currentTime: v.currentTime };
   });
 }

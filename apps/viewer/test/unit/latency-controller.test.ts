@@ -165,6 +165,23 @@ describe('bounds', () => {
     expect(ctl.currentBounds.max).toBe(30);
   });
 
+  it('a short window at stream start caps the delay only until the playlists grow', () => {
+    const ctl = new DelayController({ profile: 'stable', now: 0 });
+    ctl.setCeiling(6);
+    expect(ctl.target).toBe(6);
+    ctl.tick({ now: 1, latency: 6, forwardBuffer: 4, bandwidthEstimate: 9_000_000, levelBitrate: BITRATE, playing: true });
+    ctl.setCeiling(null);
+    expect(ctl.target).toBe(20);
+  });
+
+  it('a delay above the ceiling (the window shrank) is caught up, not slowed down further', () => {
+    const ctl = new DelayController({ profile: 'stable', now: 0 });
+    ctl.setCeiling(12);
+    let rate = 0;
+    for (let t = 0; t < 30; t++) rate = ctl.tick({ now: t, latency: 18, forwardBuffer: 16, bandwidthEstimate: 9_000_000, levelBitrate: BITRATE, playing: true }).playbackRate;
+    expect(rate).toBeGreaterThan(1);
+  });
+
   it('the P2P floor applies only while P2P is on', () => {
     const net = (): Net => ({ loadRatio: 0.15, bw: 20_000_000, p2p: 0.5, p2pRatio: 0.5 });
     const on = simulate({ seconds: 600, net });

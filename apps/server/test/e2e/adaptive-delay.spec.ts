@@ -121,7 +121,9 @@ test('on a throttled, oscillating network the delay rises and stalls stay rare',
     for (let k = 0; k < 5; k++) {
       await page.waitForTimeout(2000);
       last = await delayOf(page);
-      maxRate = Math.max(maxRate, last.playbackRate);
+      // Before the controller has seen the network wobble it may still catch up a little; once
+      // it calls the network unstable it never speeds up.
+      if (last.state === 'unstable') maxRate = Math.max(maxRate, last.playbackRate);
       maxTarget = Math.max(maxTarget, last.target);
     }
   }
