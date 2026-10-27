@@ -38,7 +38,7 @@ export default defineConfig({
     fontLicenses,
     starlight({
       title: { en: `${brand.name} guide`, 'pt-BR': `Guia do ${brand.name}` },
-      description: 'SwarmCast: members-only live streaming from your own computer. Free, private, open source.',
+      description: 'SwarmCast: private, members-only live streams straight from OBS on your own PC. Free and open source.',
       favicon: brand.favicon,
       defaultLocale: 'root',
       locales: {
@@ -49,6 +49,10 @@ export default defineConfig({
       editLink: { baseUrl: `${links.repo}/edit/main/site/` },
       lastUpdated: false,
       credits: false,
+      // Link previews and search tags on every guide page (Open Graph, Twitter, og:image per language).
+      routeMiddleware: './src/route-data.ts',
+      // A bilingual "page not found" lives in src/pages/404.astro (GitHub Pages serves one 404.html).
+      disable404Route: true,
       // Colours, font, radii: assets/brand/tokens.css (via tokens.css), mapped onto Starlight.
       customCss: ['./src/styles/tokens.css', './src/styles/ui.css', './src/styles/starlight.css'],
       components: {

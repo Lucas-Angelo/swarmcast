@@ -29,10 +29,15 @@ export function readTokens(css = fs.readFileSync(TOKENS_CSS, 'utf8')) {
   return { light, dark: { ...light, ...dark } };
 }
 
-/** Background colours for <meta name="theme-color">. */
-export function themeColors() {
+/**
+ * Background colours for <meta name="theme-color">. Pass the CSS text when the caller is bundled
+ * (an Astro component: import it with `?raw`), where this file's own path no longer points at the
+ * repository.
+ * @param {string} [css]
+ */
+export function themeColors(css) {
   try {
-    const { light, dark } = readTokens();
+    const { light, dark } = readTokens(css);
     return { light: light['--sc-bg'] ?? '#ffffff', dark: dark['--sc-bg'] ?? '#111111' };
   } catch {
     return { light: '#ffffff', dark: '#111111' };

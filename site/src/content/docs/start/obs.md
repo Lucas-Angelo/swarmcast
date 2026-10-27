@@ -1,6 +1,6 @@
 ---
 title: Set up OBS
-description: Connect OBS Studio to SwarmCast once. Send the same scene to Twitch (or any platform) and SwarmCast, or a different scene to each.
+description: Connect OBS Studio to SwarmCast once for a private, members-only stream. Send it the same scene as Twitch, or a different one.
 tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 2 }
 ---
 

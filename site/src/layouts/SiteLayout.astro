@@ -10,7 +10,10 @@ import Footer from '../components/Footer.astro';
 import { brand, links } from '../brand.mjs';
 import { langRedirectScript } from '../lang-redirect.mjs';
 import { themeColors } from '../tokens.mjs';
+import tokensCss from '../../../assets/brand/tokens.css?raw';
 import { pagePath, tr, type SiteLang } from '../lib/i18n';
+import { appJsonLd, jsonLdText, socialTags } from '../lib/seo';
+import { version } from '../../../package.json';
 
 interface Props {
   lang: SiteLang;
@@ -18,12 +21,17 @@ interface Props {
   slug: string;
   title: string;
   description: string;
+  /** The "page not found" page: no canonical URL or alternates, not indexed, no language redirect. */
+  notFound?: boolean;
 }
-const { lang, slug, title, description } = Astro.props;
-const colors = themeColors();
+const { lang, slug, title, description, notFound = false } = Astro.props;
+const colors = themeColors(tokensCss);
 const en = pagePath('en', slug);
 const pt = pagePath('pt-BR', slug);
 const canonical = new URL(lang === 'en' ? en : pt, links.site).href;
+const social = socialTags({ lang, title, description, url: notFound ? undefined : canonical, type: 'website' });
+// Structured data for search engines, on the landing pages only (version from the root package.json).
+const jsonLd = slug === '' && !notFound ? jsonLdText(appJsonLd({ lang, description, url: canonical, version })) : undefined;
 const favicon = `${links.base}${brand.favicon}`;
 const themeScript = `(function () {
   var t = '';
@@ -46,10 +54,18 @@ const themeScript = `(function () {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{title}</title>
     <meta name="description" content={description} />
-    <link rel="canonical" href={canonical} />
-    <link rel="alternate" hreflang="en" href={new URL(en, links.site).href} />
-    <link rel="alternate" hreflang="pt-BR" href={new URL(pt, links.site).href} />
-    <link rel="alternate" hreflang="x-default" href={new URL(en, links.site).href} />
+    {
+      notFound ? (
+        <meta name="robots" content="noindex" />
+      ) : (
+        <>
+          <link rel="canonical" href={canonical} />
+          <link rel="alternate" hreflang="en" href={new URL(en, links.site).href} />
+          <link rel="alternate" hreflang="pt-BR" href={new URL(pt, links.site).href} />
+          <link rel="alternate" hreflang="x-default" href={new URL(en, links.site).href} />
+        </>
+      )
+    }
     <link rel="icon" href={favicon} type="image/svg+xml" />
     <link rel="icon" href={`${links.base}/favicon-32.png`} type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href={`${links.base}/apple-touch-icon.png`} />
@@ -57,14 +73,9 @@ const themeScript = `(function () {
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content={colors.light} />
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content={colors.dark} />
-    <meta property="og:type" content="website" />
-    <meta property="og:title" content={title} />
-    <meta property="og:description" content={description} />
-    <meta property="og:url" content={canonical} />
-    <meta property="og:site_name" content={brand.name} />
-    <meta property="og:locale" content={lang === 'en' ? 'en_US' : 'pt_BR'} />
-    <meta name="twitter:card" content="summary" />
-    <script is:inline set:html={langRedirectScript(links.base)} />
+    {social.map((t) => <meta {...t.attrs} />)}
+    {jsonLd && <script is:inline type="application/ld+json" set:html={jsonLd} />}
+    {!notFound && <script is:inline set:html={langRedirectScript(links.base)} />}
     <script is:inline set:html={themeScript} />
   </head>
   <body>

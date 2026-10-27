@@ -13,7 +13,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "og": "node scripts/social-cards.mjs"
   },
   "dependencies": {
     "@astrojs/starlight": "~0.42.7",

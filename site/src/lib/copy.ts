@@ -61,6 +61,8 @@ export interface Copy {
     legal: string;
   };
   download: {
+    /** The <title> and link-preview title (the H1 is `title`). */
+    metaTitle: string;
     title: string;
     description: string;
     lead: string;
@@ -81,11 +83,11 @@ export interface Copy {
 
 const en: Copy = {
   meta: {
-    title: 'SwarmCast: members-only lives from your own PC',
-    description: 'Stream a members-only live from your own computer through a secret link. Your members watch in the browser. Free, private and open source, for Windows, macOS and Linux.',
+    title: 'SwarmCast: free members-only live streams from your PC',
+    description: 'Private, members-only live streams straight from OBS on your own PC. Subscribers watch through a secret link in the browser. Free, open source, no accounts.',
   },
   hero: {
-    title: 'Members-only lives, straight from your PC.',
+    title: 'Members-only live streams, straight from your PC.',
     lead: 'Keep streaming from OBS. Send one secret link, and your members watch in their browser.',
     shotAlt: 'The SwarmCast panel during a live: 3 viewers, the secret link for subscribers, the OBS settings, viewers helping through P2P, and the protection card.',
     shotCaption: 'The SwarmCast panel during a live.',
@@ -126,7 +128,7 @@ const en: Copy = {
   faq: {
     title: 'Questions',
     items: [
-      { q: 'Is it really free?', a: 'Yes. SwarmCast is free and open source (MIT license). No account, no subscription, no ads, and no server to pay for: it runs on your computer.' },
+      { q: 'Is it really free?', a: 'Yes. SwarmCast is a free, open-source (MIT license) alternative to paid members-only streaming. No account, no subscription, no ads, and no server to pay for: it runs on your computer.' },
       { q: 'Does it replace Twitch, YouTube or Kick?', a: 'No. It is for a members-only live next to your public one, or on its own. OBS can send to both at the same time.' },
       { q: 'How many people can watch?', a: 'It depends on your upload speed and on how many viewers help through P2P; the panel shows an estimate. You need at least 10 Mbps of upload; 50 Mbps or more is recommended.' },
       { q: 'Why does Windows or macOS warn me when I install it?', a: 'SwarmCast has no paid code-signing certificate, so the system shows a warning the first time. This is normal for free, open-source apps. The download page shows how to continue and how to check the file.' },
@@ -141,7 +143,7 @@ const en: Copy = {
     guide: 'Read the guide',
   },
   footer: {
-    tagline: 'Members-only lives from your own PC. Free and open source.',
+    tagline: 'Members-only live streams from your own PC. Free and open source.',
     product: 'Product',
     help: 'Help',
     project: 'Project',
@@ -161,6 +163,7 @@ const en: Copy = {
     legal: 'SwarmCast is free software under the MIT license. No cookies, no trackers.',
   },
   download: {
+    metaTitle: 'Download SwarmCast for Windows, macOS and Linux',
     title: 'Download SwarmCast',
     description: 'Download the SwarmCast desktop app for Windows, macOS or Linux. Free and open source, with checksums for every file.',
     lead: 'Free and open source, for Windows, macOS and Linux.',
@@ -235,8 +238,8 @@ const en: Copy = {
 
 const pt: Copy = {
   meta: {
-    title: 'SwarmCast: lives só para membros, direto do seu PC',
-    description: 'Faça uma live só para membros direto do seu computador, por um link secreto. Os membros assistem pelo navegador. Grátis, privado e de código aberto, para Windows, macOS e Linux.',
+    title: 'SwarmCast: live só para membros, grátis e direto do seu PC',
+    description: 'Faça lives privadas só para membros direto do OBS, no seu PC. Os inscritos assistem pelo navegador com um link secreto. Grátis, código aberto e sem cadastro.',
   },
   hero: {
     title: 'Lives só para membros, direto do seu PC.',
@@ -280,7 +283,7 @@ const pt: Copy = {
   faq: {
     title: 'Perguntas',
     items: [
-      { q: 'É grátis mesmo?', a: 'Sim. O SwarmCast é gratuito e de código aberto (licença MIT). Sem conta, sem assinatura, sem anúncio e sem servidor para pagar: ele roda no seu computador.' },
+      { q: 'É grátis mesmo?', a: 'Sim. O SwarmCast é gratuito e de código aberto (licença MIT): uma alternativa grátis às plataformas pagas de live fechada. Sem conta, sem assinatura, sem anúncio e sem servidor para pagar: ele roda no seu computador.' },
       { q: 'Substitui a Twitch, o YouTube ou a Kick?', a: 'Não. É para uma live só para membros junto com a sua live pública, ou sozinha. O OBS consegue mandar para os dois ao mesmo tempo.' },
       { q: 'Quantas pessoas podem assistir?', a: 'Depende do seu upload e de quantos espectadores ajudam pelo P2P; o painel mostra uma estimativa. Você precisa de pelo menos 10 Mbps de upload; o recomendado é 50 Mbps ou mais.' },
       { q: 'Por que o Windows ou o macOS dá um aviso na instalação?', a: 'O SwarmCast não tem um certificado pago de assinatura de código, então o sistema mostra um aviso na primeira vez. Isso é normal em apps gratuitos e de código aberto. A página de download mostra como continuar e como conferir o arquivo.' },
@@ -315,6 +318,7 @@ const pt: Copy = {
     legal: 'O SwarmCast é software livre, com licença MIT. Sem cookies e sem rastreadores.',
   },
   download: {
+    metaTitle: 'Baixar o SwarmCast para Windows, macOS e Linux',
     title: 'Baixar o SwarmCast',
     description: 'Baixe o app do SwarmCast para Windows, macOS ou Linux. Gratuito e de código aberto, com checksums de todos os arquivos.',
     lead: 'Gratuito e de código aberto, para Windows, macOS e Linux.',

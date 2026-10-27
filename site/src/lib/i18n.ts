@@ -64,7 +64,7 @@ export const ui = {
     'dl.copy': 'Copy link',
     'dl.copied': 'Link copied',
     'dl.share': 'Share',
-    'dl.shareTitle': 'SwarmCast: members-only lives from your own PC',
+    'dl.shareTitle': 'SwarmCast: members-only live streams from your own PC',
     'os.windows': 'Windows',
     'os.macos': 'macOS',
     'os.linux': 'Linux',

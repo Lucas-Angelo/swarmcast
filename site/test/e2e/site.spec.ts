@@ -72,7 +72,7 @@ test.describe('landing pages', () => {
     await page.goto('/swarmcast/');
     await expect(page).toHaveURL(/\/swarmcast\/$/);
     await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members-only lives, straight from your PC.');
+    await expect(page.getByRole('heading', { level: 1 })).toHaveText('Members-only live streams, straight from your PC.');
     await expect(page.getByText('Keep streaming from OBS.')).toBeVisible();
     await expect(page.getByRole('img', { name: /The SwarmCast panel during a live/ })).toBeVisible();
     await expect(page.getByTestId('how-it-works').locator('li')).toHaveCount(4);
@@ -111,7 +111,7 @@ test.describe('landing pages', () => {
     await page.goto('/swarmcast/');
     const faq = page.getByTestId('faq');
     await faq.getByText('Is it really free?').click();
-    await expect(faq.getByText('Yes. SwarmCast is free and open source')).toBeVisible();
+    await expect(faq.getByText('Yes. SwarmCast is a free, open-source')).toBeVisible();
     await expect(page.getByRole('link', { name: 'More answers in the guide' })).toHaveAttribute('href', '/swarmcast/help/troubleshooting/#frequent-questions');
     await context.close();
   });

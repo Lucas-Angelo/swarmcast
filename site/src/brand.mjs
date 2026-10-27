@@ -10,6 +10,10 @@
 //   favicon  A file in site/public/ (served at /swarmcast/<name>): SVG, PNG or ICO.
 //   mascot   { file: 'mascot.png', alt: { en: '…', 'pt-BR': '…' } } with the file in
 //            assets/brand/. Shown in the landing page's closing section. undefined = no mascot.
+//   author   Who makes it, for the search engines' structured data (JSON-LD on the landing page).
+//
+// The social preview cards (public/og/) are rendered from assets/brand/ by
+// scripts/social-cards.mjs; rerun it after a brand change.
 
 /**
  * @type {{
@@ -17,6 +21,7 @@
  *   logo: undefined | { mark?: string, markDark?: string, full?: string, fullDark?: string, alt: string },
  *   favicon: string,
  *   mascot: undefined | { file: string, alt: { en: string, 'pt-BR': string } },
+ *   author: { name: string, url: string },
  * }}
  */
 export const brand = {
@@ -27,6 +32,7 @@ export const brand = {
     file: 'mascot/mascot-hello.png',
     alt: { en: 'The SwarmCast bee waving hello', 'pt-BR': 'A abelha do SwarmCast acenando' },
   },
+  author: { name: 'Lucas Ângelo', url: 'https://github.com/Lucas-Angelo' },
 };
 
 /** Public URLs used across the site (kept here so a fork only changes one file). */

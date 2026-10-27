@@ -1,6 +1,6 @@
 ---
 title: Configurar o OBS
-description: Ligue o OBS Studio ao SwarmCast uma vez só. Mande a mesma cena para a Twitch (ou qualquer plataforma) e para o SwarmCast, ou uma cena diferente para cada um.
+description: Ligue o OBS Studio ao SwarmCast uma vez para fazer uma live fechada, só para membros. Mande a mesma cena da Twitch ou uma cena diferente.
 tableOfContents: { minHeadingLevel: 2, maxHeadingLevel: 2 }
 ---
 
