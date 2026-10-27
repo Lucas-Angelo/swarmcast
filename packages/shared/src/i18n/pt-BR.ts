@@ -172,12 +172,12 @@ export const ptBR: Messages = {
 
   'admin.p2p.title': 'Espectadores e ajuda P2P',
   'admin.p2p.tip':
-    'P2P (ponto a ponto): quem está com "Ajudar a transmissão" ligado (o padrão) repassa pedaços do vídeo para os outros, e seu PC envia menos. Cada pedaço é conferido com uma impressão digital assinada, então dados alterados são descartados.',
+    'P2P (ponto a ponto): quem liga "Ajudar a transmissão" (vem desligado por padrão) repassa pedaços do vídeo para os outros, e seu PC envia menos. Cada pedaço é conferido com uma impressão digital assinada, então dados alterados são descartados.',
   'admin.stat.watching': 'Assistindo',
   'admin.stat.watching.tip': 'Espectadores conectados agora (incluindo quem perdeu a conexão há menos de 30 segundos).',
   'admin.stat.helping': 'Ajudando via P2P',
   'admin.stat.helping.tip':
-    'Espectadores com "Ajudar a transmissão (P2P)" ligado (vem ligado por padrão) e com permissão. Eles trocam vídeo entre si e veem o IP uns dos outros. Seu IP continua escondido.',
+    'Espectadores com "Ajudar a transmissão (P2P)" ligado (vem desligado por padrão) e com permissão. Eles trocam vídeo entre si e veem o IP uns dos outros. Seu IP continua escondido.',
   'admin.stat.fromPeers': 'Vídeo vindo de peers',
   'admin.stat.fromPeers.tip':
     'Quanto do vídeo seus espectadores receberam uns dos outros em vez do seu PC (quem está conectado agora, desde que entrou). Quanto maior, menos upload para você.',
@@ -371,7 +371,7 @@ export const ptBR: Messages = {
   'watch.goLive.tipUnknown': 'Clique para pular para o momento atual.',
   'watch.p2p': 'Ajudar a transmissão (P2P)',
   'watch.p2p.tip':
-    'Compartilha o vídeo com outros espectadores para todo mundo assistir mais liso. Quem também estiver com isso ativado pode ver seu endereço IP, que só mostra sua localização aproximada (cidade) e sua operadora — não seu nome, endereço ou nada do seu aparelho. É o mesmo que acontece em jogos online e chamadas de vídeo. Você pode desligar quando quiser e continuar assistindo normalmente via HTTPS. Cada pedaço do vídeo é conferido, então ninguém consegue te mandar vídeo alterado.',
+    'Vem desligado por padrão. Ligue para compartilhar o vídeo com outros espectadores e todo mundo assistir mais liso. Quem também estiver com isso ativado pode ver seu endereço IP, que só mostra sua localização aproximada (cidade) e sua operadora — não seu nome, endereço ou nada do seu aparelho. É o mesmo que acontece em jogos online e chamadas de vídeo. Você pode desligar quando quiser e continuar assistindo normalmente via HTTPS. Cada pedaço do vídeo é conferido, então ninguém consegue te mandar vídeo alterado.',
   'watch.p2pUnavailable': 'P2P não está disponível neste aparelho. Você está assistindo via HTTPS.',
   'watch.p2pRevoked': 'Quem transmite desligou o P2P para você. Pode continuar assistindo normalmente.',
   'watch.p2pOffForAll': 'Quem transmite desligou o P2P nesta live. Pode continuar assistindo normalmente.',
@@ -756,7 +756,7 @@ export const ptBR: Messages = {
   'onb.share.none': 'O link aparece quando o SwarmCast estiver ligado.',
   'onb.share.subs': 'Mande só para os seus inscritos, por exemplo num canal do Discord só para subs.',
   'onb.share.viewers': 'Os espectadores digitam um apelido e assistem no navegador.',
-  'onb.share.p2p': '"{p2pKey}" vem ligado: os espectadores compartilham vídeo entre si.',
+  'onb.share.p2p': '"{p2pKey}" vem desligado por padrão: quem liga compartilha vídeo com os outros espectadores.',
   'onb.share.p2p.tip': 'Quem ajuda pelo P2P pode ver o IP dos outros que também ajudam (só cidade aproximada e provedor). No modo seguro ninguém vê o seu. Qualquer um pode desligar e continuar assistindo via HTTPS.',
   'onb.tour.title': 'Durante a live: o seu painel',
   'onb.tour.intro': 'Escolha uma área para ver onde ela fica no painel.',

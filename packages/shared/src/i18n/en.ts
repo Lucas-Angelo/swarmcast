@@ -176,12 +176,12 @@ export const en = {
 
   'admin.p2p.title': 'Viewers & P2P help',
   'admin.p2p.tip':
-    'P2P (peer-to-peer): viewers with "Help the stream" on (the default) pass video pieces to each other, so your PC uploads less. Every piece is checked against a signed fingerprint, so altered data is rejected.',
+    'P2P (peer-to-peer): viewers who turn on "Help the stream" (it is off by default) pass video pieces to each other, so your PC uploads less. Every piece is checked against a signed fingerprint, so altered data is rejected.',
   'admin.stat.watching': 'Watching',
   'admin.stat.watching.tip': 'Viewers connected right now (including anyone who lost connection less than 30 seconds ago).',
   'admin.stat.helping': 'Helping via P2P',
   'admin.stat.helping.tip':
-    'Viewers with "Help the stream (P2P)" on (it is on by default) who are allowed to use it. They share video with each other and can see each other\'s IP addresses. Your IP stays hidden.',
+    'Viewers who turned on "Help the stream (P2P)" (it is off by default) and are allowed to use it. They share video with each other and can see each other\'s IP addresses. Your IP stays hidden.',
   'admin.stat.fromPeers': 'Video from peers',
   'admin.stat.fromPeers.tip':
     'Share of the video your viewers got from each other instead of from your PC (viewers connected now, since they joined). Higher means less upload for you.',
@@ -375,7 +375,7 @@ export const en = {
   'watch.goLive.tipUnknown': 'Click to jump to the live moment.',
   'watch.p2p': 'Help the stream (P2P)',
   'watch.p2p.tip':
-    'Shares video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.',
+    'Off by default. Turn it on to share video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.',
   'watch.p2pUnavailable': 'P2P is not available on this device. You are watching over HTTPS.',
   'watch.p2pRevoked': 'The streamer turned off P2P for you. You can keep watching normally.',
   'watch.p2pOffForAll': 'The streamer turned off P2P for this live. You can keep watching normally.',
@@ -760,7 +760,7 @@ export const en = {
   'onb.share.none': 'The link shows up once SwarmCast is on.',
   'onb.share.subs': 'Send it only to your subscribers, for example in a subs-only Discord channel.',
   'onb.share.viewers': 'Viewers type a nickname and watch in the browser.',
-  'onb.share.p2p': '"{p2pKey}" is on by default: viewers share video with each other.',
+  'onb.share.p2p': '"{p2pKey}" is off by default: viewers who turn it on share video with each other.',
   'onb.share.p2p.tip': 'Viewers who help with P2P can see each other\'s IP address (approximate city and internet provider only). In Secure mode they never see yours. Anyone can turn it off and keep watching over HTTPS.',
   'onb.tour.title': 'During the live: your panel',
   'onb.tour.intro': 'Pick an area to see where it is in the panel.',

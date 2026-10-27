@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { admin, adminState, currentTime, join, liveLink, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, adminState, currentTime, join, liveLink, stats, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
 
@@ -14,11 +14,28 @@ test('a viewer joins with the live link, picks a nickname and watches', async ({
   const { context, page } = await join(browser, nick);
   await waitPlaying(page);
   await expect(page.locator('#status')).toHaveText('Live');
-  // "Help the stream (P2P)" is on by default.
-  await expect(page.locator('#p2p')).toBeChecked();
+  // "Help the stream (P2P)" is off by default (opt-in).
+  await expect(page.locator('#p2p')).not.toBeChecked();
   await expect.poll(async () => (await viewerByNick(nick))?.connected).toBe(true);
   // The secret never stays in the address bar.
   expect(page.url()).not.toContain('/join/');
+  await context.close();
+});
+
+test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', async ({ browser, browserName }) => {
+  const { context, page } = await join(browser, `optin-${browserName}`);
+  await waitPlaying(page);
+  const p2p = page.locator('#p2p');
+  await expect(p2p).not.toBeChecked();
+  await expect(p2p).toBeEnabled();
+  expect((await stats(page)).p2pEnabled).toBe(false);
+  await p2p.check();
+  await expect.poll(async () => (await stats(page)).p2pEnabled).toBe(true);
+  await expect(page.locator('#p2p-stats')).toContainText('P2P on');
+  // Same browser, next visit: still on.
+  await page.reload();
+  await expect(page.locator('#p2p')).toBeChecked();
+  await expect.poll(async () => (await stats(page)).p2pEnabled).toBe(true);
   await context.close();
 });
 

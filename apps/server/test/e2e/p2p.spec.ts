@@ -137,7 +137,7 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
 test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser, browserName }) => {
   const { context, page } = await join(browser, `allp2p-${browserName}`);
   await waitPlaying(page);
-  await expect(page.locator('#p2p')).toBeChecked();
+  await enableP2P(page);
   const settings = (await adminState()).settings;
   try {
     await adminApi<AdminState['settings']>('PUT', '/api/settings', { ...settings, allowViewerP2P: false });
@@ -233,7 +233,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await page.fill('#nickname', `steady-${browserName}`);
     await page.click('#join');
     await waitPlaying(page);
-    await expect(page.locator('#p2p')).toBeChecked();
+    await enableP2P(page);
     // Fault injection: the P2P core may no longer fetch anything over HTTPS by itself, only
     // from peers. That is the state seen live, where the core held a soon-needed segment
     // without ever starting it; here it holds every segment, waiting for the trickling peer.

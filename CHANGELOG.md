@@ -46,7 +46,7 @@ The desktop app release: SwarmCast now installs like any other app, opens in its
 - The panel's "not authorized" page explains that the panel only opens from the SwarmCast app on this computer and how to reopen it, in English or Portuguese, with the brand.
 - The start scripts never ask questions in the terminal: below the minimum they warn and continue. `--ask` / `-Ask` restores the question; `--yes` / `-Yes` still works.
 - The header button is now "Turn on SwarmCast" (it starts SwarmCast, not OBS).
-- "Help the stream (P2P)" is on by default; a viewer who turns it off keeps it off. The explanation moved into its tooltip.
+- "Help the stream (P2P)" is off by default; viewers can turn it on (and it stays on for them). The explanation moved into its tooltip.
 
 ### Fixed
 

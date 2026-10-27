@@ -3,7 +3,7 @@ title: Ajudar a transmissão (P2P)
 description: Como os espectadores se ajudam com o P2P, o que isso mostra sobre eles (uma localização aproximada) e como desligar.
 ---
 
-**Ajudar a transmissão (P2P)** é uma opção na página de quem assiste. Ela vem **ligada**. Quem deixa ligada passa pedaços do vídeo para os outros espectadores, então o seu computador manda menos e a live fica mais lisa para todo mundo. P2P quer dizer "peer to peer": de um espectador para outro.
+**Ajudar a transmissão (P2P)** é uma opção na página de quem assiste. Ela vem **desligada** por padrão: cada espectador decide se quer ligar. Quem deixa ligada passa pedaços do vídeo para os outros espectadores, então o seu computador manda menos e a live fica mais lisa para todo mundo. P2P quer dizer "peer to peer": de um espectador para outro.
 
 ![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), com quantos peers ajudam e quanto do vídeo veio deles.](../../../../assets/guides/viewers/pt-br/watch-phone.webp)
 

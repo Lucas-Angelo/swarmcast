@@ -101,13 +101,13 @@ function showViewerCount(count: number | null | undefined): void {
   }
 }
 
-/** The viewer's own P2P choice (on unless they turned it off before). */
+/** The viewer's own P2P choice: off unless they turned it on (opt-in; a saved "on" is kept). */
 const P2P_PREF_KEY = 'swarmcast.p2p';
 function p2pWanted(): boolean {
   try {
-    return localStorage.getItem(P2P_PREF_KEY) !== 'off';
+    return localStorage.getItem(P2P_PREF_KEY) === 'on';
   } catch {
-    return true;
+    return false;
   }
 }
 function rememberP2P(on: boolean): void {
@@ -238,7 +238,7 @@ async function main(): Promise<void> {
   video.disableRemotePlayback = true;
 
   const HlsWithP2P = HlsJsP2PEngine.injectMixin(Hls);
-  // P2P is on by default; a viewer who turned it off keeps it off; the streamer can forbid it.
+  // P2P is off by default (opt-in); a viewer who turned it on keeps it on; the streamer can forbid it.
   stats.p2pEnabled = p2pWanted() && stats.p2pAllowed;
   // Playback profile (docs/QUALITY.md): "stable" (~20 s behind live, the default) or
   // "low-delay" (~8 s). Segments further than highDemandTimeWindow from the playhead can come

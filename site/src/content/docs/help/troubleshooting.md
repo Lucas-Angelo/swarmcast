@@ -58,7 +58,7 @@ Their internet is probably slow. Their player moves to a smaller quality by itse
 
 ### It stutters for everyone
 
-1. Look at the warnings at the top of the panel. **"Too many viewers for your upload"**: ask viewers to keep **Help the stream (P2P)** on, or lower the OBS bitrate.
+1. Look at the warnings at the top of the panel. **"Too many viewers for your upload"**: ask viewers to turn on **Help the stream (P2P)** (it is off by default), or lower the OBS bitrate.
 2. Check that your upload is not used by something else (cloud backup, downloads, another stream with a high bitrate).
 3. If the free tunnel keeps failing, [Direct mode](/swarmcast/live/direct-mode/) is a last resort. Read its warning first.
 

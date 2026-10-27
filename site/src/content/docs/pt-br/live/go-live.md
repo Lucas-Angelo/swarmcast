@@ -43,7 +43,7 @@ As duas coisas que o OBS precisa, cada uma com um botão **Copiar**. A chave fic
 
 - **Espectadores e ajuda P2P:** quantos assistem e quantos ajudam por P2P.
 - **Seu upload agora:** quanto do seu upload o SwarmCast está usando. Nunca passa do **Upload máximo para espectadores**.
-- **Avisos** no topo, por exemplo **"Espectadores demais para o seu upload"**: peça para o pessoal deixar **Ajudar a transmissão (P2P)** ligado ([Ajudar a transmissão](/swarmcast/pt-br/live/p2p/)).
+- **Avisos** no topo, por exemplo **"Espectadores demais para o seu upload"**: peça para o pessoal ligar **Ajudar a transmissão (P2P)**, que vem desligado por padrão ([Ajudar a transmissão](/swarmcast/pt-br/live/p2p/)).
 
 ## Quando terminar
 

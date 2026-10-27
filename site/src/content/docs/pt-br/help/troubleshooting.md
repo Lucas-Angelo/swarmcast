@@ -58,7 +58,7 @@ Provavelmente a internet dele está lenta. O player desce de qualidade sozinho (
 
 ### Trava para todo mundo
 
-1. Veja os avisos no topo do painel. **"Espectadores demais para o seu upload"**: peça para o pessoal deixar **Ajudar a transmissão (P2P)** ligado, ou diminua a taxa de bits (bitrate) do OBS.
+1. Veja os avisos no topo do painel. **"Espectadores demais para o seu upload"**: peça para o pessoal ligar **Ajudar a transmissão (P2P)** (vem desligado por padrão), ou diminua a taxa de bits (bitrate) do OBS.
 2. Confira se nada mais está usando o seu upload (backup na nuvem, downloads, outra transmissão com bitrate alto).
 3. Se o túnel gratuito continuar falhando, o [modo direto](/swarmcast/pt-br/live/direct-mode/) é o último recurso. Leia o aviso antes.
 

@@ -165,7 +165,7 @@ export async function stats(page: Page): Promise<ViewerStats> {
   return page.evaluate(() => (window as unknown as { __swarmcast: { stats: ViewerStats } }).__swarmcast.stats);
 }
 
-/** Make sure P2P is on (it is on by default; `check` is a no-op when already checked). */
+/** Turn P2P on (it is off by default, opt-in; `check` is a no-op when already checked). */
 export async function enableP2P(page: Page): Promise<void> {
   await page.check('#p2p');
   await expect(page.locator('#p2p')).toBeChecked();

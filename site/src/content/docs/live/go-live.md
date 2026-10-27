@@ -43,7 +43,7 @@ The two things OBS needs, each with a **Copy** button. The key stays hidden: **n
 
 - **Viewers & P2P help:** how many watch and how many help through P2P.
 - **Your upload now:** how much of your upload SwarmCast uses. It never goes above **Max upload for viewers**.
-- **Warnings** at the top, for example **"Too many viewers for your upload"**: ask viewers to keep **Help the stream (P2P)** on ([Help the stream](/swarmcast/live/p2p/)).
+- **Warnings** at the top, for example **"Too many viewers for your upload"**: ask viewers to turn on **Help the stream (P2P)**, which is off by default ([Help the stream](/swarmcast/live/p2p/)).
 
 ## When you finish
 
