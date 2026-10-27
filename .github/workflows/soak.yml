@@ -1,0 +1,432 @@
+name: Soak
+
+# Runs the test suites many times to measure how stable they are, and writes one report: the
+# pass rate of every check, the flaky ones, a 95 % bound on each failure rate (rule of three),
+# durations and failure signatures (scripts/ci/soak-report.mjs, job summary and artifact).
+#
+# What runs comes from .github/soak-plan.json (suite x runners x repetitions). Every job sets up
+# like the normal workflow of its suite, then scripts/ci/soak-run.mjs calls the suite's usual
+# entry point (vitest, playwright, cargo test, the scripts/test harnesses) once per repetition.
+#
+# Start it:
+# - on a pull request: add the `soak` label (workflow_dispatch only works once this file is on
+#   the default branch). Remove and add the label again for another soak;
+# - once on main: `gh workflow run soak.yml [-f plan='<inline JSON or another plan file>']`.
+# It has no schedule: it is a measurement you start, not a gate.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      plan:
+        description: 'Plan: a file in the repo or inline JSON (see .github/soak-plan.json)'
+        default: .github/soak-plan.json
+
+permissions:
+  contents: read
+
+# One soak per pull request at a time; a new one waits for the running one.
+concurrency:
+  group: soak-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: '1'
+  CARGO_TERM_COLOR: always
+  SOAK_PLAN: ${{ inputs.plan || '.github/soak-plan.json' }}
+  # Tauri v2 build prerequisites on Linux (same list as desktop.yml).
+  LINUX_BUILD_DEPS: build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils
+
+jobs:
+  plan:
+    name: Plan
+    if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'soak'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read # find the desktop.yml run whose installers desktop-test uses
+    outputs:
+      node: ${{ steps.plan.outputs.node }}
+      rust: ${{ steps.plan.outputs.rust }}
+      windows: ${{ steps.plan.outputs.windows }}
+      preflight: ${{ steps.plan.outputs.preflight }}
+      scripts: ${{ steps.plan.outputs.scripts }}
+      desktop_test: ${{ steps.plan.outputs.desktop_test }}
+      desktop_dmg: ${{ steps.plan.outputs.desktop_dmg }}
+      apt: ${{ steps.plan.outputs.apt }}
+      desktop_run: ${{ steps.desktop.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Expand the plan into job matrices
+        id: plan
+        run: |
+          node scripts/ci/soak-plan.mjs "$SOAK_PLAN" | tee -a "$GITHUB_OUTPUT" | cut -c1-200
+      # desktop-test installs the installers that desktop.yml built for this commit (or, when
+      # that run has none, for the newest run of the branch): no build in the soak.
+      - name: Find the desktop installers to test
+        id: desktop
+        if: steps.plan.outputs.desktop_test != '[]'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+        run: |
+          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow desktop.yml --commit "$SHA" --json databaseId -q '.[0].databaseId')"
+          [ -n "$run" ] || run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow desktop.yml --branch "$BRANCH" --json databaseId -q '.[0].databaseId')"
+          [ -n "$run" ] || { echo "::error::No desktop.yml run for $SHA or $BRANCH: desktop-test has no installers"; exit 1; }
+          echo "desktop-test uses the installers of https://github.com/$GITHUB_REPOSITORY/actions/runs/$run"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------- unit, integration, E2E
+  node:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.node != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.node) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          ffmpeg: ${{ matrix.suite != 'unit' }}
+      # The rest is what ci.yml does before the same suite.
+      - name: Install the website's dependencies (unit)
+        if: matrix.suite == 'unit'
+        run: npm ci --prefix site --no-audit --no-fund
+      - name: Binaries and build (integration, E2E)
+        if: matrix.suite != 'unit'
+        run: |
+          npm run fetch-bins
+          npm run build
+      - name: Playwright browsers and their system libraries (Linux)
+        if: matrix.suite == 'e2e' && runner.os == 'Linux'
+        run: |
+          npx playwright install firefox webkit
+          .github/scripts/apt-retry.sh --run npx playwright install-deps firefox webkit
+      - name: Playwright browsers and their system libraries (macOS)
+        if: matrix.suite == 'e2e' && runner.os == 'macOS'
+        run: npx playwright install --with-deps chromium firefox webkit
+      - &soak-run
+        name: Soak ${{ matrix.suite }} (×${{ matrix.repeat }})
+        env:
+          SOAK: ${{ toJSON(matrix) }}
+        run: node scripts/ci/soak-run.mjs
+      - &soak-upload
+        name: Upload the soak results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-${{ matrix.id }}
+          path: soak-results/
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------- Rust (apps/desktop/src-tauri)
+  rust:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.rust != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.rust) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: 'false'
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          save-if: false
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          .github/scripts/apt-retry.sh update
+          # shellcheck disable=SC2086 # a list of packages
+          .github/scripts/apt-retry.sh install -y --no-install-recommends $LINUX_BUILD_DEPS
+      # Compile once, so the soaked runs time the tests only.
+      - name: Build the tests
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked --no-run
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- Windows end-to-end suites
+  windows:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.windows != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.windows) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SC_RUNNER_LABEL: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          go: 'true'
+          ffmpeg: 'true'
+      # The rest is what windows.yml does before the same suite.
+      - name: Media Foundation for Firefox (app)
+        if: matrix.suite == 'windows-app'
+        shell: pwsh
+        run: |
+          $f = Get-WindowsFeature Server-Media-Foundation
+          "Server-Media-Foundation: $($f.InstallState)"
+          if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
+      - name: Playwright Firefox (app)
+        if: matrix.suite == 'windows-app'
+        run: npx playwright install firefox
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target windows-x64 --vendor
+      - name: Build a newer package (installer)
+        if: matrix.suite == 'windows-installer'
+        run: |
+          newer="$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")"
+          node scripts/build/package.mjs --target windows-x64 --version "$newer"
+          echo "SC_NEWER=$newer" >> "$GITHUB_ENV"
+      - name: Build the real package
+        run: node scripts/build/package.mjs --target windows-x64
+      - name: Assemble release folders and the installer zip
+        run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- Pre-release clean-machine check
+  preflight:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.preflight != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.preflight) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          go: 'true'
+          ffmpeg: 'true'
+      # What preflight.yml does, without the Playwright browser download: verify.mjs --chrome
+      # drives the Google Chrome of the runner image. No --tunnel by default: Cloudflare
+      # rate-limits quick tunnels, so the soak would measure Cloudflare. To soak the tunnel
+      # too, put "--tunnel" in the plan entry's args.
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target "${{ matrix.target }}" --vendor
+      - name: Build the real package
+        run: node scripts/build/package.mjs --target "${{ matrix.target }}"
+      - name: Assemble a local release folder
+        run: |
+          cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
+          cp scripts/start-macos.command release/start-macos.sh
+          node scripts/build/checksums.mjs release
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- install and uninstall scripts
+  scripts:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.scripts != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.scripts) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The scripts and their tests need only Node.js (like scripts.yml).
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: 'false'
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- desktop app clean-machine test
+  desktop_test:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.desktop_test != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.desktop_test) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    permissions:
+      contents: read
+      actions: read # download the installers of another workflow run
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: 'false'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: desktop-${{ matrix.target }}
+          path: release/desktop
+          run-id: ${{ needs.plan.outputs.desktop_run }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: update-test-${{ matrix.target }}
+          path: release/update-test
+          run-id: ${{ needs.plan.outputs.desktop_run }}
+          github-token: ${{ github.token }}
+      # As in desktop.yml: the .deb's dependencies are downloaded first (apt-retry.sh), so the
+      # test's own `apt-get install ./*.deb` installs them from the local cache.
+      - name: The .deb's dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          .github/scripts/apt-retry.sh update
+          deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
+          .github/scripts/apt-retry.sh install -y --no-install-recommends --download-only "./$deb"
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- macOS DMG bundling (hdiutil)
+  desktop_dmg:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.desktop_dmg != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.desktop_dmg) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: apps/desktop/src-tauri -> target
+          key: ${{ matrix.target }}
+          save-if: false
+      # As desktop.yml; every soaked run is then one `tauri build --bundles app,dmg` (the Rust
+      # build is cached after the first one), which is where hdiutil reports "Resource busy".
+      - run: npm run build
+      - name: Assemble release/staging/${{ matrix.target }}
+        run: node scripts/build/package.mjs --target "${{ matrix.target }}" --no-archive
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- apt on a cold cache
+  apt:
+    name: ${{ matrix.name }}
+    needs: plan
+    if: needs.plan.outputs.apt != '[]'
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.apt) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The setup action's apt settings, without its npm cache or ffmpeg.
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: 'false'
+      - *soak-run
+      - *soak-upload
+
+  # ---------------------------------------------------------------- the report
+  report:
+    name: Soak report
+    needs: [plan, node, rust, windows, preflight, scripts, desktop_test, desktop_dmg, apt]
+    if: always() && needs.plan.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: soak-*
+          path: soak-results
+      # Fails when any check failed or was flaky, or a planned run never reported.
+      - name: Pass rates, flakes, bounds, durations, failure signatures
+        run: node scripts/ci/soak-report.mjs soak-results --plan "$SOAK_PLAN" --out soak-report.md --json soak-report.json
+      - name: Upload the report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: soak-report
+          path: |
+            soak-report.md
+            soak-report.json
+          if-no-files-found: warn
+          retention-days: 30
