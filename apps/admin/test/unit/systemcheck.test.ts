@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { isMessageKey, setLang } from '@swarmcast/shared/i18n';
-import { belowMinimum, CHECK_IDS, checkRow, checkRows, loadSystemCheck, type SystemCheck } from '../../src/onboarding/systemcheck.js';
+import { belowMinimum, CHECK_IDS, checkRow, checkRows, loadSystemCheck, translateValue, type SystemCheck } from '../../src/onboarding/systemcheck.js';
 
 const base: SystemCheck = {
   version: 1,
@@ -67,5 +67,25 @@ describe('installer system check rows', () => {
       }),
     ).toBeNull();
     expect(await loadSystemCheck(async () => ({ error: 'x' }))).toBeNull();
+  });
+});
+
+describe('check values', () => {
+  it('are translated by check id; numbers and unknown values are shown as written', () => {
+    setLang('pt-BR');
+    expect(checkRow({ id: 'ports', status: 'ok', value: 'free' }).value).toBe('livres');
+    expect(checkRow({ id: 'ports', status: 'warn', value: 'in use: 8080 1935' }).value).toBe('em uso: 8080 1935');
+    expect(checkRow({ id: 'obs', status: 'ok', value: 'installed' }).value).toBe('instalado');
+    expect(checkRow({ id: 'obs', status: 'warn', value: 'not found' }).value).toBe('não encontrado');
+    expect(checkRow({ id: 'github', status: 'ok', value: 'reachable' }).value).toBe('acessível');
+    expect(checkRow({ id: 'github', status: 'warn', value: 'unreachable (not needed)' }).value).toBe('inacessível (não é necessário)');
+    expect(checkRow({ id: 'release', status: 'ok', value: 'reachable (latest v0.2.1)' }).value).toBe('acessível (última v0.2.1)');
+    expect(checkRow({ id: 'release', status: 'ok', value: 'v0.2.1 (desktop app)' }).value).toBe('v0.2.1 (app para computador)');
+    expect(checkRow({ id: 'upload', status: 'warn', value: 'speed test failed' }).value).toBe('o teste de velocidade falhou');
+    expect(checkRow({ id: 'ram', status: 'ok', value: '16 GB' }).value).toBe('16 GB');
+    expect(translateValue('mystery', 'free')).toBe('free');
+    setLang('en');
+    expect(checkRow({ id: 'github', status: 'ok', value: 'reachable' }).value).toBe('reachable');
+    expect(checkRow({ id: 'ports', status: 'ok', value: 'free' }).value).toBe('free');
   });
 });

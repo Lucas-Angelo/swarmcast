@@ -268,6 +268,9 @@ export const en = {
   'admin.col.bad': 'Bad data',
   'admin.col.bad.tip':
     'How many video pieces from this viewer failed the integrity check (wrong fingerprint) and were thrown away by others. After {count} reports they are removed from P2P automatically.',
+  'admin.col.delay': 'Delay',
+  'admin.col.delay.tip':
+    'How many seconds behind live this viewer is watching. It adjusts itself to each connection: closer to live on steady internet, further back on shaky mobile data so the video does not pause.',
   'admin.col.actions': 'Actions',
   'admin.col.actions.tip':
     'Remove from P2P: they keep watching, but stop sharing video with others (and stop seeing their IPs). Kick: they are disconnected and this device cannot join this stream again.',
@@ -360,7 +363,7 @@ export const en = {
   'watch.buffering': 'Buffering…',
   'watch.paused': 'Paused',
   'watch.status.tip':
-    'Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer\'s). The stream runs about 20 seconds behind the streamer (about 8 seconds with "Lower delay").',
+    'Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer\'s). The stream runs 10 to 30 seconds behind the streamer, adjusted to your connection (6 to 10 seconds with "Lower delay").',
   'watch.waiting': 'Waiting for the stream…',
   'watch.lotsOfViewers': 'Lots of viewers right now — retrying…',
   'watch.playbackError': 'Playback error — reloading…',
@@ -369,6 +372,9 @@ export const en = {
   'watch.unmute.tip': 'The video starts muted because browsers block autoplay with sound. Click to turn the sound on.',
   'watch.viewers': { one: '{count} watching', other: '{count} watching' },
   'watch.viewers.tip': 'People watching this stream right now.',
+  'watch.delay': '~{count} s behind live',
+  'watch.delay.tip':
+    'How far behind the streamer you are watching. It adjusts itself to your connection: it moves closer to live while your internet is steady and further back when it wobbles, so the video does not pause. "LIVE" / "Go live" jumps to the live moment.',
   'watch.atLive': 'LIVE',
   'watch.goLive': 'Go live',
   'watch.atLive.tip': 'You are watching live (about {latency} behind the streamer, which is normal).',
@@ -515,7 +521,7 @@ export const en = {
   'quality.shed.behind': 'Turned off during this stream to keep OBS smooth (the PC could not keep up): {heights}.',
   'quality.shed.cpu': 'Turned off during this stream to keep OBS smooth (the CPU was almost fully busy): {heights}.',
   'quality.shed.tip': 'SwarmCast never lets the converter take CPU from OBS. They come back the next time OBS connects; choose fewer qualities if it keeps happening.',
-  'quality.offStable': 'Viewers still get the Stable playback buffer (about 20 s), which rides out most hiccups.',
+  'quality.offStable': 'Viewers still get the Stable playback buffer (10 to 30 s, adjusted to each connection), which rides out most hiccups.',
   'quality.advanced': 'Advanced',
   'quality.encoder.label': 'Encoder:',
   'quality.encoder.best': 'Best available (recommended)',
@@ -575,8 +581,8 @@ export const en = {
   'watch.latency.title': 'Playback',
   'watch.latency.stable': 'Stable',
   'watch.latency.lowDelay': 'Lower delay',
-  'watch.latency.hint.stable': 'About 20 s behind live. Smoothest playback; best for P2P.',
-  'watch.latency.hint.lowDelay': 'About 8 s behind live. May pause on weak connections.',
+  'watch.latency.hint.stable': '10–30 s behind live, adjusted to your connection. Smoothest playback; best for P2P.',
+  'watch.latency.hint.lowDelay': '6–10 s behind live. May pause on weak connections.',
   'watch.latency.tip':
     'Stable keeps more video ready, so short internet hiccups do not pause the stream. Lower delay is closer to live (good for chatting) but pauses more easily. Your choice is remembered.',
   // ---- attack protection ----
@@ -797,6 +803,17 @@ export const en = {
   'onb.sys.rec': 'recommended {recommended}',
   'onb.sys.minRec': 'minimum {min} · recommended {recommended}',
   'onb.sys.skipped': 'Not checked',
+  'onb.sys.val.free': 'free',
+  'onb.sys.val.inUse': 'in use: {ports}',
+  'onb.sys.val.installed': 'installed',
+  'onb.sys.val.notFound': 'not found',
+  'onb.sys.val.reachable': 'reachable',
+  'onb.sys.val.unreachable': 'unreachable',
+  'onb.sys.val.unreachableOk': 'unreachable (not needed)',
+  'onb.sys.val.reachableLatest': 'reachable (latest {version})',
+  'onb.sys.val.desktopApp': '{version} (desktop app)',
+  'onb.sys.val.notMeasured': 'not measured (skipped)',
+  'onb.sys.val.speedFailed': 'speed test failed',
   'onb.sys.id.os': 'Operating system',
   'onb.sys.id.ram': 'Memory (RAM)',
   'onb.sys.id.cpu': 'Processor',

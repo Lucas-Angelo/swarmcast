@@ -17,8 +17,8 @@ export const DEFAULT_LATENCY_LABELS: LatencyToggleLabels = {
   lowDelay: 'Lower delay',
   title: 'Playback',
   hint: {
-    stable: 'About 20 s behind live. Smoothest playback; best for P2P.',
-    'low-delay': 'About 8 s behind live. May pause on weak connections.',
+    stable: '10–30 s behind live, adjusted to your connection. Smoothest playback; best for P2P.',
+    'low-delay': '6–10 s behind live. May pause on weak connections.',
   },
 };
 

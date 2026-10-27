@@ -12,7 +12,7 @@ A maioria dos computadores usa os arquivos **x64** (`amd64`). Os **arm64** (`aar
 
 ## Opção A: o pacote .deb
 
-1. Entre na [página de download](/swarmcast/pt-br/download/#linux) e baixe o arquivo `.deb` (por exemplo, `swarmcast_0.2.0_amd64.deb`).
+1. Entre na [página de download](/swarmcast/pt-br/download/#linux) e baixe o arquivo `.deb` (por exemplo, `swarmcast_0.2.1_amd64.deb`).
 2. Instale:
    - **Com o mouse:** dê dois cliques no arquivo. A central de programas abre. Clique em **Instalar** e digite sua senha.
    - **No terminal**, dentro da pasta Downloads: `sudo apt install ./swarmcast_*_amd64.deb`
@@ -25,6 +25,8 @@ O `apt` também instala as duas bibliotecas do sistema de que o SwarmCast precis
 1. Baixe o arquivo `.AppImage` na [página de download](/swarmcast/pt-br/download/#linux).
 2. Deixe ele rodar: botão direito no arquivo → **Propriedades** → **Permissões** → marque **Permitir execução do arquivo como programa** (ou no terminal: `chmod +x SwarmCast_*.AppImage`).
 3. Dê dois cliques nele.
+
+O AppImage usa as bibliotecas comuns de desktop (fontes, gráficos/OpenGL), que toda distribuição com ambiente gráfico já tem. Numa instalação mínima, sem desktop completo, use o `.deb`.
 
 :::caution[Ubuntu 22.04 ou mais novo: "AppImages require FUSE to run"]
 Instale a biblioteca FUSE 2 uma vez e tente de novo:

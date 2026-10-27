@@ -18,9 +18,9 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 ## Os controles
 
-- **● AO VIVO / Ir para o ao vivo:** você fica uns 20 segundos atrás de quem transmite, o que é normal. Se ficou mais para trás, clique em **Ir para o ao vivo**.
+- **● AO VIVO / Ir para o ao vivo:** você fica de 10 a 30 segundos atrás de quem transmite, o que é normal. Ao lado, "~14 s atrás do ao vivo" mostra o seu atraso: ele se ajusta sozinho à sua conexão (mais perto do ao vivo com internet firme, mais para trás quando ela oscila, para o vídeo não travar). Se ficou mais para trás, clique em **Ir para o ao vivo**.
 - **Qualidade:** **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
-- **Reprodução: Estável ou Menos atraso.** **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (uns 8 segundos), bom para conversar no chat, mas trava com mais facilidade.
+- **Reprodução: Estável ou Menos atraso.** **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P):** vem desligada por padrão; você pode ligar (veja abaixo).
 
 No celular, os mesmos controles ficam embaixo do vídeo:

@@ -12,7 +12,7 @@ Most computers need the **x64** (`amd64`) files. Use the **arm64** (`aarch64`) o
 
 ## Option A: the .deb package
 
-1. Go to the [download page](/swarmcast/download/#linux) and download the `.deb` file (for example `swarmcast_0.2.0_amd64.deb`).
+1. Go to the [download page](/swarmcast/download/#linux) and download the `.deb` file (for example `swarmcast_0.2.1_amd64.deb`).
 2. Install it:
    - **With the mouse:** double-click the file. Your software center opens. Click **Install** and type your password.
    - **In a terminal**, in the Downloads folder: `sudo apt install ./swarmcast_*_amd64.deb`
@@ -25,6 +25,8 @@ Most computers need the **x64** (`amd64`) files. Use the **arm64** (`aarch64`) o
 1. Download the `.AppImage` file from the [download page](/swarmcast/download/#linux).
 2. Allow it to run: right-click the file → **Properties** → **Permissions** → tick **Allow executing file as program** (or in a terminal: `chmod +x SwarmCast_*.AppImage`).
 3. Double-click it.
+
+The AppImage uses the usual desktop libraries (fonts, graphics/OpenGL), which every desktop distribution already has. On a minimal install without a full desktop, use the `.deb` instead.
 
 :::caution[Ubuntu 22.04 or newer: "AppImages require FUSE to run"]
 Install the FUSE 2 library once, then try again:

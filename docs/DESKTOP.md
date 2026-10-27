@@ -268,7 +268,7 @@ mode the server does it on first start (no `system-check.json`, or a different a
   account, and Node's JIT would need extra entitlements). Minimum macOS 13.5 (Node 24's minimum). No paid
   Apple certificate, so the first open needs System Settings → Privacy & Security → "Open Anyway"
   (documented in the guide with screenshots).
-- **Linux**: `.deb` (depends on `libwebkit2gtk-4.1-0`, `libayatana-appindicator3-1`) and `.AppImage`,
+- **Linux**: `.deb` (depends on `libwebkit2gtk-4.1-0`, `libgtk-3-0` and `libayatana-appindicator3-1`, which the Tauri bundler adds by itself, so `tauri.conf.json` lists none: listing them again put each one twice in `Depends`) and `.AppImage`,
   x64 and arm64. The app binary is `swarmcast-desktop`; resources in `/usr/lib/SwarmCast/`. The sidecar
   is not an `externalBin` on Linux: the `.deb` ships it as `/usr/bin/swarmcast-server`, the AppImage
   as `usr/libexec/SwarmCast/swarmcast-server`. linuxdeploy (the AppImage bundler) runs patchelf on every

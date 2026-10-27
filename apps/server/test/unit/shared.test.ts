@@ -20,6 +20,8 @@ describe('control messages', () => {
     expect(
       clientMessageSchema.safeParse({ t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 2, p2pUpBytes: 3, peers: 1, device: 'mobile' }).success,
     ).toBe(true);
+    expect(clientMessageSchema.safeParse({ t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 2, p2pUpBytes: 3, peers: 1, device: 'mobile', delayS: 14 }).success).toBe(true);
+    expect(clientMessageSchema.safeParse({ t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 2, p2pUpBytes: 3, peers: 1, device: 'mobile', delayS: -1 }).success).toBe(false);
     expect(clientMessageSchema.safeParse({ t: 'evil' }).success).toBe(false);
     expect(clientMessageSchema.safeParse({ t: 'hash-fail', peerId: 'nothex', segment: 'x' }).success).toBe(false);
   });

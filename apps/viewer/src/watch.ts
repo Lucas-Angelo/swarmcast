@@ -6,6 +6,7 @@ import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import { debug as p2pDebug } from 'p2p-media-loader-core';
 import type { ServerMessage, ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
+import { attachAdaptiveDelay, delaySpeedFromSearch, type AdaptiveDelay } from './adaptive-delay.js';
 import { createLatencyToggle } from './latency-toggle.js';
 import { CoreActivity, PeerStrikes, withHttpFallback } from './p2p-fallback.js';
 import { asciiToHex, peerGuard } from './peer-guard.js';
@@ -17,6 +18,7 @@ import {
   type applyProfile,
   loadProfile,
   p2pCoreConfigFor,
+  type PlaybackProfileId,
   type PlaylistWindow,
   saveEstimate,
   streamSwarmIdBuilder,
@@ -40,6 +42,8 @@ const goLive = $<HTMLButtonElement>('golive');
 const viewerCountWrap = $<HTMLSpanElement>('viewer-count-wrap');
 const viewerCountEl = $<HTMLSpanElement>('viewer-count');
 const playerControls = $<HTMLDivElement>('player-controls');
+const delayWrap = $<HTMLSpanElement>('delay-wrap');
+const delayEl = $<HTMLSpanElement>('delay');
 
 let tipSeq = 0;
 /** An (i) tooltip like the static ones in watch.html (installTooltips() handles it). */
@@ -63,7 +67,7 @@ function tip(text: string): HTMLSpanElement {
 }
 
 /** Quality menu (Auto/1080p/720p/480p/360p) and the Stable / Lower-delay switch, with tooltips. */
-function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null): void {
+function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void): void {
   const qualityGroup = document.createElement('div');
   qualityGroup.className = 'control-group quality-group';
   playerControls.appendChild(qualityGroup);
@@ -87,6 +91,7 @@ function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<t
       title: t('watch.latency.title'),
       hint: { stable: t('watch.latency.hint.stable'), 'low-delay': t('watch.latency.hint.lowDelay') },
     },
+    onProfile,
   );
   toggle.element.querySelector('legend')?.after(tip(t('watch.latency.tip')));
 }
@@ -163,6 +168,10 @@ const stats = {
   get stats() {
     return { ...stats, peers: [...stats.peers] };
   },
+  /** Adaptive delay controller state (adaptive-delay.ts). */
+  get delay() {
+    return adaptive?.snapshot() ?? null;
+  },
   /** Tracker channels open inside /control (tracker-mux.ts). */
   get trackerChannels() {
     return trackerMux.openCount;
@@ -171,6 +180,15 @@ const stats = {
 
 let ended = false;
 let control: WebSocket | null = null;
+let adaptive: AdaptiveDelay | null = null;
+
+/** "~14 s behind live" next to the status while playing (the delay adapts to the connection). */
+function showDelay(): void {
+  const d = adaptive?.delay ?? null;
+  const show = d !== null && stats.playing && !ended;
+  delayWrap.hidden = !show;
+  if (show) delayEl.textContent = t('watch.delay', { count: Math.max(1, Math.round(d)) });
+}
 
 function setStatus(key: MessageKey, live = false): void {
   statusEl.textContent = t(key);
@@ -278,23 +296,36 @@ async function main(): Promise<void> {
     const { video, audio } = liveDetails();
     return mismatchWindow(video, audio);
   };
+  // The shortest playlist in use, mismatch or not (short at stream start, or a server keeping
+  // fewer segments): the adaptive delay must stay inside it.
+  const shortestWindow = (): PlaylistWindow | null => {
+    const d = Object.values(liveDetails());
+    return d.length === 0 ? null : { windowS: Math.min(...d.map((x) => x.totalduration)), targetDurationS: Math.max(...d.map((x) => x.targetduration)) };
+  };
   const windowStart = (): number | null => {
     const d = Object.values(liveDetails());
     return d.length === 0 ? null : Math.max(...d.map((x) => x.fragmentStart));
   };
-  // Keep the live delay inside that window (player-config.ts latencyFor). Set on the config,
-  // not hls.targetLatency, so hls.js keeps its stall count.
+  // Keep the live delay inside that window (player-config.ts latencyFor). The adaptive delay
+  // (adaptive-delay.ts) owns liveSyncDuration; the window only caps it (setCeiling).
   // While the viewer has paused, hls.js must not move the playhead: its catch-up jump
   // (liveMaxLatencyDuration) would drag a paused viewer to live and "Go live −N s" would read 0.
   // Playing again restores the limit, so a viewer who paused past the window is brought back.
+  // A short hold inside a stall (adaptive delay) is not a viewer pause.
   const fitLatency = (): void => {
-    const fit = latencyFor(loadProfile(), playlistWindow());
-    const max = video.paused && !video.ended ? Infinity : fit.liveMaxLatencyDuration;
-    if (hls.config.liveSyncDuration !== fit.liveSyncDuration || hls.config.liveMaxLatencyDuration !== max) {
-      debugLog(`live delay ${fit.liveSyncDuration}s (max ${max}s) for window ${JSON.stringify(playlistWindow())}`);
+    const w = playlistWindow();
+    const fit = latencyFor(loadProfile(), w);
+    const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
+    // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
+    // the target itself; the shortest window only stops the controller building delay past it.
+    const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
+    adaptive?.setCeiling(room(w));
+    adaptive?.setGrowthLimit(room(shortestWindow()));
+    if (hls.config.liveMaxLatencyDuration !== max) {
+      debugLog(`live delay max ${max}s for window ${JSON.stringify(w)}`);
       hls.config.liveMaxLatencyDuration = max;
-      hls.config.liveSyncDuration = fit.liveSyncDuration;
     }
+    if (!adaptive && hls.config.liveSyncDuration !== fit.liveSyncDuration) hls.config.liveSyncDuration = fit.liveSyncDuration;
   };
   hls.on(Hls.Events.LEVEL_UPDATED, fitLatency);
   hls.on(Hls.Events.AUDIO_TRACK_LOADED, fitLatency);
@@ -355,7 +386,11 @@ async function main(): Promise<void> {
     }
   });
 
-  mountPlayerControls(hls, engine, playlistWindow);
+  // Each viewer's delay adapts to their connection (latency-controller.ts, docs/QUALITY.md).
+  adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, speed: delaySpeedFromSearch(location.search) });
+  fitLatency();
+  mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id));
+  setInterval(showDelay, 1000);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
@@ -418,7 +453,7 @@ async function main(): Promise<void> {
   });
   video.addEventListener('waiting', () => setStatus('watch.buffering'));
   video.addEventListener('pause', () => {
-    if (!ended) setStatus('watch.paused');
+    if (!ended && !adaptive?.holding) setStatus('watch.paused');
   });
   unmute.addEventListener('click', () => {
     video.muted = false;
@@ -494,6 +529,8 @@ async function main(): Promise<void> {
     hls,
     windowStart,
     isEnded: () => ended,
+    // The adaptive delay's deliberate hold inside a stall is not a stuck player.
+    isHeld: () => adaptive?.holding ?? false,
     reload: () => hls.loadSource(cfg.playlistUrl),
     log: (msg) => {
       stats.stallRecoveries += 1;
@@ -592,6 +629,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
       peers: stats.peers.size,
       http429: stats.http429,
       device: isMobile ? 'mobile' : 'desktop',
+      ...(adaptive?.delay ? { delayS: Math.round(adaptive.delay) } : {}),
     });
   }, 5000);
 }
@@ -623,7 +661,8 @@ function setupGoLive(hls: { liveSyncPosition: number | null; latency: number } |
     }
     const target = liveTarget();
     const behind = target === null ? null : Math.max(0, target - video.currentTime);
-    const atLive = !video.paused && (behind === null || behind < behindThresholdS);
+    // A short hold inside a stall (adaptive delay) is not a pause.
+    const atLive = (!video.paused || !!adaptive?.holding) && (behind === null || behind < behindThresholdS);
     goLive.hidden = false;
     goLive.classList.toggle('at-live', atLive);
     goLive.dataset.behind = behind === null ? '' : behind.toFixed(1);

@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../../src/app.js';
 import { isAlive } from '../../src/process/children.js';
+import { LoadGuard } from '../../src/quality/load-guard.js';
 import { variantInfoHashHex } from '../../src/tracker/tracker.js';
 import { hasFfmpeg, joinAs, pushTestStream, tmpDir, waitFor, type Jar } from './helpers.js';
 
@@ -39,6 +40,11 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
         },
       },
     });
+    // These tests are about the ladder itself (renditions, crash recovery, reconnects). On a
+    // 3-vCPU CI runner, x264 720p + 480p next to the test feed keeps the machine ≥ 90 % busy, so
+    // the load guard rightly drops 720p after 10 s and the 720p playlist disappears mid-test.
+    // The guard has its own unit tests (quality-decisions.test.ts): never shed here.
+    (app.live.quality as unknown as { guard: LoadGuard }).guard = new LoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
     await app.live.quality.probe();
     await app.live.start();
     ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });

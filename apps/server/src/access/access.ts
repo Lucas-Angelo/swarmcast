@@ -22,6 +22,8 @@ export interface Session {
   peerIds: Set<string>;
   stats: { httpBytes: number; p2pDownBytes: number; p2pUpBytes: number; peers: number };
   http429: number;
+  /** Seconds behind live the player last reported (adaptive delay), null before playback. */
+  delayS: number | null;
   /** Number of open control channels. */
   connections: number;
   lastSeenAt: number;
@@ -171,6 +173,7 @@ export class AccessControl extends EventEmitter<AccessEvents> {
       peerIds: new Set(),
       stats: { httpBytes: 0, p2pDownBytes: 0, p2pUpBytes: 0, peers: 0 },
       http429: 0,
+      delayS: null,
       connections: 0,
       lastSeenAt: this.now(),
     };

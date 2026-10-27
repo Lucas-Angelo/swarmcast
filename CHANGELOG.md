@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-27
+
+### Changed
+
+- **The delay behind live adapts to each viewer's connection.** With "Stable", the player starts about 20 s behind live as before, then drifts down to about 10–12 s on a steady connection (playing at most 5 % faster for a while, never jumping) and grows towards 30 s on shaky mobile data or after pauses, so the video pauses less. After a pause it moves back at once, inside that same pause, instead of pausing again later. "Lower delay" adapts between 6 and 10 s. The player looks at how fast video pieces arrive compared with how long they play, how steady the bandwidth is, pauses, whether the buffer keeps up with the live edge, and whether pieces came from other viewers (P2P); it never goes past what the server keeps of the stream (`MAX_PLAYER_DELAY_S`). Details: [docs/QUALITY.md](docs/QUALITY.md#adaptive-delay).
+- Viewers see their delay next to the status ("~14 s behind live", with a tooltip), and the panel's viewers table shows each viewer's delay.
+
+### Fixed
+
+- The gentle catch-up after stalls (`maxLiveSyncPlaybackRate`) never ran: hls.js only uses it in low-latency mode. The new delay controller drives the playback speed itself.
+- The panel's "PC check" in Portuguese showed some values in English ("free", "installed", "reachable"…); they are translated now.
+- The Linux `.deb` listed `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1` twice in its dependencies.
+- The Linux install guide says that the AppImage needs the usual desktop libraries (fonts, OpenGL) and that minimal installs should use the `.deb`.
+
 ## [0.2.0] - 2026-10-26
 
 The desktop app release: SwarmCast now installs like any other app, opens in its own window and updates itself. The website is the single guide for streamers.

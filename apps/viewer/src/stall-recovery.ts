@@ -61,6 +61,12 @@ export interface StallRecoveryOptions {
   reload(): void;
   log?(msg: string): void;
   isEnded?(): boolean;
+  /**
+   * Playback is paused on purpose inside a stall (adaptive delay, adaptive-delay.ts). The hold
+   * neither starts nor resets the watchdog: it still counts as the stall it extends, so a player
+   * that is really stuck is recovered on time, and one whose data keeps arriving is left alone.
+   */
+  isHeld?(): boolean;
 }
 
 function ranges(v: HTMLMediaElement): Array<[number, number]> {
@@ -77,7 +83,7 @@ export function installStallRecovery(o: StallRecoveryOptions): () => void {
   let lastRanges = '';
   const tick = (): void => {
     // Not paused = playback was asked for (autoplay or the viewer), so this covers the start too.
-    const stalled = !o.isEnded?.() && !video.paused && !video.ended && video.readyState < 3;
+    const stalled = !o.isEnded?.() && (!video.paused || !!o.isHeld?.()) && !video.ended && video.readyState < 3;
     if (!stalled) {
       since = 0;
       attempts = 0;

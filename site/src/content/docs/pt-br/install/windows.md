@@ -7,7 +7,7 @@ O SwarmCast é instalado só para o seu usuário do Windows. Ele não pede permi
 
 ## 1. Baixar
 
-Baixe o arquivo que termina em **`x64-setup.exe`** (por exemplo, `SwarmCast_0.2.0_x64-setup.exe`) na [página de download](/swarmcast/pt-br/download/#windows).
+Baixe o arquivo que termina em **`x64-setup.exe`** (por exemplo, `SwarmCast_0.2.1_x64-setup.exe`) na [página de download](/swarmcast/pt-br/download/#windows).
 
 ## 2. Rodar o instalador
 

@@ -21,6 +21,16 @@ O conversor roda com prioridade baixa. Se ele ficar para trás, ou se o processa
 
 Um espectador em 480p gasta mais ou menos um quarto do upload de um em 1080p. Quando tem muita gente assistindo, os players descem de qualidade sozinhos e o seu upload rende mais. Quem ajuda pelo [P2P](/swarmcast/pt-br/live/p2p/) gasta menos ainda.
 
+## Quanto quem assiste fica atrás do ao vivo
+
+O player de cada espectador escolhe o próprio atraso e vai ajustando à conexão dele. Com **Estável** (o padrão) ele começa em uns 20 segundos:
+
+- **Internet firme** (o vídeo chega bem mais rápido do que toca, sem travadas): o atraso desce devagar até uns **10–12 segundos**. O player toca um tiquinho mais rápido (no máximo 5 %) por um tempo para chegar lá, então ninguém percebe um pulo.
+- **Internet instável** (dados móveis que ficam oscilando, travadas): o atraso sobe até uns **30 segundos**, para o player guardar mais vídeo. Depois de uma travada ele recua na hora, dentro da mesma travada, para não ter uma segunda depois.
+- Quem recebe vídeo de outros espectadores pelo P2P fica em 12 segundos ou mais, o que dá tempo para o compartilhamento.
+
+Com **Menos atraso** ele fica entre 6 e 10 segundos. Cada espectador vê o próprio atraso ao lado do status (por exemplo "~14 s atrás do ao vivo"), e a tabela de espectadores do painel mostra o atraso de cada um na coluna **Atraso**. Ele nunca passa do que o seu servidor guarda da live, então ninguém fica para trás demais.
+
 ## Mudar você mesmo
 
 No cartão **Qualidade para quem assiste** você pode:

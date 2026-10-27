@@ -80,7 +80,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -92,7 +92,26 @@ jobs:
       - run: npm run build
       # The Playwright version comes from package-lock.json. The `chromium` project runs
       # Google Chrome (channel: 'chrome', for H.264/AAC), which GitHub's runner images ship.
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - name: Playwright version
+        id: playwright
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      # Ubuntu: Firefox and WebKit come from Playwright's CDN (cached per version), and their
+      # system libraries through apt with a time limit per try, retries and a fallback mirror
+      # (GitHub's Ubuntu mirror has stalled `playwright install --with-deps` for 20+ minutes).
+      - name: Cache the Playwright browsers (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: ms-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+      - name: Playwright browsers and their system libraries (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          npx playwright install firefox webkit
+          .github/scripts/apt-retry.sh --run npx playwright install-deps firefox webkit
+      - name: Playwright browsers and their system libraries (macOS)
+        if: runner.os == 'macOS'
+        run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()

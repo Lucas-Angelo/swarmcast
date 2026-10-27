@@ -24,7 +24,14 @@
           <span class="tip"
             ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-status">i</button
             ><span class="tip-bubble" role="tooltip" id="tip-status" data-i18n="watch.status.tip"
-              >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs about 20 seconds behind the streamer (about 8 seconds with "Lower delay").</span
+              >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs 10 to 30 seconds behind the streamer, adjusted to your connection (6 to 10 seconds with "Lower delay").</span
+            ></span
+          >
+          <span class="tip delay" id="delay-wrap" hidden
+            ><span id="delay" class="delay-badge muted" data-testid="delay"></span
+            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-delay">i</button
+            ><span class="tip-bubble" role="tooltip" id="tip-delay" data-i18n="watch.delay.tip"
+              >How far behind the streamer you are watching. It adjusts itself to your connection: it moves closer to live while your internet is steady and further back when it wobbles, so the video does not pause. "LIVE" / "Go live" jumps to the live moment.</span
             ></span
           >
           <span class="tip viewers" id="viewer-count-wrap" hidden

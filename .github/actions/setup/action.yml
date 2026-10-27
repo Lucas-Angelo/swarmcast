@@ -39,12 +39,15 @@ runs:
         go-version: 1.27.x
         cache-dependency-path: apps/tray/go.sum
 
+    # Ubuntu's ffmpeg (what the suites have always run against), through apt-retry.sh: a time
+    # limit per try, retries and a fallback mirror, because GitHub's Ubuntu mirror sometimes
+    # stalls for many minutes.
     - name: Install ffmpeg (Linux)
       if: inputs.ffmpeg == 'true' && runner.os == 'Linux'
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg
+        "$GITHUB_ACTION_PATH/../../scripts/apt-retry.sh" update
+        "$GITHUB_ACTION_PATH/../../scripts/apt-retry.sh" install -y --no-install-recommends ffmpeg
         echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
     - name: Install ffmpeg (macOS)
       if: inputs.ffmpeg == 'true' && runner.os == 'macOS'

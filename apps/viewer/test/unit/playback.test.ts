@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PLAYER_LIVE_DELAYS, PLAYLIST_WINDOW_S, SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { latencyFor, mismatchWindow, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
-import { planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
+import { installStallRecovery, planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
 
 describe('latencyFor', () => {
   it('uses the delays the server sizes its playlists from, untouched in a full window', () => {
@@ -84,5 +84,47 @@ describe('planStallRecovery', () => {
     expect(planStallRecovery({ ...s, stalledMs: 8000, attempts: 1, windowStart: 30 })).toEqual({ action: 'wait' });
     expect(planStallRecovery({ ...s, stalledMs: 9000, attempts: 1, windowStart: 30 })).toEqual({ action: 'restart', to: 50 });
     expect(planStallRecovery({ ...s, stalledMs: 24_000, attempts: 4 })).toEqual({ action: 'reload' });
+  });
+});
+
+describe('installStallRecovery', () => {
+  const fake = (): HTMLVideoElement & { paused: boolean } =>
+    ({ paused: false, ended: false, readyState: 2, currentTime: 10, buffered: { length: 0, start: () => 0, end: () => 0 } }) as unknown as HTMLVideoElement & { paused: boolean };
+
+  it('the adaptive delay hold neither resets nor delays it: a stuck player is recovered on time', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      let held = false;
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload: vi.fn(), isHeld: () => held });
+      vi.advanceTimersByTime(2000);
+      // The stall is extended by a hold (the video is paused on purpose), nothing arrives.
+      held = true;
+      video.paused = true;
+      // Nothing buffered yet: the first attempt comes 8 s after the stall began, hold included.
+      vi.advanceTimersByTime(5000);
+      expect(hls.startLoad).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(2000);
+      expect(hls.startLoad).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a viewer pause is not a stall', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      video.paused = true;
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload: vi.fn(), isHeld: () => false });
+      vi.advanceTimersByTime(30_000);
+      expect(hls.startLoad).not.toHaveBeenCalled();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

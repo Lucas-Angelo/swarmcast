@@ -9,8 +9,9 @@ test.afterEach(async () => {
   await admin('/api/bans/clear');
 });
 
-test('a viewer joins with the live link, picks a nickname and watches', async ({ browser, browserName }) => {
-  const nick = `play-${browserName}`;
+test('a viewer joins with the live link, picks a nickname and watches', async ({ browser, browserName }, testInfo) => {
+  // One nickname per attempt: on a retry, the previous attempt's session is still listed.
+  const nick = `play-${browserName}-${testInfo.retry}`;
   const { context, page } = await join(browser, nick);
   await waitPlaying(page);
   await expect(page.locator('#status')).toHaveText('Live');

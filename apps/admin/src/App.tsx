@@ -373,6 +373,7 @@ export function App() {
                   <Th label={t('admin.col.p2p')} tip={t('admin.col.p2p.tip')} />
                   <Th label={t('admin.col.shared')} tip={t('admin.col.shared.tip')} />
                   <Th label={t('admin.col.bad')} tip={t('admin.col.bad.tip', { count: HASH_FAILURE_THRESHOLD })} />
+                  <Th label={t('admin.col.delay')} tip={t('admin.col.delay.tip')} />
                   <Th label={t('admin.col.actions')} tip={t('admin.col.actions.tip')} />
                 </tr>
               </thead>
@@ -462,6 +463,7 @@ function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act })
       <td>{p2p}</td>
       <td>{mb(v.p2pUpBytes)}</td>
       <td>{v.hashFailures}</td>
+      <td data-testid="viewer-delay">{v.delayS === null ? '–' : t('time.secondsShort', { count: v.delayS })}</td>
       <td class="actions">
         {v.p2pAllowed ? (
           <button class="small" title={t('admin.viewer.removeP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: false }))}>

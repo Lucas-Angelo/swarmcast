@@ -7,7 +7,7 @@ SwarmCast installs for your Windows user only. It needs no administrator rights 
 
 ## 1. Download
 
-Get the file that ends in **`x64-setup.exe`** (for example `SwarmCast_0.2.0_x64-setup.exe`) from the [download page](/swarmcast/download/#windows).
+Get the file that ends in **`x64-setup.exe`** (for example `SwarmCast_0.2.1_x64-setup.exe`) from the [download page](/swarmcast/download/#windows).
 
 ## 2. Run the installer
 

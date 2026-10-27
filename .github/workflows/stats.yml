@@ -1,6 +1,6 @@
 name: Usage stats
 
-# Usage numbers WITHOUT telemetry: the SwarmCast app never phones home. Once a day (and when a
+# Usage numbers WITHOUT telemetry: the SwarmCast app never phones home. Once a day (and after a
 # release is published) this saves a snapshot of GitHub's PUBLIC release download counters:
 # the installers' downloads, and the downloads of `latest.json`, which the desktop app fetches
 # when it starts and every 6 hours to look for updates. scripts/stats/stats.mjs explains the
@@ -12,6 +12,12 @@ name: Usage stats
 on:
   schedule:
     - cron: '17 5 * * *'
+  # release.yml publishes the release with GITHUB_TOKEN, whose `release: published` event starts
+  # no workflow; the end of the Release run does (workflow_run fires for a run started by the tag
+  # push). `release` stays for a release published by hand.
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
   release:
     types: [published]
   workflow_dispatch:
@@ -24,6 +30,8 @@ concurrency:
 
 jobs:
   snapshot:
+    # After a Release run: only when it published (it fails before publishing otherwise).
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
