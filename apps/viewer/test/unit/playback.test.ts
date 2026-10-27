@@ -88,18 +88,40 @@ describe('planStallRecovery', () => {
 });
 
 describe('installStallRecovery', () => {
-  it('ignores the adaptive delay hold, acts on a real stall', () => {
+  const fake = (): HTMLVideoElement & { paused: boolean } =>
+    ({ paused: false, ended: false, readyState: 2, currentTime: 10, buffered: { length: 0, start: () => 0, end: () => 0 } }) as unknown as HTMLVideoElement & { paused: boolean };
+
+  it('the adaptive delay hold neither resets nor delays it: a stuck player is recovered on time', () => {
     vi.useFakeTimers();
     try {
-      const video = { paused: false, ended: false, readyState: 2, currentTime: 10, buffered: { length: 0, start: () => 0, end: () => 0 } } as unknown as HTMLVideoElement;
+      const video = fake();
       const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
-      let held = true;
+      let held = false;
       const stop = installStallRecovery({ video, hls, windowStart: () => null, reload: vi.fn(), isHeld: () => held });
-      vi.advanceTimersByTime(20_000);
+      vi.advanceTimersByTime(2000);
+      // The stall is extended by a hold (the video is paused on purpose), nothing arrives.
+      held = true;
+      video.paused = true;
+      // Nothing buffered yet: the first attempt comes 8 s after the stall began, hold included.
+      vi.advanceTimersByTime(5000);
       expect(hls.startLoad).not.toHaveBeenCalled();
-      held = false;
-      vi.advanceTimersByTime(20_000);
-      expect(hls.startLoad).toHaveBeenCalled();
+      vi.advanceTimersByTime(2000);
+      expect(hls.startLoad).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a viewer pause is not a stall', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      video.paused = true;
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload: vi.fn(), isHeld: () => false });
+      vi.advanceTimersByTime(30_000);
+      expect(hls.startLoad).not.toHaveBeenCalled();
       stop();
     } finally {
       vi.useRealTimers();

@@ -289,6 +289,15 @@ describe('stalls', () => {
     expect(r.latency).toBeCloseTo(23, 0);
   });
 
+  it('at most one hold a minute: a freeze that keeps coming back is not extended again', () => {
+    const ctl = new DelayController({ profile: 'stable', now: 0 });
+    expect(ctl.onStallStart(0, 20).holdS).toBe(3);
+    ctl.onStallEnd(5, 23, 5);
+    expect(ctl.onStallStart(10, 23).holdS).toBe(0);
+    ctl.onStallEnd(12, 23, 2);
+    expect(ctl.onStallStart(70, 24).holdS).toBeGreaterThan(0);
+  });
+
   it('a long stall: no hold, the delay it added sticks (no catch-up afterwards)', () => {
     const r = simulate({ seconds: 100, net: () => middling, stalls: [{ at: 50, durationS: 7 }] });
     expect(r.holds).toEqual([3]);

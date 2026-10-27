@@ -103,6 +103,9 @@ export interface Tuning {
   stallStepS: number;
   /** Longest hold added to a stall, s. */
   maxHoldS: number;
+  /** At most one hold this often, s: a freeze that keeps coming back (stuck loading, the stall
+   * watchdog restarting it) is not extended again and again. */
+  holdEveryS: number;
   /** Highest catch-up playbackRate. */
   maxRate: number;
   /** playbackRate while building delay on an unstable network. */
@@ -125,6 +128,7 @@ const COMMON = {
   unstable: { medianRatio: 0.6, p90Ratio: 0.9, cov: 0.35, minHeadroom: 1.2, lagSlope: 0.15, enterS: 5, exitS: 30 },
   stallQuietS: 120,
   stallMemoryS: 300,
+  holdEveryS: 60,
   p2pMemoryS: 120,
   slowRate: 0.95,
   slowDown: { startBelow: 1, stopBelow: 0.25 },
@@ -162,6 +166,7 @@ export function scaledTuning(t: Tuning, speed: number): Tuning {
     unstable: { ...t.unstable, enterS: t.unstable.enterS / s, exitS: t.unstable.exitS / s },
     stallQuietS: t.stallQuietS / s,
     stallMemoryS: t.stallMemoryS / s,
+    holdEveryS: t.holdEveryS / s,
     p2pMemoryS: t.p2pMemoryS / s,
     decayPerS: t.decayPerS * s,
     raisePerS: t.raisePerS * s,
@@ -226,6 +231,7 @@ export class DelayController {
   private lags: Array<{ t: number; v: number }> = [];
   private stalls: Array<{ at: number; durationS: number }> = [];
   private lastStallAt = -Infinity;
+  private lastHoldAt = -Infinity;
   private lastP2PAt = -Infinity;
   private lastTick: number | null = null;
   /** Since when the "enter" condition of the next state has held (hysteresis dwell). */
@@ -320,9 +326,12 @@ export class DelayController {
     this.enterUnstable(now);
     this.rateMode = 'normal';
     if (latency === null || !Number.isFinite(latency)) return { target: this.target, holdS: 0 };
+    if (now - this.lastHoldAt < tu.holdEveryS) return { target: this.target, holdS: 0 };
     const room = this.maxS - latency;
     const holdS = clamp(Math.min(this.target - latency, room), 0, tu.maxHoldS);
-    return { target: this.target, holdS: holdS >= 0.5 ? Math.round(holdS * 10) / 10 : 0 };
+    if (holdS < 0.5) return { target: this.target, holdS: 0 };
+    this.lastHoldAt = now;
+    return { target: this.target, holdS: Math.round(holdS * 10) / 10 };
   }
 
   /** Playback resumed: the delay the stall added stays (the target never sits below it). */
