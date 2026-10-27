@@ -47,7 +47,8 @@ jobs:
           - { target: linux-x64, os: ubuntu-latest }
           - { target: linux-x64, os: ubuntu-22.04 }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Ubuntu's apt and `playwright install --with-deps` alone have taken 13–22 min on runners.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
