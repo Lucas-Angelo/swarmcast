@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { playlistEntries, SEGMENT_DURATION_S, type CodedText, type EncoderId, type Rung, type TranscoderStatus, type X264Preset } from '@swarmcast/shared';
+import { removeDir } from '../core/fs-cleanup.js';
 import type { Logger } from '../core/logger.js';
 import { coded } from '../core/messages.js';
 import { ManagedChild, type Reaper } from '../process/children.js';
@@ -264,11 +265,11 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     await this.child?.stop(2000);
     this.child = null;
     this.window.clear();
-    if (this.outDir) {
-      fs.rmSync(this.outDir, { recursive: true, force: true });
-      this.outDir = null;
-    }
+    const dir = this.outDir;
+    this.outDir = null;
     this.plan = null;
     this.set('off');
+    // Last, and only this run's folder: a start() during the (retried) delete gets a new one.
+    if (dir) await removeDir(dir, this.o.log, 'quality ladder');
   }
 }

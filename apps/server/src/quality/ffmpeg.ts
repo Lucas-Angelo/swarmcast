@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import versions from '../../../../scripts/build/versions.json' with { type: 'json' };
+import { removeDir } from '../core/fs-cleanup.js';
 import type { Logger } from '../core/logger.js';
 import { exe, isPackaged, platformTag } from '../core/paths.js';
 
@@ -160,6 +161,7 @@ export async function installFfmpeg(
     onProgress({ phase: 'error', receivedBytes: 0, message: (err as Error).message });
     throw err;
   } finally {
-    fs.rmSync(work, { recursive: true, force: true });
+    // Never let a locked temporary file turn a finished install (or its real error) into EPERM.
+    await removeDir(work, log, 'ffmpeg download');
   }
 }
