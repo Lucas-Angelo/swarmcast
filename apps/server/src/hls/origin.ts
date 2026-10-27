@@ -140,6 +140,12 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   private timer: NodeJS.Timeout | null = null;
   private running = false;
   private polling = false;
+  /**
+   * Bumped whenever the set of hashed files grows, and after every poll that changed a
+   * playlist. The signed manifest is cached per version (ManifestSigner), so a file added in
+   * the middle of a poll, and listed in a playlist served right away, is never answered with a
+   * manifest signed before it existed.
+   */
   version = 0;
   available = false;
   lastSegmentAt = 0;
@@ -427,6 +433,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
       addedAt: now,
       lastListedAt: now,
     });
+    // Before any playlist can list it: the next manifest request is signed afresh.
+    this.version += 1;
     return true;
   }
 }
