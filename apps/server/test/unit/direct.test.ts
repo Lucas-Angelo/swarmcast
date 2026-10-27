@@ -258,26 +258,26 @@ describe('direct mode: a port the computer can really open', () => {
     const d = new DirectMode(
       deps({
         random: () => seq[Math.min(i++, seq.length - 1)]!,
-        canBind: async (port, host) => {
+        reservePort: async (port, host) => {
           expect(host).toBe('0.0.0.0');
-          if (port < 30000) {
+          if (port < 28000) {
             refused.push(port);
-            return false;
+            throw Object.assign(new Error(`listen EACCES ${host}:${port}`), { code: 'EACCES' });
           }
-          return true;
+          return { port, release: async () => {} };
         },
       }),
     );
     const url = await d.enable();
-    expect(refused).toEqual([24000, 28000]);
-    expect(url).toBe('https://203.0.113.7:32000');
-    expect([...igd.mappings.keys()]).toEqual([32000]);
+    expect(refused).toEqual([22915, 25830]);
+    expect(url).toBe('https://203.0.113.7:28745');
+    expect([...igd.mappings.keys()]).toEqual([28745]);
     await d.disable();
   });
 
   it('gives a clear error, and maps nothing, when no port can be opened', async () => {
     let n = 0;
-    const d = new DirectMode(deps({ random: () => (n++ % 1000) / 1000, canBind: async () => false }));
+    const d = new DirectMode(deps({ random: () => (n++ % 1000) / 1000, reservePort: async () => Promise.reject(Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })) }));
     await expect(d.enable()).rejects.toMatchObject({ code: 'err.directNoPort' });
     expect(igd.mappings.size).toBe(0);
     expect(d.active).toBe(false);
