@@ -38,5 +38,5 @@ fi
 # --shm-size: OBS and Mesa use shared memory; the 64 MB default is tight.
 docker run --rm --init --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \
   -v "$(cd "$RELEASE" && pwd):/release:ro" -v "$DIR:/tests:ro" \
-  -e RELEASE_URL=file:///release -e "OUTPUT_MODE=$MODE" \
+  -e "OUTPUT_MODE=$MODE" \
   "$IMAGE" bash /tests/obs-test.sh

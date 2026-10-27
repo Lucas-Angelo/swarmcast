@@ -70,7 +70,9 @@ scripts/test/docker/obs.sh            # Advanced output, x264, keyframe interval
 scripts/test/docker/obs.sh --simple   # OBS Simple output defaults
 ```
 
-`obs-test.sh` installs SwarmCast with the start script (`file:///release`), starts it, writes
+`obs-test.sh` serves the release folder on `http://127.0.0.1:8000` inside the container (not
+`file:///release`: the start script needs an HTTP 200 for the checksum list, and curl reports no
+HTTP status for `file://`), installs SwarmCast with the start script from there, starts it, writes
 the OBS config (first-run wizard skipped via `global.ini`; obs-websocket enabled without auth
 in both `global.ini` `[OBSWebSocket]` (obs-websocket ≤ 5.4, OBS ≤ 30) and
 `plugin_config/obs-websocket/config.json` (5.5+)), starts OBS under `xvfb-run` with
