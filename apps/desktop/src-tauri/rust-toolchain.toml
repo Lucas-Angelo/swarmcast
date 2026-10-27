@@ -1,0 +1,7 @@
+# The Rust the desktop app is built and checked with, locally and in CI (desktop.yml installs it
+# from here). Pinned so a new stable release or runner image never changes the build or the
+# rust-cache key by itself; bump it deliberately.
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
