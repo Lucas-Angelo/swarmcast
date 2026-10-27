@@ -22,6 +22,13 @@ afterEach(() => {
   }
 });
 
+/** The grandchild's pid as the parent printed it; anything else fails here, not as a vacuous "not alive". */
+function pidOf(line: string): number {
+  const pid = Number(line.trim());
+  expect(Number.isInteger(pid) && pid > 0, `pid line: ${JSON.stringify(line)}`).toBe(true);
+  return pid;
+}
+
 /**
  * A parent that starts a grandchild (both plain node processes) and prints the grandchild's pid.
  * Spawned like ManagedChild does it: its own process group on POSIX.
@@ -30,12 +37,13 @@ async function tree(opts: { ignoreTerm?: boolean } = {}): Promise<{ parent: Chil
   const script = [
     opts.ignoreTerm ? "process.on('SIGTERM', () => {});" : '',
     "const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-    'console.log(c.pid);',
+    // Not console.log: with FORCE_COLOR (set in CI) it wraps a number in ANSI colour codes.
+    "process.stdout.write(c.pid + '\\n');",
     'setInterval(() => {}, 1000);',
   ].join('\n');
   const parent = spawn(process.execPath, ['-e', script], { detached: posix, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
   leftovers.push(parent.pid!);
-  const grandchild = await new Promise<number>((resolve) => readline.createInterface({ input: parent.stdout! }).once('line', (l) => resolve(Number(l))));
+  const grandchild = await new Promise<number>((resolve) => readline.createInterface({ input: parent.stdout! }).once('line', (l) => resolve(pidOf(l))));
   leftovers.push(grandchild);
   expect(isAlive(parent.pid!)).toBe(true);
   expect(isAlive(grandchild)).toBe(true);
@@ -76,12 +84,13 @@ describe('ManagedChild.stop', () => {
     const script = [
       "process.on('SIGTERM', () => {});",
       "const c = require('node:child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
-      'console.log(c.pid);',
+      "process.stdout.write(c.pid + '\\n');",
       'setInterval(() => {}, 1000);',
     ].join('\n');
     const child = new ManagedChild('test-tree', process.execPath, ['-e', script], {}, null, silentLog);
     leftovers.push(child.pid!);
-    const grandchild = await new Promise<number>((resolve) => child.once('line', (l) => resolve(Number(l))));
+    const grandchild = await new Promise<number>((resolve) => child.once('line', (l) => resolve(pidOf(l))));
+    expect(isAlive(grandchild)).toBe(true);
     leftovers.push(grandchild);
     await child.stop(200);
     expect(child.running).toBe(false);
