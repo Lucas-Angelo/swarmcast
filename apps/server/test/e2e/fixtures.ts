@@ -134,7 +134,23 @@ export async function join(browser: Browser, nickname: string, link?: string, se
   await page.goto(link ?? (await liveLink()));
   await expect(page).toHaveURL(/\/join$/);
   await page.fill('#nickname', nickname);
+  // The answer to POST /api/join, so a refused join fails with the server's status and reason
+  // instead of a bare toHaveURL timeout. A 403 "check required" is not final: the page solves
+  // the browser check and posts again.
+  const answer = page.waitForResponse(async (r) => {
+    if (r.request().method() !== 'POST' || new URL(r.url()).pathname !== '/api/join') return false;
+    if (r.status() !== 403) return true;
+    const body = (await r.json().catch(() => ({}))) as { code?: string };
+    return body.code !== 'viewer.err.checkRequired';
+  }, { timeout: 0 });
+  // The page shows an error without a final answer when the browser check fails.
+  const shownError = page.locator('#error').waitFor({ state: 'visible', timeout: 0 }).then(() => null);
+  answer.catch(() => {});
+  shownError.catch(() => {});
   await page.click('#join');
+  const res = await Promise.race([answer, shownError]);
+  if (!res) throw new Error(`join as "${nickname}" failed without a final POST /api/join answer; the page says: ${await page.locator('#error').textContent()}`);
+  expect(res.status(), `POST /api/join as "${nickname}" answered ${res.status()}: ${await res.text().catch(() => '(no body)')}`).toBe(200);
   await expect(page).toHaveURL(/\/watch$/);
   return { context, page };
 }

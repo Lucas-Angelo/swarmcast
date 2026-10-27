@@ -37,10 +37,13 @@ function step(name, ok, detail = '') {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, timeoutMs, what) {
+/** `abort()` returning a message ends the wait at once (e.g. the test feed died). */
+async function until(fn, timeoutMs, what, abort = () => null) {
   const end = Date.now() + timeoutMs;
   let last;
   while (Date.now() < end) {
+    const why = abort();
+    if (why) throw new Error(`${what}: ${why}`);
     try {
       last = await fn();
       if (last) return last;
@@ -134,8 +137,26 @@ async function adminLogin(output) {
   return { base, api };
 }
 
+/**
+ * The OBS-like feed: $FFMPEG_BIN (the pinned test build CI installs) or ffmpeg from PATH.
+ * stderr is kept, so a feed that dies (no libx264, bad URL) fails the check with ffmpeg's reason.
+ */
 function pushStream(rtmpUrl, key) {
-  return spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', '1200k', '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`], { stdio: 'ignore' });
+  const bin = process.env.FFMPEG_BIN || 'ffmpeg';
+  const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', '1200k', '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`], { stdio: ['ignore', 'ignore', 'pipe'] });
+  let err = '';
+  let ended = null;
+  child.stderr.on('data', (d) => (err += d));
+  child.on('error', (e) => {
+    err += `spawn ${bin} failed: ${e.message}\n`;
+    ended ??= 'spawn failed';
+  });
+  child.on('exit', (code, signal) => (ended = signal ?? `code ${code}`));
+  return {
+    kill: () => child.kill(),
+    /** null while the feed runs, else "test feed exited (…): <stderr tail>". */
+    died: () => (ended ? `test feed ${bin} exited (${ended}): ${(key ? err.replaceAll(key, '[stream key]') : err).trim().slice(-1500) || '(no stderr)'}` : null),
+  };
 }
 
 async function joinAndPlay(browser, link, nickname) {
@@ -208,7 +229,7 @@ async function runSession({ releaseUrl, tunnel, browser }) {
     step(`[${label}] live link`, pattern.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, '/join/…'));
 
     ffmpeg = pushStream(s0.rtmpUrl, s0.streamKey);
-    await until(async () => (await api('/api/state')).phase === 'live', 90_000, 'phase live');
+    await until(async () => (await api('/api/state')).phase === 'live', 90_000, 'phase live', () => ffmpeg.died());
     step(`[${label}] OBS-like RTMP stream accepted (phase live)`, true);
 
     const a = await joinAndPlay(browser, s0.liveLink, `alice-${label}`);

@@ -600,6 +600,12 @@ function Uninstall-DesktopApp {
       Say-Warn "The desktop app's uninstaller did not finish in $SC_UninstallTimeout s; removing its files directly."
     } elseif ($r.Code -ne 0) {
       Say-Warn "The desktop app's uninstaller stopped with exit code $($r.Code); removing its files directly."
+      # Its output, or the reason it could not be started (-1), so a failure explains itself.
+      $detail = "$($r.Out)".Trim()
+      if ($detail) {
+        if ($detail.Length -gt 1500) { $detail = '...' + $detail.Substring($detail.Length - 1500) }
+        Say "  Uninstaller said: $detail"
+      }
     }
   }
   foreach ($dir in $d.InstallDirs) {
