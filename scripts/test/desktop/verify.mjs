@@ -5,16 +5,22 @@
 //
 //   node scripts/test/desktop/verify.mjs --installers release/desktop/<target> \
 //        [--update-from <dir A> --update-to <dir B with latest.json> --update-port 47811]
+//   node scripts/test/desktop/verify.mjs --appimage-only <dir>     (Linux: the AppImage alone,
+//        e.g. on a minimal host in Docker: scripts/test/desktop/appimage-host.sh)
 //
 // 1. Installs the real installer (Windows NSIS /S, macOS .dmg -> ~/Applications, Linux .deb),
 //    starts the app, logs into the panel (admin API), checks /api/desktop, turns "Start with
 //    the computer" on and off (Run key / LaunchAgent / XDG entry), kills the app (its server
 //    and tools must go with it: the Windows Job object), starts it again, quits from the panel
-//    (nothing left running) and uninstalls (NSIS uninstaller / apt remove). Linux also runs
-//    the AppImage. Then installs again and removes everything with scripts/uninstall-*.
-// 2. Update: installs build A, serves build B and its latest.json on 127.0.0.1, starts A,
-//    clicks "Update now" through the panel API and expects B to come back by itself with
-//    config.json and secrets.json unchanged.
+//    (nothing left running) and uninstalls (NSIS uninstaller / apt remove). Linux runs the
+//    AppImage first, before the .deb brings WebKitGTK onto the machine. Then installs again and
+//    removes everything with scripts/uninstall-*.
+// 2. Update: installs build A (macOS: from its .app.tar.gz, Linux: the AppImage), serves build
+//    B and its latest.json on 127.0.0.1, starts A, clicks "Update now" through the panel API
+//    right after the login and expects B to come back by itself with config.json and
+//    secrets.json unchanged. macOS and Linux then do it again with "Update now" sent the moment
+//    the server is ready, while the window is still on the splash or opening the panel (that
+//    crashed the macOS shell: wry panicked in WebviewWindow::url()).
 //
 // The panel login URL comes from SWARMCAST_TEST_LOGIN_FILE (written by the server).
 import { spawn, spawnSync } from 'node:child_process';
@@ -56,7 +62,7 @@ function step(name, ok, detail = '') {
   }
 }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, ms, what) {
+async function until(fn, ms, what, every = 500) {
   const end = Date.now() + ms;
   let last;
   while (Date.now() < end) {
@@ -66,7 +72,7 @@ async function until(fn, ms, what) {
     } catch (err) {
       last = err;
     }
-    await sleep(500);
+    await sleep(every);
   }
   throw new Error(`timed out (${ms / 1000} s) waiting for ${what}${last instanceof Error ? `: ${last.message}` : ''}`);
 }
@@ -84,14 +90,30 @@ const file = (dir, re) => {
 
 // ---------------------------------------------------------------- processes
 
+const OURS = /SwarmCast\.app\/|swarmcast-desktop|swarmcast-server|SwarmCast_.*\.AppImage|\/mediamtx|cloudflared/;
+
+/** Every process as "pid command line". Linux reads /proc: a minimal host has no `ps`. */
+function processes() {
+  if (OS === 'linux') {
+    return fs.readdirSync('/proc').filter((d) => /^\d+$/.test(d)).flatMap((pid) => {
+      try {
+        const cmd = fs.readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').join(' ').trim();
+        return cmd ? [`${pid} ${cmd}`] : [];
+      } catch {
+        return []; // gone meanwhile
+      }
+    });
+  }
+  return spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' }).stdout.split('\n');
+}
+
 /** SwarmCast processes still running (the shell, the server, MediaMTX, cloudflared). */
 function ours() {
   if (OS === 'windows') {
-    const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', "Get-Process SwarmCast,swarmcast-server,mediamtx,cloudflared -ErrorAction SilentlyContinue | ForEach-Object { \"$($_.Id) $($_.Path)\" }"], { encoding: 'utf8' });
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', "Get-Process SwarmCast,swarmcast-server,mediamtx,cloudflared -ErrorAction SilentlyContinue | ForEach-Object { \"$($_.Id) $($_.Path)\" }"], { encoding: 'utf8' });
     return r.stdout.split(/\r?\n/).filter(Boolean);
   }
-  const r = spawnSync('ps', ['-axo', 'pid=,command='], { encoding: 'utf8' });
-  return r.stdout.split('\n').filter((l) => /SwarmCast\.app\/|swarmcast-desktop|swarmcast-server|SwarmCast_.*\.AppImage|\/mediamtx|cloudflared/.test(l) && !l.includes('verify.mjs'));
+  return processes().filter((l) => OURS.test(l) && !l.includes('verify.mjs'));
 }
 async function nothingLeft(what) {
   const left = await until(() => ours().length === 0, 45_000, 'every SwarmCast process to exit').then(() => []).catch(() => ours());
@@ -102,26 +124,38 @@ async function nothingLeft(what) {
 
 let child = null;
 let debPackage = '';
-/** Starts the installed app and logs into its panel. */
-async function launch(exe, env = {}, argv = []) {
+/** The variables every app start in this test gets (and the updated app inherits). */
+const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1' });
+
+/** Starts the installed app (without waiting for it). */
+function spawnApp(exe, env = {}, argv = []) {
   fs.rmSync(loginFile, { force: true });
   const out = fs.openSync(path.join(work, 'app-output.log'), 'a');
-  child = spawn(exe, argv, {
-    stdio: ['ignore', out, out],
-    env: { ...process.env, SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1', ...env },
-  });
+  child = spawn(exe, argv, { stdio: ['ignore', out, out], env: { ...process.env, ...testEnv(), ...env } });
   child.on('error', (err) => console.log(`spawn error: ${err.message}`));
+}
+
+/** Starts the installed app and logs into its panel. */
+async function launch(exe, env = {}, argv = []) {
+  spawnApp(exe, env, argv);
   return login();
 }
 
-async function login() {
-  const url = await until(() => fs.existsSync(loginFile) && fs.readFileSync(loginFile, 'utf8').trim(), 120_000, 'the app to start its server (login URL)');
+/** The panel login URL, as soon as the server has written it (every 50 ms). */
+const loginUrl = () => until(() => fs.existsSync(loginFile) && fs.readFileSync(loginFile, 'utf8').trim(), 120_000, 'the app to start its server (login URL)', 50);
+
+/** The panel's session cookie, from the login URL. */
+async function authenticate(url) {
   const u = new URL(url);
   const res = await request({ port: u.port, path: u.pathname });
   const cookie = String(res.headers['set-cookie'] ?? '').split(';')[0];
   step('panel login', res.status < 400 && cookie.includes('='), `HTTP ${res.status}`);
-  const panel = { port: Number(u.port), cookie };
-  const page = await request({ port: panel.port, path: '/', cookie });
+  return { port: Number(u.port), cookie };
+}
+
+async function login() {
+  const panel = await authenticate(await loginUrl());
+  const page = await request({ port: panel.port, path: '/', cookie: panel.cookie });
   step('panel page loads behind the login', page.status === 200 && page.body.includes('<html'), `HTTP ${page.status}`);
   const anon = await request({ port: panel.port, path: '/api/state' });
   step('the admin API refuses requests without the login', anon.status === 401, `HTTP ${anon.status}`);
@@ -187,7 +221,18 @@ async function quitFromPanel(panel) {
 
 // ---------------------------------------------------------------- install / uninstall per OS
 
-function install(dir) {
+/** `hdiutil detach`, retried: right after a mount, macOS services (XProtect, Spotlight) can keep
+ * the volume busy for a few seconds ("Resource busy"). The last try forces it. */
+async function detach(mnt) {
+  for (const [i, wait] of [2000, 4000, 8000, 0].entries()) {
+    const force = wait === 0;
+    if (run('hdiutil', ['detach', ...(force ? ['-force'] : []), mnt], { allowFail: !force }) === 0) return;
+    console.log(`::warning title=hdiutil::detach of ${mnt} failed (try ${i + 1} of 4), retrying in ${wait / 1000} s`);
+    await sleep(wait);
+  }
+}
+
+async function install(dir) {
   if (OS === 'windows') {
     run(file(dir, /_x64-setup\.exe$/), ['/S']);
     const exe = path.join(winInstallDir, 'SwarmCast.exe');
@@ -196,20 +241,35 @@ function install(dir) {
   }
   if (OS === 'macos') {
     const mnt = path.join(work, 'dmg');
-    run('hdiutil', ['attach', '-nobrowse', '-readonly', '-mountpoint', mnt, file(dir, /\.dmg$/)]);
+    run('hdiutil', ['attach', '-nobrowse', '-readonly', '-noverify', '-mountpoint', mnt, file(dir, /\.dmg$/)]);
     fs.mkdirSync(path.dirname(macApp), { recursive: true });
     fs.rmSync(macApp, { recursive: true, force: true });
     run('cp', ['-R', path.join(mnt, 'SwarmCast.app'), macApp]);
-    run('hdiutil', ['detach', mnt]);
+    await detach(mnt);
     const exe = path.join(macApp, 'Contents', 'MacOS', 'SwarmCast');
     step('the .dmg holds SwarmCast.app (copied to ~/Applications)', fs.existsSync(exe), exe);
     return exe;
   }
   const deb = file(dir, /\.deb$/);
   debPackage = spawnSync('dpkg-deb', ['--field', deb, 'Package'], { encoding: 'utf8' }).stdout.trim();
-  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', deb]);
+  // No time limit: apt resolving the .deb's dependencies is part of the test, and a slow mirror
+  // is not a failure (the workflow downloads them beforehand; the job timeout is the backstop).
+  // TODO(WP2a): with apt-retry.sh `download`, pass its cache: -o Dir::Cache::archives=$APT_DEBS.
+  const cache = process.env.APT_DEBS ? ['-o', `Dir::Cache::archives=${process.env.APT_DEBS}`] : [];
+  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=3', ...cache, deb], { timeout: undefined });
   step(`the .deb (package ${debPackage}) installs swarmcast-desktop`, fs.existsSync('/usr/bin/swarmcast-desktop'));
   return '/usr/bin/swarmcast-desktop';
+}
+
+/** macOS: the app from the updater's .app.tar.gz (what an update unpacks), into ~/Applications. */
+function installAppTarGz(dir) {
+  const archive = file(dir, /\.app\.tar\.gz$/);
+  fs.mkdirSync(path.dirname(macApp), { recursive: true });
+  fs.rmSync(macApp, { recursive: true, force: true });
+  run('tar', ['-xzf', archive, '-C', path.dirname(macApp)]);
+  const exe = path.join(macApp, 'Contents', 'MacOS', 'SwarmCast');
+  step(`${path.basename(archive)} holds SwarmCast.app (unpacked to ~/Applications)`, fs.existsSync(exe), exe);
+  return exe;
 }
 
 /** Linux: the AppImage, where people keep them (the uninstall script looks there). */
@@ -222,12 +282,22 @@ function installAppImage(dir) {
   return dest;
 }
 
+/** The update test's build A: without a .dmg or .deb (desktop.yml builds it with app / appimage / nsis). */
+async function installUpdateFrom(dir) {
+  if (OS === 'linux') return installAppImage(dir);
+  if (OS === 'macos') return installAppTarGz(dir);
+  return install(dir);
+}
+
 async function nativeUninstall() {
   if (OS === 'windows') {
-    run(path.join(winInstallDir, 'uninstall.exe'), ['/S']);
-    await until(() => !fs.existsSync(path.join(winInstallDir, 'SwarmCast.exe')), 60_000, 'the NSIS uninstaller to finish').catch(() => {});
+    // `_?=<dir>` (last, unquoted) runs the uninstaller in place, so it can be waited for and its
+    // exit code means something (0 ok, 1 cancelled, 2 aborted); it then leaves itself behind.
+    const status = run(path.join(winInstallDir, 'uninstall.exe'), ['/S', `_?=${winInstallDir}`], { allowFail: true });
+    step('NSIS uninstaller exits with 0', status === 0, `exit ${status}`);
     step('NSIS uninstaller removes the app', !fs.existsSync(path.join(winInstallDir, 'SwarmCast.exe')));
     step('...and keeps the settings (no "delete app data")', fs.existsSync(path.join(dataDir, 'config.json')));
+    fs.rmSync(winInstallDir, { recursive: true, force: true });
   } else if (OS === 'linux') {
     run('sudo', ['apt-get', 'remove', '-y', debPackage]);
     step('apt remove removes the app', !fs.existsSync('/usr/bin/swarmcast-desktop'));
@@ -235,7 +305,7 @@ async function nativeUninstall() {
 }
 
 function scriptUninstall(exe) {
-  if (OS === 'windows') run('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts', 'uninstall-windows.ps1')]);
+  if (OS === 'windows') run('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(root, 'scripts', 'uninstall-windows.ps1')]);
   else run('bash', [path.join(root, 'scripts', OS === 'macos' ? 'uninstall-macos.command' : 'uninstall-linux.sh')], { env: { ...process.env, SWARMCAST_NO_PAUSE: '1' } });
   step('scripts/uninstall-* removes the app', !fs.existsSync(exe), exe);
   step('scripts/uninstall-* removes the data folder', !fs.existsSync(dataDir), dataDir);
@@ -244,11 +314,30 @@ function scriptUninstall(exe) {
 
 // ---------------------------------------------------------------- 1. the real installer
 
+/** The version in the installers' file names (package.json's otherwise). */
+function versionIn(dir) {
+  const fallback = fs.existsSync(path.join(root, 'package.json')) ? JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version : '?';
+  return fs.readdirSync(dir).map((n) => /_(\d+\.\d+\.\d+[^_]*)_/.exec(n)?.[1]).find(Boolean) ?? fallback;
+}
+
+/** Linux: the AppImage on its own (start, panel, /api/desktop, quit). */
+async function appImageTest(dir) {
+  const v = versionIn(dir);
+  console.log(`\n=== AppImage ${v}`);
+  const exe = installAppImage(dir);
+  const panel = await launch(exe);
+  await checkDesktopApi(panel, v);
+  await quitFromPanel(panel);
+  return exe;
+}
+
 async function installerTest(dir) {
-  const version = JSON.parse(fs.readFileSync(path.join(root, 'package.json'), 'utf8')).version;
-  const v = fs.readdirSync(dir).map((n) => /_(\d+\.\d+\.\d+[^_]*)_/.exec(n)?.[1]).find(Boolean) ?? version;
+  const v = versionIn(dir);
+  // Linux: the AppImage first, while the machine has none of the .deb's libraries (WebKitGTK…):
+  // a library the AppImage should bundle but does not then fails here.
+  const appImage = OS === 'linux' ? await appImageTest(dir) : null;
   console.log(`\n=== installer ${v} (${OS})`);
-  const exe = install(dir);
+  const exe = await install(dir);
   let panel = await launch(exe);
   await checkDesktopApi(panel, v);
   await checkAutostart(panel);
@@ -257,22 +346,84 @@ async function installerTest(dir) {
   await quitFromPanel(panel);
   await nativeUninstall();
 
-  let last = exe;
-  if (OS === 'linux') {
-    console.log('\n=== AppImage');
-    last = installAppImage(dir);
-    panel = await launch(last);
-    await checkDesktopApi(panel, v);
-    await quitFromPanel(panel);
-  } else if (OS === 'windows') {
-    install(dir);
+  if (OS === 'windows') {
+    await install(dir);
     await quitFromPanel(await launch(exe));
   }
   console.log('\n=== scripts/uninstall-*');
-  scriptUninstall(last);
+  scriptUninstall(appImage ?? exe);
 }
 
 // ---------------------------------------------------------------- 2. update A -> B
+
+/**
+ * Windows: the NSIS installer relaunches the updated app, and when it runs elevated (as on the
+ * CI runner) it does so with an environment made from the user's profile, without this test's
+ * variables. HKCU\Environment is part of that profile, so they go there for the update and are
+ * removed afterwards.
+ */
+function userEnvironment(vars) {
+  if (OS !== 'windows') return () => {};
+  for (const [name, value] of Object.entries(vars)) run('reg', ['add', 'HKCU\\Environment', '/v', name, '/t', 'REG_SZ', '/d', value, '/f']);
+  return () => {
+    for (const name of Object.keys(vars)) run('reg', ['delete', 'HKCU\\Environment', '/v', name, '/f'], { allowFail: true });
+  };
+}
+
+/**
+ * One update A -> B. `atReady`: "Update now" goes out the moment the server has written its login
+ * URL, i.e. while the shell is still on the splash or just navigating to the panel; otherwise
+ * right after the panel login, like a streamer clicking at once. No delay either way: the shell
+ * must cope (it used to crash on macOS).
+ */
+async function updateRound(dirA, manifest, env, atReady) {
+  const what = atReady ? 'the moment the server is ready (window on the splash)' : 'right after the panel login';
+  console.log(`\n=== update to ${manifest.version}: "Update now" ${what}`);
+  const exe = await installUpdateFrom(dirA);
+  const config = path.join(dataDir, 'config.json');
+  const secrets = path.join(dataDir, 'secrets.json');
+  const log = path.join(dataDir, 'logs', 'desktop.log');
+  const read = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
+  let before;
+  let logFrom;
+  let panel;
+  if (atReady) {
+    // Needs the settings of an earlier start to compare against (the other round runs first).
+    before = [read(config), read(secrets)];
+    logFrom = read(log).length;
+    spawnApp(exe, env);
+    const url = await loginUrl();
+    const seen = Date.now();
+    fs.rmSync(loginFile, { force: true });
+    panel = await authenticate(url);
+    await api(panel, 'POST', '/api/desktop/update/install');
+    console.log(`"Update now" sent ${Date.now() - seen} ms after the login URL appeared`);
+  } else {
+    panel = await launch(exe, env);
+    await until(() => fs.existsSync(config) && fs.existsSync(secrets), 30_000, 'config.json and secrets.json');
+    before = [read(config), read(secrets)];
+    logFrom = read(log).length;
+    fs.rmSync(loginFile, { force: true });
+    await api(panel, 'POST', '/api/desktop/update/install');
+    console.log('"Update now" sent');
+  }
+  console.log('waiting for the new version to start by itself');
+  const restarted = (t) => {
+    const i = t.indexOf(`SwarmCast desktop ${manifest.version} starting`);
+    return i >= 0 && t.indexOf('ready, opening the panel', i) > 0;
+  };
+  await until(() => restarted(read(log).slice(logFrom)), 300_000, `SwarmCast ${manifest.version} to start by itself`);
+  step(`the app relaunched itself as ${manifest.version} and its server is ready`, true);
+  const after = [read(config), read(secrets)];
+  step('config.json is unchanged by the update', JSON.stringify(JSON.parse(after[0])) === JSON.stringify(JSON.parse(before[0])));
+  step('secrets.json is unchanged by the update', after[1] === before[1]);
+  // The new version got this test's environment too (Windows: through HKCU\Environment).
+  panel = await login();
+  await checkDesktopApi(panel, manifest.version);
+  await api(panel, 'POST', '/api/app/quit');
+  await nothingLeft('after closing the updated app');
+  return exe;
+}
 
 async function updateTest(dirA, dirB, port) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dirB, 'latest.json'), 'utf8'));
@@ -286,44 +437,16 @@ async function updateTest(dirA, dirB, port) {
     fs.createReadStream(f).pipe(res);
   });
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
+  const env = { SWARMCAST_UPDATE_URL: `http://127.0.0.1:${port}/latest.json` };
+  const restoreUserEnv = userEnvironment({ ...testEnv(), ...env });
   try {
-    const exe = OS === 'linux' ? installAppImage(dirA) : install(dirA);
-    const env = { SWARMCAST_UPDATE_URL: `http://127.0.0.1:${port}/latest.json` };
-    let panel = await launch(exe, env);
-    const config = path.join(dataDir, 'config.json');
-    const secrets = path.join(dataDir, 'secrets.json');
-    await until(() => fs.existsSync(config) && fs.existsSync(secrets), 30_000, 'config.json and secrets.json');
-    const before = [fs.readFileSync(config, 'utf8'), fs.readFileSync(secrets, 'utf8')];
-    // Like a streamer, click "Update now" once the panel has had time to show in the app window
-    // (an update started while the webview is still loading crashed the macOS shell: wry panic).
-    await sleep(5000);
-    const log = path.join(dataDir, 'logs', 'desktop.log');
-    fs.rmSync(loginFile, { force: true });
-    await api(panel, 'POST', '/api/desktop/update/install');
-    console.log('"Update now" sent; waiting for the new version to start by itself');
-    const restarted = (t) => {
-      const i = t.lastIndexOf(`SwarmCast desktop ${manifest.version} starting`);
-      return i >= 0 && t.indexOf('ready, opening the panel', i) > 0;
-    };
-    await until(() => fs.existsSync(log) && restarted(fs.readFileSync(log, 'utf8')), 300_000, `SwarmCast ${manifest.version} to start by itself`);
-    step(`the app relaunched itself as ${manifest.version} and its server is ready`, true);
-    const after = [fs.readFileSync(config, 'utf8'), fs.readFileSync(secrets, 'utf8')];
-    step('config.json is unchanged by the update', JSON.stringify(JSON.parse(after[0])) === JSON.stringify(JSON.parse(before[0])));
-    step('secrets.json is unchanged by the update', after[1] === before[1]);
-    if (OS === 'windows') {
-      // NSIS relaunches the app through the shell with the user's own environment, so this
-      // test's variables (login file, update URL) are gone: the log above is the check.
-      run('taskkill', ['/F', '/IM', 'SwarmCast.exe'], { allowFail: true });
-    } else {
-      // The app relaunches itself with the same environment: check the new version's panel.
-      await until(() => fs.existsSync(loginFile), 60_000, 'the login URL of the updated app');
-      panel = await login();
-      await checkDesktopApi(panel, manifest.version);
-      await api(panel, 'POST', '/api/app/quit');
-    }
-    await nothingLeft('after closing the updated app');
+    let exe = await updateRound(dirA, manifest, env, false);
+    // Windows: reinstalling A over B is a downgrade the NSIS installer handles differently; the
+    // early click is a macOS/Linux shell bug (wry), so it runs there.
+    if (OS !== 'windows') exe = await updateRound(dirA, manifest, env, true);
     scriptUninstall(exe); // updated in place
   } finally {
+    restoreUserEnv();
     server.close();
   }
 }
@@ -404,6 +527,10 @@ async function windowsGuideShots(dir, out) {
 try {
   if (process.env.SC_DESKTOP_SCREENSHOTS && OS === 'windows' && opt('installers')) {
     await windowsGuideShots(path.resolve(opt('installers')), path.resolve(process.env.SC_DESKTOP_SCREENSHOTS)).catch((err) => console.log(`guide screenshots failed (ignored): ${err.message}`));
+  }
+  if (opt('appimage-only')) {
+    if (OS !== 'linux') throw new Error('--appimage-only is for Linux');
+    await appImageTest(path.resolve(opt('appimage-only')));
   }
   if (opt('installers')) await installerTest(path.resolve(opt('installers')));
   if (opt('update-from')) await updateTest(path.resolve(opt('update-from')), path.resolve(opt('update-to')), Number(opt('update-port') ?? 47811));
