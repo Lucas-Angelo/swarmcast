@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  adminLogin, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
+  ART, adminLogin, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
   launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
   runInstaller, section, serve, sha256File, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
 } from './lib.mjs';
@@ -331,15 +331,18 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   fs.mkdirSync(dir, { recursive: true });
   const outLog = path.join(dir, 'out.log');
   const wrapper = path.join(dir, 'w.cmd');
-  const env = bareEnv({ home, releaseUrl: srv2.url });
+  // runas starts the wrapper with the Basic User's own environment, so it sets the same
+  // variables as every other section (bareEnv): above all SWARMCAST_NO_OPEN. Without it the app
+  // opened the panel in a browser, which inherited the redirected output handle and kept
+  // `>> out.log` from ever writing the EXIT line (about 1 run in 6).
+  const env = bareEnv({ home, releaseUrl: srv2.url, extra: { SWARMCAST_NO_NOTIFY: '1' } });
   fs.writeFileSync(
     wrapper,
     [
       '@echo off',
-      `set "Path=${env.Path}"`,
-      `set "SWARMCAST_HOME=${home}"`,
-      `set "SWARMCAST_RELEASE_URL=${srv2.url}"`,
-      'set "SWARMCAST_NO_PAUSE=1"',
+      ...Object.entries(env)
+        .filter(([k]) => /^(path|swarmcast_.*)$/i.test(k))
+        .map(([k, v]) => `set "${k}=${v}"`),
       `whoami /groups | findstr /i "Mandatory" > "${path.join(dir, 'groups.txt')}"`,
       `call "${path.join(relDir, 'start-windows.cmd')}" --yes --skip-speedtest --no-tunnel > "${outLog}" 2>&1`,
       `echo EXIT %ERRORLEVEL% >> "${outLog}"`,
@@ -365,13 +368,25 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   await waitLiveLink(app);
   info('Basic User run: live link after login', `${Math.round((Date.now() - tLogin) / 1000)} s`);
   const tQuit = Date.now();
-  await app.api('/api/app/quit', {}).catch(() => {});
-  // The wrapper's "EXIT n" line, within 60 s of the quit request like quitAndVerify (the limit
-  // used to start at login, so a slow start to the live link ate into it).
-  const code = await until(() => /EXIT (\d+)/.exec(text()), 60_000, 'exit').then((m) => Number(m[1]), () => 'timeout');
-  info('Basic User run: exit after quit', `${Math.round((Date.now() - tQuit) / 1000)} s`);
+  const quit = await app.api('/api/app/quit', {}).then((j) => `HTTP ${j.__status}`, (e) => `failed: ${e.message}`);
+  // Exit signals, within 60 s of the quit request like quitAndVerify: the start script's own
+  // install.log line (primary), or the wrapper's EXIT line.
+  const installLog = () => readText(path.join(home, 'logs', 'install.log'));
+  const exited = await until(() => {
+    const a = /SwarmCast exited with code (-?\d+)/.exec(installLog());
+    const b = /EXIT (\d+)/.exec(text());
+    return a || b ? { code: Number((a ?? b)[1]), via: [a && 'install.log', b && 'EXIT line'].filter(Boolean).join(' + ') } : null;
+  }, 60_000, 'exit').catch(() => ({ code: 'timeout', via: 'none' }));
+  info('Basic User run: exit after quit', `${Math.round((Date.now() - tQuit) / 1000)} s (quit request ${quit}; signals: ${exited.via})`);
+  const code = exited.code;
   check('Basic User run: quits cleanly', code === 0, `exit ${code}`);
-  if (code !== 0) info('Basic User run: installer output (end)', text().slice(-1500));
+  if (code !== 0) {
+    info('Basic User run: installer output (end)', text().slice(-1500));
+    // Everything the wrapper wrote (out.log, groups.txt, w.cmd) for the artifacts.
+    const dest = path.join(ART, 'installer-basic-user');
+    fs.mkdirSync(dest, { recursive: true });
+    for (const f of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, f), path.join(dest, f));
+  }
   await sleep(1500);
   const left = processesUnder(home);
   check('Basic User run: no process left', left.length === 0, describeProcs(left));

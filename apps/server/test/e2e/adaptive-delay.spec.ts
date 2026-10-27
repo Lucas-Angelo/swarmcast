@@ -79,8 +79,8 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   console.log('good network:', JSON.stringify({ start: start.delay, low: low.delay, target: low.target, stalls: low.stalls, stalledS: low.stalledS, holds: low.holds }));
   expect(low.stalls).toBeLessThanOrEqual(3);
   expect(maxRate).toBeLessThanOrEqual(1.05);
-  const shown = Number((await label.textContent())!.match(/\d+/)![0]);
-  expect(shown).toBeLessThanOrEqual(16);
+  // The label refreshes once a second: poll it rather than read it once.
+  await expect.poll(async () => Number(/\d+/.exec((await label.textContent()) ?? '')?.[0] ?? 99), { timeout: 10_000 }).toBeLessThanOrEqual(16);
 
   // The panel's viewers table gets each viewer's delay.
   await expect.poll(async () => (await viewerByNick(nick))?.delayS ?? 99, { timeout: 20_000 }).toBeLessThan(17);

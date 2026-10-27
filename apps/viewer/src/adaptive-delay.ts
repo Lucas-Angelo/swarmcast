@@ -38,6 +38,9 @@ export function delaySpeedFromSearch(search: string): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(60, n) : 1;
 }
 
+/** One-second latency samples whose median is the delay everyone uses. */
+const LATENCY_SAMPLES = 5;
+
 function forwardBuffer(video: HTMLVideoElement): number {
   const b = video.buffered;
   const t = video.currentTime;
@@ -64,9 +67,25 @@ export function attachAdaptiveDelay(
   let userRate = false;
   const counters = { stalls: 0, stalledS: 0, holds: 0, heldS: 0 };
 
-  const latency = (): number | null => {
+  const rawLatency = (): number | null => {
     const l = hls.latency;
     return Number.isFinite(l) && l > 0 ? l : null;
+  };
+  // hls.latency = playlist edge + its age − currentTime, and the age comes from the wall clock
+  // (Date.now()): a clock step (NTP on a CI runner, a laptop waking up) shows a delay of 37 s for
+  // a second or two. The controller, the status line and the panel all use the median of the
+  // last few one-second samples instead: one source of truth that ignores such a blip.
+  const recent: number[] = [];
+  const sampleLatency = (): void => {
+    const l = rawLatency();
+    if (l === null) return;
+    recent.push(l);
+    if (recent.length > LATENCY_SAMPLES) recent.shift();
+  };
+  const latency = (): number | null => {
+    if (recent.length === 0) return rawLatency();
+    const sorted = [...recent].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)]!;
   };
 
   // p2p-media-loader knows where each segment came from and how long the real download took
@@ -124,6 +143,9 @@ export function attachAdaptiveDelay(
       const now = clock();
       const d = now - stallAt;
       counters.stalledS += d;
+      // Right after the freeze the median still holds pre-stall samples: use the live value.
+      recent.length = 0;
+      sampleLatency();
       ctl.onStallEnd(now, latency(), d);
       stallAt = null;
     }
@@ -149,6 +171,8 @@ export function attachAdaptiveDelay(
   });
   video.addEventListener('seeking', () => {
     lastSeekAt = clock();
+    // Go live, a profile switch, the stall watchdog: the old samples no longer apply.
+    recent.length = 0;
     stallAt = null;
     if (holding) resume();
   });
@@ -167,6 +191,7 @@ export function attachAdaptiveDelay(
 
   let last = ctl.tick({ now: clock(), latency: null, forwardBuffer: 0, bandwidthEstimate: 0, levelBitrate: 0, playing: false });
   setInterval(() => {
+    sampleLatency();
     const level = hls.levels[hls.currentLevel];
     last = ctl.tick({
       now: clock(),
@@ -191,7 +216,8 @@ export function attachAdaptiveDelay(
 
   return {
     get delay() {
-      return started ? latency() : null;
+      const l = started ? latency() : null;
+      return l === null ? null : Math.max(0, l);
     },
     get target() {
       return ctl.target;

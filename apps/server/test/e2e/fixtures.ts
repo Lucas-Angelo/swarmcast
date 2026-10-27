@@ -57,18 +57,25 @@ export async function setPlaylistWindow(seconds: number): Promise<void> {
 
 /**
  * Start a playback monitor in the page: `stallReport()` then returns the longest time (ms)
- * the playhead did not move while playing, since the last reset.
+ * the playhead did not move while playing, since the last reset, and how many seconds of media
+ * played (`playedS`: forward progress only, so a source reload that restarts the timeline or a
+ * seek back does not count as lost progress, and a jump forward counts at most 1 s).
  */
 export async function startStallMonitor(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const w = window as unknown as { __stall?: { last: number; at: number; max: number; timer: number } };
+    const w = window as unknown as { __stall?: { last: number; prev: number; at: number; max: number; played: number; timer: number } };
     if (w.__stall) clearInterval(w.__stall.timer);
     const v = document.querySelector('video')!;
-    const st = { last: v.currentTime, at: performance.now(), max: 0, timer: 0 };
+    const st = { last: v.currentTime, prev: v.currentTime, at: performance.now(), max: 0, played: 0, timer: 0 };
     st.timer = window.setInterval(() => {
       const now = performance.now();
       // The adaptive delay's hold inside a stall pauses the video, but the viewer sees a freeze.
       const held = (window as unknown as { __swarmcast?: { delay?: { holding?: boolean } | null } }).__swarmcast?.delay?.holding === true;
+      const step = v.currentTime - st.prev;
+      if (step > 0) st.played += Math.min(step, 1);
+      st.prev = v.currentTime;
+      // Back in time (source reloaded): measure the next stall from the new position.
+      if (v.currentTime < st.last) st.last = v.currentTime;
       if ((v.paused && !held) || v.currentTime > st.last + 0.05) {
         st.last = v.currentTime;
         st.at = now;
@@ -80,13 +87,13 @@ export async function startStallMonitor(page: Page): Promise<void> {
   });
 }
 
-export async function stallReport(page: Page): Promise<{ maxStallMs: number; currentStallMs: number; currentTime: number }> {
+export async function stallReport(page: Page): Promise<{ maxStallMs: number; currentStallMs: number; currentTime: number; playedS: number }> {
   return page.evaluate(() => {
-    const st = (window as unknown as { __stall: { last: number; at: number; max: number } }).__stall;
+    const st = (window as unknown as { __stall: { last: number; at: number; max: number; played: number } }).__stall;
     const v = document.querySelector('video')!;
     const held = (window as unknown as { __swarmcast?: { delay?: { holding?: boolean } | null } }).__swarmcast?.delay?.holding === true;
     const current = (v.paused && !held) || v.currentTime > st.last + 0.05 ? 0 : performance.now() - st.at;
-    return { maxStallMs: Math.max(st.max, current), currentStallMs: current, currentTime: v.currentTime };
+    return { maxStallMs: Math.max(st.max, current), currentStallMs: current, currentTime: v.currentTime, playedS: st.played };
   });
 }
 
