@@ -17,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - The gentle catch-up after stalls (`maxLiveSyncPlaybackRate`) never ran: hls.js only uses it in low-latency mode. The new delay controller drives the playback speed itself.
+- The panel's "PC check" in Portuguese showed some values in English ("free", "installed", "reachable"…); they are translated now.
+- The Linux `.deb` listed `libwebkit2gtk-4.1-0` and `libayatana-appindicator3-1` twice in its dependencies.
+- The Linux install guide says that the AppImage needs the usual desktop libraries (fonts, OpenGL) and that minimal installs should use the `.deb`.
 
 ## [0.2.0] - 2026-10-26
 

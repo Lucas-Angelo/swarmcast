@@ -12,7 +12,7 @@ A maioria dos computadores usa os arquivos **x64** (`amd64`). Os **arm64** (`aar
 
 ## Opção A: o pacote .deb
 
-1. Entre na [página de download](/swarmcast/pt-br/download/#linux) e baixe o arquivo `.deb` (por exemplo, `swarmcast_0.2.0_amd64.deb`).
+1. Entre na [página de download](/swarmcast/pt-br/download/#linux) e baixe o arquivo `.deb` (por exemplo, `swarmcast_0.2.1_amd64.deb`).
 2. Instale:
    - **Com o mouse:** dê dois cliques no arquivo. A central de programas abre. Clique em **Instalar** e digite sua senha.
    - **No terminal**, dentro da pasta Downloads: `sudo apt install ./swarmcast_*_amd64.deb`
