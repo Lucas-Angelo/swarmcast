@@ -7,10 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added
-
-- **Website link previews and SEO**: a link to the site pasted in WhatsApp, Discord, Telegram, X, Facebook, LinkedIn or iMessage shows a large preview card in the page's language; every page has its own title, description, canonical URL, language alternates and Open Graph / Twitter tags, the home pages carry structured data (JSON-LD), and there is a `robots.txt` and a bilingual "page not found" page.
-
 ## [0.2.0] - 2026-10-26
 
 The desktop app release: SwarmCast now installs like any other app, opens in its own window and updates itself. The website is the single guide for streamers.
@@ -22,6 +18,7 @@ The desktop app release: SwarmCast now installs like any other app, opens in its
 - **"Start with the computer"** in the desktop app (off by default): opens SwarmCast in the tray when you sign in, without a window and without turning the live on.
 - Panel "Desktop app" card (start with the computer, version, check for updates) and an update banner with progress; on the first start of the desktop app, the computer check and the video converter install run in the background with progress, automatic retries and "Try again".
 - **Website** for streamers and viewers (<https://lucas-angelo.github.io/swarmcast/>, English and Brazilian Portuguese, GitHub Pages from `site/`): a landing page, a download page that picks the right installer for your computer, install guides with the Windows/macOS warnings, OBS, going live, P2P, protection, direct mode, updates, uninstall and troubleshooting. It replaces the old Markdown tutorials; the offline guide in the installer zips is generated from the same pages, and the panel has a "Help" link to it. Usage numbers on the site come only from GitHub's public download counters (no telemetry).
+- **Website link previews and SEO**: a link to the site pasted in WhatsApp, Discord, Telegram, X, Facebook, LinkedIn or iMessage shows a large preview card in the page's language; every page has its own title, description, canonical URL, language alternates and Open Graph / Twitter tags, the home pages carry structured data (JSON-LD), and there is a `robots.txt` and a bilingual "page not found" page.
 - **OBS guide with real screenshots** (English and Portuguese, OBS shown in each language): stream the same scene to Twitch (or any platform) and SwarmCast with the Multiple output plugin, or a different scene (e.g. a movie in a browser window) with Aitum Vertical.
 - **Forest & Cream brand**: the "broadcasting bee" symbol, wordmark, app and tray icons, favicons, a mascot, and one set of design tokens (light and dark) shared by the panel, the viewer pages, the desktop app and the website ([assets/brand/](assets/brand/README.md)).
 - **Problem report → Export logs** (panel, and the tray in the desktop app): saves a zip to your Downloads folder with the last days of logs, app and system details and the settings, anonymised (IP addresses and nicknames replaced by labels; never the stream key, the live link, tokens or secrets). "Show in folder" opens it.
