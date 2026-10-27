@@ -7,7 +7,7 @@
 
 use std::sync::{Arc, RwLock};
 
-use tauri::webview::NewWindowResponse;
+use tauri::webview::{NewWindowResponse, PageLoadEvent};
 use tauri::{App, WebviewUrl, WebviewWindowBuilder};
 use url::Url;
 
@@ -30,6 +30,16 @@ pub fn is_local(url: &Url) -> bool {
         "http" | "https" => url.host_str() == Some("tauri.localhost"),
         _ => false,
     }
+}
+
+/// The splash page, relative to the app's frontend (`build.frontendDist`).
+const SPLASH_PAGE: &str = "index.html";
+
+/// Where Tauri serves `WebviewUrl::App(SPLASH_PAGE)` (no `devUrl`, no `useHttpsScheme`). Known
+/// up front: the webview's own `url()` panics on macOS before the first page commits.
+pub fn splash_url() -> Url {
+    let origin = if cfg!(windows) { "http://tauri.localhost/" } else { "tauri://localhost/" };
+    Url::parse(origin).and_then(|o| o.join(SPLASH_PAGE)).expect("the splash URL is a valid constant")
 }
 
 pub fn navigation_policy(url: &Url, admin: Option<&url::Origin>) -> Nav {
@@ -77,7 +87,8 @@ pub fn create(app: &App, shell: &Arc<Shell>, visible: bool) -> tauri::Result<()>
     let origin: Arc<RwLock<Option<url::Origin>>> = shell.admin_origin();
     let nav_handle = handle.clone();
     let popup_handle = handle.clone();
-    let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App("index.html".into()))
+    let page_shell = shell.clone();
+    let builder = WebviewWindowBuilder::new(app, MAIN_WINDOW, WebviewUrl::App(SPLASH_PAGE.into()))
         .title("SwarmCast")
         .inner_size(1200.0, 820.0)
         .min_inner_size(900.0, 600.0)
@@ -104,13 +115,14 @@ pub fn create(app: &App, shell: &Arc<Shell>, visible: bool) -> tauri::Result<()>
                 shell::open_external(&popup_handle, &url);
             }
             NewWindowResponse::Deny
+        })
+        // The shell follows the page from these events instead of asking the webview (page.rs).
+        .on_page_load(move |_window, payload| {
+            page_shell.on_page_load(payload.url(), matches!(payload.event(), PageLoadEvent::Finished));
         });
     #[cfg(windows)]
     let builder = builder.additional_browser_args(&webview2_args(crate::i18n::locale()));
     let window = builder.build()?;
-    if let Ok(url) = window.url() {
-        shell.set_splash_url(url);
-    }
     let close_shell = shell.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {
@@ -135,6 +147,13 @@ mod tests {
         assert!(is_local(&u("http://tauri.localhost/index.html")));
         assert!(!is_local(&u("http://localhost/")));
         assert!(!is_local(&u("https://tauri.localhost.evil.com/")));
+    }
+
+    #[test]
+    fn splash_url_is_the_local_index_page() {
+        let url = splash_url();
+        assert!(is_local(&url), "{url}");
+        assert_eq!(url.path(), "/index.html");
     }
 
     #[test]

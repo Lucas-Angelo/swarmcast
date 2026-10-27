@@ -1,0 +1,4 @@
+disallowed-methods = [
+  { path = "tauri::WebviewWindow::url", reason = "panics on macOS while the webview has no URL yet (wry unwraps WKWebView.URL): the shell tracks the page itself, see src/page.rs" },
+  { path = "tauri::Webview::url", reason = "panics on macOS while the webview has no URL yet (wry unwraps WKWebView.URL): the shell tracks the page itself, see src/page.rs" },
+]
