@@ -328,9 +328,83 @@ async function updateTest(dirA, dirB, port) {
   }
 }
 
+// ---------------------------------------------------------------- optional: guide screenshots
+
+// SC_DESKTOP_SCREENSHOTS=<dir> (Windows only, artifacts for the website guide, no checks): runs
+// the installer with its normal pages (Enter on each), captures each page and the app window,
+// then removes everything again so the real test starts from a clean machine.
+const WIN_SHOT_PS = String.raw`
+param([string]$Out, [int]$ProcId = 0, [string]$Keys = '')
+Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+Add-Type @"
+using System; using System.Runtime.InteropServices;
+public class ScWin {
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+}
+"@
+[ScWin]::SetProcessDPIAware() | Out-Null
+$h = [IntPtr]::Zero
+if ($ProcId -gt 0) { $p = Get-Process -Id $ProcId -ErrorAction SilentlyContinue; if ($p) { $h = $p.MainWindowHandle } }
+if ($h -ne [IntPtr]::Zero) { [ScWin]::SetForegroundWindow($h) | Out-Null; Start-Sleep -Milliseconds 400 }
+$b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+$bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
+$g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
+$bmp.Save($Out + '-screen.png'); $g.Dispose()
+if ($h -ne [IntPtr]::Zero) {
+  $r = New-Object ScWin+RECT; [ScWin]::GetWindowRect($h, [ref]$r) | Out-Null
+  $x = [Math]::Max(0, $r.L); $y = [Math]::Max(0, $r.T); $w = [Math]::Min($b.Width, $r.R) - $x; $hh = [Math]::Min($b.Height, $r.B) - $y
+  if ($w -gt 10 -and $hh -gt 10) { $bmp.Clone((New-Object System.Drawing.Rectangle $x, $y, $w, $hh), $bmp.PixelFormat).Save($Out + '-window.png') }
+}
+$bmp.Dispose()
+if ($Keys) { [System.Windows.Forms.SendKeys]::SendWait($Keys) }
+`;
+
+async function windowsGuideShots(dir, out) {
+  fs.mkdirSync(out, { recursive: true });
+  const ps1 = path.join(work, 'shot.ps1');
+  fs.writeFileSync(ps1, WIN_SHOT_PS);
+  const shot = (name, pid = 0, keys = '') =>
+    spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-Out', path.join(out, name), '-ProcId', String(pid), ...(keys ? ['-Keys', keys] : [])], { stdio: 'inherit', timeout: 60_000 });
+  const pidOf = (name) => {
+    const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process ${name} -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`], { encoding: 'utf8' });
+    return Number(r.stdout.trim()) || 0;
+  };
+  const killAll = () => run('powershell.exe', ['-NoProfile', '-Command', 'Get-Process SwarmCast,swarmcast-server,mediamtx,cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force'], { allowFail: true });
+  console.log('\n=== guide screenshots (Windows installer pages and the app window)');
+  const setup = spawn(file(dir, /_x64-setup\.exe$/), [], { stdio: 'ignore' });
+  for (let i = 1; i <= 10 && setup.exitCode === null; i++) {
+    await sleep(3000);
+    shot(`installer-${String(i).padStart(2, '0')}`, setup.pid, '{ENTER}');
+  }
+  await until(() => setup.exitCode !== null, 120_000, 'the installer to close').catch(() => setup.kill());
+  // The last page starts the app ("Run SwarmCast" is ticked by default).
+  await sleep(20_000);
+  shot('app-en', pidOf('SwarmCast'));
+  killAll();
+  await sleep(3000);
+  const exe = path.join(winInstallDir, 'SwarmCast.exe');
+  if (fs.existsSync(exe)) {
+    const app = spawn(exe, [], { stdio: 'ignore', env: { ...process.env, SWARMCAST_LOCALE: 'pt-BR', SWARMCAST_NO_OPEN: '1' } });
+    await sleep(20_000);
+    shot('app-pt-BR', app.pid);
+    killAll();
+    await sleep(3000);
+    run(path.join(winInstallDir, 'uninstall.exe'), ['/S'], { allowFail: true });
+    await until(() => !fs.existsSync(exe), 60_000, 'the uninstaller').catch(() => {});
+  }
+  fs.rmSync(dataDir, { recursive: true, force: true });
+  console.log(`guide screenshots: ${fs.readdirSync(out).join(', ')}`);
+}
+
 // ---------------------------------------------------------------- main
 
 try {
+  if (process.env.SC_DESKTOP_SCREENSHOTS && OS === 'windows' && opt('installers')) {
+    await windowsGuideShots(path.resolve(opt('installers')), path.resolve(process.env.SC_DESKTOP_SCREENSHOTS)).catch((err) => console.log(`guide screenshots failed (ignored): ${err.message}`));
+  }
   if (opt('installers')) await installerTest(path.resolve(opt('installers')));
   if (opt('update-from')) await updateTest(path.resolve(opt('update-from')), path.resolve(opt('update-to')), Number(opt('update-port') ?? 47811));
   console.log('\nAll desktop checks passed.');
