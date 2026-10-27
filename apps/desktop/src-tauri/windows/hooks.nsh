@@ -22,8 +22,11 @@ FunctionEnd
 ; Stops everything still running from the install folder (the server, MediaMTX,
 ; cloudflared). Normally nothing is left: closing SwarmCast.exe closes its Job object, which
 ; ends the server and every process it started (ffmpeg included).
+; Never the uninstaller itself: run in place (`uninstall.exe /S _?=<dir>`, as
+; scripts/uninstall-windows.ps1 does) it lives in the install folder too, and killing it ended
+; every such uninstall with exit code -1 before its own steps ran.
 !macro SwarmCastStopProcesses
-  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$dir = '$INSTDIR\'; Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) } | Stop-Process -Force -ErrorAction SilentlyContinue"`
+  nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$dir = '$INSTDIR\'; Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($$_.Path) -ne 'uninstall.exe' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
   Pop $0
 !macroend
 
