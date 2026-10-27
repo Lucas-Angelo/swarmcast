@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 
-/** Best-effort desktop notification. Never throws. */
+/** Best-effort desktop notification. Never throws. Silent in tests (VITEST, SWARMCAST_NO_NOTIFY=1). */
 export function notify(title: string, message: string): void {
+  if (process.env.VITEST || process.env.SWARMCAST_NO_NOTIFY === '1') return;
   try {
     const clean = (s: string): string => s.replace(/["'`$\\]/g, '');
     if (process.platform === 'darwin') {

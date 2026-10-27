@@ -8,6 +8,9 @@ import type { ChildProcess } from 'node:child_process';
 import { createApp } from '../../src/app.js';
 import { pushTestStream } from '../integration/helpers.js';
 
+// Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
+process.env.SWARMCAST_NO_NOTIFY ??= '1';
+
 // SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
 export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
