@@ -187,11 +187,16 @@ function dedupe(checks) {
 
 // ------------------------------------------------------------------ running
 
+// Windows: Git Bash, the `shell: bash` of the workflow steps. A bare "bash" could resolve to WSL's
+// System32\bash.exe first.
+const gitBash = isWin ? path.join(process.env.ProgramFiles ?? 'C:\\Program Files', 'Git', 'bin', 'bash.exe') : '';
+const BASH = isWin && fs.existsSync(gitBash) ? gitBash : 'bash';
+
 /** Runs one bash command with a time limit, streaming its output; resolves { code, output, seconds, timedOut }. */
 function run(cmd, env, limitMs) {
   return new Promise((resolve) => {
     const start = Date.now();
-    const child = spawn('bash', ['-c', cmd], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: !isWin });
+    const child = spawn(BASH, ['-c', cmd], { env, stdio: ['ignore', 'pipe', 'pipe'], detached: !isWin });
     let output = '';
     const onData = (d) => {
       process.stdout.write(d);

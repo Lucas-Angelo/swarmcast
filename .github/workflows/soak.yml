@@ -64,8 +64,9 @@ jobs:
         id: plan
         run: |
           node scripts/ci/soak-plan.mjs "$SOAK_PLAN" | tee -a "$GITHUB_OUTPUT" | cut -c1-200
-      # desktop-test installs the installers that desktop.yml built for this commit (or, when
-      # that run has none, for the newest run of the branch): no build in the soak.
+      # desktop-test installs the installers of the newest desktop.yml run for this commit (or of
+      # the branch when this commit has none): no build in the soak. Start the soak after that
+      # run's build jobs have finished.
       - name: Find the desktop installers to test
         id: desktop
         if: steps.plan.outputs.desktop_test != '[]'
