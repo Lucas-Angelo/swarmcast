@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Website link previews and SEO**: a link to the site pasted in WhatsApp, Discord, Telegram, X, Facebook, LinkedIn or iMessage shows a large preview card in the page's language; every page has its own title, description, canonical URL, language alternates and Open Graph / Twitter tags, the home pages carry structured data (JSON-LD), and there is a `robots.txt` and a bilingual "page not found" page.
+
 ## [0.2.0] - 2026-10-26
 
 The desktop app release: SwarmCast now installs like any other app, opens in its own window and updates itself. The website is the single guide for streamers.
