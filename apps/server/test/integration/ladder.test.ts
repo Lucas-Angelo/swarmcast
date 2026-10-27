@@ -18,7 +18,16 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   let app: App;
   let ffmpeg: ChildProcess | null = null;
   let jar: Jar;
-  const state = () => JSON.stringify({ phase: app.live.phase, source: app.live.origin.sourceKind, quality: app.live.quality.state() });
+  const ladder = () => app.live.quality.transcoder;
+  const state = () =>
+    JSON.stringify({
+      phase: app.live.phase,
+      source: app.live.origin.sourceKind,
+      transcoder: { status: ladder().status, pid: ladder().pid, outDir: ladder().outDir, launches: ladder().launches, crashes: ladder().crashes },
+      quality: app.live.quality.state(),
+    });
+  /** The ladder runs with its own folder, and the origin serves it. */
+  const ladderRunning = (): boolean => ladder().status === 'running' && !!ladder().outDir && !!ladder().pid && app.live.origin.sourceKind === 'ladder';
 
   beforeAll(async () => {
     app = await createApp({
@@ -119,16 +128,23 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   });
 
   it('OBS reconnecting: same playlist names, sequence keeps growing, a discontinuity marks the restart', async () => {
+    await waitFor(ladderRunning, 30_000, 'ladder running before OBS leaves', state);
     const before = await (await jar.fetch('/hls/v480.m3u8')).text();
     const seqBefore = Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(before)![1]);
     const lastBefore = mediaSegments(before).pop()!;
+    // Every run listed so far (the crash test leaves two in the stitched playlist): "back after
+    // the reconnect" means a segment of a run that did not exist before, never an old one.
+    const run = (seg: string): string => seg.split('_')[0]!;
+    const runsBefore = new Set(mediaSegments(before).map(run));
+    const launches = ladder().launches;
     ffmpeg?.kill('SIGKILL');
-    await waitFor(() => app.live.quality.transcoder.status === 'off', 20_000, 'ladder stop after OBS left', state);
+    await waitFor(() => ladder().status === 'off' && app.live.origin.sourceKind !== 'ladder', 20_000, 'ladder stop after OBS left', state);
     ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });
-    const oldRun = lastBefore.split('_')[0]!;
+    const oldRun = run(lastBefore);
     await waitFor(async () => {
+      if (!(ladder().launches > launches && ladderRunning())) return false;
       const res = await jar.fetch('/hls/v480.m3u8');
-      return res.ok && mediaSegments(await res.text()).some((s) => !s.startsWith(oldRun));
+      return res.ok && mediaSegments(await res.text()).some((s) => !runsBefore.has(run(s)));
     }, 60_000, 'ladder back after reconnect', state);
     const after = await (await jar.fetch('/hls/v480.m3u8')).text();
     expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
@@ -139,8 +155,9 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   });
 
   it('"Stop everything" also stops ffmpeg and deletes its files', async () => {
-    const pid = app.live.quality.transcoder.pid;
-    const dir = app.live.quality.transcoder.outDir;
+    await waitFor(ladderRunning, 30_000, 'ladder running before "Stop everything"', state);
+    const pid = ladder().pid;
+    const dir = ladder().outDir;
     ffmpeg?.kill('SIGKILL');
     expect(await app.live.stop()).toBe(true);
     if (pid) expect(isAlive(pid)).toBe(false);

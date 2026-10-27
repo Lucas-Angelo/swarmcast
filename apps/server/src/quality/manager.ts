@@ -287,6 +287,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
         // A new publisher replaced the old one without a "closed" first (MediaMTX lets a new
         // OBS connection take over the path): treat it as a reconnect.
         void this.transcoder.stop().then(() => {
+          this.leaveStoppedLadder();
           if (seq !== this.publishSeq || !this.live) return;
           this.d.origin.setSource(this.mediamtxSource);
           this.d.origin.hold(false);
@@ -303,12 +304,27 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
       this.publishSeq += 1;
       if (this.ladderTimer) clearTimeout(this.ladderTimer);
       this.ladderTimer = null;
+      const seq = this.publishSeq;
       void this.transcoder.stop().then(() => {
+        this.leaveStoppedLadder();
+        // OBS may be back already (a new publish during the stop): its own flow owns the origin.
+        if (seq !== this.publishSeq) return;
         this.d.origin.setSource(this.mediamtxSource);
         this.d.origin.hold(false);
         this.changed();
       });
     }
+  }
+
+  /**
+   * After a ladder stop: never keep serving the stopped ladder's (deleted) folder from cache.
+   * A flow that started a new ladder meanwhile has its own folder (outDir set) and is left alone.
+   */
+  private leaveStoppedLadder(): void {
+    if (this.d.origin.sourceKind !== 'ladder' || this.transcoder.outDir) return;
+    this.d.origin.setSource(this.mediamtxSource);
+    this.d.origin.hold(false);
+    this.changed();
   }
 
   /** True when the current settings could give more than one rendition for a 1080p source. */
@@ -389,6 +405,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     if (rungs.length < 2) {
       this.d.warn(reason === 'behind' ? 'warn.quality.shedAllBehind' : 'warn.quality.shedAllCpu', { height: dropped.height });
       await this.transcoder.stop();
+      this.leaveStoppedLadder();
       if (!this.live || seq !== this.publishSeq) return;
       this.d.origin.setSource(this.mediamtxSource);
       this.d.origin.hold(false);
@@ -398,14 +415,20 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     this.d.warn(reason === 'behind' ? 'warn.quality.shedBehind' : 'warn.quality.shedCpu', { height: dropped.height, rest });
     const source = this.ladderSource;
     await this.transcoder.stop();
-    if (!this.live || !this.publishing || seq !== this.publishSeq || !source) return;
+    if (!this.live || !this.publishing || seq !== this.publishSeq || !source) {
+      this.leaveStoppedLadder();
+      return;
+    }
     this.launchLadder(seq, source, rungs);
   }
 
   private fallBackToPlain(code: MessageKey, params?: MessageParams): void {
     this.d.warn(code, params);
+    const seq = this.publishSeq;
     void this.transcoder.stop().then(() => {
-      if (!this.live) return;
+      this.leaveStoppedLadder();
+      // Only for the publish it was about: a reconnect meanwhile runs its own ladder flow.
+      if (!this.live || seq !== this.publishSeq) return;
       this.d.origin.setSource(this.mediamtxSource);
       this.d.origin.hold(false);
       this.changed();
