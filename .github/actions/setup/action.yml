@@ -52,26 +52,38 @@ runs:
       run: |
         brew install ffmpeg
         echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
-    # The pinned build the panel installs for streamers (BtbN LGPL, scripts/build/versions.json),
-    # SHA-256 verified, instead of Chocolatey (whose install sometimes left no ffmpeg.exe).
+    # A pinned BtbN build, SHA-256 verified (same release as the app's pin in
+    # scripts/build/versions.json), instead of Chocolatey, whose install sometimes left no
+    # ffmpeg.exe. This is the GPL variant: the test feeds encode with libx264, which the LGPL
+    # build the app installs for streamers does not have. Hash from BtbN's checksums.sha256.
     # The real ffmpeg.exe goes first on PATH, ahead of any shim on the image: a shim runs
     # ffmpeg as a child, so tests that kill "ffmpeg" by PID would only kill the shim. The
     # Windows suites run the app with a bare-OS PATH and hand the test feed FFMPEG_BIN.
     - name: Install ffmpeg (Windows)
       if: inputs.ffmpeg == 'true' && runner.os == 'Windows'
       shell: pwsh
+      env:
+        FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
+        FFMPEG_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
       run: |
+        $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg-gpl.zip'
+        curl.exe --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 -o $zip $env:FFMPEG_URL
+        if ($LASTEXITCODE -ne 0) { throw "Downloading ffmpeg failed (curl exit $LASTEXITCODE): $env:FFMPEG_URL" }
+        $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
+        if ($hash -ne $env:FFMPEG_SHA256) { throw "ffmpeg checksum mismatch: expected $env:FFMPEG_SHA256, got $hash" }
         $dir = Join-Path $env:RUNNER_TEMP 'ffmpeg'
-        node scripts/build/fetch-binaries.mjs --target windows-x64 --only ffmpeg --out $dir
-        if ($LASTEXITCODE -ne 0) { throw "Downloading the pinned ffmpeg failed (exit $LASTEXITCODE)" }
-        $exe = Join-Path $dir 'ffmpeg.exe'
-        if (-not (Test-Path $exe)) { throw "ffmpeg.exe is missing in $dir after the download" }
-        "FFMPEG_BIN=$exe" >> $env:GITHUB_ENV
-        $dir >> $env:GITHUB_PATH
-    - name: ffmpeg version
+        Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
+        $f = Get-ChildItem $dir -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+        if (-not $f) { throw "ffmpeg.exe not found in $zip" }
+        "FFMPEG_BIN=$($f.FullName)" >> $env:GITHUB_ENV
+        Split-Path $f.FullName >> $env:GITHUB_PATH
+    - name: ffmpeg version (and the libx264 encoder the test feeds need)
       if: inputs.ffmpeg == 'true'
       shell: bash
-      run: '"$FFMPEG_BIN" -hide_banner -version | head -n 1'
+      run: |
+        "$FFMPEG_BIN" -hide_banner -version | head -n 1
+        encoders="$("$FFMPEG_BIN" -hide_banner -encoders)"
+        grep -q libx264 <<<"$encoders" || { echo "::error::$FFMPEG_BIN has no libx264 encoder (the test feeds need it)"; exit 1; }
 
     - if: inputs.npm-ci == 'true'
       shell: bash
