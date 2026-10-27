@@ -26,6 +26,8 @@ Most computers need the **x64** (`amd64`) files. Use the **arm64** (`aarch64`) o
 2. Allow it to run: right-click the file → **Properties** → **Permissions** → tick **Allow executing file as program** (or in a terminal: `chmod +x SwarmCast_*.AppImage`).
 3. Double-click it.
 
+The AppImage uses the usual desktop libraries (fonts, graphics/OpenGL), which every desktop distribution already has. On a minimal install without a full desktop, use the `.deb` instead.
+
 :::caution[Ubuntu 22.04 or newer: "AppImages require FUSE to run"]
 Install the FUSE 2 library once, then try again:
 

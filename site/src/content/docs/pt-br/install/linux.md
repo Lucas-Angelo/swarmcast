@@ -26,6 +26,8 @@ O `apt` também instala as duas bibliotecas do sistema de que o SwarmCast precis
 2. Deixe ele rodar: botão direito no arquivo → **Propriedades** → **Permissões** → marque **Permitir execução do arquivo como programa** (ou no terminal: `chmod +x SwarmCast_*.AppImage`).
 3. Dê dois cliques nele.
 
+O AppImage usa as bibliotecas comuns de desktop (fontes, gráficos/OpenGL), que toda distribuição com ambiente gráfico já tem. Numa instalação mínima, sem desktop completo, use o `.deb`.
+
 :::caution[Ubuntu 22.04 ou mais novo: "AppImages require FUSE to run"]
 Instale a biblioteca FUSE 2 uma vez e tente de novo:
 
