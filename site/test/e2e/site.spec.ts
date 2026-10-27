@@ -400,6 +400,60 @@ test('every page has alt text on its images', async ({ browser }) => {
   await context.close();
 });
 
+/** The illustrated usage guides: [page, minimum screenshots, an English alt text, its Portuguese twin]. The alt texts name the app's buttons in the page language, like the screenshots. */
+const GUIDES: Array<[string, number, RegExp, RegExp]> = [
+  ['start/quick-start', 1, /The SwarmCast panel during a live/, /O painel do SwarmCast durante uma live/],
+  ['install/windows', 1, /Run SwarmCast/, /Boas-vindas ao SwarmCast/],
+  ['install/macos', 1, /Open Anyway/, /Abrir Mesmo Assim/],
+  ['start/first-run', 10, /Starting SwarmCast/, /Abrindo o SwarmCast/],
+  ['live/go-live', 6, /Start Streaming/, /Iniciar transmissão/],
+  ['live/kick-and-new-link', 5, /Remove from P2P/, /Tirar do P2P/],
+  ['live/quality', 1, /Quality for viewers/, /Qualidade para quem assiste/],
+  ['live/p2p', 2, /Help the stream \(P2P\)/, /Ajudar a transmissão \(P2P\)/],
+  ['live/protection', 1, /Protection card/, /cartão Proteção/],
+  ['app/autostart', 2, /Start with the computer/, /Iniciar com o computador/],
+  ['app/updates', 2, /Check for updates/, /Procurar atualizações/],
+  ['help/troubleshooting', 1, /Export logs/, /Exportar logs/],
+  ['viewers', 4, /nickname/, /apelido/],
+];
+
+test.describe('illustrated guides', () => {
+  for (const [slug, min, en, pt] of GUIDES) {
+    for (const [lang, url, alt] of [
+      ['en', `/swarmcast/${slug}/`, en],
+      ['pt-BR', `/swarmcast/pt-br/${slug}/`, pt],
+    ] as const) {
+      test(`${url}: screenshots in the page language load, with alt text`, async ({ browser }) => {
+        const { context, page } = await open(browser, { locale: lang === 'en' ? 'en-US' : 'pt-BR' });
+        await page.goto(url);
+        const imgs = page.locator('main .sl-markdown-content img');
+        expect(await imgs.count()).toBeGreaterThanOrEqual(min);
+        for (const img of await imgs.all()) {
+          await img.scrollIntoViewIfNeeded();
+          await expect(img).toHaveJSProperty('complete', true);
+          expect(await img.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
+          expect((await img.getAttribute('alt'))?.length ?? 0, 'alt text').toBeGreaterThan(10);
+        }
+        const alts = await imgs.evaluateAll((l) => l.map((i) => (i as HTMLImageElement).alt).join('\n'));
+        expect(alts).toMatch(alt);
+        await context.close();
+      });
+    }
+  }
+
+  for (const url of ['/swarmcast/start/first-run/', '/swarmcast/pt-br/live/go-live/', '/swarmcast/pt-br/live/kick-and-new-link/', '/swarmcast/viewers/', '/swarmcast/pt-br/install/macos/', '/swarmcast/install/windows/']) {
+    test(`${url} fits a 360 px screen with its screenshots`, async ({ browser }) => {
+      const { context, page } = await open(browser, { os: 'iphone', viewport: { width: 360, height: 780 }, isMobile: true, locale: url.includes('pt-br') ? 'pt-BR' : 'en-US' });
+      await page.goto(url);
+      for (const img of await page.locator('main img').all()) await img.scrollIntoViewIfNeeded();
+      await noHorizontalScroll(page);
+      const tooWide = await page.locator('main img').evaluateAll((l) => l.filter((i) => i.getBoundingClientRect().right > document.documentElement.clientWidth + 1).length);
+      expect(tooWide, 'screenshots wider than the screen').toBe(0);
+      await context.close();
+    });
+  }
+});
+
 test('keyboard users see where they are', async ({ browser }) => {
   const { context, page } = await open(browser);
   await page.goto('/swarmcast/');

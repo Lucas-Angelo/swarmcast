@@ -11,7 +11,7 @@ Your viewers always get your **original quality** (what OBS sends, for example 1
 - Without one, it runs a short test on the processor and offers **one** small quality only if there is room to spare.
 - The viewer's player picks the best quality their internet can play without pausing (**Auto**), and changes it when needed. Viewers can also pick a quality by hand.
 
-![The Quality for viewers card: what your PC can do, the extra qualities viewers can pick, and the upload SwarmCast uses.](../../../../../docs/img/panel-quality-en.png)
+![The Quality for viewers card: 1 Stream in multiple qualities (automatic), 2 Viewers get: 1080p, 720p, 480p, 360p, and 3 Upload used by SwarmCast.](../../../assets/guides/live/en/quality-card.webp)
 
 ## OBS always comes first
 

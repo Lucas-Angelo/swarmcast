@@ -110,6 +110,8 @@ O SwarmCast é testado com o OBS Studio. Qualquer programa que mande para um ser
 
 Quando algo dá errado, os logs mostram o que aconteceu. O SwarmCast junta tudo num arquivo para você:
 
+![O cartão Relatório de problema: 1 Exportar logs, 2 Salvo em …/Downloads/SwarmCast-logs-0.2.0-….zip (o nome de usuário está escondido aqui), 3 Mostrar na pasta.](../../../../assets/guides/help/pt-br/export.webp)
+
 1. No painel, desça até o cartão **Relatório de problema** e clique em **Exportar logs**. No app para computador, também dá para usar o ícone da bandeja (no Mac, o ícone da barra de menus) → **Exportar logs…**.
 2. O SwarmCast salva um arquivo ZIP com um nome como `SwarmCast-logs-0.2.0-20261026-1430.zip` na sua pasta **Downloads** e mostra onde ele está. Clique em **Mostrar na pasta** para achar o arquivo.
 3. Anexe o ZIP numa issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), ou mande para a pessoa que está te ajudando. Conte o que você fez e o que esperava que acontecesse.

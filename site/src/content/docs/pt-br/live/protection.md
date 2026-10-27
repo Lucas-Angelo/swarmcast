@@ -16,7 +16,7 @@ O SwarmCast foi feito para o seu computador nunca ficar aberto para a internet n
 
 ## O cartão Proteção
 
-![O cartão Proteção: o estado atual (Normal), a verificação do navegador, as listas públicas de bloqueio e as reações automáticas a um ataque.](../../../../../../docs/img/panel-protection-pt-BR.png)
+![O cartão Proteção: 1 o estado, Normal, 2 a verificação do navegador de quem entra (ligada por padrão), 3 Bloquear IPs maliciosos conhecidos (listas públicas), e as reações automáticas a um ataque.](../../../../assets/guides/live/pt-br/protection-card.webp)
 
 O SwarmCast acompanha o tráfego da sua live e compara com o que o seu público costuma gerar. O cartão mostra o estado: **Normal**, **Atividade incomum** ou **Sob ataque**, e o motivo.
 

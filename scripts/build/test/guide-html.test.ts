@@ -61,7 +61,10 @@ describe('the offline guides built from the site pages', () => {
       expect(html).not.toMatch(/<script/i);
       expect(html).not.toMatch(/\ssrc="(?!data:)/);
       expect(html).toContain('img-src data:');
-      expect(html).toContain('<img src="data:image/png;base64,');
+      // The annotated WebP screenshots of the guides, every one of them embedded.
+      expect(html).toContain('<img src="data:image/webp;base64,');
+      const pictures = config.pages.reduce((n, slug) => n + (fs.readFileSync(path.join(dir, `${slug}.md`), 'utf8').match(/^\s*!\[[^\]]*\]\([^)]+\)\s*$/gm) ?? []).length, 0);
+      expect(html.match(/<img src="data:image\//g)?.length).toBe(pictures);
       expect(html).toContain('SwarmCast v9.9.9');
       expect(html).not.toMatch(/:::|\]\(\/swarmcast/); // no leftover Markdown
       const ids = new Set([...html.matchAll(/\sid="([^"]+)"/g)].map((m) => m[1]));

@@ -3,49 +3,69 @@ title: Primeira vez e tutorial
 description: O que o SwarmCast faz quando abre pela primeira vez e o tutorial passo a passo do painel.
 ---
 
-Quando você abre o SwarmCast, aparece o **painel**: a tela onde você controla a sua live. Ele roda só no seu computador. Ninguém mais consegue abrir.
+Quando você abre o SwarmCast, aparece o **painel**, a tela onde você controla a sua live. Ele roda só no seu computador: ninguém mais consegue abrir.
 
-## O que acontece na primeira vez
+## 1. O SwarmCast abre
 
-1. A janela mostra **Abrindo o SwarmCast…** por alguns segundos.
-2. O SwarmCast confere o seu computador: memória, processador, velocidade da internet e se o OBS está instalado. Leva mais ou menos um minuto. ✓ quer dizer tudo certo, ⚠ funciona mas não é o ideal. Nada disso impede você de continuar.
-3. Ele baixa o conversor de vídeo gratuito (ffmpeg) direto de quem publica e confere o arquivo. É ele que deixa quem tem internet lenta escolher uma qualidade menor. Se o download falhar, o SwarmCast tenta de novo sozinho, e tudo continua funcionando na qualidade original.
-4. O **tutorial de configuração** abre.
+![A janela do SwarmCast enquanto abre: Abrindo o SwarmCast… Isso costuma levar só alguns segundos.](../../../../assets/guides/start/pt-br/splash.webp)
 
-## O tutorial de configuração
+A janela mostra **Abrindo o SwarmCast…** por alguns segundos, e depois o tutorial de configuração abre sozinho.
 
-O tutorial leva uns 5 minutos e tem imagens do OBS. Ele mostra:
+## 2. O tutorial de configuração
 
-1. **A conferência do seu PC:** o que o SwarmCast encontrou neste computador.
-2. **Saída do OBS:** o intervalo de quadro-chave de 2 segundos (obrigatório).
-3. **Onde você vai transmitir?** Em outra plataforma (Twitch, YouTube, Kick…) e no SwarmCast ao mesmo tempo, ou só no SwarmCast.
-4. **Mandar o OBS para o SwarmCast:** o servidor e a chave de transmissão, com botões de **Copiar**.
-5. **Testar:** você começa a transmitir no OBS e o tutorial mostra quando o vídeo chega.
-6. **Compartilhar o link** e um tour rápido pelo painel.
+![Tutorial de configuração, passo 1 de 9: Boas-vindas ao SwarmCast, com 1 Próximo.](../../../../assets/guides/start/pt-br/welcome.webp)
 
-Os mesmos passos estão explicados aqui no site: [Configurar o OBS](/swarmcast/pt-br/start/obs/) e [Fazer a live e mandar o link](/swarmcast/pt-br/live/go-live/).
+Leva uns 5 minutos. Clique em **Próximo** para seguir e em **Voltar** para voltar. **Pular tutorial** fecha (dá para abrir de novo depois).
 
-Para ver o tutorial de novo, clique em **Refazer o tutorial de configuração** no fim do painel.
+## 3. Conferindo o seu PC
 
-![O painel do SwarmCast durante a live: Ao vivo e OBS: enviando no topo, o cartão do link da live (o link está escondido aqui) e a lista de espectadores com o aparelho e o P2P de cada um.](../../../../../../docs/img/panel-overview-pt-BR.png)
+![Passo 2, Conferindo o seu PC, enquanto roda: 1 Verificando o seu computador… (memória, processador, velocidade da internet, OBS). Leva mais ou menos um minuto.](../../../../assets/guides/start/pt-br/checking.webp)
 
-## As partes do painel
+Na primeira vez, o SwarmCast confere o seu computador. Ele mostra **Verificando o seu computador…** por mais ou menos um minuto.
 
-- **No topo:** se você está ao vivo, se o OBS está enviando e o botão **Desligar tudo**.
-- **Link da live para seus inscritos:** o link secreto para compartilhar, com **Copiar link** e **Gerar novo link**.
-- **Espectadores e ajuda P2P:** quem está assistindo (apelido e aparelho) e quem está ajudando a passar o vídeo.
-- **Qualidade para quem assiste** e **Sua internet:** as qualidades menores e quanto do seu upload o SwarmCast usa.
-- **Modo de conexão:** modo seguro (o normal) ou modo direto (só para emergências).
-- **Proteção:** o que o SwarmCast detectou e fez contra ataques.
-- **App do SwarmCast:** iniciar com o computador, versão e atualizações.
-- **Atividade:** tudo o que acontece durante a live. Copie quando for pedir ajuda.
-- **No fim:** o idioma, **Ajuda** (este site), **Refazer o tutorial de configuração** e **Fechar o SwarmCast**.
+![Passo 2 com o resultado: 1 um sinal verde ao lado do sistema, memória, processador, upload e download, disco, portas, OBS Studio, servidor de atualizações e versão, e 2 Próximo.](../../../../assets/guides/start/pt-br/pc-check.webp)
 
-A maioria dos botões tem um **ⓘ** do lado: passe o mouse ou toque nele para ver a explicação.
+Verde quer dizer tudo certo; amarelo, funciona mas não é o ideal. Nada disso impede você de continuar. Ao mesmo tempo, o SwarmCast baixa o conversor de vídeo gratuito (ffmpeg) para as qualidades menores.
+
+## 4. O OBS, uma vez só
+
+![Passo 4, Para onde você vai transmitir?: 1 Outra plataforma + SwarmCast ao mesmo tempo (recomendado), ou 2 Só o SwarmCast.](../../../../assets/guides/start/pt-br/where.webp)
+
+Escolha se você também transmite na Twitch, no YouTube ou na Kick, ou só no SwarmCast. Os próximos passos mostram as configurações do OBS para essa escolha.
+
+![Passo 5: instale o plugin Multiple output no OBS e preencha um destino novo com 1 Nome, 2 URL (servidor) e 3 Chave de transmissão, cada um com um botão Copiar.](../../../../assets/guides/start/pt-br/obs-step.webp)
+
+Use os botões **Copiar** e cole no OBS. O passo a passo completo, com imagens do OBS: [Configurar o OBS](/swarmcast/pt-br/start/obs/).
+
+## 5. Teste e mande o link
+
+![Passo 6, Teste: 1 O SwarmCast está ligado, depois Iniciar transmissão no OBS.](../../../../assets/guides/start/pt-br/test-it.webp)
+
+Comece a transmitir no OBS. O tutorial mostra quando o vídeo chega.
+
+![Passo 7, Compartilhe o link: o link da live (escondido aqui) e 1 Copiar link.](../../../../assets/guides/start/pt-br/share-link.webp)
+
+Cada live ganha um link secreto novo. Mande só para os seus membros.
+
+![Passo 9, Tudo pronto!: o que fazer no fim da live, e 1 Concluir.](../../../../assets/guides/start/pt-br/finish.webp)
+
+Clique em **Concluir**. Para ver o tutorial de novo, clique em **Refazer o tutorial de configuração**, no fim do painel.
+
+## O painel
+
+![O painel durante uma live: 1 Ao vivo: 3 espectadores e OBS: enviando, 2 o link da live (escondido aqui), 3 Configuração do OBS, 4 Espectadores e ajuda P2P, 5 Proteção.](../../../../assets/guides/start/pt-br/panel.webp)
+
+1. **No alto:** se você está ao vivo, se o OBS está enviando e o botão **Desligar tudo**.
+2. **Link da live para seus inscritos:** o link para mandar. Veja [Fazer a live](/swarmcast/pt-br/live/go-live/).
+3. **Configuração do OBS:** o servidor e a chave de transmissão para o OBS.
+4. **Espectadores e ajuda P2P:** quantos assistem e quantos ajudam. Veja [Ajudar a transmissão (P2P)](/swarmcast/pt-br/live/p2p/).
+5. **Proteção:** veja [Segurança e proteção](/swarmcast/pt-br/live/protection/).
+
+Mais abaixo: **Qualidade para quem assiste**, **App do SwarmCast** (iniciar com o computador, atualizações), **Espectadores** (expulsar alguém), **Atividade** e **Relatório de problema** (mandar os logs). Quase todo botão tem um **ⓘ** pequeno: passe o mouse ou toque nele para ver a explicação.
 
 ## Onde o SwarmCast guarda as suas configurações
 
-As configurações, a chave de transmissão e os logs ficam numa pasta do SwarmCast no seu usuário. Atualizar o SwarmCast nunca apaga essa pasta.
+As configurações, a chave de transmissão e os logs ficam numa pasta do SwarmCast na sua conta de usuário. Atualizar o SwarmCast nunca apaga essa pasta.
 
 - Windows: `%LOCALAPPDATA%\SwarmCast`
 - macOS: `~/Library/Application Support/SwarmCast`

@@ -5,7 +5,7 @@ description: Como os espectadores se ajudam com o P2P, o que isso mostra sobre e
 
 **Ajudar a transmissão (P2P)** é uma opção na página de quem assiste. Ela vem **ligada**. Quem deixa ligada passa pedaços do vídeo para os outros espectadores, então o seu computador manda menos e a live fica mais lisa para todo mundo. P2P quer dizer "peer to peer": de um espectador para outro.
 
-![A página de quem assiste no celular: Ajudar a transmissão (P2P) é a caixinha abaixo do vídeo.](../../../../../../docs/img/viewer-phone-pt-BR.png)
+![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), com quantos peers ajudam e quanto do vídeo veio deles.](../../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ## O que isso mostra, sem rodeios
 
@@ -24,6 +24,9 @@ Cada pedaço de vídeo tem uma impressão digital assinada pelo seu SwarmCast. O
 
 - **Quem assiste:** desmarca **Ajudar a transmissão (P2P)**. Continua assistindo normalmente, direto de você, e a escolha fica salva. O **ⓘ** ao lado da opção explica a mesma coisa.
 - **Você:** clica em **Tirar do P2P** ao lado da pessoa na lista de espectadores. Ela continua assistindo, mas para de compartilhar.
+- **Todo mundo de uma vez:** desmarque **Permitir P2P para os espectadores** no cartão **Sua internet** e clique em **Salvar**. Aí todo mundo assiste direto de você, e o seu upload precisa dar conta de todos.
+
+![O cartão Sua internet: 3 Permitir P2P para os espectadores, entre os limites de upload, de desligamento e de espectadores.](../../../../assets/guides/live/pt-br/limits.webp)
 
 Alguns navegadores ou redes não conseguem usar P2P (algumas redes de empresa ou de escola, por exemplo). Essas pessoas veem "P2P não está disponível neste aparelho" e assistem normalmente.
 

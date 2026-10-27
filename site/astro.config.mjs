@@ -110,6 +110,7 @@ export default defineConfig({
           ...t('Get started', 'Começar'),
           items: [
             { slug: 'guide' },
+            { slug: 'start/quick-start' },
             { ...t('Download', 'Baixar'), link: '/download/' },
             { slug: 'install/windows' },
             { slug: 'install/macos' },

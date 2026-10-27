@@ -3,49 +3,69 @@ title: First run and the tutorial
 description: What SwarmCast does the first time it opens, and the step-by-step tutorial in the panel.
 ---
 
-When you open SwarmCast, you see the **panel**: the screen where you control your live. It runs only on your computer. Nobody else can open it.
+When you open SwarmCast you see the **panel**, the screen where you control your live. It runs only on your computer: nobody else can open it.
 
-## What happens the first time
+## 1. SwarmCast starts
 
-1. The window shows **Starting SwarmCast…** for a few seconds.
-2. SwarmCast checks your computer: memory, processor, internet speed and whether OBS is installed. This takes about a minute. ✓ means fine, ⚠ means it works but is not ideal. Nothing here stops you.
-3. It downloads the free video converter (ffmpeg) straight from its publisher and checks it. It lets viewers with slow internet pick a smaller quality. If the download fails, SwarmCast tries again by itself, and everything still works with your original quality.
-4. The **setup tutorial** opens.
+![The SwarmCast window while it starts: Starting SwarmCast… This usually takes a few seconds.](../../../assets/guides/start/en/splash.webp)
 
-## The setup tutorial
+The window shows **Starting SwarmCast…** for a few seconds, then the setup tutorial opens by itself.
 
-The tutorial takes about 5 minutes and has pictures of OBS. It walks you through:
+## 2. The setup tutorial
 
-1. **Your PC check:** what SwarmCast found on this computer.
-2. **OBS output settings:** the keyframe interval of 2 seconds (required).
-3. **Where will you stream?** Another platform (Twitch, YouTube, Kick…) and SwarmCast at the same time, or only SwarmCast.
-4. **Send OBS to SwarmCast:** the server and the stream key, with **Copy** buttons.
-5. **Test it:** you start streaming in OBS and the tutorial shows when the video arrives.
-6. **Share the link** and a quick tour of the panel.
+![Setup tutorial, step 1 of 9: Welcome to SwarmCast, with 1 Next.](../../../assets/guides/start/en/welcome.webp)
 
-The same steps are explained on this site: [Set up OBS](/swarmcast/start/obs/) and [Go live and share the link](/swarmcast/live/go-live/).
+About 5 minutes. Click **Next** to go on, **Back** to go back. **Skip tutorial** closes it (you can open it again later).
 
-To see the tutorial again, click **Redo setup tutorial** at the bottom of the panel.
+## 3. Your PC check
 
-![The SwarmCast panel during a live: Live and OBS: sending at the top, the live link card (the link is hidden here), and the list of viewers with their device and P2P.](../../../../../docs/img/panel-overview-en.png)
+![Step 2, Your PC check, while it runs: 1 Checking your computer… (memory, processor, internet speed, OBS). This takes about a minute.](../../../assets/guides/start/en/checking.webp)
 
-## The parts of the panel
+The first time, SwarmCast checks your computer. It shows **Checking your computer…** for about a minute.
 
-- **At the top:** whether you are live, whether OBS is sending, and the **Stop everything** button.
-- **Live link for your subscribers:** the secret link to share, with **Copy link** and **Generate new link**.
-- **Viewers & P2P help:** who is watching (nickname and device) and who is helping by sharing video.
-- **Quality for viewers** and **Your internet:** the smaller qualities and how much of your upload SwarmCast uses.
-- **Connection mode:** Secure mode (normal) or Direct mode (emergencies only).
-- **Protection:** what SwarmCast detected and did against attacks.
-- **Desktop app:** start with the computer, version and updates.
-- **Activity:** everything that happens during the live. Copy it when you ask for help.
-- **At the bottom:** the language, **Help** (this site), **Redo setup tutorial** and **Quit SwarmCast**.
+![Step 2 with the results: 1 a green tick next to the system, memory, processor, upload and download speed, disk, ports, OBS Studio, update server and version, and 2 Next.](../../../assets/guides/start/en/pc-check.webp)
 
-Most buttons have a small **ⓘ** next to them: hover or tap it for an explanation.
+A green tick means fine, a yellow one means it works but is not ideal. Nothing here stops you. At the same time SwarmCast downloads the free video converter (ffmpeg) for the smaller qualities.
+
+## 4. OBS, once
+
+![Step 4, Where will you stream?: 1 Another platform + SwarmCast at the same time (recommended), or 2 Only SwarmCast.](../../../assets/guides/start/en/where.webp)
+
+Choose whether you also stream to Twitch, YouTube or Kick, or only to SwarmCast. The next steps show the OBS settings for that choice.
+
+![Step 5: install the Multiple output plugin in OBS and fill in a new target with 1 Name, 2 URL (server) and 3 Stream key, each with a Copy button.](../../../assets/guides/start/en/obs-step.webp)
+
+Use the **Copy** buttons and paste into OBS. The full walkthrough with OBS pictures: [Set up OBS](/swarmcast/start/obs/).
+
+## 5. Test it and share the link
+
+![Step 6, Test it: 1 SwarmCast is on, then Start Streaming in OBS.](../../../assets/guides/start/en/test-it.webp)
+
+Start streaming in OBS. The tutorial shows when the video arrives.
+
+![Step 7, Share the link: the live link (hidden here) and 1 Copy link.](../../../assets/guides/start/en/share-link.webp)
+
+Every live gets a new secret link. Send it only to your members.
+
+![Step 9, All set!: what to do at the end of a live, and 1 Finish.](../../../assets/guides/start/en/finish.webp)
+
+Click **Finish**. To see the tutorial again, click **Redo setup tutorial** at the bottom of the panel.
+
+## The panel
+
+![The panel during a live: 1 Live: 3 viewers and OBS: sending, 2 the live link (hidden here), 3 OBS settings, 4 Viewers & P2P help, 5 Protection.](../../../assets/guides/start/en/panel.webp)
+
+1. **At the top:** whether you are live, whether OBS is sending, and **Stop everything**.
+2. **Live link for your subscribers:** the link to share. See [Go live](/swarmcast/live/go-live/).
+3. **OBS settings:** the server and the stream key for OBS.
+4. **Viewers & P2P help:** how many watch and how many help. See [Help the stream (P2P)](/swarmcast/live/p2p/).
+5. **Protection:** see [Security and protection](/swarmcast/live/protection/).
+
+Further down: **Quality for viewers**, **Desktop app** (start with the computer, updates), **Viewers** (kick someone), **Activity** and **Problem report** (send your logs). Most buttons have a small **ⓘ**: hover or tap it for an explanation.
 
 ## Where SwarmCast keeps your settings
 
-Your settings, your stream key and the logs are in a SwarmCast folder in your user account. Updating SwarmCast never deletes it.
+Your settings, your stream key and the logs live in a SwarmCast folder in your user account. Updating SwarmCast never deletes it.
 
 - Windows: `%LOCALAPPDATA%\SwarmCast`
 - macOS: `~/Library/Application Support/SwarmCast`

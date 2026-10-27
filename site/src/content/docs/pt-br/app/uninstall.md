@@ -9,11 +9,14 @@ Desinstalar nunca mexe no OBS. Se quiser, apague você mesmo o destino do SwarmC
 
 1. Feche o SwarmCast (ícone da bandeja → **Sair**).
 2. Abra **Configurações** → **Aplicativos** → **Aplicativos instalados**, encontre o **SwarmCast**, clique em **…** → **Desinstalar**.
-3. O desinstalador mantém as suas configurações e a chave de transmissão, a não ser que você marque a opção de **apagar os dados do app**.
+3. O desinstalador mantém as suas configurações e a chave de transmissão, a não ser que você marque **Remover dados do programa**.
 
 ## macOS
 
 1. Feche o SwarmCast (ícone na barra de menus → **Sair**).
+
+   ![O menu do SwarmCast na barra de menus: 1 o ícone; Sair é o último item.](../../../../assets/guides/live/pt-br/tray.webp)
+
 2. Se **Iniciar com o computador** estiver ligado, desligue antes no painel ([Iniciar com o computador](/swarmcast/pt-br/app/autostart/)).
 3. Abra **Aplicativos** e arraste o **SwarmCast** para o Lixo.
 4. As suas configurações continuam em `~/Library/Application Support/SwarmCast`. Para apagar tudo, use o script de desinstalação abaixo.

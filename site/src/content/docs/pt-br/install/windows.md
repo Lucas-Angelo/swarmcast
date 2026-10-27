@@ -7,28 +7,37 @@ O SwarmCast é instalado só para o seu usuário do Windows. Ele não pede permi
 
 ## 1. Baixar
 
-1. Entre na [página de download](/swarmcast/pt-br/download/#windows).
-2. Baixe o arquivo que termina em **`x64-setup.exe`** (por exemplo, `SwarmCast_0.2.0_x64-setup.exe`).
+Baixe o arquivo que termina em **`x64-setup.exe`** (por exemplo, `SwarmCast_0.2.0_x64-setup.exe`) na [página de download](/swarmcast/pt-br/download/#windows).
 
 ## 2. Rodar o instalador
 
-1. Abra a pasta **Downloads** e dê dois cliques no arquivo.
-2. Na primeira vez, o Windows pode mostrar uma tela azul: **"O Windows protegeu o computador"**. Isso acontece com todo app novo que não é de uma empresa grande. Não quer dizer que tem algo errado.
-   1. Clique em **Mais informações**.
-   2. Clique em **Executar assim mesmo**.
-3. Se o Windows perguntar **"Deseja executar este arquivo?"**, clique em **Executar**.
-4. O instalador abre em português ou inglês, conforme o idioma do Windows. Clique em **Avançar** e em **Instalar**. Leva poucos segundos.
-5. Na última tela, deixe marcado **Executar SwarmCast** e clique em **Concluir**.
+Abra a pasta **Downloads** e dê dois cliques no arquivo.
+
+Na primeira vez, o Windows pode mostrar uma tela azul, **"O Windows protegeu o computador"**. Ela aparece para todo app novo sem um certificado de assinatura pago; não quer dizer que tem algo errado:
+
+1. Clique em **Mais informações**.
+2. Clique em **Executar assim mesmo**.
+
+Se o Windows perguntar **"Deseja executar este arquivo?"**, clique em **Executar**.
 
 :::tip[Por que aparece esse aviso?]
-O SmartScreen avisa sobre apps novos ou sem um certificado de assinatura pago. O SwarmCast é gratuito e de código aberto, por isso não tem esse certificado pago. O código é público, e toda atualização que o app instala é conferida antes por uma assinatura digital.
+O SwarmCast é gratuito e de código aberto, por isso não tem o certificado pago. O código é público, e toda atualização que o app instala é conferida antes por uma assinatura digital.
 :::
 
-## 3. Abrir o SwarmCast
+## 3. Avance pelo instalador
 
-Agora o SwarmCast tem um atalho na área de trabalho e no menu Iniciar. Ele abre na própria janela e coloca um ícone perto do relógio (a bandeja). Se não encontrar o ícone, clique na setinha **^** ao lado do relógio.
+O instalador segue o idioma do Windows (português ou inglês). Em português, as telas são:
 
-Na primeira vez, a janela mostra **Abrindo o SwarmCast…** e depois um tutorial curto. Continue em [Primeira vez e tutorial](/swarmcast/pt-br/start/first-run/).
+1. **Bem-vindo ao Instalador do SwarmCast:** clique em **Próximo >**.
+2. **Escolha o Local da Instalação:** deixe a pasta como está (dentro de `AppData\Local\Programs\SwarmCast` do seu usuário) e clique em **Próximo >**. A instalação leva poucos segundos.
+3. **Instalação Completa:** clique em **Próximo >**.
+4. **Completando a instalação do SwarmCast:** deixe marcado **Executar o SwarmCast** (e, se quiser, **Criar atalho na área de trabalho**) e clique em **Concluir**.
+
+## 4. O SwarmCast abre
+
+![O SwarmCast no Windows: a janela do app com o tutorial de configuração (Boas-vindas ao SwarmCast) por cima do painel; o link da live está escondido.](../../../../assets/guides/install-windows/pt-br/app.webp)
+
+O SwarmCast abre na própria janela, com um atalho na área de trabalho e no menu Iniciar, e um ícone perto do relógio (a bandeja; clique na setinha **^** se não encontrar). Na primeira vez, o tutorial de configuração abre: continue em [Primeira vez e tutorial](/swarmcast/pt-br/start/first-run/).
 
 :::note
 Na primeira vez que você ligar o modo direto (só para emergências, veja [Modo direto](/swarmcast/pt-br/live/direct-mode/)), o Windows pode perguntar se o SwarmCast pode usar as redes. Clique em **Permitir** (redes privadas).

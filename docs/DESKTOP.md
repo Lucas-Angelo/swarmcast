@@ -300,3 +300,8 @@ with `--insecure-updates --updater-pubkey` and a key pair generated in the job. 
 the real `TAURI_SIGNING_PRIVATE_KEY` and publishes the tested installers, their `.sig` files and
 `latest.json` ([RELEASING.md](RELEASING.md)); other builds of the real installers have no updater
 artifacts.
+
+Run manually with `screenshots: true` (`gh workflow run desktop.yml -f screenshots=true`), the Windows test
+first clicks through the installer's normal pages and captures each page and the app window (English and pt-BR)
+for the website guide (`SC_DESKTOP_SCREENSHOTS`, artifact `guide-screenshots-windows-x64`, no checks), then removes
+everything so the real test starts clean.

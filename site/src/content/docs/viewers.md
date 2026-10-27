@@ -10,11 +10,11 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 1. Open the link in a current browser: Chrome, Edge or Firefox on a computer, Chrome on Android, or Safari on iPhone and iPad (iOS 17.1 or newer).
 2. Type a **nickname** and click **Watch**. Only the streamer sees your nickname, not the other viewers.
 
-   ![The join page: type a nickname and click Watch.](../../../../docs/img/join-en.png)
+   ![The join page: 1 type a nickname, 2 Checking your browser… runs by itself for a second or two, 3 Watch.](../../assets/guides/viewers/en/join.webp)
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the LIVE badge, the number of viewers, the quality menu and the Help the stream (P2P) switch.](../../../../docs/img/viewer-desktop-en.png)
+![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, and 3 the Help the stream (P2P) switch.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
@@ -22,6 +22,10 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 - **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (about 8 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P):** on by default (see below).
+
+On a phone the same controls sit under the video:
+
+![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ## Help the stream (P2P)
 
@@ -40,7 +44,7 @@ You can turn it off at any time and keep watching normally. Your choice is remem
 - **It keeps pausing:** choose a smaller quality, or **Stable** playback.
 - **"Browser not supported":** update your browser, or open the link in Chrome, Edge, Firefox or Safari.
 
-![The page you see with an old or wrong link: Link not valid.](../../../../docs/img/link-invalid-en.png)
+![The page you see with an old or wrong link: Link not valid.](../../assets/guides/viewers/en/invalid.webp)
 
 ## Your privacy
 

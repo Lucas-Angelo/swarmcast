@@ -3,40 +3,40 @@ title: Expulsar alguém e trocar o link
 description: Tire alguém da live, impeça alguém de compartilhar vídeo e troque um link que vazou.
 ---
 
-Cada pessoa aparece na lista de **Espectadores** do painel com o apelido que digitou e o aparelho (💻 PC ou 📱 Celular).
+Todo mundo que está assistindo aparece no cartão **Espectadores** do painel, com o apelido que digitou e o aparelho (PC ou Celular).
+
+![O cartão Espectadores: Bia, Rafa_gamer e Theo com o aparelho, P2P ligado, dados compartilhados e os botões 1 Tirar do P2P e 2 Expulsar.](../../../../assets/guides/live/pt-br/viewers.webp)
 
 ## Tirar uma pessoa: Expulsar
 
-Clique em **Expulsar** ao lado da pessoa. Ela é desconectada na hora e aquele navegador não consegue voltar até a live acabar.
-
-Ela ainda pode voltar por **outro aparelho** se tiver guardado o link. Para fechar essa porta também, gere um link novo (veja abaixo).
+Clique em **Expulsar** ao lado da pessoa. Ela cai na hora e aquele navegador não volta até a live acabar. Ela ainda pode voltar por **outro aparelho** se guardou o link: troque o link também (abaixo).
 
 ## Impedir alguém de compartilhar vídeo: Tirar do P2P
 
-Clique em **Tirar do P2P**. A pessoa continua assistindo, direto do seu computador, mas para de passar vídeo para os outros. **Liberar P2P de novo** desfaz.
+![O cartão Espectadores depois de Tirar do P2P: 1 o P2P da Rafa_gamer mostra removido, e 2 Liberar P2P de novo desfaz.](../../../../assets/guides/live/pt-br/viewers-removed.webp)
 
-O SwarmCast também faz isso sozinho com quem for denunciado por outros espectadores por mandar vídeo com defeito.
+Clique em **Tirar do P2P**. A pessoa continua assistindo, direto do seu computador, mas não compartilha mais vídeo com os outros. **Liberar P2P de novo** desfaz. O SwarmCast também faz isso sozinho com quem os outros espectadores denunciam por mandar vídeo quebrado.
 
 ## O link vazou: Gerar novo link
 
-1. Clique em **Gerar novo link** no cartão do link da live.
-2. Mande o link novo para os seus membros.
+![O cartão do link da live: 1 Copiar link, 2 Gerar novo link, 3 Desconectar todo mundo.](../../../../assets/guides/live/pt-br/link-card.webp)
 
-O link antigo para de funcionar na hora para quem tentar **entrar**. Quem já está assistindo continua, a não ser que você também clique em **Desconectar todo mundo**. Aí todo mundo vai precisar do link novo.
+1. Clique em **Gerar novo link**, depois em **Copiar link**, e mande o link novo para os seus membros.
+2. O link antigo para de funcionar na hora para quem é **novo**. Quem já está assistindo continua, a não ser que você também clique em **Desconectar todo mundo**: aí todo mundo precisa do link novo.
 
-Quem tentar entrar com um link antigo vê **Link inválido**:
+Quem abre um link antigo vê isto:
 
-![A página que aparece com um link antigo ou errado: Link inválido.](../../../../../../docs/img/link-invalid-pt-BR.png)
+![A página que aparece com um link antigo ou errado: Link inválido. Este link da live não vale mais. Peça o link atual para quem está transmitindo.](../../../../assets/guides/viewers/pt-br/invalid.webp)
 
 :::tip
-Toda live ganha um link novo automaticamente. O link que você mandou ontem não funciona hoje.
+Toda live ganha um link novo sozinha. Um link que você mandou ontem não funciona hoje.
 :::
 
 ## Limites contra espectadores falsos
 
-Duas opções abaixo da configuração de upload impedem que alguém encha a sua live de entradas falsas:
+![O cartão Sua internet: 1 Upload máximo para espectadores, 2 Desligar após … minutos sem vídeo, 3 Permitir P2P para os espectadores, 4 Máximo de espectadores ao mesmo tempo, depois Sessões por navegador e Salvar.](../../../../assets/guides/live/pt-br/limits.webp)
 
-- **Máximo de espectadores ao mesmo tempo:** quando a live lota, quem chega vê que ela está lotada. Ninguém que já está assistindo cai. Começa em 120, mais ou menos o que o túnel grátis aguenta.
-- **Sessões por navegador:** quantas abas um mesmo navegador pode deixar abertas (a mais antiga é substituída).
+- **Máximo de espectadores ao mesmo tempo:** quando a live lota, quem chega vê "A live está lotada agora". Ninguém que já está assistindo cai. Começa em 120, mais ou menos o que o túnel grátis aguenta.
+- **Sessões por navegador:** quantas abas um mesmo navegador pode deixar abertas (a mais antiga é trocada).
 
-Mais em [Segurança e proteção](/swarmcast/pt-br/live/protection/).
+Clique em **Salvar** depois de mudar. Mais em [Segurança e proteção](/swarmcast/pt-br/live/protection/).

@@ -5,7 +5,7 @@ description: How viewers help each other with P2P, what it shows about them (an 
 
 **Help the stream (P2P)** is a switch on the viewer page. It is **on by default**. Viewers who have it on pass pieces of the video to each other, so your computer sends less and the live runs smoother for everyone. P2P means "peer to peer": from one viewer to another.
 
-![The viewer page on a phone: Help the stream (P2P) is the checkbox below the video.](../../../../../docs/img/viewer-phone-en.png)
+![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, with how many peers help and how much video came from them.](../../../assets/guides/viewers/en/watch-phone.webp)
 
 ## What it shows, honestly
 
@@ -24,6 +24,9 @@ Every piece of video has a fingerprint signed by your SwarmCast. Each viewer's b
 
 - **Viewers:** untick **Help the stream (P2P)**. They keep watching normally, straight from you, and the choice is remembered. The small **ⓘ** next to the switch explains the same thing.
 - **You:** click **Remove from P2P** next to someone in the viewers list. They keep watching but stop sharing.
+- **Everyone at once:** untick **Allow P2P for viewers** in the **Your internet** card and click **Save**. Everybody then watches straight from you, so your upload has to carry them all.
+
+![The Your internet card: 3 Allow P2P for viewers, between the upload, auto-stop and viewer limits.](../../../assets/guides/live/en/limits.webp)
 
 Some browsers or networks cannot use P2P (some company or school networks, for example). Those viewers see "P2P is not available on this device" and watch normally.
 

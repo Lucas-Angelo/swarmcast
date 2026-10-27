@@ -20,7 +20,11 @@ Se você estiver ao vivo, atualizar encerra a live para todo mundo. O SwarmCast 
 
 ## Procurar agora
 
-Clique em **Procurar atualizações** no cartão **App do SwarmCast** do painel ou no menu do ícone da bandeja.
+![O cartão App do SwarmCast: Iniciar com o computador, Versão do app 0.2.0 e 2 Procurar atualizações, com Você já está com a versão mais recente.](../../../../assets/guides/app/pt-br/desktop-card.webp)
+
+Clique em **Procurar atualizações** no cartão **App do SwarmCast** do painel ou no menu do ícone da bandeja. Quando não tem nada novo, o SwarmCast avisa:
+
+![A mensagem Atualização do SwarmCast: Você já tem a versão mais recente do SwarmCast (0.2.0), com 1 OK.](../../../../assets/guides/app/pt-br/update-latest.webp)
 
 ## Se a atualização falhar
 

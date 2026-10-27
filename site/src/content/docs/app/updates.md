@@ -20,7 +20,11 @@ If you are live, updating ends the live for everyone. SwarmCast warns you first,
 
 ## Check now
 
-Click **Check for updates** in the panel's **Desktop app** card, or in the tray menu.
+![The Desktop app card: Start with the computer, App version 0.2.0 and 2 Check for updates, with You have the latest version.](../../../assets/guides/app/en/desktop-card.webp)
+
+Click **Check for updates** in the panel's **Desktop app** card, or in the tray menu. When nothing is new, SwarmCast says so:
+
+![The message SwarmCast update: You have the latest version of SwarmCast (0.2.0), with 1 OK.](../../../assets/guides/app/en/update-latest.webp)
 
 ## If an update fails
 

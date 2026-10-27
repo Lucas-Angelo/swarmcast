@@ -10,11 +10,11 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 1. Abra o link num navegador atualizado: Chrome, Edge ou Firefox no computador, Chrome no Android ou Safari no iPhone e no iPad (iOS 17.1 ou mais novo).
 2. Digite um **apelido** e clique em **Assistir**. Só quem faz a live vê o seu apelido; os outros espectadores não veem.
 
-   ![A página de entrada: digite um apelido e clique em Assistir.](../../../../../docs/img/join-pt-BR.png)
+   ![A página de entrada: 1 digite um apelido, 2 Verificando seu navegador… roda sozinho por um ou dois segundos, 3 Assistir.](../../../assets/guides/viewers/pt-br/join.webp)
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o selo AO VIVO, o número de espectadores, o menu de qualidade e a opção Ajudar a transmissão (P2P).](../../../../../docs/img/viewer-desktop-pt-BR.png)
+![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, e 3 a chave Ajudar a transmissão (P2P).](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
@@ -22,6 +22,10 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 - **Qualidade:** **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
 - **Reprodução: Estável ou Menos atraso.** **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (uns 8 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P):** vem ligada (veja abaixo).
+
+No celular, os mesmos controles ficam embaixo do vídeo:
+
+![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P).](../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ## Ajudar a transmissão (P2P)
 
@@ -40,7 +44,7 @@ Você pode desligar quando quiser e continuar assistindo normalmente. A sua esco
 - **Fica travando:** escolha uma qualidade menor ou a reprodução **Estável**.
 - **"Navegador não suportado":** atualize o navegador ou abra o link no Chrome, Edge, Firefox ou Safari.
 
-![A página que aparece com um link antigo ou errado: Link inválido.](../../../../../docs/img/link-invalid-pt-BR.png)
+![A página que aparece com um link antigo ou errado: Link inválido.](../../../assets/guides/viewers/pt-br/invalid.webp)
 
 ## A sua privacidade
 

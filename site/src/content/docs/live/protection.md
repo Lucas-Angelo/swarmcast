@@ -16,7 +16,7 @@ SwarmCast is built so that your computer is never open to the internet in the no
 
 ## The Protection card
 
-![The Protection card: the current state (Normal), the browser check, the public blocklists and the automatic reactions to an attack.](../../../../../docs/img/panel-protection-en.png)
+![The Protection card: 1 the state, Normal, 2 Check new viewers' browsers (on by default), 3 Block known malicious IPs (public lists), and the automatic reactions to an attack.](../../../assets/guides/live/en/protection-card.webp)
 
 SwarmCast watches the traffic of your live and compares it with what your audience normally produces. The card shows the state: **Normal**, **Unusual activity** or **Under attack**, and why.
 
