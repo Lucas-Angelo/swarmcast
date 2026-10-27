@@ -284,16 +284,22 @@ async function main(): Promise<void> {
   };
   // Keep the live delay inside that window (player-config.ts latencyFor). Set on the config,
   // not hls.targetLatency, so hls.js keeps its stall count.
+  // While the viewer has paused, hls.js must not move the playhead: its catch-up jump
+  // (liveMaxLatencyDuration) would drag a paused viewer to live and "Go live −N s" would read 0.
+  // Playing again restores the limit, so a viewer who paused past the window is brought back.
   const fitLatency = (): void => {
     const fit = latencyFor(loadProfile(), playlistWindow());
-    if (hls.config.liveSyncDuration !== fit.liveSyncDuration || hls.config.liveMaxLatencyDuration !== fit.liveMaxLatencyDuration) {
-      debugLog(`live delay ${fit.liveSyncDuration}s (max ${fit.liveMaxLatencyDuration}s) for window ${JSON.stringify(playlistWindow())}`);
-      hls.config.liveMaxLatencyDuration = fit.liveMaxLatencyDuration;
+    const max = video.paused && !video.ended ? Infinity : fit.liveMaxLatencyDuration;
+    if (hls.config.liveSyncDuration !== fit.liveSyncDuration || hls.config.liveMaxLatencyDuration !== max) {
+      debugLog(`live delay ${fit.liveSyncDuration}s (max ${max}s) for window ${JSON.stringify(playlistWindow())}`);
+      hls.config.liveMaxLatencyDuration = max;
       hls.config.liveSyncDuration = fit.liveSyncDuration;
     }
   };
   hls.on(Hls.Events.LEVEL_UPDATED, fitLatency);
   hls.on(Hls.Events.AUDIO_TRACK_LOADED, fitLatency);
+  video.addEventListener('pause', fitLatency);
+  video.addEventListener('play', fitLatency);
 
   // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
   // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
@@ -306,8 +312,11 @@ async function main(): Promise<void> {
     debugLog(`dropping peer ${peerId} (${why})`);
     peerGuard.drop(asciiToHex(peerId), 120_000);
   };
+  // Only peers that stop delivering count here. A peer that sends altered data is reported to
+  // the server (onPeerError below), which removes it from P2P for everyone after a few reports;
+  // dropping it locally first would hide it from that check.
   engine.addEventListener('onSegmentError', (d) => {
-    if (d.downloadSource === 'p2p' && d.error.type !== 'abort') strikePeer(d.peerId, d.error.type);
+    if (d.downloadSource === 'p2p' && d.error.type === 'bytes-receiving-timeout') strikePeer(d.peerId, d.error.type);
   });
   const p2pLoader = hls.config.fLoader;
   if (p2pLoader) {
@@ -400,6 +409,12 @@ async function main(): Promise<void> {
     showOverlay(null);
     setStatus('watch.live', true);
     unmute.hidden = !video.muted;
+  });
+  // The first picture is there: the stream has started even if the viewer paused before it
+  // began to play (or autoplay was blocked), so "Go live" and the picture are shown.
+  video.addEventListener('loadeddata', () => {
+    stats.playing = true;
+    showOverlay(null);
   });
   video.addEventListener('waiting', () => setStatus('watch.buffering'));
   video.addEventListener('pause', () => {

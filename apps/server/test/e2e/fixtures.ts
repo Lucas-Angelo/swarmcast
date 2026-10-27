@@ -129,10 +129,18 @@ export async function join(browser: Browser, nickname: string, link?: string, se
   return { context, page };
 }
 
+/**
+ * Wait until the video has really played `seconds` (summed `played` ranges, not currentTime:
+ * hls.js seeks to the live start position before the first frame plays, so a large
+ * currentTime alone does not mean playback started).
+ */
 export async function waitPlaying(page: Page, seconds = 1.5): Promise<void> {
   await page.waitForFunction((s) => {
     const v = document.querySelector('video');
-    return !!v && v.currentTime > s && !v.paused;
+    if (!v || v.paused) return false;
+    let played = 0;
+    for (let i = 0; i < v.played.length; i++) played += v.played.end(i) - v.played.start(i);
+    return played > s;
   }, seconds, { timeout: 60_000 });
 }
 
@@ -163,6 +171,11 @@ export async function enableP2P(page: Page): Promise<void> {
   await expect(page.locator('#p2p')).toBeChecked();
 }
 
+/**
+ * The viewer with this nickname. When a test is retried the first attempt's session (same
+ * nickname, now disconnected) is still listed, so prefer a connected one, then the newest.
+ */
 export async function viewerByNick(nick: string): Promise<AdminState['viewers'][number] | undefined> {
-  return (await adminState()).viewers.find((v) => v.nickname === nick);
+  const matches = (await adminState()).viewers.filter((v) => v.nickname === nick);
+  return matches.findLast((v) => v.connected) ?? matches.at(-1);
 }

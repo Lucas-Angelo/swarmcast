@@ -73,9 +73,14 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   const goLive = page.getByTestId('go-live');
   await expect(goLive).toHaveText('LIVE');
   await page.evaluate(() => document.querySelector('video')!.pause());
-  await page.waitForTimeout(10_000);
   await expect(goLive).toContainText('Go live');
-  expect(Number(await goLive.getAttribute('data-behind'))).toBeGreaterThan(5);
+  // "Behind" counts from the live sync point (live edge − target delay). A viewer who joined a
+  // young stream starts closer to live than that delay, so the pause first uses up the gap:
+  // wait until it reads more than 5 s instead of a fixed time. The playhead must not move.
+  const pausedAt = await currentTime(page);
+  await expect.poll(async () => Number(await goLive.getAttribute('data-behind')), { timeout: 45_000, intervals: [1000] }).toBeGreaterThan(5);
+  await expect(goLive).toContainText('Go live');
+  expect(Math.abs((await currentTime(page)) - pausedAt)).toBeLessThan(0.5);
   await goLive.click();
   await expect(goLive).toHaveText('LIVE', { timeout: 15_000 });
   const behind = await page.evaluate(() => {

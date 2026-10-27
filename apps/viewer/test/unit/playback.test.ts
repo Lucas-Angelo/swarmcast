@@ -38,8 +38,11 @@ describe('mismatchWindow', () => {
   it('fits only when the audio playlist covers less than the video one', () => {
     expect(mismatchWindow({ totalduration: 40, targetduration: 2 }, { totalduration: 20, targetduration: 1 })).toEqual({ windowS: 20, targetDurationS: 2 });
     expect(mismatchWindow({ totalduration: 40, targetduration: 2 }, { totalduration: 40, targetduration: 1 })).toBeNull();
-    // stream just started: both short and growing together
+    // stream just started: both short and growing, refreshed at different moments
     expect(mismatchWindow({ totalduration: 10, targetduration: 2 }, { totalduration: 9.5, targetduration: 1 })).toBeNull();
+    expect(mismatchWindow({ totalduration: 6, targetduration: 2 }, { totalduration: 4, targetduration: 1 })).toBeNull();
+    expect(mismatchWindow({ totalduration: 10, targetduration: 2 }, { totalduration: 7, targetduration: 1 })).toBeNull();
+    expect(mismatchWindow({ totalduration: 32, targetduration: 2 }, { totalduration: 29.99, targetduration: 1 })).toBeNull();
     expect(mismatchWindow({ totalduration: 40, targetduration: 2 }, undefined)).toBeNull();
   });
 });

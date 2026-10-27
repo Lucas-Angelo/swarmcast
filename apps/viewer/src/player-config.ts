@@ -202,7 +202,9 @@ interface LiveDetails {
  */
 export function mismatchWindow(video: LiveDetails | undefined, audio: LiveDetails | undefined): PlaylistWindow | null {
   if (!video || !audio) return null;
-  if (audio.totalduration >= video.totalduration - video.targetduration) return null;
+  // The two playlists refresh at different moments, so while they grow (stream start) one is
+  // briefly a segment or two ahead: only a clear, lasting gap counts.
+  if (audio.totalduration > video.totalduration - Math.max(2 * video.targetduration, video.totalduration / 4)) return null;
   return { windowS: audio.totalduration, targetDurationS: Math.max(video.targetduration, audio.targetduration) };
 }
 
