@@ -97,10 +97,10 @@ H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each pr
 
 ```sh
 scripts/test/docker/appimage.sh --version 0.2.2 release/desktop/linux-arm64/SwarmCast_0.2.2_aarch64.AppImage
-scripts/test/docker/appimage.sh SwarmCast_0.2.2_amd64.AppImage ubuntu:24.04   # one base (x64 host)
+scripts/test/docker/appimage.sh --platform linux/amd64 SwarmCast_0.2.2_amd64.AppImage ubuntu:24.04   # one base, emulated
 ```
 
-The AppImage must match the Docker host's architecture. `Dockerfile.appimage` is the bare base
+The AppImage must match the container's architecture (the Docker host's, or `--platform`). `Dockerfile.appimage` is the bare base
 image plus `HOST_PACKAGES` (the list on the website's Linux page: `libgl1 libegl1 fontconfig
 fonts-dejavu-core libharfbuzz0b libfribidi0`), FUSE 2 (`libfuse2t64` or `libfuse2`), and the
 test's own display and session tools (`xvfb xauth dbus`). There is no curl, Python or Node:

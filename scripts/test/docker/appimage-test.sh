@@ -54,6 +54,10 @@ mkdir -p "$HOME/Applications"
 app="$HOME/Applications/$(basename "$APPIMAGE_FILE")"
 cp "$APPIMAGE_FILE" "$app"
 chmod +x "$app"
+# Emulated runs (appimage.sh --platform): the AppImage magic bytes at offset 8 keep the kernel's
+# binfmt emulator from recognising the ELF file ("ELFAI: not found"). Zeroing them in this copy
+# is the usual workaround; the AppImage runtime does not need them.
+[ "${CLEAR_APPIMAGE_MAGIC:-0}" = 1 ] && printf '\0\0\0' | dd of="$app" bs=1 seek=8 count=3 conv=notrunc status=none
 
 echo "== start $(basename "$app") under Xvfb + dbus-run-session"
 APPIMAGE_EXTRACT_AND_RUN=1 SWARMCAST_TEST_LOGIN_FILE="$LOGIN" SWARMCAST_NO_OPEN=1 SWARMCAST_NO_FFMPEG_INSTALL=1 \
