@@ -49,6 +49,15 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
       - run: npm test
+      # Kept for every run that was not cancelled (green ones too): per-test results and timings.
+      - name: Upload the unit test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-unit-${{ matrix.os }}
+          path: test-results/vitest-unit.json
+          if-no-files-found: warn
+          retention-days: 14
 
   integration:
     name: Integration tests (${{ matrix.os }})
@@ -71,6 +80,16 @@ jobs:
       - run: npm run build
       # Lifecycle tests that rely on POSIX signals skip themselves on Windows.
       - run: npm run test:integration
+      # Kept for every run that was not cancelled (green ones too): per-test results and timings,
+      # and the fake OBS's ffmpeg stderr (fake-obs.log).
+      - name: Upload the integration test results and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-${{ matrix.os }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 14
 
   e2e:
     name: E2E (Playwright, ${{ matrix.os }})
@@ -113,8 +132,10 @@ jobs:
         if: runner.os == 'macOS'
         run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
+      # Kept for every run that was not cancelled, so a test that passed on retry (flaky) still
+      # leaves its trace: the HTML report, results.json, traces, e2e-server.log, fake-obs.log.
       - name: Upload Playwright report
-        if: failure()
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-${{ matrix.os }}

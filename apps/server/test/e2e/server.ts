@@ -11,6 +11,32 @@ import { pushTestStream } from '../integration/helpers.js';
 // Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
 process.env.SWARMCAST_NO_NOTIFY ??= '1';
 
+// Everything the app logs (pino JSON lines on stdout) goes to test-results/e2e-server.log, which
+// CI uploads with the Playwright report. stderr goes there too and still reaches Playwright's
+// output. Synchronous writes, so the last lines before a crash are kept. Playwright empties
+// test-results/ before it starts this server.
+fs.mkdirSync('test-results', { recursive: true });
+const serverLog = fs.openSync(path.join('test-results', 'e2e-server.log'), 'w');
+const toServerLog = (chunk: unknown): void => {
+  try {
+    if (typeof chunk === 'string') fs.writeSync(serverLog, chunk);
+    else fs.writeSync(serverLog, chunk as Uint8Array);
+  } catch {
+    /* the log is evidence only */
+  }
+};
+const lastCallback = (args: unknown[]): ((err?: Error | null) => void) | undefined => args.findLast((a) => typeof a === 'function') as ((err?: Error | null) => void) | undefined;
+process.stdout.write = ((chunk: unknown, ...rest: unknown[]) => {
+  toServerLog(chunk);
+  lastCallback(rest)?.();
+  return true;
+}) as typeof process.stdout.write;
+const stderrWrite = process.stderr.write.bind(process.stderr) as (...a: unknown[]) => boolean;
+process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
+  toServerLog(chunk);
+  return stderrWrite(chunk, ...rest);
+}) as typeof process.stderr.write;
+
 // SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
 export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
@@ -22,7 +48,8 @@ fs.mkdirSync(process.env.SWARMCAST_DOWNLOADS_DIR, { recursive: true });
 const app = await createApp({
   dataDir,
   noTunnel: true,
-  logToStdout: false,
+  // stdout is test-results/e2e-server.log (above).
+  logToStdout: true,
   configOverrides: {
     ports: E2E_PORTS,
     speedTest: { enabled: false, intervalMinutes: 15 },

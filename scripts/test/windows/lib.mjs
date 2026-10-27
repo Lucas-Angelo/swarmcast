@@ -96,12 +96,15 @@ export async function section(name, fn) {
   currentSection = name;
   log(`===== ${name}`);
   const t0 = Date.now();
+  const failsBefore = results.filter((r) => r.status === 'fail').length;
   try {
     await fn();
   } catch (e) {
     record('section aborted', 'fail', e?.stack?.split('\n').slice(0, 3).join(' | ') ?? String(e));
     await screenshotAll(name.slice(0, 40));
   } finally {
+    // Before the cleanups, so the dump shows the processes and ports as the failure left them.
+    if (results.filter((r) => r.status === 'fail').length > failsBefore) failureDump(name.slice(0, 40));
     while (cleanups.length) {
       const c = cleanups.pop();
       try {
@@ -130,6 +133,76 @@ export function closeStrayBrowsers() {
     }
   } catch {
     /* best effort */
+  }
+}
+
+/**
+ * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
+ * TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
+ * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
+ * logs are copied by startApp's cleanup.
+ */
+export function failureDump(tag) {
+  if (!isWin) return;
+  const file = path.join(ART, `${SUITE}-dump-${tag}.txt`.replace(/[^\w.-]+/g, '_'));
+  const parts = [`failure dump: ${SUITE} [${currentSection}] on ${RUNNER} at ${new Date().toISOString()}`];
+  const add = (title, fn) => {
+    let out;
+    try {
+      out = fn();
+    } catch (e) {
+      out = `error: ${e.message}`;
+    }
+    parts.push(`\n===== ${title}\n${String(out ?? '').trimEnd()}`);
+  };
+  const netsh = (...a) => {
+    const r = spawnSync('netsh', a, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    return `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
+  };
+  let names = new Map();
+  add('process tree (pid, ppid, name, command line)', () => {
+    const list = processes();
+    names = new Map(list.map((p) => [p.pid, p.name]));
+    const pids = new Set(list.map((p) => p.pid));
+    const kids = new Map();
+    for (const p of list) {
+      const parent = pids.has(p.ppid) && p.ppid !== p.pid ? p.ppid : 0;
+      if (!kids.has(parent)) kids.set(parent, []);
+      kids.get(parent).push(p);
+    }
+    const lines = [];
+    const walk = (parent, depth, seen) => {
+      for (const p of (kids.get(parent) ?? []).sort((a, b) => a.pid - b.pid)) {
+        if (seen.has(p.pid)) continue;
+        seen.add(p.pid);
+        lines.push(`${'  '.repeat(depth)}${p.pid} (ppid ${p.ppid}) ${p.name}: ${(p.cmd || p.path).slice(0, 600)}`);
+        walk(p.pid, depth + 1, seen);
+      }
+    };
+    walk(0, 0, new Set());
+    return lines.join('\n');
+  });
+  const owner = (pid) => `${pid} ${names.get(pid) ?? '?'}`;
+  add('TCP listeners (address:port owner)', () =>
+    psJson('Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
+      .sort((a, b) => a.LocalPort - b.LocalPort)
+      .map((c) => `${c.LocalAddress}:${c.LocalPort}\t${owner(c.OwningProcess)}`)
+      .join('\n'),
+  );
+  add('UDP endpoints (address:port owner)', () =>
+    psJson('Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
+      .sort((a, b) => a.LocalPort - b.LocalPort)
+      .map((c) => `${c.LocalAddress}:${c.LocalPort}\t${owner(c.OwningProcess)}`)
+      .join('\n'),
+  );
+  add('netsh int ipv4 show excludedportrange protocol=tcp', () => netsh('int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp'));
+  add('netsh int ipv4 show excludedportrange protocol=udp', () => netsh('int', 'ipv4', 'show', 'excludedportrange', 'protocol=udp'));
+  add('netsh int ipv4 show dynamicport tcp', () => netsh('int', 'ipv4', 'show', 'dynamicport', 'tcp'));
+  try {
+    fs.writeFileSync(file, parts.join('\n') + '\n');
+    log(`failure dump: ${file}`);
+  } catch (e) {
+    log(`failure dump failed: ${e.message}`);
   }
 }
 
@@ -497,24 +570,59 @@ export function editConfig(home, fn) {
 
 export const ffmpegBin = () => process.env.FFMPEG_BIN || 'ffmpeg';
 
+/** The feed waitPhase(…, 'live') watches: the latest one pushStream started and nobody stopped. */
+let currentFeed = null;
+let feedCount = 0;
+
 export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200, rate = 30 } = {}) {
+  const logFile = path.join(ART, `${SUITE}-feed-${String(++feedCount).padStart(2, '0')}.log`);
   const child = spawn(
     ffmpegBin(),
     ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}`, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', String(rate * 2), '-keyint_min', String(rate * 2), '-sc_threshold', '0', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`, '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
   );
   let err = '';
-  child.stderr.on('data', (d) => (err += d));
-  const handle = { child, stderr: () => err, stop: () => killTree(child.pid) };
+  let exit = null;
+  const onErr = (d) => {
+    d = key ? String(d).replaceAll(key, '[stream key]') : String(d);
+    err += d;
+    try {
+      fs.appendFileSync(logFile, d);
+    } catch {
+      /* evidence only */
+    }
+  };
+  child.stderr.on('data', onErr);
+  child.on('error', (e) => onErr(`spawn ${ffmpegBin()} failed: ${e.message}\n`));
+  child.on('exit', (code, signal) => (exit = signal ?? `code ${code}`));
+  log(`test feed #${feedCount} pid ${child.pid ?? '?'}: ${ffmpegBin()} ${size} ${kbps} kbps (stderr: ${path.basename(logFile)})`);
+  const handle = {
+    child,
+    stderr: () => err,
+    /** null while running, else why it ended (also for a feed that never started). */
+    exited: () => exit ?? (child.pid === undefined && err ? 'spawn failed' : null),
+    stop: () => {
+      if (currentFeed === handle) currentFeed = null;
+      killTree(child.pid);
+    },
+  };
+  currentFeed = handle;
   onCleanup(() => handle.stop());
   return handle;
 }
 
+/** Waits for the app's phase. Waiting for 'live' fails at once when the test feed has died. */
 export async function waitPhase(app, phase, timeoutMs = 90_000) {
-  return until(async () => {
-    const s = await app.state();
-    return s.phase === phase ? s : null;
-  }, timeoutMs, `phase ${phase}`);
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const s = await app.state().catch(() => null);
+    if (s?.phase === phase) return s;
+    const feed = phase === 'live' ? currentFeed : null;
+    const dead = feed?.exited();
+    if (dead) throw new Error(`test feed exited (${dead}) while waiting for phase live: ${feed.stderr().trim().slice(-1500) || '(no stderr)'}`);
+    if (Date.now() >= end) throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: phase ${phase} (phase ${s?.phase ?? 'unknown'})`);
+    await sleep(500);
+  }
 }
 
 // ---------------------------------------------------------------------------

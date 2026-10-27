@@ -22,10 +22,15 @@ export function tmpDir(prefix = 'sc-it-'): string {
  * Push a synthetic stream with a 2 s keyframe interval (like OBS should be configured).
  * Default 640x360 at 1.2 Mbps; `cbr` pads to a constant bitrate (like OBS's CBR) so segment
  * sizes match the nominal bitrate even for the easy-to-compress test pattern.
+ * ffmpeg's stderr is appended to `logFile` (default test-results/fake-obs.log, uploaded by CI),
+ * after a header line naming the process, so a dead feed leaves its reason behind.
  */
-export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: number; cbr?: boolean } = {}): ChildProcess {
+export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: number; cbr?: boolean; logFile?: string } = {}): ChildProcess {
   const kbps = o.kbps ?? 1200;
-  return spawn(
+  const logFile = path.resolve(o.logFile ?? path.join('test-results', 'fake-obs.log'));
+  fs.mkdirSync(path.dirname(logFile), { recursive: true });
+  const fd = fs.openSync(logFile, 'a');
+  const child = spawn(
     'ffmpeg',
     [
       '-hide_banner', '-loglevel', 'error', '-re',
@@ -36,8 +41,20 @@ export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: numbe
       ...(o.cbr ? ['-minrate', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps}k`, '-x264-params', 'nal-hrd=cbr:filler=1'] : []),
       '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', rtmpUrl,
     ],
-    { stdio: 'ignore' },
+    { stdio: ['ignore', 'ignore', fd] },
   );
+  // The URL carries the stream key: log only its path prefix.
+  const target = rtmpUrl.replace(/\/[^/]*$/, '/…');
+  fs.writeSync(fd, `--- ${new Date().toISOString()} fake OBS pid ${child.pid ?? '?'}: ${o.size ?? '640x360'} ${kbps} kbps${o.cbr ? ' cbr' : ''} -> ${target}\n`);
+  child.on('exit', (code, signal) => {
+    try {
+      fs.appendFileSync(logFile, `--- ${new Date().toISOString()} fake OBS pid ${child.pid ?? '?'} exited (${signal ?? `code ${code}`})\n`);
+    } catch {
+      /* the log is evidence only */
+    }
+  });
+  fs.closeSync(fd);
+  return child;
 }
 
 /** `detail` describes the state at the timeout, so a CI failure says why. */

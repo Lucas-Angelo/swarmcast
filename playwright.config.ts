@@ -11,10 +11,17 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  // CI keeps the evidence of every run (ci.yml uploads playwright-report/ and test-results/ unless
+  // cancelled, flaky-green runs included): the HTML report, results.json for flake statistics,
+  // and annotations on the PR. test-results/ also holds e2e-server.log and fake-obs.log.
+  reporter: process.env.CI
+    ? [['list'], ['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
+    : 'list',
+  reportSlowTests: { max: 10, threshold: 60_000 },
   use: {
     baseURL: `http://127.0.0.1:${PUBLIC}`,
-    trace: 'retain-on-failure',
+    // CI: a trace for every retried (failed or flaky) test, and no tracing cost on first attempts.
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
   },
   webServer: {
     command: 'node --import tsx apps/server/test/e2e/server.ts',
