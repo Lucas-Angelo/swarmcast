@@ -189,7 +189,11 @@ describe('controller reactions in Direct mode', () => {
   });
 
   it('stops everything when going back fails', async () => {
-    const { live, advance } = setup({ rtmp: 39381, public: 39382, admin: 39383, mediamtxHls: 39384 });
+    // The live is never really started here, so "Stop everything" checks ports nothing of ours
+    // listens on. With fixed ports, any other program listening on one of them looks like a
+    // leftover, the stop verification fails and retries for 15 s (past this test's 10 s wait).
+    // Port 0 cannot be listened on by anything.
+    const { live, advance } = setup({ rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 });
     live.access.begin();
     live.phase = 'live';
     live.mode = 'direct';
