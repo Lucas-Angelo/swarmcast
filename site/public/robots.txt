@@ -1,0 +1,5 @@
+# Everything on the SwarmCast site may be crawled.
+User-agent: *
+Allow: /
+
+Sitemap: https://lucas-angelo.github.io/swarmcast/sitemap-index.xml

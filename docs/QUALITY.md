@@ -24,11 +24,12 @@ This page records the decisions behind the quality options (1080p/720p/480p with
 - **Why longer segments help.** Fewer requests, and a bigger buffer for the same number of segments behind live. Both effects come from the buffer, not from the segment length itself.
 - **Why we keep 2 s.**
   - Our segment length is fixed by OBS's keyframe interval, which most platforms (Twitch, YouTube, Kick) recommend at 2 s. When the multistream plugin reuses the encoder of her stream to another platform, we cannot change it without touching that stream.
-  - The extra request rate (0.5 req/s per viewer) is small for the tunnel's 200 in-flight limit.
+  - The tunnel limits requests *in flight* (200, open WebSockets included; measured, see [ARCHITECTURE.md](ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26)), not the request rate. A playlist request is in flight for one round trip, so 0.5 extra req/s per viewer adds about 0.1 in flight. What fills the tunnel is one open WebSocket per viewer plus segment downloads that peers did not serve.
   - 2 s segments let the player sit at any multiple of 2 s behind live, and let peers trade smaller pieces.
 - **What we change instead.**
   - The player waits **20 s** behind live (10 segments) instead of 14 s.
-  - The playlist window viewers see is **20 segments (40 s)**: the origin's stitcher keeps up to 20 cached segments even though MediaMTX lists 15. So a viewer who falls behind after stalls is not pushed off the playlist.
+  - The playlist window viewers see is **40 s in every playlist** (`PLAYLIST_WINDOW_S` in packages/shared): the furthest a player sits behind live (Stable's `liveMaxLatencyDuration`, 36 s) plus 2 segments to fetch the oldest one. MediaMTX and the ladder list that many 2 s segments, and the origin's stitcher keeps every playlist at that many seconds from its actual segment durations: the ladder cuts its shared audio rendition every second, so the audio playlist keeps 40 entries (with a fixed count of 20 it held only 20 s, and a player 20 s behind live sat on the oldest audio segment). Change a profile delay and the windows follow (a unit test checks the invariant).
+  - The player fits its delay into the shortest playlist it uses (video or audio): `liveMaxLatencyDuration` ≤ window − 2 target durations and `liveSyncDuration` ≤ that − 2 target durations, so with an older server whose audio playlist holds 20 s, Stable plays about 12 s behind live instead of freezing.
 
 ### hls.js settings
 hls.js 1.7.3 defaults are from `src/config.ts`. `apps/viewer/src/player-config.ts` holds both profiles. The table shows the main values.
@@ -189,5 +190,5 @@ Raw output, including latency to the edge, the share of time per rendition and l
 - RTT-based congestion detection on a real saturated home uplink: only simulated.
 - The panel's ffmpeg installer (`quality/ffmpeg.ts`) and the start scripts' ffmpeg step have not downloaded the real third-party archives end to end on any OS (the installer tests use a fake archive served locally; `scripts/test/preflight/verify.mjs` checks the real download when the release directory has `binaries.json`). All five archive hashes were verified by download during research. Extraction relies on `tar -xf`: bsdtar on macOS and Windows 10+ (zip), GNU tar + xz on Linux (`.tar.xz`); the Windows script uses .NET's ZipFile. The E2E and integration tests used the Homebrew ffmpeg 9.0.1.
 - The CPU fallback thresholds (≥ 6 threads, ≥ 1.5×, ≤ 1 core after a 1.3× margin) and the live protection (0.97×, 90 % CPU, 10 s, 30 s cool-down) come from reasoning and unit tests, not from measurements on weak PCs: this M5 Max has VideoToolbox, so the CPU fallback never runs here.
-- Tunnel behaviour: the bench ran against the local server, without the Cloudflare quick tunnel.
+- Tunnel behaviour: the bench ran against the local server, without the Cloudflare quick tunnel. The tunnel's concurrency limit itself was measured with a synthetic load (200 in flight, WebSockets included; `scripts/test/tunnel-limit/`, [ARCHITECTURE.md](ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26)), but not the number of video requests real viewers keep in flight.
 - P2P share per rendition with real viewers.

@@ -5,8 +5,12 @@
 #   ./uninstall-linux.sh [options]
 #
 # It stops SwarmCast if it is running, removes a router port that a crash may have
-# left open (Direct mode), then deletes the SwarmCast data folder. It never touches
-# OBS or anything outside the SwarmCast data folder.
+# left open (Direct mode), removes the SwarmCast desktop app (SwarmCast*.AppImage in
+# ~/Applications, ~/Downloads or ~/.local/bin, and its menu entries) and its "start
+# with the computer" entry, then deletes the SwarmCast data folder. It never asks
+# anything (unless --ask) and never uses sudo: when the swarm-cast package is
+# installed, it shows the apt command to remove it. It never touches OBS or anything
+# that is not SwarmCast's own.
 #
 # Everything below the marker line is identical in uninstall-macos.command and
 # uninstall-linux.sh (scripts/test/uninstall.sh checks it). Compatible with the
@@ -27,6 +31,12 @@ SC_OBS_NOTE="Your OBS settings were not changed. Remove the SwarmCast target/ser
 # Entries the app creates in its data folder; at least one must be present before
 # anything is deleted (protects against a wrong SWARMCAST_HOME).
 SC_MARKERS="app config.json secrets.json state.json logs run bin tools cache blocklists system-check.json"
+# Desktop app (docs/DESKTOP.md).
+SC_APP_ID="io.github.lucas-angelo.swarmcast"
+SC_DEB_PACKAGE="swarm-cast"
+SC_BOOTOUT_TIMEOUT=15                          # seconds for "launchctl bootout"
+# macOS: the system-wide Applications folder (the tests point it at a fake one).
+SC_SYSTEM_APPS="${SWARMCAST_APPLICATIONS_DIR:-/Applications}"
 
 OPT_KEEP=0
 OPT_ASK=0
@@ -42,7 +52,8 @@ esac
 usage() {
   cat <<EOF
 SwarmCast uninstaller for $SC_OS_LABEL: stops SwarmCast, removes a router port a
-crash may have left open, and deletes the SwarmCast data folder.
+crash may have left open, removes the SwarmCast desktop app and its "start with
+the computer" entry, and deletes the SwarmCast data folder.
 
 Usage: $SC_SCRIPT_NAME [options]
 
@@ -56,8 +67,17 @@ Options:
 Environment:
   SWARMCAST_HOME    Data folder (default: $(default_data_dir_label))
 
-OBS and its settings are never changed. Nothing outside the data folder is deleted.
+OBS and its settings are never changed. Only SwarmCast's own files are deleted.
+$(desktop_usage_note)
 EOF
+}
+
+desktop_usage_note() {
+  if [ "$SC_OS" = macos ]; then
+    printf '%s' "SwarmCast.app is removed only when its bundle id is $SC_APP_ID."
+  else
+    printf '%s' "A $SC_DEB_PACKAGE package is not removed (that needs sudo): the command is shown."
+  fi
 }
 
 default_data_dir_label() {
@@ -204,6 +224,139 @@ looks_like_swarmcast() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# Desktop app (docs/DESKTOP.md)
+# ---------------------------------------------------------------------------
+
+# add_line VAR VALUE: appends VALUE as a new line of the list in VAR.
+add_line() {
+  if [ -z "${!1}" ]; then printf -v "$1" '%s' "$2"; else printf -v "$1" '%s\n%s' "${!1}" "$2"; fi
+}
+
+# xdg_dir VALUE DEFAULT: an XDG base folder; relative values are ignored (XDG spec).
+xdg_dir() {
+  case "${1:-}" in /*) printf '%s' "$1" ;; *) printf '%s' "$2" ;; esac
+}
+
+# bundle_id APP: CFBundleIdentifier of a .app (empty when it has none).
+bundle_id() {
+  local plist="$1/Contents/Info.plist"
+  [ -f "$plist" ] || return 0
+  if [ -x /usr/libexec/PlistBuddy ]; then
+    /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist" 2>/dev/null
+    return 0
+  fi
+  tr -d '\r\n' <"$plist" 2>/dev/null |
+    sed -n 's|.*<key>CFBundleIdentifier</key>[[:space:]]*<string>\([^<]*\)</string>.*|\1|p'
+}
+
+# is_swarmcast_appimage PATH: a SwarmCast*.AppImage directly in one of the folders
+# where people keep AppImages.
+is_swarmcast_appimage() {
+  local d name
+  for d in "$HOME/Applications" "$HOME/Downloads" "$HOME/.local/bin"; do
+    case "$1" in "$d"/*) ;; *) continue ;; esac
+    name="${1#"$d"/}"
+    case "$name" in */*) continue ;; SwarmCast*.AppImage) return 0 ;; esac
+  done
+  return 1
+}
+
+# Programs started by a .desktop file (Exec= and TryExec= of [Desktop Entry]).
+desktop_entry_programs() {
+  awk '
+    /^[ \t]*\[/ { main = ($0 ~ /^[ \t]*\[Desktop Entry\][ \t]*$/); next }
+    main && /^(Exec|TryExec)[ \t]*=/ {
+      v = $0
+      sub(/^[^=]*=[ \t]*/, "", v)
+      if (substr(v, 1, 1) == "\"") { v = substr(v, 2); i = index(v, "\""); if (i) v = substr(v, 1, i - 1) }
+      else { i = index(v, " "); if (i) v = substr(v, 1, i - 1) }
+      print v
+    }' "$1" 2>/dev/null
+}
+
+# Finds the desktop app's pieces. Sets AUTOSTART_FILE, DESKTOP_APPS (SwarmCast.app
+# bundles with SwarmCast's bundle id), FOREIGN_APPS (a SwarmCast.app that is not
+# ours: left alone), APPIMAGES, DESKTOP_ENTRIES (menu entries that start one of those
+# AppImages), DESKTOP_DIRS (the app's caches and web data), DEB_INSTALLED, and the
+# process filters PROC_DIRS / PROC_FILES.
+find_desktop_app() {
+  local b f d id config data cache
+  AUTOSTART_FILE=""; DESKTOP_APPS=""; FOREIGN_APPS=""; APPIMAGES=""; DESKTOP_ENTRIES=""
+  DESKTOP_DIRS=""; DEB_INSTALLED=0; PROC_DIRS=""; PROC_FILES=""
+  add_line PROC_DIRS "$DATA_DIR"
+  add_line PROC_DIRS "$DATA_REAL"
+  if [ "$SC_OS" = macos ]; then
+    AUTOSTART_FILE="$HOME/Library/LaunchAgents/$SC_APP_ID.plist"
+    for b in "$SC_SYSTEM_APPS/SwarmCast.app" "$HOME/Applications/SwarmCast.app"; do
+      [ -d "$b" ] || continue
+      id="$(bundle_id "$b")"
+      if [ "$id" = "$SC_APP_ID" ]; then
+        add_line DESKTOP_APPS "$b"
+        add_line PROC_DIRS "$b"
+        add_line PROC_DIRS "$(cd "$b" 2>/dev/null && pwd -P)"
+      else
+        add_line FOREIGN_APPS "$b (bundle id: ${id:-none})"
+      fi
+    done
+    for d in "Caches/$SC_APP_ID" "WebKit/$SC_APP_ID" "HTTPStorages/$SC_APP_ID" \
+      "Application Support/$SC_APP_ID" "Saved Application State/$SC_APP_ID.savedState"; do
+      if [ -e "$HOME/Library/$d" ] || [ -L "$HOME/Library/$d" ]; then add_line DESKTOP_DIRS "$HOME/Library/$d"; fi
+    done
+  else
+    config="$(xdg_dir "${XDG_CONFIG_HOME:-}" "$HOME/.config")"
+    data="$(xdg_dir "${XDG_DATA_HOME:-}" "$HOME/.local/share")"
+    cache="$(xdg_dir "${XDG_CACHE_HOME:-}" "$HOME/.cache")"
+    AUTOSTART_FILE="$config/autostart/swarmcast.desktop"
+    for d in "$HOME/Applications" "$HOME/Downloads" "$HOME/.local/bin"; do
+      for f in "$d"/SwarmCast*.AppImage; do
+        if [ -f "$f" ] || [ -L "$f" ]; then add_line APPIMAGES "$f"; add_line PROC_FILES "$f"; fi
+      done
+    done
+    # Menu entries made for an AppImage (AppImageLauncher, Gear Lever, by hand): only
+    # *swarmcast*.desktop files whose command is a SwarmCast AppImage from the
+    # folders above (present or already deleted).
+    for f in "$data/applications"/*.desktop; do
+      [ -f "$f" ] || continue
+      case "$(printf '%s' "${f##*/}" | tr '[:upper:]' '[:lower:]')" in *swarmcast*) ;; *) continue ;; esac
+      while IFS= read -r b; do
+        if [ -n "$b" ] && is_swarmcast_appimage "$b"; then add_line DESKTOP_ENTRIES "$f"; break; fi
+      done <<EOF
+$(desktop_entry_programs "$f")
+EOF
+    done
+    for d in "$data/$SC_APP_ID" "$cache/$SC_APP_ID" "$config/$SC_APP_ID"; do
+      if [ -e "$d" ] || [ -L "$d" ]; then add_line DESKTOP_DIRS "$d"; fi
+    done
+    if command -v dpkg-query >/dev/null 2>&1 &&
+      dpkg-query -W -f='${Status}' "$SC_DEB_PACKAGE" 2>/dev/null | grep -q ' installed$'; then
+      DEB_INSTALLED=1
+    fi
+    # The package's files (stopped, never deleted: that is apt's job).
+    add_line PROC_DIRS "/usr/lib/SwarmCast"
+    add_line PROC_FILES "/usr/bin/swarmcast-desktop"
+    add_line PROC_FILES "/usr/bin/swarmcast-server"
+  fi
+}
+
+# True when any part of the desktop app is on this computer.
+desktop_app_found() {
+  [ -n "$DESKTOP_APPS$APPIMAGES$DESKTOP_ENTRIES$DESKTOP_DIRS" ] || [ "$DEB_INSTALLED" = 1 ] ||
+    [ -e "$AUTOSTART_FILE" ] || [ -L "$AUTOSTART_FILE" ]
+}
+
+show_desktop_app() {
+  local x
+  while IFS= read -r x; do [ -n "$x" ] && say "Desktop app: $x"; done <<EOF
+$DESKTOP_APPS
+$APPIMAGES
+EOF
+  if [ "$DEB_INSTALLED" = 1 ]; then say "Desktop app: package $SC_DEB_PACKAGE (installed with apt)"; fi
+  while IFS= read -r x; do [ -n "$x" ] && say "Not SwarmCast's, left alone: $x"; done <<EOF
+$FOREIGN_APPS
+EOF
+}
+
 # Prints "PID<TAB>executable path" for this user's processes.
 list_processes() {
   local p exe pid uid me
@@ -234,16 +387,20 @@ list_processes() {
   done
 }
 
-# Processes whose executable lives inside the data folder (swarmcast, its reaper,
-# mediamtx, cloudflared, swarmcast-tray, ffmpeg...). Nothing else is ever touched.
+# Processes whose executable lives inside a SwarmCast folder: the data folder
+# (swarmcast, its reaper, mediamtx, cloudflared, swarmcast-tray, ffmpeg...) and the
+# desktop app (SwarmCast.app, a SwarmCast AppImage and the folder it mounts, the
+# swarm-cast package's files). Nothing else is ever touched.
 find_swarmcast_processes() {
-  local pid exe
-  list_processes | while IFS="$(printf '\t')" read -r pid exe; do
-    [ "$pid" = "$$" ] && continue
-    case "$exe" in
-      "$DATA_DIR"/* | "$DATA_REAL"/*) printf '%s\t%s\n' "$pid" "$exe" ;;
-    esac
-  done
+  list_processes | SC_SELF="$$" SC_DIRS="$PROC_DIRS" SC_FILES="$PROC_FILES" SC_LINUX="$([ "$SC_OS" = linux ] && echo 1)" awk -F '\t' '
+    BEGIN { nd = split(ENVIRON["SC_DIRS"], dirs, "\n"); nf = split(ENVIRON["SC_FILES"], files, "\n") }
+    $1 == ENVIRON["SC_SELF"] || $2 == "" { next }
+    {
+      for (i = 1; i <= nd; i++) if (dirs[i] != "" && index($2, dirs[i] "/") == 1) { print; next }
+      for (i = 1; i <= nf; i++) if (files[i] != "" && $2 == files[i]) { print; next }
+      # A running AppImage mounts itself at <tmp>/.mount_<first 6 letters of its name>XXXXXX.
+      if (ENVIRON["SC_LINUX"] == 1 && tolower($2) ~ /\/\.mount_swarmc[^\/]*\/usr\/(bin\/swarmcast-(desktop|server)$|lib\/swarmcast\/|libexec\/swarmcast\/swarmcast-server$)/) { print; next }
+    }'
 }
 
 # describe "PID<TAB>path" lines -> "name (PID n), ..."
@@ -296,16 +453,30 @@ EOF
   ok "SwarmCast stopped."
 }
 
+# The SwarmCast program that can run "--cleanup": the script-mode one in the data
+# folder, else the desktop app's server (its sidecar). Empty when there is none.
+cleanup_binary() {
+  local c b
+  for c in "$DATA_DIR/app/current/swarmcast" "$DATA_DIR/app/previous/swarmcast"; do
+    if [ -f "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+  done
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    c="$b/Contents/MacOS/swarmcast-server"
+    if [ -f "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; return 0; fi
+  done <<EOF
+$DESKTOP_APPS
+EOF
+  c="/usr/bin/swarmcast-server"
+  if [ "$DEB_INSTALLED" = 1 ] && [ -f "$c" ] && [ -x "$c" ]; then printf '%s' "$c"; fi
+  return 0
+}
+
 # Removes a router port left open by a crash (Direct mode), using SwarmCast itself.
 router_cleanup() {
-  local bin="" out rc pid wd line
-  if [ -x "$DATA_DIR/app/current/swarmcast" ]; then
-    bin="$DATA_DIR/app/current/swarmcast"
-  elif [ -x "$DATA_DIR/app/previous/swarmcast" ]; then
-    bin="$DATA_DIR/app/previous/swarmcast"
-  else
-    return 0
-  fi
+  local bin out rc pid wd line
+  bin="$(cleanup_binary)"
+  [ -n "$bin" ] || return 0
   say "Checking the router for a port SwarmCast left open..."
   out="$(
     SWARMCAST_DATA_DIR="$DATA_DIR" "$bin" --cleanup --data-dir "$DATA_DIR" </dev/null 2>&1 &
@@ -356,35 +527,120 @@ EOF
   if [ "$n" -gt 20 ]; then say "    ... and $((n - 20)) more"; fi
 }
 
+
+# run_bounded SECONDS command...: runs a command, killing it after SECONDS.
+run_bounded() {
+  local secs="$1" pid wd rc
+  shift
+  "$@" </dev/null &
+  pid=$!
+  ( sleep "$secs"; kill -9 "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+  wd=$!
+  wait "$pid"
+  rc=$?
+  kill "$wd" 2>/dev/null
+  wait "$wd" 2>/dev/null
+  return "$rc"
+}
+
+FAILED=""       # paths that could not be removed (reported at the end)
+ADMIN_APPS=""   # SwarmCast.app bundles this user may not remove
+
+# remove_or_record PATH: remove_with_retry, remembering a failure for the report.
+remove_or_record() {
+  if remove_with_retry "$1"; then return 0; fi
+  add_line FAILED "$1"
+  return 1
+}
+
+# The "start with the computer" entry (written by the app, off by default).
+remove_autostart() {
+  if [ "$SC_OS" = macos ] && { [ -n "$DESKTOP_APPS" ] || [ -e "$AUTOSTART_FILE" ]; } &&
+    command -v launchctl >/dev/null 2>&1; then
+    # Unloads the login item too (best effort: usually it is not loaded).
+    run_bounded "$SC_BOOTOUT_TIMEOUT" launchctl bootout "gui/$(id -u)/$SC_APP_ID" >/dev/null 2>&1
+  fi
+  if [ -e "$AUTOSTART_FILE" ] || [ -L "$AUTOSTART_FILE" ]; then
+    if remove_or_record "$AUTOSTART_FILE"; then ok "Removed the \"start with the computer\" entry: $AUTOSTART_FILE"; fi
+  fi
+}
+
+remove_desktop_app() {
+  local b parent x n=0
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    parent="${b%/*}"
+    # /Applications is only writable for administrators: never sudo, tell the user.
+    if [ ! -w "$parent" ] || { [ ! -O "$b" ] && [ ! -w "$b" ]; }; then
+      add_line ADMIN_APPS "$b"
+      continue
+    fi
+    if remove_or_record "$b"; then ok "Removed the desktop app: $b"; fi
+  done <<EOF
+$DESKTOP_APPS
+EOF
+  while IFS= read -r x; do
+    [ -n "$x" ] || continue
+    if remove_or_record "$x"; then ok "Removed the menu entry: $x"; fi
+  done <<EOF
+$DESKTOP_ENTRIES
+EOF
+  while IFS= read -r x; do
+    [ -n "$x" ] || continue
+    if remove_or_record "$x"; then ok "Removed the desktop app: $x"; fi
+  done <<EOF
+$APPIMAGES
+EOF
+  while IFS= read -r x; do
+    [ -n "$x" ] || continue
+    if remove_or_record "$x"; then n=$((n + 1)); fi
+  done <<EOF
+$DESKTOP_DIRS
+EOF
+  if [ "$n" -gt 0 ]; then ok "Removed the desktop app's caches and web data ($n folders)."; fi
+}
+
 delete_data() {
-  local failed="" e name
-  heading "Deleting SwarmCast files"
-  cd "$HOME" 2>/dev/null || cd / || true
+  local e name
   if [ "$OPT_KEEP" = 1 ]; then
     for e in "$DATA_DIR"/* "$DATA_DIR"/.[!.]* "$DATA_DIR"/..?*; do
       [ -e "$e" ] || [ -L "$e" ] || continue
       name="${e##*/}"
       case "$name" in config.json | secrets.json) continue ;; esac
-      remove_with_retry "$e" || failed="$failed
-$e"
+      remove_or_record "$e"
     done
   else
-    remove_with_retry "$DATA_DIR" || failed="$DATA_DIR"
+    remove_or_record "$DATA_DIR"
   fi
-  if [ -n "$failed" ]; then
-    err "Some files could not be removed:"
-    while IFS= read -r e; do
-      [ -n "$e" ] && report_leftovers "$e"
-    done <<EOF
-$failed
+}
+
+# What needs an administrator: shown at the end, never done with sudo.
+show_admin_steps() {
+  local b
+  [ -n "$ADMIN_APPS" ] || [ "$DEB_INSTALLED" = 1 ] || return 0
+  heading "Still to do (needs an administrator)"
+  while IFS= read -r b; do
+    [ -n "$b" ] || continue
+    warn "$b was not removed: your user is not allowed to change ${b%/*}. In Finder, drag SwarmCast from ${b%/*} to the Trash (macOS asks for an administrator's name and password)."
+  done <<EOF
+$ADMIN_APPS
 EOF
-    say "  Close any program that may be using them (or restart the computer) and run this again."
-    return 1
+  if [ "$DEB_INSTALLED" = 1 ]; then
+    warn "The SwarmCast desktop app is installed as a system package ($SC_DEB_PACKAGE). To remove it, run this command in a terminal (it asks for your password):"
+    say ""
+    say "    sudo apt remove $SC_DEB_PACKAGE"
   fi
-  return 0
+}
+
+admin_result() {
+  local r=""
+  if [ -n "$ADMIN_APPS" ]; then r="; still installed (needs an administrator): $(printf '%s' "$ADMIN_APPS" | tr '\n' ' ')"; fi
+  if [ "$DEB_INSTALLED" = 1 ]; then r="$r; still installed: package $SC_DEB_PACKAGE (sudo apt remove $SC_DEB_PACKAGE)"; fi
+  printf '%s' "$r"
 }
 
 main() {
+  local have_data=0 removed_empty=0 e
   parse_args "$@"
   init_colors
   if [ "$OPT_HELP" = 1 ]; then
@@ -394,35 +650,41 @@ main() {
   refuse_root
   setup_paths
   trap on_signal INT TERM HUP
+  find_desktop_app
 
   say "${C_BOLD}SwarmCast uninstaller for $SC_OS_LABEL${C_RESET}"
   say "Data folder: $DATA_DIR"
+  show_desktop_app
 
-  if [ ! -e "$DATA_DIR" ] && [ ! -L "$DATA_DIR" ]; then
-    ok "SwarmCast is not installed on this computer (no data folder). Nothing to do."
+  if [ -e "$DATA_DIR" ] || [ -L "$DATA_DIR" ]; then
+    if ! check_safe_target; then
+      err "$DATA_DIR is not a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
+      EXIT_CODE=1; RESULT="refused: unsafe folder $DATA_DIR"
+      finish
+    fi
+    if [ -d "$DATA_DIR" ] && looks_like_swarmcast; then
+      have_data=1
+    elif [ -d "$DATA_DIR" ] && [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
+      rmdir "$DATA_DIR" 2>/dev/null
+      removed_empty=1
+    else
+      err "$DATA_DIR does not look like a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
+      EXIT_CODE=1; RESULT="refused: not a SwarmCast folder"
+      finish
+    fi
+  fi
+  if [ "$have_data" = 0 ] && ! desktop_app_found; then
+    if [ "$removed_empty" = 1 ]; then
+      ok "SwarmCast is not installed on this computer (the data folder was empty and has been removed)."
+    else
+      ok "SwarmCast is not installed on this computer (no data folder). Nothing to do."
+    fi
     say "$SC_OBS_NOTE"
     RESULT="not installed"
     finish
   fi
-  if ! check_safe_target; then
-    err "$DATA_DIR is not a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
-    EXIT_CODE=1; RESULT="refused: unsafe folder $DATA_DIR"
-    finish
-  fi
-  if [ ! -d "$DATA_DIR" ] || ! looks_like_swarmcast; then
-    if [ -d "$DATA_DIR" ] && [ -z "$(ls -A "$DATA_DIR" 2>/dev/null)" ]; then
-      rmdir "$DATA_DIR" 2>/dev/null
-      ok "SwarmCast is not installed on this computer (the data folder was empty and has been removed)."
-      say "$SC_OBS_NOTE"
-      RESULT="not installed"
-      finish
-    fi
-    err "$DATA_DIR does not look like a SwarmCast data folder (check SWARMCAST_HOME). Nothing was deleted."
-    EXIT_CODE=1; RESULT="refused: not a SwarmCast folder"
-    finish
-  fi
 
-  if [ "$OPT_KEEP" = 1 ]; then
+  if [ "$have_data" = 1 ] && [ "$OPT_KEEP" = 1 ]; then
     say "Your settings and stream key (config.json, secrets.json) will be kept (--keep-settings)."
   fi
   if [ "$OPT_ASK" = 1 ]; then
@@ -436,22 +698,43 @@ main() {
   fi
 
   stop_processes
-  router_cleanup
-  if delete_data; then
+  if [ "$have_data" = 1 ]; then router_cleanup; fi
+  heading "Deleting SwarmCast files"
+  cd "$HOME" 2>/dev/null || cd / || true
+  remove_autostart
+  remove_desktop_app
+  if [ "$have_data" = 1 ]; then delete_data; fi
+
+  if [ -z "$FAILED" ]; then
     heading "Done"
-    if [ "$OPT_KEEP" = 1 ]; then
+    if [ "$have_data" = 1 ] && [ "$OPT_KEEP" = 1 ]; then
       ok "SwarmCast was removed. Your settings and stream key were kept in: $DATA_DIR"
       say "  Run the start script again to reinstall with the same stream key, or delete that folder to remove them too."
       RESULT="removed (settings kept in $DATA_DIR)"
     else
-      ok "SwarmCast was removed from this computer."
-      RESULT="removed $DATA_DIR"
+      if [ -n "$ADMIN_APPS" ] || [ "$DEB_INSTALLED" = 1 ]; then
+        ok "SwarmCast's files in your user folder were removed."
+      else
+        ok "SwarmCast was removed from this computer."
+      fi
+      if [ "$have_data" = 1 ]; then RESULT="removed $DATA_DIR"; else RESULT="removed the desktop app"; fi
     fi
+    RESULT="$RESULT$(admin_result)"
+    show_admin_steps
     say "$SC_OBS_NOTE"
     say "You can also delete the folder with the installer files (the extracted zip) yourself."
   else
+    err "Some files could not be removed:"
+    while IFS= read -r e; do
+      [ -n "$e" ] && report_leftovers "$e"
+    done <<EOF
+$FAILED
+EOF
+    say "  Close any program that may be using them (or restart the computer) and run this again."
+    case "$FAILED" in *.app | *.app$'\n'*) say "  An app can also be dragged from Finder to the Trash." ;; esac
+    show_admin_steps
     EXIT_CODE=1
-    RESULT="some files could not be removed"
+    RESULT="some files could not be removed$(admin_result)"
     say "$SC_OBS_NOTE"
   fi
   finish

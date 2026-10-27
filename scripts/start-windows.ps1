@@ -7,7 +7,7 @@
 # -InstallOnly / --install-only, -SmokeTest / --smoke-test,
 # -SkipSpeedtest / --skip-speedtest, -NoFfmpeg / --no-ffmpeg, -Help / --help.
 #
-# Installer zip (works while the repository is private): when this script sits next
+# Installer zip (offline install): when this script sits next
 # to SHA256SUMS.txt and the matching SwarmCast-v*-windows-x64.zip (as in
 # SwarmCast-vX.Y.Z-windows-x64-installer.zip), it installs from those files.
 #
@@ -84,7 +84,7 @@ Install source, first match wins:
   2. A local bundle: SHA256SUMS.txt and SwarmCast-v*-windows-x64.zip in the same
      folder as this script (the extracted installer zip). The default release
      URL is still checked once for a newer version; if it cannot be reached
-     (offline, or a private repository), the local bundle is used.
+     (offline, or an HTTP error), the local bundle is used.
   3. The default release URL.
 
 Video converter: the extra viewer qualities (720p/480p/360p) need ffmpeg. It is
@@ -569,7 +569,7 @@ function Test-Release {
       $script:SumsFile = Join-Path $script:LocalDir 'SHA256SUMS.txt'
       Say "Install source: local bundle in $($script:LocalDir) (v$($local.Version))"
       # With a local bundle, look once (no retries) for a newer online release. Not
-      # reaching it (offline, or HTTP 404/401 while the repository is private) is fine.
+      # reaching it (offline, or an HTTP 404/401 answer) is fine.
       $script:OnlineState = 'unreachable'
       $online = Join-Path $script:TmpDir 'online-SHA256SUMS.txt'
       try {
@@ -586,7 +586,7 @@ function Test-Release {
         }
       } catch {
         $status = Get-HttpStatus $_
-        if ($status) { Write-Log "Online release check: HTTP $status (expected while the repository is private); using the local bundle" }
+        if ($status) { Write-Log "Online release check: HTTP $status; using the local bundle" }
         else { Write-Log "Online release check failed: $($_.Exception.Message); using the local bundle" }
       }
       return
@@ -844,14 +844,14 @@ function Install-OrUpdate {
 
   if (-not $script:ReleaseOk) {
     $why = 'offline, or the release server is unreachable'
-    if ($script:FetchHttp) { $why = "the release server answered HTTP $($script:FetchHttp); the repository may be private" }
+    if ($script:FetchHttp) { $why = "the release server answered HTTP $($script:FetchHttp)" }
     if ($installed) {
       Say-Warn "Could not check for updates ($why`: $($script:ReleaseUrl))."
       Say-Warn "Starting the installed version v$installed."
       return
     }
     if ($script:FetchHttp) {
-      Stop-Setup "Could not download SwarmCast: the release server answered HTTP $($script:FetchHttp).`n  ($($script:ReleaseUrl)/SHA256SUMS.txt)`n  If the repository is private, ask for the SwarmCast installer zip, extract it`n  (right-click -> Extract All) and double-click start-windows.cmd in the extracted folder."
+      Stop-Setup "Could not download SwarmCast: the release server answered HTTP $($script:FetchHttp).`n  ($($script:ReleaseUrl)/SHA256SUMS.txt)`n  If you have the SwarmCast installer zip, extract it (right-click -> Extract All)`n  and double-click start-windows.cmd in the extracted folder.`n  Or get the SwarmCast app: https://lucas-angelo.github.io/swarmcast/"
     }
     Stop-Setup "Could not download SwarmCast: the release server is unreachable.`n  ($($script:ReleaseUrl)/SHA256SUMS.txt)`n  Check your internet connection (and any firewall, proxy or VPN), then run this again.`n  If you received the SwarmCast installer zip, extract it (right-click -> Extract All)`n  and double-click start-windows.cmd in the extracted folder."
   }

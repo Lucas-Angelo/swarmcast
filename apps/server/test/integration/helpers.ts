@@ -2,6 +2,8 @@ import { spawn, type ChildProcess, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { solveChallenge, type Challenge } from 'altcha-lib';
+import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 
 export const hasFfmpeg = (() => {
   try {
@@ -38,13 +40,14 @@ export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: numbe
   );
 }
 
-export async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string): Promise<void> {
+/** `detail` describes the state at the timeout, so a CI failure says why. */
+export async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string, detail?: () => string): Promise<void> {
   const end = Date.now() + timeoutMs;
   while (Date.now() < end) {
     if (await cond()) return;
     await new Promise((r) => setTimeout(r, 250));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out waiting for ${what}${detail ? ` (${detail()})` : ''}`);
 }
 
 /** Tiny cookie jar for fetch-based "browsers". */
@@ -79,12 +82,16 @@ export class Jar {
   }
 }
 
-/** Open the live link, pick a nickname, and return the viewer's cookie jar. */
-export async function joinAs(base: string, liveLink: string, nickname: string): Promise<Jar> {
-  const jar = new Jar(base);
+/**
+ * Open the live link, pick a nickname, and return the viewer's cookie jar. Like the join page,
+ * solves the browser check (on by default) when the server asks for it.
+ */
+export async function joinAs(base: string, liveLink: string, nickname: string, jar = new Jar(base)): Promise<Jar> {
   const r1 = await jar.fetch(liveLink);
   if (r1.status !== 303) throw new Error(`join link returned ${r1.status}`);
-  const r2 = await jar.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname }) });
+  const ch = (await (await jar.fetch('/api/join/challenge')).json()) as { required: boolean; challenge?: Challenge };
+  const pow = ch.required ? { challenge: ch.challenge!, solution: await solveChallenge({ challenge: ch.challenge!, deriveKey }) } : undefined;
+  const r2 = await jar.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pow ? { nickname, pow } : { nickname }) });
   if (r2.status !== 200) throw new Error(`join returned ${r2.status}: ${await r2.text()}`);
   return jar;
 }

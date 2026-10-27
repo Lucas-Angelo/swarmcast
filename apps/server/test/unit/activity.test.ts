@@ -112,7 +112,7 @@ describe('keyframe interval warning', () => {
 
   it('records actions in the activity log with codes', () => {
     const live = makeLive();
-    live.updateSettings({ uploadLimitMbps: 25, autoStopMinutes: 10, alsoStreamingElsewhere: false, showViewerCount: true });
+    live.updateSettings({ uploadLimitMbps: 25, autoStopMinutes: 10, alsoStreamingElsewhere: false, showViewerCount: true, allowViewerP2P: true });
     expect(live.activity.list().at(-1)).toMatchObject({ kind: 'action', code: 'log.settingsSaved', params: { upload: 25, autoStop: 10 } });
   });
 });

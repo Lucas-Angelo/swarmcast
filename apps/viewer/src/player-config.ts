@@ -11,7 +11,7 @@
 import type Hls from 'hls.js';
 import type { HlsConfig } from 'hls.js';
 import type { DynamicCoreConfig, StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
-import { variantStreamSwarmId } from '@swarmcast/shared';
+import { PLAYER_LIVE_DELAYS, variantStreamSwarmId } from '@swarmcast/shared';
 
 export type PlaybackProfileId = 'stable' | 'low-delay';
 
@@ -41,8 +41,8 @@ export interface PlaybackProfile {
 export const PROFILES: Record<PlaybackProfileId, PlaybackProfile> = {
   stable: {
     id: 'stable',
-    liveSyncDuration: 20,
-    liveMaxLatencyDuration: 36,
+    // Shared with the server, which sizes every playlist window from these (PLAYLIST_WINDOW_S).
+    ...PLAYER_LIVE_DELAYS.stable,
     maxLiveSyncPlaybackRate: 1.05,
     maxBufferLength: 30,
     maxMaxBufferLength: 40,
@@ -55,8 +55,7 @@ export const PROFILES: Record<PlaybackProfileId, PlaybackProfile> = {
   },
   'low-delay': {
     id: 'low-delay',
-    liveSyncDuration: 8,
-    liveMaxLatencyDuration: 20,
+    ...PLAYER_LIVE_DELAYS['low-delay'],
     maxLiveSyncPlaybackRate: 1.1,
     maxBufferLength: 12,
     maxMaxBufferLength: 20,
@@ -132,6 +131,8 @@ export interface PlayerConfigOptions {
   isMobile: boolean;
   /** Override the first ABR estimate (bps); defaults to the saved one, else 2 Mbps. */
   initialEstimate?: number;
+  /** Current playlist window (see latencyFor); the profile's delays are fitted into it. */
+  window?: () => PlaylistWindow | null;
 }
 
 /**
@@ -145,6 +146,7 @@ export function hlsConfigFor(id: PlaybackProfileId, o: PlayerConfigOptions): Par
     liveSyncDuration: p.liveSyncDuration,
     liveMaxLatencyDuration: p.liveMaxLatencyDuration,
     maxLiveSyncPlaybackRate: p.maxLiveSyncPlaybackRate,
+    // +1 s per stall; hls.js caps the total at one target duration (PLAYER_STALL_INCREASE_S).
     liveSyncOnStallIncrease: 1,
     maxBufferLength: p.maxBufferLength,
     maxMaxBufferLength: p.maxMaxBufferLength,
@@ -168,6 +170,65 @@ export function hlsConfigFor(id: PlaybackProfileId, o: PlayerConfigOptions): Par
     playlistLoadPolicy: { default: RETRY_POLICY },
     manifestLoadPolicy: { default: RETRY_POLICY },
   };
+}
+
+/**
+ * Seconds before it plays under which a fragment the P2P core still holds is fetched over
+ * HTTPS instead (p2p-fallback.ts). Inside the core's own high-demand window, so the core
+ * normally gets there first; this is the safety net when it does not.
+ */
+export function urgentSecondsFor(id: PlaybackProfileId): number {
+  return Math.max(3, PROFILES[id].highDemandTimeWindow * 0.75);
+}
+
+/** How much of the stream the playlists still offer (the shortest of video and audio). */
+export interface PlaylistWindow {
+  /** Seconds covered by the shortest live playlist in use. */
+  windowS: number;
+  /** Longest target duration among those playlists, seconds. */
+  targetDurationS: number;
+}
+
+interface LiveDetails {
+  totalduration: number;
+  targetduration: number;
+}
+
+/**
+ * The window to fit the live delay into, or null to keep the profile as is. Only a mismatch
+ * matters: an audio playlist that covers less than the video one (servers up to v0.2.0 kept
+ * 20 one-second audio segments next to 40 s of video). Playlists that are merely short
+ * because the stream just started grow by themselves, and hls.js already handles them.
+ */
+export function mismatchWindow(video: LiveDetails | undefined, audio: LiveDetails | undefined): PlaylistWindow | null {
+  if (!video || !audio) return null;
+  // The two playlists refresh at different moments, so while they grow (stream start) one is
+  // briefly a segment or two ahead: only a clear, lasting gap counts.
+  if (audio.totalduration > video.totalduration - Math.max(2 * video.targetduration, video.totalduration / 4)) return null;
+  return { windowS: audio.totalduration, targetDurationS: Math.max(video.targetduration, audio.targetduration) };
+}
+
+/**
+ * Fit the profile's live delay into what the playlists actually offer. The player must stay
+ * well inside the shortest window (the audio playlist can be shorter than the video one):
+ * a position older than the oldest audio segment never plays again, and hls.js' catch-up jump
+ * (liveMaxLatencyDuration) would land there over and over.
+ *
+ * - liveMaxLatencyDuration ≤ window − 2 target durations (time to fetch the oldest segment);
+ * - liveSyncDuration leaves room below that for stalls (hls.js adds up to one target duration
+ *   after stalls, plus one of slack): ≤ max − 2 target durations.
+ */
+export function latencyFor(id: PlaybackProfileId, w?: PlaylistWindow | null): { liveSyncDuration: number; liveMaxLatencyDuration: number } {
+  const p = PROFILES[id];
+  if (!w || !(w.windowS > 0) || !(w.targetDurationS > 0)) {
+    return { liveSyncDuration: p.liveSyncDuration, liveMaxLatencyDuration: p.liveMaxLatencyDuration };
+  }
+  const td = w.targetDurationS;
+  const floorSync = 2 * td;
+  // Whole seconds, so a window that wobbles by a few ms (19.99 / 20.01 s) does not retune hls.js.
+  const max = Math.max(floorSync + 2 * td, Math.min(p.liveMaxLatencyDuration, Math.floor(Math.round(w.windowS) - 2 * td)));
+  const sync = Math.max(floorSync, Math.min(p.liveSyncDuration, Math.floor(max - 2 * td)));
+  return { liveSyncDuration: sync, liveMaxLatencyDuration: max };
 }
 
 /** p2p-media-loader core options that depend on the profile. */
@@ -225,23 +286,24 @@ interface EngineLike {
 export function applyProfile(hls: HlsLike, engine: EngineLike | null, id: PlaybackProfileId, o: PlayerConfigOptions): void {
   const p = PROFILES[id];
   const c = hls.config;
-  c.liveMaxLatencyDuration = p.liveMaxLatencyDuration;
+  const fit = latencyFor(id, o.window?.());
+  c.liveMaxLatencyDuration = fit.liveMaxLatencyDuration;
   c.maxLiveSyncPlaybackRate = p.maxLiveSyncPlaybackRate;
   c.maxBufferLength = p.maxBufferLength;
   c.maxMaxBufferLength = p.maxMaxBufferLength;
   c.backBufferLength = o.isMobile ? Math.min(6, p.backBufferLength) : p.backBufferLength;
   c.abrBandWidthFactor = p.abrBandWidthFactor;
   c.abrBandWidthUpFactor = p.abrBandWidthUpFactor;
-  hls.targetLatency = p.liveSyncDuration;
+  hls.targetLatency = fit.liveSyncDuration;
   engine?.applyDynamicConfig({ core: { highDemandTimeWindow: p.highDemandTimeWindow, mainStream: { highDemandTimeWindow: p.highDemandTimeWindow }, secondaryStream: { highDemandTimeWindow: p.highDemandTimeWindow } } });
   saveProfile(id);
   const media = hls.media;
   if (!media || media.paused) return;
   const latency = hls.latency;
-  if (latency > p.liveSyncDuration + 2) {
-    media.currentTime += latency - p.liveSyncDuration;
-  } else if (latency < p.liveSyncDuration - 2) {
-    const waitMs = (p.liveSyncDuration - latency) * 1000;
+  if (latency > fit.liveSyncDuration + 2) {
+    media.currentTime += latency - fit.liveSyncDuration;
+  } else if (latency < fit.liveSyncDuration - 2) {
+    const waitMs = (fit.liveSyncDuration - latency) * 1000;
     media.pause();
     setTimeout(() => void media.play().catch(() => {}), waitMs);
   }

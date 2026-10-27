@@ -1,0 +1,31 @@
+{
+  "name": "swarmcast-site",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The SwarmCast website (GitHub Pages): the streamer guide in English and Brazilian Portuguese.",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "test:e2e": "playwright test",
+    "og": "node scripts/social-cards.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "~0.42.7",
+    "@fontsource-variable/inter": "~5.3.0",
+    "astro": "~7.4.2",
+    "sharp": "~0.35.5",
+    "starlight-links-validator": "~0.27.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "~0.9.12",
+    "@playwright/test": "~1.64.1",
+    "typescript": "~6.0.3"
+  }
+}

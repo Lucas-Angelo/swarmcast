@@ -223,7 +223,7 @@ await section('9. installer zip: Explorer "Extract All" of a downloaded zip, no 
   info('Mark of the Web propagated to the extracted files', motw);
   must('bundle extracted', isFile(path.join(dl, 'start-windows.cmd')) && isFile(path.join(dl, 'SHA256SUMS.txt')), fs.readdirSync(dl).join(', '));
 
-  for (const variant of ['github.com reachable (private repo answers 404)', 'github.com unreachable (hosts file)']) {
+  for (const variant of ['github.com reachable', 'github.com unreachable (hosts file)']) {
     const blocked = variant.includes('unreachable');
     const home = path.join(local, blocked ? 'SC bundle offline' : 'SC bundle');
     fs.rmSync(home, { recursive: true, force: true });

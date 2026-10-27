@@ -10,20 +10,33 @@ import { z } from 'zod';
  * that the challenge was not used before. Everything is self-hosted: no third party, no account.
  *
  * Deterministic mode: the expected work equals the secret counter, drawn from the range of the
- * current level. Measured about 8 µs per attempt on a recent laptop; mid-range phones are a few
- * times slower, so level 2 (at most 20,000 attempts) stays around or under one second there.
+ * current level. Since a browser that passes is remembered (see verified.ts), this runs about once
+ * per browser, so it can be a little heavier than a per-join check.
+ *
+ * Measured (SHA-256 via WebCrypto, one attempt per digest, Apple-silicon Mac, 2026-10):
+ *   Chrome 1.5 µs/attempt; with DevTools CPU throttling 4× ("mid-tier mobile") ~6 µs, 6× ~8–9 µs;
+ *   Safari/WebKit ~22 µs (WebKit's digest is the slow case; a mid-range iPhone is estimated at
+ *   30–55 µs).
+ * Level 1, 5,000–15,000 attempts: about 0.1 s on a mid-range Android phone and 0.3–0.8 s on a
+ * mid-range iPhone. Level 2 (under attack), 15,000–40,000 attempts: about 0.3 s / 0.8–2.2 s.
  */
 export type PowLevel = 0 | 1 | 2;
 
 export const POW_COUNTER_RANGE: Record<1 | 2, [number, number]> = {
-  1: [2_000, 8_000],
-  2: [8_000, 20_000],
+  1: [5_000, 15_000],
+  2: [15_000, 40_000],
 };
 
 /** Challenges stay valid this long (the page fetches one on load, then the viewer types a nickname). */
 export const POW_TTL_MS = 10 * 60_000;
 
 export type PowVerdict = 'ok' | 'missing' | 'invalid' | 'expired' | 'replay' | 'busy';
+
+/** Verdict plus the level of the solved challenge (from its signed data) when ok. */
+export interface PowResult {
+  verdict: PowVerdict;
+  level?: 1 | 2;
+}
 
 const hex = z.string().regex(/^[0-9a-f]+$/i).max(256);
 export const powPayloadSchema = z.object({
@@ -77,6 +90,9 @@ export class JoinPow {
       algorithm: 'SHA-256',
       cost: 1,
       counter: crypto.randomInt(lo, hi + 1),
+      // Signed with the challenge: the level is what the "verified" cookie records; max lets the
+      // page show progress (the real counter stays secret).
+      data: { level, max: hi },
       deriveKey,
       expiresAt: Math.floor((this.now() + POW_TTL_MS) / 1000),
       hmacSignatureSecret: this.hmacSecret,
@@ -86,6 +102,17 @@ export class JoinPow {
   }
 
   async verify(input: unknown): Promise<PowVerdict> {
+    return (await this.verifyLevel(input)).verdict;
+  }
+
+  async verifyLevel(input: unknown): Promise<PowResult> {
+    const verdict = await this.check(input);
+    if (verdict !== 'ok') return { verdict };
+    const level = (input as PowPayload).challenge.parameters.data?.level;
+    return { verdict, level: level === 2 ? 2 : 1 };
+  }
+
+  private async check(input: unknown): Promise<PowVerdict> {
     if (input === undefined || input === null) return 'missing';
     const parsed = powPayloadSchema.safeParse(input);
     if (!parsed.success) return 'invalid';

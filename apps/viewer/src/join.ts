@@ -8,6 +8,7 @@ const form = document.getElementById('join-form') as HTMLFormElement;
 const input = document.getElementById('nickname') as HTMLInputElement;
 const errorEl = document.getElementById('error') as HTMLParagraphElement;
 const checkEl = document.getElementById('check') as HTMLParagraphElement;
+const progressEl = document.getElementById('check-progress') as HTMLProgressElement | null;
 const button = document.getElementById('join') as HTMLButtonElement;
 
 function showError(msg: string): void {
@@ -18,12 +19,25 @@ function showError(msg: string): void {
 /** Browser check (proof-of-work) in progress or solved, when the streamer's protection asks for it. */
 let pow: Promise<Payload> | null = null;
 
+/** Keep "Checking your browser…" up at least this long, so a fast check does not just flicker. */
+const CHECK_MIN_VISIBLE_MS = 600;
+/** The check the status line is showing (a retry may start a newer one). */
+let shown: Promise<Payload> | null = null;
+
 function startCheck(challenge: Challenge): Promise<Payload> {
   checkEl.hidden = false;
-  const p = solvePow(challenge).finally(() => {
-    checkEl.hidden = true;
+  const shownAt = performance.now();
+  if (progressEl) progressEl.value = 0;
+  const p = solvePow(challenge, (f) => {
+    if (progressEl) progressEl.value = f;
+  }).finally(() => {
+    // Hiding waits; the proof itself is available right away.
+    setTimeout(() => {
+      if (shown === p) checkEl.hidden = true;
+    }, Math.max(0, CHECK_MIN_VISIBLE_MS - (performance.now() - shownAt)));
   });
   p.catch(() => {});
+  shown = p;
   pow = p;
   return p;
 }

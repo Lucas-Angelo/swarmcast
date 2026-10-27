@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import type { FastifyInstance } from 'fastify';
 import {
   QUICK_TUNNEL_CONCURRENCY_LIMIT,
+  QUICK_TUNNEL_WARN_SHARE,
   estimateCapacity,
   type AccessMode,
   type AdminState,
@@ -24,10 +25,10 @@ import { BandwidthLimiter } from '../hls/throttle.js';
 import { MediaMtx, streamPath } from '../media/mediamtx.js';
 import { isAlive, type Reaper } from '../process/children.js';
 import { QualityManager } from '../quality/manager.js';
-import { createPublicServer, type PublicDeps } from '../public/server.js';
+import { createPublicServer, recentPeak, type HttpStats, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
-import { runSpeedTest } from '../speedtest/speedtest.js';
+import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
 import { TrackerService } from '../tracker/tracker.js';
 import { probeHealth, waitForReachable, type TunnelProvider } from '../tunnel/provider.js';
 import { ActivityLog } from './activity.js';
@@ -36,6 +37,7 @@ import type { Logger } from './logger.js';
 import { notify } from './notify.js';
 import { firstFreePort, isListening, isPortFree } from './ports.js';
 import { CodedError, codeOf, coded } from './messages.js';
+import { abortable } from './retry.js';
 
 export interface LiveDeps {
   config: AppConfig;
@@ -50,7 +52,8 @@ export interface LiveDeps {
   version: string;
   /** Cookies get the Secure attribute (false only for plain-HTTP local testing without a tunnel). */
   secureCookies: boolean;
-  speedTest?: () => Promise<SpeedTestResult>;
+  /** Replaces the real speed test (tests); `signal` aborts it when the app quits. */
+  speedTest?: (signal: AbortSignal) => Promise<SpeedTestResult>;
   now?: () => number;
   /** In-memory activity log shown in the panel (a private one is created when omitted). */
   activity?: ActivityLog;
@@ -58,6 +61,8 @@ export interface LiveDeps {
   quality?: { binDir: string; dataDir: string; runDir: string; reaper: Reaper | null };
   /** Public IP blocklists (downloaded by the app; none in logic tests). */
   blocklists?: PublicBlocklists;
+  /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
+  browserCheckKey?: string;
 }
 
 type StepDef = { id: string; labelKey: MessageKey };
@@ -100,7 +105,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   private startedAt = 0;
   private autoStopTimer: NodeJS.Timeout | null = null;
   private statsTimer: NodeJS.Timeout | null = null;
-  readonly httpStats = { inFlight: 0, served: 0 };
+  readonly httpStats: HttpStats = { inFlight: 0, served: 0, peak: 0, peakAt: 0 };
   speedTest?: SpeedTestResult;
   speedTestRunning = false;
   private speedTimer: NodeJS.Timeout | null = null;
@@ -117,6 +122,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   private sentCount: number | null | undefined;
   private tunnelDrops = 0;
   private busy: Promise<unknown> = Promise.resolve();
+  /** Aborted when the app quits: running speed tests stop at once. */
+  private readonly quitting = new AbortController();
   private originBytes = { http: 0 };
   private lastStepError?: string;
 
@@ -126,8 +133,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     const ports = d.config.ports;
     this.origin = new HlsOrigin(`http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`, d.log);
     this.limiter = BandwidthLimiter.fromMbps(d.config.uploadLimitMbps);
+    this.access.p2pForAll = d.config.allowViewerP2P;
     this.tracker = new TrackerService(this.access, d.log);
     this.control = new ControlChannel(this.access, d.log);
+    // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
+    this.control.tracker = this.tracker;
     const q = d.quality ?? { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
     this.quality = new QualityManager({
       config: d.config,
@@ -141,6 +151,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       mediamtxHlsUrl: `http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`,
       streamKey: d.streamKey,
       speedTest: () => this.speedTest,
+      quitSignal: this.quitting.signal,
       warn: (code, params) => this.warn(code, params),
       now: d.now,
     });
@@ -149,6 +160,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       settings: () => this.securitySettings(),
       limits: () => ({ maxViewers: d.config.maxViewers, maxSessionsPerDevice: d.config.maxSessionsPerDevice }),
       blocklists: d.blocklists,
+      browserCheckKey: d.browserCheckKey,
       activity: this.activity,
       log: d.log,
       now: d.now,
@@ -188,8 +200,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.access.on('p2p-changed', (s) => {
       if (s.p2pAllowed) this.activity.action('log.p2pAllowed', { nickname: s.nickname });
       else if (!s.autoRemovedFromP2P) this.activity.action('log.p2pRemoved', { nickname: s.nickname });
-      this.control.send(s.id, { t: 'p2p', allowed: s.p2pAllowed });
-      if (!s.p2pAllowed) {
+      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: this.access.p2pForAll });
+      if (!this.access.p2pAllowed(s)) {
         this.tracker.disconnectSession(s.id);
         this.control.blockPeers([...s.peerIds]);
       } else {
@@ -197,7 +209,18 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       }
       this.changed();
     });
-    this.control.viewerCount = () => (this.d.config.showViewerCount ? this.connectedSessions().length : null);
+    this.control.viewerCount = () => {
+      const count = this.d.config.showViewerCount ? this.connectedSessions().length : null;
+      // This viewer's hello carries a number other than the last broadcast one, so viewers no
+      // longer all have `sentCount`: forget it, or a later push of that same number would be
+      // skipped and this viewer would keep a stale count (e.g. 2 -> 0 -> 2 within one throttle
+      // window: the viewer greeted with "1" in between never sees "2").
+      if (count !== this.sentCount) {
+        this.sentCount = undefined;
+        this.viewerCountChanged();
+      }
+      return count;
+    };
     this.access.on('session-created', (s) => {
       this.activity.add({ kind: 'viewer', code: 'log.viewerJoined', params: { nickname: s.nickname } });
       this.viewerCountChanged();
@@ -336,7 +359,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         this.activity.action('log.started');
         this.changed();
       } catch (err) {
-        this.d.log.error({ err: (err as Error).message }, 'start failed');
+        if (this.quitting.signal.aborted) this.d.log.info('start cancelled: SwarmCast is quitting');
+        else this.d.log.error({ err: (err as Error).message }, 'start failed');
         await this.teardown(false);
         this.phase = 'off';
         this.changed();
@@ -345,11 +369,14 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     });
   }
 
+  /** The tunnel step can take minutes (new quick-tunnel names need DNS): quitting gives up at once. */
   private async openTunnel(): Promise<string> {
+    const signal = this.quitting.signal;
     for (let attempt = 1; attempt <= 2; attempt++) {
-      const url = await this.d.tunnel.start(this.d.config.ports.public);
+      // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
+      const url = await abortable(this.d.tunnel.start(this.d.config.ports.public), signal);
       if (this.d.tunnel.name === 'none') return url;
-      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000 })) return url;
+      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal })) return url;
       this.d.log.warn({ attempt }, 'tunnel address not reachable yet, retrying with a new tunnel');
       await this.d.tunnel.stop();
     }
@@ -358,7 +385,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private async onTunnelUrl(url: string): Promise<void> {
     if (this.mode !== 'secure' || !this.access.live) return;
-    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000 });
+    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal }).catch(() => false);
+    if (this.quitting.signal.aborted) return;
     this.baseUrl = url;
     this.tunnelUrlChangedAt = this.now();
     this.warn(ok ? 'warn.tunnelNewAddress' : 'warn.tunnelNotAnswering');
@@ -583,6 +611,21 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     return !!this.access.setP2PAllowed(sessionId, allowed);
   }
 
+  /**
+   * "Allow P2P for viewers" (panel): off is the emergency switch. Every viewer is told over the
+   * control channel (P2P off live, playback goes on over HTTPS) and dropped from the tracker;
+   * back on, viewers who were not removed one by one may use P2P again.
+   */
+  private setP2PForAll(on: boolean): void {
+    this.d.config.allowViewerP2P = on;
+    this.access.p2pForAll = on;
+    this.activity.action(on ? 'log.p2pForAllOn' : 'log.p2pForAllOff');
+    for (const s of this.access.sessions.values()) {
+      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: on });
+      if (!on) this.tracker.disconnectSession(s.id);
+    }
+  }
+
   clearBans(): void {
     this.access.clearBans();
     this.activity.action('log.bansCleared');
@@ -599,6 +642,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     if (s.maxViewers !== undefined) this.d.config.maxViewers = s.maxViewers;
     if (s.maxSessionsPerDevice !== undefined) this.d.config.maxSessionsPerDevice = s.maxSessionsPerDevice;
     if (countChanged) this.viewerCountChanged();
+    if (s.allowViewerP2P !== this.access.p2pForAll) this.setP2PForAll(s.allowViewerP2P);
     // In automatic upload mode the adaptive controller owns the limiter.
     this.quality.applyManualLimit();
     this.d.saveConfig(this.d.config);
@@ -682,12 +726,12 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.activity.action('log.speedTestStarted');
     this.changed();
     try {
-      this.speedTest = await (this.d.speedTest ?? runSpeedTest)();
+      this.speedTest = await (this.d.speedTest ?? ((signal) => runSpeedTest({ ...speedTestUrls(), signal })))(this.quitting.signal);
       this.d.log.info({ up: this.speedTest.uploadMbps, down: this.speedTest.downloadMbps }, 'speed test done');
       this.activity.action('log.speedTestDone', { up: this.speedTest.uploadMbps, down: this.speedTest.downloadMbps, ping: this.speedTest.latencyMs });
       return this.speedTest;
     } catch (err) {
-      this.warn('warn.speedTestFailed', { error: (err as Error).message });
+      if (!this.quitting.signal.aborted) this.warn('warn.speedTestFailed', { error: (err as Error).message });
       return undefined;
     } finally {
       this.speedTestRunning = false;
@@ -722,10 +766,18 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   // ---- state for the admin panel ----
 
+  /**
+   * What a quick tunnel counts against its 200-in-flight limit: open WebSockets (/control, plus
+   * any plain /tracker socket) and HTTP requests in progress (the peak of the last ~10 s).
+   */
+  tunnelInFlight(): number {
+    return this.control.connectionCount + this.tracker.plainSocketCount + recentPeak(this.httpStats);
+  }
+
   snapshot(): AdminState {
     const sessions = [...this.access.sessions.values()];
     const connected = this.connectedSessions();
-    const helping = connected.filter((s) => s.p2pEnabled && s.p2pAllowed);
+    const helping = connected.filter((s) => s.p2pEnabled && this.access.p2pAllowed(s));
     const totalHttp = connected.reduce((a, s) => a + s.stats.httpBytes, 0);
     const totalP2P = connected.reduce((a, s) => a + s.stats.p2pDownBytes, 0);
     const share = totalHttp + totalP2P > 0 ? totalP2P / (totalHttp + totalP2P) : 0;
@@ -740,10 +792,15 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     });
     const warnings: CodedText[] = [...this.warnings];
     const withoutP2P = connected.length - helping.length;
+    const tunnelInFlight = this.tunnelInFlight();
     if (this.mode === 'secure' && this.d.tunnel.name === 'cloudflare-quick') {
-      // Each viewer without P2P keeps ~2-3 requests in flight at peaks.
-      if (withoutP2P * 2.5 > QUICK_TUNNEL_CONCURRENCY_LIMIT * 0.6 || this.httpStats.inFlight > QUICK_TUNNEL_CONCURRENCY_LIMIT * 0.6) {
-        warnings.push(coded('warn.tunnelLimit'));
+      // The quick tunnel counts every open WebSocket (one per viewer) and every HTTP request in
+      // progress. Measured peaks, or an estimate: a viewer without P2P keeps about 1.5 video
+      // requests in flight at peaks, one with P2P about 0.5.
+      const estimate = Math.round(connected.length + withoutP2P * 1.5 + helping.length * 0.5);
+      const used = Math.max(tunnelInFlight, estimate);
+      if (used >= QUICK_TUNNEL_CONCURRENCY_LIMIT * QUICK_TUNNEL_WARN_SHARE) {
+        warnings.push(coded('warn.tunnelLimit', { used: Math.min(used, QUICK_TUNNEL_CONCURRENCY_LIMIT), limit: QUICK_TUNNEL_CONCURRENCY_LIMIT }));
       }
     }
     const keyframes = this.keyframeWarning();
@@ -789,6 +846,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         p2pSharePercent: Math.round(share * 100),
         originUploadMbps: Math.round(this.limiter.currentMbps() * 10) / 10,
         httpInFlight: this.httpStats.inFlight,
+        tunnelInFlight,
         rateLimited429: http429,
       },
       warnings: allWarnings.map((w) => w.text),
@@ -798,6 +856,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         autoStopMinutes: this.d.config.autoStopMinutes,
         alsoStreamingElsewhere: this.d.config.alsoStreamingElsewhere,
         showViewerCount: this.d.config.showViewerCount,
+        allowViewerP2P: this.d.config.allowViewerP2P,
         maxViewers: this.d.config.maxViewers,
         maxSessionsPerDevice: this.d.config.maxSessionsPerDevice,
       },
@@ -827,8 +886,17 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     return this.lastStepError;
   }
 
+  /**
+   * Aborted when the app quits (shutdown): the speed test, a start still opening the tunnel,
+   * the desktop first-run check and the ffmpeg download give up instead of delaying the exit.
+   */
+  get quitSignal(): AbortSignal {
+    return this.quitting.signal;
+  }
+
   /** Final shutdown when the app exits. */
   async shutdown(): Promise<void> {
+    this.quitting.abort();
     await this.stop().catch(() => {});
     this.d.log.debug('live stopped; closing control channel and tracker');
     if (this.speedTimer) clearInterval(this.speedTimer);

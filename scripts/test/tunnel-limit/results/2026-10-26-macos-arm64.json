@@ -1,0 +1,1023 @@
+{
+ "startedAt": "2026-10-26T22:02:02.748Z",
+ "local": false,
+ "node": "v24.19.0",
+ "phases": {
+  "a": {
+   "steps": [
+    {
+     "target": 25,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 25,
+     "openOrigin": 25,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 64,
+     "pingP95": 91,
+     "pingMax": 95,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 25,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 4,
+      "cloudflared_tunnel_total_requests": 29
+     }
+    },
+    {
+     "target": 50,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 50,
+     "openOrigin": 50,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 71,
+     "pingP95": 86,
+     "pingMax": 96,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 50,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 7,
+      "cloudflared_tunnel_total_requests": 57
+     }
+    },
+    {
+     "target": 75,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 75,
+     "openOrigin": 75,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 73,
+     "pingP95": 84,
+     "pingMax": 293,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 75,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 10,
+      "cloudflared_tunnel_total_requests": 85
+     }
+    },
+    {
+     "target": 100,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 100,
+     "openOrigin": 100,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 56,
+     "pingP95": 81,
+     "pingMax": 81,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 100,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 13,
+      "cloudflared_tunnel_total_requests": 113
+     }
+    },
+    {
+     "target": 125,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 125,
+     "openOrigin": 125,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 58,
+     "pingP95": 72,
+     "pingMax": 119,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 125,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 16,
+      "cloudflared_tunnel_total_requests": 141
+     }
+    },
+    {
+     "target": 150,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 150,
+     "openOrigin": 150,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 56,
+     "pingP95": 77,
+     "pingMax": 82,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 150,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 19,
+      "cloudflared_tunnel_total_requests": 169
+     }
+    },
+    {
+     "target": 175,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 175,
+     "openOrigin": 175,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 69,
+     "pingP95": 84,
+     "pingMax": 86,
+     "httpProbes": {
+      "200": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 175,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 22,
+      "cloudflared_tunnel_total_requests": 197
+     }
+    },
+    {
+     "target": 200,
+     "attempted": 25,
+     "upgrades": {
+      "ok": 25
+     },
+     "openClient": 200,
+     "openOrigin": 200,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 71,
+     "pingP95": 180,
+     "pingMax": 186,
+     "httpProbes": {
+      "429": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 200,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 22,
+      "cloudflared_tunnel_total_requests": 222
+     }
+    },
+    {
+     "target": 225,
+     "attempted": 25,
+     "upgrades": {
+      "429": 25
+     },
+     "openClient": 200,
+     "openOrigin": 200,
+     "droppedExisting": 0,
+     "dropCodes": [],
+     "lostPings": 0,
+     "pingP50": 62,
+     "pingP95": 79,
+     "pingMax": 152,
+     "httpProbes": {
+      "429": 3
+     },
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 200,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 22,
+      "cloudflared_tunnel_total_requests": 222
+     }
+    }
+   ],
+   "maxOpenClient": 200,
+   "maxOpenOrigin": 200
+  },
+  "c": {
+   "steps": [
+    {
+     "label": "c",
+     "c": 100,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 100
+       },
+       "originMaxInflight": 100,
+       "p50ms": 2840
+      },
+      {
+       "statuses": {
+        "200": 100
+       },
+       "originMaxInflight": 100,
+       "p50ms": 2591
+      }
+     ],
+     "rate429": 0,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 222,
+      "cloudflared_tunnel_total_requests": 422
+     }
+    },
+    {
+     "label": "c",
+     "c": 150,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 150
+       },
+       "originMaxInflight": 150,
+       "p50ms": 2666
+      },
+      {
+       "statuses": {
+        "200": 150
+       },
+       "originMaxInflight": 150,
+       "p50ms": 2676
+      }
+     ],
+     "rate429": 0,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 522,
+      "cloudflared_tunnel_total_requests": 722
+     }
+    },
+    {
+     "label": "c",
+     "c": 180,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 180
+       },
+       "originMaxInflight": 180,
+       "p50ms": 2739
+      },
+      {
+       "statuses": {
+        "200": 180
+       },
+       "originMaxInflight": 180,
+       "p50ms": 2626
+      }
+     ],
+     "rate429": 0,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 882,
+      "cloudflared_tunnel_total_requests": 1082
+     }
+    },
+    {
+     "label": "c",
+     "c": 195,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 195
+       },
+       "originMaxInflight": 195,
+       "p50ms": 2635
+      },
+      {
+       "statuses": {
+        "200": 195
+       },
+       "originMaxInflight": 195,
+       "p50ms": 2663
+      }
+     ],
+     "rate429": 0,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 1272,
+      "cloudflared_tunnel_total_requests": 1472
+     }
+    },
+    {
+     "label": "c",
+     "c": 205,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 200,
+        "429": 5
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2633
+      },
+      {
+       "statuses": {
+        "200": 200,
+        "429": 5
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2628
+      }
+     ],
+     "rate429": 0.024390243902439025,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 1672,
+      "cloudflared_tunnel_total_requests": 1872
+     }
+    },
+    {
+     "label": "c",
+     "c": 220,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 200,
+        "429": 20
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2638
+      },
+      {
+       "statuses": {
+        "200": 200,
+        "429": 20
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2606
+      }
+     ],
+     "rate429": 0.09090909090909091,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 2072,
+      "cloudflared_tunnel_total_requests": 2272
+     }
+    },
+    {
+     "label": "c",
+     "c": 250,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 200,
+        "429": 50
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2631
+      },
+      {
+       "statuses": {
+        "200": 200,
+        "429": 50
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2616
+      }
+     ],
+     "rate429": 0.2,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 2472,
+      "cloudflared_tunnel_total_requests": 2672
+     }
+    },
+    {
+     "label": "c",
+     "c": 300,
+     "mode": "ttfb",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 200,
+        "429": 100
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2639
+      },
+      {
+       "statuses": {
+        "200": 200,
+        "429": 100
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2635
+      }
+     ],
+     "rate429": 0.3333333333333333,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 2872,
+      "cloudflared_tunnel_total_requests": 3072
+     }
+    }
+   ],
+   "lastClean": 195,
+   "first429": 205,
+   "bodySteps": [
+    {
+     "label": "c-body",
+     "c": 175,
+     "mode": "body",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 175
+       },
+       "originMaxInflight": 175,
+       "p50ms": 2618
+      },
+      {
+       "statuses": {
+        "200": 175
+       },
+       "originMaxInflight": 175,
+       "p50ms": 2680
+      }
+     ],
+     "rate429": 0,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 3222,
+      "cloudflared_tunnel_total_requests": 3422
+     }
+    },
+    {
+     "label": "c-body",
+     "c": 225,
+     "mode": "body",
+     "ms": 2500,
+     "ws": 0,
+     "wsOrigin": 0,
+     "waves": [
+      {
+       "statuses": {
+        "200": 200,
+        "429": 25
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2619
+      },
+      {
+       "statuses": {
+        "200": 200,
+        "429": 25
+       },
+       "originMaxInflight": 200,
+       "p50ms": 2623
+      }
+     ],
+     "rate429": 0.1111111111111111,
+     "rateErr": 0,
+     "metrics": {
+      "cloudflared_tcp_active_sessions": 0,
+      "cloudflared_tunnel_concurrent_requests_per_tunnel": 0,
+      "cloudflared_tunnel_request_errors": 0,
+      "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 3622,
+      "cloudflared_tunnel_total_requests": 3822
+     }
+    }
+   ]
+  },
+  "b": [
+   {
+    "K": 50,
+    "openClient": 50,
+    "openOrigin": 50,
+    "upgrades": {
+     "ok": 50
+    },
+    "slow": [
+     {
+      "label": "b K=50",
+      "c": 125,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 50,
+      "wsOrigin": 50,
+      "waves": [
+       {
+        "statuses": {
+         "200": 125
+        },
+        "originMaxInflight": 125,
+        "p50ms": 2831
+       },
+       {
+        "statuses": {
+         "200": 125
+        },
+        "originMaxInflight": 125,
+        "p50ms": 2675
+       }
+      ],
+      "rate429": 0,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 50,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 3872,
+       "cloudflared_tunnel_total_requests": 4122
+      }
+     },
+     {
+      "label": "b K=50",
+      "c": 165,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 50,
+      "wsOrigin": 50,
+      "waves": [
+       {
+        "statuses": {
+         "200": 150,
+         "429": 15
+        },
+        "originMaxInflight": 150,
+        "p50ms": 2624
+       },
+       {
+        "statuses": {
+         "200": 150,
+         "429": 15
+        },
+        "originMaxInflight": 150,
+        "p50ms": 2605
+       }
+      ],
+      "rate429": 0.09090909090909091,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 50,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 4172,
+       "cloudflared_tunnel_total_requests": 4422
+      }
+     },
+     {
+      "label": "b K=50",
+      "c": 175,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 50,
+      "wsOrigin": 50,
+      "waves": [
+       {
+        "statuses": {
+         "200": 150,
+         "429": 25
+        },
+        "originMaxInflight": 150,
+        "p50ms": 2614
+       },
+       {
+        "statuses": {
+         "200": 150,
+         "429": 25
+        },
+        "originMaxInflight": 150,
+        "p50ms": 2605
+       }
+      ],
+      "rate429": 0.14285714285714285,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 50,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 4472,
+       "cloudflared_tunnel_total_requests": 4722
+      }
+     }
+    ],
+    "hls": [
+     {
+      "conc": 170,
+      "seconds": 13.6,
+      "requests": 470,
+      "statuses": {
+       "200": 150,
+       "429": 320
+      },
+      "reqPerS": 34.5,
+      "mbitPerS": 27.1,
+      "p50ms": 12524,
+      "p95ms": 13146,
+      "stoppedEarly": true
+     }
+    ],
+    "wsDroppedDuringLoad": 0,
+    "pingP95DuringHls": 462
+   },
+   {
+    "K": 100,
+    "openClient": 100,
+    "openOrigin": 100,
+    "upgrades": {
+     "ok": 50
+    },
+    "slow": [
+     {
+      "label": "b K=100",
+      "c": 75,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 100,
+      "wsOrigin": 100,
+      "waves": [
+       {
+        "statuses": {
+         "200": 75
+        },
+        "originMaxInflight": 75,
+        "p50ms": 2579
+       },
+       {
+        "statuses": {
+         "200": 75
+        },
+        "originMaxInflight": 75,
+        "p50ms": 2578
+       }
+      ],
+      "rate429": 0,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 100,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 4772,
+       "cloudflared_tunnel_total_requests": 5072
+      }
+     },
+     {
+      "label": "b K=100",
+      "c": 115,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 100,
+      "wsOrigin": 100,
+      "waves": [
+       {
+        "statuses": {
+         "200": 100,
+         "429": 15
+        },
+        "originMaxInflight": 100,
+        "p50ms": 2595
+       },
+       {
+        "statuses": {
+         "200": 100,
+         "429": 15
+        },
+        "originMaxInflight": 100,
+        "p50ms": 2613
+       }
+      ],
+      "rate429": 0.13043478260869565,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 100,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 4972,
+       "cloudflared_tunnel_total_requests": 5272
+      }
+     },
+     {
+      "label": "b K=100",
+      "c": 175,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 100,
+      "wsOrigin": 100,
+      "waves": [
+       {
+        "statuses": {
+         "200": 100,
+         "429": 75
+        },
+        "originMaxInflight": 100,
+        "p50ms": 2579
+       },
+       {
+        "statuses": {
+         "200": 100,
+         "429": 75
+        },
+        "originMaxInflight": 100,
+        "p50ms": 2584
+       }
+      ],
+      "rate429": 0.42857142857142855,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 100,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 5172,
+       "cloudflared_tunnel_total_requests": 5472
+      }
+     }
+    ],
+    "hls": [
+     {
+      "conc": 120,
+      "seconds": 11.1,
+      "requests": 345,
+      "statuses": {
+       "200": 100,
+       "429": 245
+      },
+      "reqPerS": 31.1,
+      "mbitPerS": 22.2,
+      "p50ms": 7542,
+      "p95ms": 8538,
+      "stoppedEarly": true
+     }
+    ],
+    "wsDroppedDuringLoad": 0,
+    "pingP95DuringHls": 1322
+   },
+   {
+    "K": 150,
+    "openClient": 0,
+    "openOrigin": 0,
+    "upgrades": {
+     "ok": 50
+    },
+    "slow": [
+     {
+      "label": "b K=150",
+      "c": 25,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 150,
+      "wsOrigin": 150,
+      "waves": [
+       {
+        "statuses": {
+         "200": 25
+        },
+        "originMaxInflight": 25,
+        "p50ms": 2793
+       },
+       {
+        "statuses": {
+         "200": 25
+        },
+        "originMaxInflight": 25,
+        "p50ms": 2590
+       }
+      ],
+      "rate429": 0,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 150,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 5322,
+       "cloudflared_tunnel_total_requests": 5672
+      }
+     },
+     {
+      "label": "b K=150",
+      "c": 65,
+      "mode": "ttfb",
+      "ms": 2500,
+      "ws": 150,
+      "wsOrigin": 150,
+      "waves": [
+       {
+        "statuses": {
+         "200": 50,
+         "429": 15
+        },
+        "originMaxInflight": 50,
+        "p50ms": 2597
+       },
+       {
+        "statuses": {
+         "200": 50,
+         "429": 15
+        },
+        "originMaxInflight": 50,
+        "p50ms": 2579
+       }
+      ],
+      "rate429": 0.23076923076923078,
+      "rateErr": 0,
+      "metrics": {
+       "cloudflared_tcp_active_sessions": 0,
+       "cloudflared_tunnel_concurrent_requests_per_tunnel": 150,
+       "cloudflared_tunnel_request_errors": 0,
+       "cloudflared_tunnel_response_by_code{status_code=\"200\"}": 5422,
+       "cloudflared_tunnel_total_requests": 5772
+      }
+     }
+    ],
+    "hls": [
+     {
+      "conc": 24,
+      "seconds": 12.1,
+      "requests": 70,
+      "statuses": {
+       "200": 46,
+       "502": 4,
+       "err:ECONNRESET": 20
+      },
+      "reqPerS": 5.8,
+      "mbitPerS": 9.3,
+      "p50ms": 1448,
+      "p95ms": 2378,
+      "stoppedEarly": false
+     },
+     {
+      "conc": 70,
+      "seconds": 8.7,
+      "requests": 139,
+      "statuses": {
+       "200": 139
+      },
+      "reqPerS": 16,
+      "mbitPerS": 39.3,
+      "p50ms": 3799,
+      "p95ms": 4558,
+      "stoppedEarly": false
+     }
+    ],
+    "wsDroppedDuringLoad": 150,
+    "pingP95DuringHls": 92
+   }
+  ]
+ },
+ "cloudflared": "cloudflared version 2026.10.3 (built 2026-10-21-13:12 UTC)",
+ "tunnel": {
+  "url": "https://<random>.trycloudflare.com",
+  "connections": [
+   {
+    "index": 0,
+    "location": "gig09",
+    "protocol": "quic"
+   },
+   {
+    "index": 0,
+    "location": "gig08",
+    "protocol": "quic"
+   }
+  ]
+ },
+ "rejectSamples": [
+  {
+   "status": 429,
+   "bytes": 0,
+   "ms": 79.34200000000419,
+   "body": "",
+   "server": "cloudflare",
+   "cfRay": "a50cc0760805cb3d-GIG"
+  },
+  {
+   "status": 429,
+   "bytes": 0,
+   "ms": 71.66145800000231,
+   "body": "",
+   "server": "cloudflare",
+   "cfRay": "a50cc0760d1dfc5f-GIG"
+  },
+  {
+   "status": 429,
+   "bytes": 0,
+   "ms": 52.16991599999892,
+   "body": "",
+   "server": "cloudflare",
+   "cfRay": "a50cc0760a5da64f-GIG"
+  },
+  {
+   "ok": false,
+   "status": 429,
+   "body": "",
+   "server": "cloudflare"
+  },
+  {
+   "ok": false,
+   "status": 429,
+   "body": "",
+   "server": "cloudflare"
+  },
+  {
+   "ok": false,
+   "status": 429,
+   "body": "",
+   "server": "cloudflare"
+  }
+ ],
+ "finishedAt": "2026-10-26T22:06:43.759Z",
+ "seconds": 281,
+ "machine": "macOS arm64 (one home connection, ~40 Mbit/s up)"
+}

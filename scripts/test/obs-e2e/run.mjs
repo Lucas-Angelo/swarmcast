@@ -122,7 +122,7 @@ function startSwarmCast({ shim = false } = {}) {
 
 async function adminLogin() {
   const res = await fetch(loginUrl, { redirect: 'manual' });
-  assert(res.status === 303, `/auth/<token> answered ${res.status}`);
+  assert(res.status === 200, `/auth/<token> answered ${res.status}`);
   adminCookie = res.headers.getSetCookie()[0].split(';')[0];
 }
 async function state() {

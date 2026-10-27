@@ -52,7 +52,12 @@ export function platformTag(platform = process.platform, arch = process.arch): s
   return `${os}-${arch}`;
 }
 
-export function resolvePaths(dataDir = defaultDataDir()): AppPaths {
+/**
+ * Where everything lives. `SWARMCAST_BIN_DIR` (MediaMTX, cloudflared) and `SWARMCAST_WEB_DIR`
+ * (folder holding `viewer/` and `admin/`) override the defaults; the desktop app sets both,
+ * because its resources are not next to the server executable (docs/DESKTOP.md).
+ */
+export function resolvePaths(dataDir = defaultDataDir(), env: NodeJS.ProcessEnv = process.env): AppPaths {
   let installDir: string;
   let binDir: string;
   if (isPackaged()) {
@@ -62,8 +67,8 @@ export function resolvePaths(dataDir = defaultDataDir()): AppPaths {
     installDir = repoRoot();
     binDir = path.join(installDir, 'vendor', platformTag());
   }
-  if (process.env.SWARMCAST_BIN_DIR) binDir = path.resolve(process.env.SWARMCAST_BIN_DIR);
-  const webRoot = isPackaged() ? path.join(installDir, 'web') : null;
+  if (env.SWARMCAST_BIN_DIR) binDir = path.resolve(env.SWARMCAST_BIN_DIR);
+  const webRoot = env.SWARMCAST_WEB_DIR ? path.resolve(env.SWARMCAST_WEB_DIR) : isPackaged() ? path.join(installDir, 'web') : null;
   return {
     dataDir,
     configFile: path.join(dataDir, 'config.json'),

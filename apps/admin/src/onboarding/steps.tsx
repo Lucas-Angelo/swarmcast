@@ -4,8 +4,9 @@ import { useEffect, useState } from 'preact/hooks';
 import type { AdminState, QualityState } from '@swarmcast/shared';
 import { formatNumber, getLang, t, tc } from '@swarmcast/shared/i18n';
 import { api, post } from '../api.js';
+import { useDesktop } from '../desktop.js';
 import { Info } from '../Info.js';
-import { keyframeProblem, testStatus, videoSupport, type Route, type VideoSupport } from './logic.js';
+import { converterInstall, keyframeProblem, testStatus, videoSupport, type InstallLike, type Route, type VideoSupport } from './logic.js';
 import { belowMinimum, checkRows, loadSystemCheck, type SystemCheck } from './systemcheck.js';
 import { AREAS, clearSpot, findArea, spotlight, type AreaId } from './tour.js';
 import imgDocksMenu from './img/obs-docks-menu.png';
@@ -81,11 +82,14 @@ function Status({ kind, children, testid }: { kind: 'ok' | 'wait' | 'warn' | 'of
 export function WelcomeStep() {
   return (
     <>
-      <ul class="onb-lines">
-        <li>{t('onb.welcome.l1')}</li>
-        <li>{t('onb.welcome.l2')}</li>
-        <li>{t('onb.welcome.l3')}</li>
-      </ul>
+      <div class="onb-hero">
+        <span class="sc-mascot sc-mascot-hello" aria-hidden="true" />
+        <ul class="onb-lines">
+          <li>{t('onb.welcome.l1')}</li>
+          <li>{t('onb.welcome.l2')}</li>
+          <li>{t('onb.welcome.l3')}</li>
+        </ul>
+      </div>
       <p class="onb-callout">{t('onb.welcome.plan')}</p>
       <p class="muted small">{t('onb.welcome.twitch')}</p>
     </>
@@ -93,7 +97,7 @@ export function WelcomeStep() {
 }
 
 // ---- 2. PC check ----
-type QualityLike = Partial<QualityState> | null;
+type QualityLike = (Partial<QualityState> & { install?: InstallLike | null }) | null;
 
 function videoText(v: VideoSupport): string {
   switch (v) {
@@ -115,15 +119,17 @@ function videoText(v: VideoSupport): string {
 export function PcStep({ s }: { s: AdminState }) {
   // undefined = loading; null = not available (older server or error): the row is hidden.
   const [q, setQ] = useState<QualityLike | undefined>(undefined);
+  const [reload, setReload] = useState(0);
   useEffect(() => {
     let stopped = false;
     let timer: number | undefined;
     const load = (): void => {
-      api<QualityState>('/api/quality', 'GET').then(
+      api<QualityLike>('/api/quality', 'GET').then(
         (r) => {
           if (stopped) return;
           setQ(r);
-          if (r?.probing) timer = window.setTimeout(load, 2000);
+          // Keep following the encoder test and the video converter install (desktop first run).
+          if (r?.probing || converterInstall(r) === 'installing' || converterInstall(r) === 'retrying') timer = window.setTimeout(load, 2000);
         },
         () => !stopped && setQ(null),
       );
@@ -133,8 +139,10 @@ export function PcStep({ s }: { s: AdminState }) {
       stopped = true;
       if (timer) clearTimeout(timer);
     };
-  }, []);
-  // Installer check (start scripts); null = none -> live panel data only.
+  }, [reload]);
+  // Installer check (start scripts, or the desktop app's first start); null = none -> live panel data only.
+  const desktop = useDesktop();
+  const checking = desktop?.systemCheck === 'running';
   const [sys, setSys] = useState<SystemCheck | null | undefined>(undefined);
   useEffect(() => {
     let stopped = false;
@@ -142,12 +150,24 @@ export function PcStep({ s }: { s: AdminState }) {
     return () => {
       stopped = true;
     };
-  }, []);
+    // Load again when the desktop app's check finishes.
+  }, [desktop?.systemCheck]);
   const video = videoSupport(q ?? null);
+  const install = converterInstall(q ?? null);
   const cap = s.capacity;
+  const retryInstall = (): void => {
+    void post('/api/quality/ffmpeg/install')
+      .catch(() => {})
+      .then(() => setReload((n) => n + 1));
+  };
   return (
     <>
       <p>{t('onb.pc.intro')}</p>
+      {checking && !sys && (
+        <Status kind="wait" testid="onb-sys-checking">
+          {t('onb.sys.checking')}
+        </Status>
+      )}
       {sys && <SystemCheckView c={sys} />}
       {sys && <h3 class="onb-sub">{t('onb.sys.now')}</h3>}
       <dl class="onb-checks" data-testid="onb-pc">
@@ -190,9 +210,27 @@ export function PcStep({ s }: { s: AdminState }) {
           <div class="onb-check">
             <dt>{t('onb.pc.video')}</dt>
             <dd>
-              <Status kind={video === 'hardware' || video === 'software' ? 'ok' : video === 'checking' || q === undefined ? 'wait' : 'off'}>
-                {q === undefined ? t('onb.pc.videoChecking') : videoText(video)}
-              </Status>
+              {video === 'noFfmpeg' && (install === 'installing' || install === 'retrying') ? (
+                <Status kind="wait" testid="onb-ffmpeg-installing">
+                  {t('onb.pc.videoInstalling')}
+                  {install === 'retrying' && q?.install?.attempt && q.install.attempts ? (
+                    <span class="muted small"> {t('quality.install.retrying', { attempt: q.install.attempt, attempts: q.install.attempts })}</span>
+                  ) : null}
+                </Status>
+              ) : video === 'noFfmpeg' && install === 'failed' ? (
+                <div class="row tight">
+                  <Status kind="warn" testid="onb-ffmpeg-failed">
+                    {t('onb.pc.videoInstallFailed')}
+                  </Status>
+                  <button type="button" class="small" data-testid="onb-ffmpeg-retry" title={t('quality.install.retry.tip')} onClick={retryInstall}>
+                    {t('quality.install.retry')}
+                  </button>
+                </div>
+              ) : (
+                <Status kind={video === 'hardware' || video === 'software' ? 'ok' : video === 'checking' || q === undefined ? 'wait' : 'off'}>
+                  {q === undefined ? t('onb.pc.videoChecking') : videoText(video)}
+                </Status>
+              )}
             </dd>
           </div>
         )}

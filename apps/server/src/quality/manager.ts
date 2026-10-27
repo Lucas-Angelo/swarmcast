@@ -34,6 +34,7 @@ import type { Reaper } from '../process/children.js';
 import type { TrackerService } from '../tracker/tracker.js';
 import { cpuCores, probeEncoders, testCpu } from './encoders.js';
 import { installFfmpeg, resolveFfmpeg, type InstallProgress } from './ffmpeg.js';
+import { withRetries } from '../core/retry.js';
 import { CpuSampler, LoadGuard, type ShedReason } from './load-guard.js';
 import { ObsWebsocketClient, tcpConnectRtt } from './signals.js';
 import { Transcoder, renderLadderMultivariant } from './transcoder.js';
@@ -56,12 +57,15 @@ export interface QualityDeps {
   mediamtxHlsUrl: string;
   streamKey: string;
   speedTest: () => SpeedTestResult | undefined;
+  /** Aborted when the app quits: an ffmpeg download (and its retries) stops. */
+  quitSignal?: AbortSignal;
   /** Panel warning + activity log line (translatable code). */
   warn: (code: MessageKey, params?: MessageParams) => void;
   now?: () => number;
   /** Overrides for tests. */
   rttProbe?: () => Promise<number | undefined>;
   probe?: typeof probeEncoders;
+  installFfmpeg?: typeof installFfmpeg;
   cpuTest?: typeof testCpu;
   /** Whole-machine CPU busy percent since the last call (tests). */
   cpuBusy?: () => number | undefined;
@@ -169,22 +173,46 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     return this.probePromise;
   }
 
-  async installFfmpeg(): Promise<void> {
-    if (this.install && !['done', 'error'].includes(this.install.phase)) throw new Error('The video converter is already being installed.');
-    this.install = { phase: 'downloading', receivedBytes: 0 };
+  async installFfmpeg(retry?: { attempt: number; attempts: number }): Promise<void> {
+    if (this.install && !['done', 'error'].includes(this.install.phase) && !(retry && this.install.phase === 'retrying')) {
+      throw new Error('The video converter is already being installed.');
+    }
+    this.install = { phase: 'downloading', receivedBytes: 0, ...retry };
     this.changed();
     try {
-      this.ffmpegPath = await installFfmpeg(this.d.dataDir, this.d.log, (p) => {
-        this.install = p;
-        this.changed();
-      });
+      this.ffmpegPath = await (this.d.installFfmpeg ?? installFfmpeg)(
+        this.d.dataDir,
+        this.d.log,
+        (p) => {
+          this.install = { ...p, ...retry };
+          this.changed();
+        },
+        { signal: this.d.quitSignal },
+      );
       this.transcoder.setBinary(this.ffmpegPath);
       await this.probe(true);
     } catch (err) {
-      this.install = { phase: 'error', receivedBytes: 0, message: (err as Error).message };
+      this.install = { phase: 'error', receivedBytes: 0, message: (err as Error).message, ...retry };
       this.changed();
       throw err;
     }
+  }
+
+  /**
+   * installFfmpeg with automatic retries after `delaysMs` (desktop first run). Between tries the
+   * panel shows phase 'retrying' with the last error; after the last one, 'error' ("Try again").
+   */
+  installFfmpegWithRetries(delaysMs: readonly number[], sleep?: (ms: number) => Promise<void>): Promise<void> {
+    const attempts = delaysMs.length + 1;
+    return withRetries((attempt) => this.installFfmpeg({ attempt, attempts }), delaysMs, {
+      sleep,
+      signal: this.d.quitSignal,
+      onRetry: (err, next) => {
+        this.d.log.warn({ err: err.message, next }, 'video converter install failed; trying again');
+        this.install = { phase: 'retrying', receivedBytes: 0, message: err.message, attempt: next, attempts };
+        this.changed();
+      },
+    });
   }
 
   // ---- plan ----

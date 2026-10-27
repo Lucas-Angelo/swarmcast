@@ -1,0 +1,72 @@
+---
+// Starlight's header plus a Download button (wide screens) and a language link that stays
+// visible on phones (Starlight moves its language menu into the hamburger menu below 50rem).
+import Default from '@astrojs/starlight/components/Header.astro';
+import Icon from './Icon.astro';
+import { otherLangPath, pagePath, siteLang, tr } from '../lib/i18n';
+
+const lang = siteLang(Astro.locals.starlightRoute.locale);
+const other = otherLangPath(Astro.url.pathname);
+---
+
+<div class="sc-header">
+  <div class="sc-header-main"><Default /></div>
+  <a class="sc-btn sc-btn-primary sc-btn-sm sc-header-dl" href={pagePath(lang, 'download')} data-testid="header-download">
+    <Icon name="download" size={16} />
+    {tr(lang, 'nav.download')}
+  </a>
+  <a
+    class="sc-lang-mobile"
+    href={other.href}
+    hreflang={other.lang}
+    lang={other.lang}
+    aria-label={tr(lang, 'lang.switch.label')}
+    data-testid="lang-mobile"
+  >
+    <Icon name="globe" size={16} />
+    <span>{tr(lang, 'lang.short')}</span>
+  </a>
+</div>
+
+<style>
+  .sc-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    height: 100%;
+  }
+  .sc-header-main {
+    flex: 1;
+    min-width: 0;
+    height: 100%;
+  }
+  .sc-header-dl {
+    display: none;
+  }
+  .sc-lang-mobile {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    min-height: 2.25rem;
+    padding: 0 0.5rem;
+    border: 1px solid var(--sc-border);
+    border-radius: var(--sc-radius-sm);
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .sc-lang-mobile:hover {
+    border-color: var(--sc-border-strong);
+    color: var(--sc-ink);
+  }
+  @media (min-width: 50rem) {
+    .sc-lang-mobile {
+      display: none;
+    }
+    .sc-header-dl {
+      display: inline-flex;
+    }
+  }
+</style>

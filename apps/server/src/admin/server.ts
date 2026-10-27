@@ -6,13 +6,26 @@ import rateLimit from '@fastify/rate-limit';
 import fastifyStatic from '@fastify/static';
 import { WebSocketServer } from 'ws';
 import { z } from 'zod';
-import { ADMIN_COOKIE, directEnableSchema, securitySettingsSchema, settingsSchema, type AdminLogMessage, type ApiErrorBody, type DirectCheckResponse } from '@swarmcast/shared';
-import { resolveLang } from '@swarmcast/shared/i18n';
+import {
+  ADMIN_COOKIE,
+  directEnableSchema,
+  securitySettingsSchema,
+  settingsSchema,
+  type AdminDesktopMessage,
+  type AdminLogMessage,
+  type ApiErrorBody,
+  type DirectCheckResponse,
+} from '@swarmcast/shared';
 import type { CheckResult } from '../direct/direct.js';
+import type { DesktopBridge } from '../desktop/bridge.js';
+import type { Diagnostics } from '../diagnostics/diagnostics.js';
 import type { LiveController } from '../core/live.js';
 import type { Logger } from '../core/logger.js';
 import { codeOf, coded } from '../core/messages.js';
 import { applySecurityHeaders } from '../public/security.js';
+import { registerDesktopRoutes } from './desktop-routes.js';
+import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
+import { gateHead, notAuthorizedPage, signedInPage } from './gate.js';
 import { registerOnboardingRoutes } from './onboarding-routes.js';
 import { registerQualityRoutes } from './quality-routes.js';
 import { registerSystemCheckRoutes } from './system-check-routes.js';
@@ -29,20 +42,10 @@ export interface AdminOptions {
   cleanupStale: () => Promise<boolean>;
   /** <data>/system-check.json written by the start scripts (shown in the setup tutorial). */
   systemCheckFile?: string;
-}
-
-const NOT_AUTHORIZED = {
-  en: { title: 'SwarmCast panel', text: 'Open the panel from the SwarmCast tray/menu bar icon, or run the start script again.' },
-  'pt-BR': { title: 'Painel do SwarmCast', text: 'Abra o painel pelo ícone do SwarmCast na bandeja/barra de menus, ou rode o script de início de novo.' },
-} as const;
-
-/** Shown without the per-run token. No inline styles (the CSP forbids them). */
-function notAuthorizedPage(acceptLanguage: string | undefined): string {
-  const lang = resolveLang((acceptLanguage ?? '').split(',').map((l) => l.split(';')[0]!.trim()));
-  const m = NOT_AUTHORIZED[lang];
-  return `<!doctype html><html lang="${lang}"><head><meta charset="utf-8"><title>SwarmCast</title></head>
-<body><h1>${m.title}</h1>
-<p>${m.text}</p></body></html>`;
+  /** Desktop mode only (`--desktop`): autostart, updates, first-run check. */
+  desktop?: DesktopBridge;
+  /** Log retention setting and "Export logs" (diagnostics-routes.ts). */
+  diagnostics?: Diagnostics;
 }
 
 /**
@@ -60,12 +63,17 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     "script-src 'self'",
     "style-src 'self'",
     "img-src 'self' data:",
+    // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
+    "font-src 'self'",
     `connect-src 'self' ws://127.0.0.1:${o.port} ws://localhost:${o.port}`,
     "base-uri 'none'",
     "form-action 'self'",
     "frame-ancestors 'none'",
     "object-src 'none'",
   ].join('; ');
+
+  // Stylesheet + favicon of the sign-in and "not authorized" pages (gate.ts), read once.
+  const gate = gateHead(o.adminDir);
 
   const tokenOk = (t: string | undefined): boolean =>
     !!t && t.length < 200 && crypto.timingSafeEqual(crypto.createHash('sha256').update(t).digest(), tokenHash);
@@ -88,6 +96,12 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     }
   });
 
+  // SWARMCAST_LOG_LEVEL=debug: one line per panel request (the login token is never logged).
+  const logPath = (url: string): string => (url.startsWith('/auth/') ? '/auth/…' : url.split('?')[0]!);
+  app.addHook('onResponse', async (req, reply) => {
+    o.log.debug({ method: req.method, path: logPath(req.url), status: reply.statusCode }, 'panel request');
+  });
+
   const auth = async (req: FastifyRequest, reply: FastifyReply): Promise<void> => {
     if (!tokenOk(req.cookies[ADMIN_COOKIE])) {
       const c = coded('err.notAuthorized');
@@ -97,18 +111,26 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
 
   app.get<{ Params: { token: string } }>('/auth/:token', async (req, reply) => {
-    if (!tokenOk(req.params.token)) return reply.code(401).type('text/html').send(notAuthorizedPage(req.headers['accept-language']));
+    if (!tokenOk(req.params.token)) return reply.code(401).type('text/html; charset=utf-8').send(notAuthorizedPage(req.headers['accept-language'], gate));
     reply.setCookie(ADMIN_COOKIE, req.params.token, { path: '/', httpOnly: true, sameSite: 'strict', secure: false });
-    return reply.redirect('/', 303);
+    // Also set for every admin response (onRequest); repeated here because this page must never be
+    // cached or leak its URL (the token) as a referrer.
+    reply.header('Cache-Control', 'no-store').header('Referrer-Policy', 'no-referrer');
+    return reply.type('text/html; charset=utf-8').send(signedInPage(req.headers['accept-language'], gate));
   });
 
   await app.register(fastifyStatic, { root: o.adminDir, prefix: '/', index: false, wildcard: false, serve: false });
   app.get('/', async (req, reply) => {
-    if (!tokenOk(req.cookies[ADMIN_COOKIE])) return reply.code(401).type('text/html').send(notAuthorizedPage(req.headers['accept-language']));
-    return reply.sendFile('index.html', o.adminDir);
+    if (!tokenOk(req.cookies[ADMIN_COOKIE])) return reply.code(401).type('text/html; charset=utf-8').send(notAuthorizedPage(req.headers['accept-language'], gate));
+    // Never cached: after an update, the window or tab must load the new index.html, whose
+    // hashed /assets names point at the new code. (Without cacheControl: false, the static
+    // plugin would replace the no-store set in onRequest with its own `public, max-age=0`.)
+    reply.header('Cache-Control', 'no-store');
+    return reply.sendFile('index.html', o.adminDir, { cacheControl: false });
   });
+  // Vite gives every file in /assets a content hash, so its URL never changes meaning.
   app.get<{ Params: { '*': string } }>('/assets/*', async (req, reply) => {
-    return reply.sendFile(path.posix.join('assets', req.params['*']), o.adminDir);
+    return reply.sendFile(path.posix.join('assets', req.params['*']), o.adminDir, { maxAge: '365d', immutable: true });
   });
 
   const L = o.live;
@@ -181,6 +203,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   registerQualityRoutes(app, L, auth, wrap);
   registerOnboardingRoutes(app, L, auth, wrap);
   registerSystemCheckRoutes(app, o.systemCheckFile, auth);
+  registerDesktopRoutes(app, o.desktop, auth, wrap);
+  registerDiagnosticsRoutes(app, o.diagnostics, auth, wrap);
   app.post('/api/app/quit', { preHandler: auth }, wrap(() => {
     setTimeout(o.onQuit, 100);
     return { ok: true };
@@ -196,12 +220,15 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
       !allowedOrigins.has(req.headers.origin ?? '') ||
       !tokenOk(cookies[ADMIN_COOKIE])
     ) {
+      o.log.debug('panel WebSocket refused');
       socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n');
       return;
     }
+    o.log.debug('panel WebSocket connected');
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.send(JSON.stringify(L.snapshot()));
       ws.send(JSON.stringify({ type: 'log', reset: true, entries: L.activity.list() } satisfies AdminLogMessage));
+      if (o.desktop) ws.send(JSON.stringify({ type: 'desktop', ...o.desktop.snapshot() } satisfies AdminDesktopMessage));
     });
   });
   let pending: NodeJS.Timeout | null = null;
@@ -215,7 +242,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
   L.on('state', push);
   // Activity entries go out right away, as their own message type (the state message is unchanged).
-  const broadcast = (msg: AdminLogMessage): void => {
+  const broadcast = (msg: AdminLogMessage | AdminDesktopMessage): void => {
     const data = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(data);
   };
@@ -223,10 +250,16 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   const onClear = (): void => broadcast({ type: 'log', reset: true, entries: [] });
   L.activity.on('entry', onEntry);
   L.activity.on('clear', onClear);
+  // Desktop app state (update status from the shell, autostart, first-run check) as its own message.
+  const onDesktop = (): void => {
+    if (o.desktop) broadcast({ type: 'desktop', ...o.desktop.snapshot() });
+  };
+  o.desktop?.on('changed', onDesktop);
   app.addHook('onClose', async () => {
     L.off('state', push);
     L.activity.off('entry', onEntry);
     L.activity.off('clear', onClear);
+    o.desktop?.off('changed', onDesktop);
     for (const c of wss.clients) c.terminate();
     wss.close();
   });

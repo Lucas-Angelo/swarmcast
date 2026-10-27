@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-splash-open-logs"
+description = "Enables the splash_open_logs command without any pre-configured scope."
+commands.allow = ["splash_open_logs"]
+
+[[permission]]
+identifier = "deny-splash-open-logs"
+description = "Denies the splash_open_logs command without any pre-configured scope."
+commands.deny = ["splash_open_logs"]

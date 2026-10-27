@@ -20,11 +20,38 @@ $StartPs = Join-Path $Root 'scripts\start-windows.ps1'
 $StartCmd = Join-Path $Root 'scripts\start-windows.cmd'
 $Arch = 'x64'
 
-$Work = Join-Path ([IO.Path]::GetTempPath()) ('swarmcast-uninstall-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
+# The long form of the temp folder (CI runners use C:\Users\RUNNER~1\...): shortcut
+# targets and process paths read back in long form.
+$TempRoot = [IO.Path]::GetTempPath()
+if ($OnWindows) {
+  try {
+    Add-Type -Namespace SwarmCastTest -Name Paths -MemberDefinition '[DllImport("kernel32.dll", CharSet = CharSet.Unicode)] public static extern uint GetLongPathName(string s, System.Text.StringBuilder l, uint n);'
+    $sb = New-Object System.Text.StringBuilder 1024
+    if ([SwarmCastTest.Paths]::GetLongPathName($TempRoot, $sb, 1024) -gt 0) { $TempRoot = $sb.ToString() }
+  } catch { }
+}
+$Work = Join-Path $TempRoot ('swarmcast-uninstall-test-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 $Data = Join-Path $Work 'swarm home'       # a space on purpose: quoting must hold
 $ExeDir = Join-Path $Work 'exe'
 $ScriptTmp = Join-Path $Work 'tmp'
 New-Item -ItemType Directory -Force -Path $ExeDir, $ScriptTmp | Out-Null
+
+# Never the real Run / Uninstall registry keys, Start menu, desktop or app folders:
+# the uninstaller runs with fake LOCALAPPDATA / APPDATA / USERPROFILE and a registry
+# sandbox of its own (SWARMCAST_TEST_SANDBOX), removed at the end.
+$AppId = 'io.github.lucas-angelo.swarmcast'
+$Sandbox = 'T' + [guid]::NewGuid().ToString('N').Substring(0, 12)
+$RegBase = "HKCU:\Software\SwarmCastTestSandbox\$Sandbox"
+$RegBaseRel = "Software\SwarmCastTestSandbox\$Sandbox"
+$SavedEnv = @{ LOCALAPPDATA = $env:LOCALAPPDATA; APPDATA = $env:APPDATA; USERPROFILE = $env:USERPROFILE }
+$FakeLocal = Join-Path $Work 'local app data'
+$FakeRoaming = Join-Path $Work 'roaming app data'
+$FakeProfile = Join-Path $Work 'profile'
+New-Item -ItemType Directory -Force -Path $FakeLocal, $FakeRoaming, $FakeProfile | Out-Null
+$env:SWARMCAST_TEST_SANDBOX = $Sandbox
+$env:LOCALAPPDATA = $FakeLocal
+$env:APPDATA = $FakeRoaming
+$env:USERPROFILE = $FakeProfile
 
 $script:Pass = 0
 $script:Fail = 0
@@ -239,6 +266,84 @@ function New-Tree {
     Set-Content -LiteralPath $ro -Value 'x'
     (Get-Item -LiteralPath $ro).Attributes = 'ReadOnly'
   }
+}
+
+# Compiles C# into an exe (csc of .NET Framework, else Add-Type).
+function Build-Exe([string]$Source, [string]$Out) {
+  $srcFile = $Out + '.cs'
+  [IO.File]::WriteAllText($srcFile, $Source)
+  $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+  if (-not (Test-Path -LiteralPath $csc)) { $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework\v4.0.30319\csc.exe' }
+  if (Test-Path -LiteralPath $csc) {
+    $ErrorActionPreference = 'Continue'
+    $log = & $csc /nologo /target:exe "/out:$Out" $srcFile 2>&1
+    $ErrorActionPreference = 'Stop'
+    if ($LASTEXITCODE -ne 0) { throw "csc failed: $log" }
+  } else {
+    Add-Type -TypeDefinition $Source -OutputAssembly $Out -OutputType ConsoleApplication
+  }
+}
+
+# A fake NSIS uninstaller (Windows): records how it was called, then, like the real
+# one run with "/S _?=<dir>", deletes everything in <dir> but itself and its
+# Uninstall registry key (FAKE_UNINSTALL_KEY, relative to HKCU).
+function New-FakeUninstaller {
+  $out = Join-Path $ExeDir 'fake-uninstall.exe'
+  if (Test-Path -LiteralPath $out) { return $out }
+  $src = @"
+using System;
+using System.IO;
+using Microsoft.Win32;
+public static class FakeNsisUninstaller {
+  public static int Main(string[] args) {
+    string self = Path.GetFullPath(System.Reflection.Assembly.GetExecutingAssembly().Location);
+    string cl = Environment.CommandLine;
+    int at = cl.IndexOf("_?=");
+    string dir = at >= 0 ? cl.Substring(at + 3).Trim() : Path.GetDirectoryName(self);
+    bool silent = Array.IndexOf(args, "/S") >= 0;
+    string log = Environment.GetEnvironmentVariable("FAKE_UNINSTALL_LOG");
+    if (!String.IsNullOrEmpty(log)) File.AppendAllText(log, "exe=" + self + "\nsilent=" + silent + "\ndir=" + dir + "\n");
+    if (!silent) return 2;
+    foreach (string f in Directory.GetFiles(dir, "*", SearchOption.AllDirectories)) {
+      if (!String.Equals(Path.GetFullPath(f), self, StringComparison.OrdinalIgnoreCase)) File.Delete(f);
+    }
+    foreach (string d in Directory.GetDirectories(dir)) Directory.Delete(d, true);
+    string key = Environment.GetEnvironmentVariable("FAKE_UNINSTALL_KEY");
+    if (!String.IsNullOrEmpty(key)) Registry.CurrentUser.DeleteSubKeyTree(key, false);
+    return 0;
+  }
+}
+"@
+  Build-Exe $src $out
+  return $out
+}
+
+# An Uninstall entry in the registry sandbox; returns its path relative to HKCU.
+function New-FakeUninstallEntry([string]$Name, [string]$DisplayName, [string]$Exe, [string]$Dir) {
+  $k = "$RegBase\Uninstall\$Name"
+  New-Item -Path $k -Force | Out-Null
+  New-ItemProperty -LiteralPath $k -Name 'DisplayName' -Value $DisplayName -PropertyType String -Force | Out-Null
+  New-ItemProperty -LiteralPath $k -Name 'UninstallString' -Value "`"$Exe`"" -PropertyType String -Force | Out-Null
+  New-ItemProperty -LiteralPath $k -Name 'QuietUninstallString' -Value "`"$Exe`" /S" -PropertyType String -Force | Out-Null
+  if ($Dir) { New-ItemProperty -LiteralPath $k -Name 'InstallLocation' -Value $Dir -PropertyType String -Force | Out-Null }
+  return "$RegBaseRel\Uninstall\$Name"
+}
+
+function Set-FakeRunValue([string]$Name, [string]$Value) {
+  New-Item -Path "$RegBase\Run" -Force | Out-Null
+  New-ItemProperty -LiteralPath "$RegBase\Run" -Name $Name -Value $Value -PropertyType String -Force | Out-Null
+}
+
+function Test-RunValue([string]$Name) {
+  try { return ($null -ne (Get-ItemProperty -LiteralPath "$RegBase\Run" -Name $Name -ErrorAction Stop)) } catch { return $false }
+}
+
+function New-Shortcut([string]$Lnk, [string]$Target) {
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Lnk) | Out-Null
+  $sh = New-Object -ComObject WScript.Shell
+  $l = $sh.CreateShortcut($Lnk)
+  $l.TargetPath = $Target
+  $l.Save()
 }
 
 function Install-FakeSwarmCast {
@@ -501,6 +606,128 @@ try {
   Assert-Exists (Join-Path $Data 'secrets.json')
   End-Case
 
+  # --- 9. desktop app ------------------------------------------------------------
+  Begin-Case '9. desktop app: silent uninstaller, leftovers, shortcuts, autostart and WebView2 data; others kept'
+  New-Tree
+  $x = ''
+  if ($OnWindows) { $x = '.exe' }
+  $sleeper = Get-Sleeper
+  $inst = Join-Path $env:LOCALAPPDATA 'Programs\SwarmCast'
+  New-Item -ItemType Directory -Force -Path (Join-Path $inst 'resources\bin') | Out-Null
+  $appExe = Join-Path $inst 'SwarmCast.exe'
+  $mtx = Join-Path $inst "resources\bin\mediamtx$x"
+  Copy-Item -LiteralPath $sleeper -Destination $appExe
+  Copy-Item -LiteralPath $sleeper -Destination $mtx
+  Copy-Item -LiteralPath (New-FakeExe '0.0.1') -Destination (Join-Path $inst 'swarmcast-server.exe')
+  Set-Content -LiteralPath (Join-Path $inst 'resources\leftover.txt') -Value 'x'
+  $web1 = Join-Path $env:LOCALAPPDATA $AppId
+  $web2 = Join-Path $env:APPDATA $AppId
+  New-Item -ItemType Directory -Force -Path (Join-Path $web1 'EBWebView\Default'), $web2 | Out-Null
+  Set-Content -LiteralPath (Join-Path $web1 'EBWebView\Default\x.txt') -Value 'x'
+  Set-Content -LiteralPath (Join-Path $web2 'x.txt') -Value 'x'
+  $keepLocal = Join-Path $env:LOCALAPPDATA 'Other\keep.txt'
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $keepLocal) | Out-Null
+  Set-Content -LiteralPath $keepLocal -Value 'x'
+  # Same name, outside SwarmCast folders: must keep running.
+  $outsideApp = Join-Path $Work 'outside app\SwarmCast.exe'
+  New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outsideApp) | Out-Null
+  Copy-Item -LiteralPath $sleeper -Destination $outsideApp
+  $uninstLog = Join-Path $Work 'uninstall-calls.log'
+  if ($OnWindows) {
+    $uninst = Join-Path $inst 'uninstall.exe'
+    Copy-Item -LiteralPath (New-FakeUninstaller) -Destination $uninst
+    # Tauri names the key after the product, but it is found by DisplayName.
+    $keyRel = New-FakeUninstallEntry 'NotTheProductName_1234' 'SwarmCast' $uninst $inst
+    $otherDir = Join-Path $Work 'other app'
+    New-Item -ItemType Directory -Force -Path $otherDir | Out-Null
+    $otherUninst = Join-Path $otherDir 'uninstall.exe'
+    Copy-Item -LiteralPath (New-FakeUninstaller) -Destination $otherUninst
+    New-FakeUninstallEntry 'OtherApp' 'Other App' $otherUninst $otherDir | Out-Null
+    Set-FakeRunValue 'SwarmCast' "`"$appExe`" --background"
+    Set-FakeRunValue 'OtherApp' "`"$otherDir\other.exe`""
+    $sm = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs'
+    $desk = Join-Path $env:USERPROFILE 'Desktop'
+    New-Shortcut (Join-Path $sm 'SwarmCast.lnk') $appExe
+    New-Shortcut (Join-Path $desk 'SwarmCast.lnk') $appExe
+    New-Shortcut (Join-Path $desk 'Other.lnk') (Join-Path $env:WINDIR 'notepad.exe')
+    New-Shortcut (Join-Path $sm 'SwarmCast\SwarmCast.lnk') (Join-Path $env:WINDIR 'notepad.exe')
+    $env:FAKE_UNINSTALL_LOG = $uninstLog
+    $env:FAKE_UNINSTALL_KEY = $keyRel
+  }
+  $p1 = Start-Sleeper $appExe
+  $p2 = Start-Sleeper $mtx
+  $p3 = Start-Sleeper $outsideApp
+  Start-Sleep -Milliseconds 800
+  Assert-Running $p1.Id 'SwarmCast.exe (desktop app)'
+  $cleanupLog = Join-Path $Work 'cleanup-desktop.log'
+  $env:FAKE_CLEANUP_LOG = $cleanupLog
+  Invoke-Uninstall @()
+  Remove-Item Env:FAKE_CLEANUP_LOG, Env:FAKE_UNINSTALL_LOG, Env:FAKE_UNINSTALL_KEY -ErrorAction SilentlyContinue
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out "Desktop app: $inst"
+  Assert-Stopped $p1.Id 'SwarmCast.exe (desktop app)'
+  Assert-Stopped $p2.Id 'mediamtx (desktop app)'
+  Assert-Running $p3.Id 'SwarmCast.exe outside SwarmCast folders'
+  Assert-Absent $inst
+  Assert-Eq (@(Get-Content -LiteralPath $cleanupLog -ErrorAction SilentlyContinue))[0] "--cleanup --data-dir $Data" 'the desktop app''s swarmcast-server ran --cleanup'
+  Assert-Absent $web1
+  Assert-Absent $web2
+  Assert-Exists $keepLocal
+  Assert-Absent $Data
+  Assert-Contains $script:Out 'SwarmCast was removed from this computer'
+  if ($OnWindows) {
+    $calls = Read-Text $uninstLog
+    Assert-Contains $calls "exe=$uninst" 'the SwarmCast uninstaller was run'
+    Assert-Contains $calls 'silent=True' 'it was run with /S'
+    Assert-Contains $calls "dir=$inst" 'it was run in place (_?=<install folder>)'
+    Assert-NotContains $calls $otherUninst 'the other app''s uninstaller was not run'
+    Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\NotTheProductName_1234") $false 'the SwarmCast Uninstall key is gone'
+    Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\OtherApp") $true 'the other Uninstall key is kept'
+    Assert-Eq (Test-RunValue 'SwarmCast') $false 'the SwarmCast Run value is gone'
+    Assert-Eq (Test-RunValue 'OtherApp') $true 'the other Run value is kept'
+    Assert-Absent (Join-Path $sm 'SwarmCast.lnk')
+    Assert-Absent (Join-Path $desk 'SwarmCast.lnk')
+    Assert-Exists (Join-Path $desk 'Other.lnk')
+    Assert-Exists (Join-Path $sm 'SwarmCast\SwarmCast.lnk')
+    Assert-Exists $otherUninst
+  } else {
+    Skip 'registry, shortcuts and the NSIS uninstaller only exist on Windows'
+  }
+  Stop-Process -Id $p3.Id -Force -ErrorAction SilentlyContinue
+  End-Case
+
+  Begin-Case '9b. desktop app only, its uninstaller missing: files and the registry entry are removed anyway'
+  if (Test-Path -LiteralPath $Data) { Remove-Item -LiteralPath $Data -Recurse -Force }
+  $inst = Join-Path $env:LOCALAPPDATA 'Programs\SwarmCast'
+  New-Item -ItemType Directory -Force -Path $inst | Out-Null
+  Set-Content -LiteralPath (Join-Path $inst 'SwarmCast.exe') -Value 'x'
+  if ($OnWindows) { New-FakeUninstallEntry 'SwarmCast' 'SwarmCast' (Join-Path $inst 'uninstall.exe') $null | Out-Null }
+  Invoke-Uninstall @()
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Absent $inst
+  Assert-Contains $script:Out 'SwarmCast uninstall finished: removed the desktop app'
+  Assert-NotContains $script:Out 'not installed'
+  if ($OnWindows) { Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\SwarmCast") $false 'the Uninstall key is gone' }
+  End-Case
+
+  Begin-Case '9c. an Uninstall entry pointing at a folder that is not SwarmCast''s: the folder is kept'
+  if (-not $OnWindows) {
+    Skip 'the registry only exists on Windows'
+  } else {
+    New-Tree
+    $precious = Join-Path $Work 'precious'
+    New-Item -ItemType Directory -Force -Path $precious | Out-Null
+    Set-Content -LiteralPath (Join-Path $precious 'thesis.txt') -Value 'precious'
+    New-FakeUninstallEntry 'SwarmCastOdd' 'SwarmCast' (Join-Path $precious 'missing-uninstall.exe') $precious | Out-Null
+    Invoke-Uninstall @()
+    Assert-Eq $script:Rc 0 'exit code 0'
+    Assert-Eq (Read-Text (Join-Path $precious 'thesis.txt')) 'precious' 'file untouched'
+    Assert-Absent $Data
+    Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\SwarmCastOdd") $true 'its registry entry is kept while the folder exists'
+    Remove-Item -LiteralPath "$RegBase\Uninstall\SwarmCastOdd" -Recurse -Force
+  }
+  End-Case
+
   # --- 8. usage -------------------------------------------------------------------
   Begin-Case '8. --help and unknown options'
   Invoke-Uninstall @('--help')
@@ -512,6 +739,17 @@ try {
 } finally {
   foreach ($p in $script:Started) { try { if (-not $p.HasExited) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } } catch { } }
   Remove-Item Env:SWARMCAST_HOME, Env:SWARMCAST_NO_PAUSE, Env:SWARMCAST_DATA_DIR, Env:SWARMCAST_STOP_GRACE, Env:SWARMCAST_DELETE_DELAYS, Env:FAKE_CLEANUP_LOG, Env:FAKE_CLEANUP_EXIT -ErrorAction SilentlyContinue
+  Remove-Item Env:SWARMCAST_TEST_SANDBOX, Env:FAKE_UNINSTALL_LOG, Env:FAKE_UNINSTALL_KEY -ErrorAction SilentlyContinue
+  $env:LOCALAPPDATA = $SavedEnv.LOCALAPPDATA
+  $env:APPDATA = $SavedEnv.APPDATA
+  $env:USERPROFILE = $SavedEnv.USERPROFILE
+  if ($OnWindows) {
+    Remove-Item -LiteralPath $RegBase -Recurse -Force -ErrorAction SilentlyContinue
+    $parentKey = 'HKCU:\Software\SwarmCastTestSandbox'
+    if ((Test-Path -LiteralPath $parentKey) -and @(Get-ChildItem -LiteralPath $parentKey -ErrorAction SilentlyContinue).Count -eq 0) {
+      Remove-Item -LiteralPath $parentKey -Force -ErrorAction SilentlyContinue
+    }
+  }
   Start-Sleep -Milliseconds 500
   if ($env:KEEP_WORK -eq '1') { Write-Host "Work dir kept: $Work" } else { Remove-Item -LiteralPath $Work -Recurse -Force -ErrorAction SilentlyContinue }
 }

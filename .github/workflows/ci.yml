@@ -1,24 +1,32 @@
 name: CI
 
-# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
-# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
-# private repo.
+# Lint, typecheck, build, unit, integration and E2E tests on Windows, macOS and Linux.
+# Runs on every pull request and push to main (docs- and site-only changes skip it), monthly
+# (catches rot: dead downloads, runner image changes), manually, and as a gate of release.yml.
 on:
+  pull_request:
+    paths-ignore: &app-paths-ignore
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+  push:
+    branches: [main]
+    paths-ignore: *app-paths-ignore
   schedule:
     - cron: '17 6 1 * *'
   workflow_dispatch:
+  workflow_call:
 
 permissions:
   contents: read
 
+# Superseded pull request runs are cancelled; runs on main, tags and schedules never are.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: '1'
-  NODE_VERSION: 24.x
-  GO_VERSION: 1.27.x
 
 jobs:
   checks:
@@ -28,16 +36,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - run: npm ci
+      - uses: ./.github/actions/setup
+      # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
+      - name: Install the website's dependencies
+        run: npm ci --prefix site --no-audit --no-fund
       - run: npm run lint
       - run: npm run typecheck
       - run: npm run build
@@ -50,28 +57,14 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - name: Install ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Install ffmpeg (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      - name: Install ffmpeg (Windows)
-        if: runner.os == 'Windows'
-        run: choco install ffmpeg -y --no-progress
-      - run: ffmpeg -version
-      - run: npm ci
+          ffmpeg: 'true'
       # Downloads MediaMTX and cloudflared for the host into vendor/<target>/ and verifies
       # them against the SHA-256 values pinned in scripts/build/versions.json.
       - run: npm run fetch-bins
@@ -81,29 +74,20 @@ jobs:
 
   e2e:
     name: E2E (Playwright, ${{ matrix.os }})
+    # Windows browsers (Chrome, Edge, Firefox) are covered by windows.yml.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - name: Install ffmpeg (Linux)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
-      - name: Install ffmpeg (macOS)
-        if: runner.os == 'macOS'
-        run: brew install ffmpeg
-      - run: npm ci
+          ffmpeg: 'true'
       - run: npm run fetch-bins
       - run: npm run build
       # The Playwright version comes from package-lock.json. The `chromium` project runs
@@ -124,14 +108,14 @@ jobs:
   audit:
     name: npm audit (production dependencies)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          npm-ci: 'false'
       # Reads package-lock.json; fails on high or critical advisories in runtime dependencies.
       - run: npm audit --omit=dev --audit-level=high
 
@@ -142,18 +126,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/tray/go.sum
+          go: 'true'
+          npm-ci: 'false'
       - run: node apps/tray/build.mjs
       - name: go vet
         working-directory: apps/tray
@@ -161,19 +142,19 @@ jobs:
 
   binaries:
     name: Upstream binaries up to date
-    # Weekly report only: fails when MediaMTX/cloudflared have newer releases than the
-    # pins in scripts/build/versions.json. It never opens PRs; run
-    # `node scripts/build/update-binaries.mjs` locally to apply the update.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Reports MediaMTX/cloudflared releases newer than the pins in scripts/build/versions.json.
+    # SwarmCast ships pinned, verified versions on purpose, so a newer release is only a warning
+    # on pull requests, main and releases; the monthly scheduled run fails (the rot alarm). It
+    # never opens PRs: run `node scripts/build/update-binaries.mjs` locally to apply the update.
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          npm-ci: 'false'
       - name: Check for newer MediaMTX / cloudflared releases
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -189,4 +170,7 @@ jobs:
             cat binaries.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
+          if [ "$status" -ne 0 ]; then
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then exit "$status"; fi
+            echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins."
+          fi

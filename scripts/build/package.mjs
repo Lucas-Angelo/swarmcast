@@ -9,7 +9,7 @@
 //     LICENSE, THIRD_PARTY_LICENSES.txt, VERSION
 // Then archives it unless --no-archive is given (see archive.mjs).
 //
-// Usage: node scripts/build/package.mjs [--target macos-arm64] [--version 0.1.0] [--no-archive]
+// Usage: node scripts/build/package.mjs [--target macos-arm64] [--version 0.2.0] [--no-archive]
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';

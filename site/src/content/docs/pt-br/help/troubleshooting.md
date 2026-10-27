@@ -1,0 +1,136 @@
+---
+title: Problemas e dúvidas
+description: Respostas para os problemas mais comuns na instalação, no OBS, com o link e na live, e as dúvidas frequentes.
+---
+
+## Instalar e abrir
+
+### Windows: "O Windows protegeu o computador"
+
+Clique em **Mais informações** e depois em **Executar assim mesmo**. Veja [Instalar no Windows](/swarmcast/pt-br/install/windows/).
+
+### macOS: "A Apple não pôde verificar o SwarmCast" ou "não pode ser aberto"
+
+Abra **Ajustes do Sistema** → **Privacidade e Segurança**, role para baixo e clique em **Abrir Mesmo Assim**. Veja [Instalar no macOS](/swarmcast/pt-br/install/macos/).
+
+### "O SwarmCast já está aberto em outra janela ou num terminal"
+
+Já tem outro SwarmCast rodando, por exemplo um que você abriu por script. Feche ele (no terminal: **Ctrl+C**; ou no ícone da bandeja → **Sair**) e clique em **Tentar de novo**.
+
+### "Outro programa está usando as portas de que o SwarmCast precisa"
+
+Outro app de transmissão, ou um segundo SwarmCast, está usando a porta 1935 (a que o OBS usa para mandar o vídeo) ou a porta do painel. Feche esse programa e clique em **Tentar de novo**. Reiniciar o computador também resolve.
+
+### "O SwarmCast não conseguiu abrir"
+
+Clique em **Tentar de novo**. Se continuar falhando, clique em **Abrir pasta de logs** e mande os arquivos mais recentes quando for pedir ajuda (veja [Enviar seus logs](#enviar-seus-logs)).
+
+## OBS
+
+### O OBS não conecta
+
+- Confira se o SwarmCast está aberto e se o topo do painel diz **Esperando o OBS começar a transmitir…** ou **Ao vivo**. Se disser **Desligado**, clique em **Ligar o SwarmCast**.
+- O servidor tem que ser exatamente `rtmp://127.0.0.1:1935/live`.
+- A chave tem que ser a do painel. Use os botões **Copiar** em vez de digitar.
+- Com o plugin Multiplas saídas, clique em **Iniciar** ao lado do SwarmCast. Com o Aitum Vertical, clique no botão de antena do painel Vertical.
+
+### "O intervalo de quadros-chave parece errado"
+
+No OBS: **Configurações** → **Saída** → **Modo de saída: Avançado** → **Transmissão** → **Intervalo de keyframes: 2 s**. Veja [Configurar o OBS](/swarmcast/pt-br/start/obs/).
+
+## O link e os espectadores
+
+### Os espectadores veem "Link inválido"
+
+Eles estão com um link antigo. Cada live tem um link novo, e **Gerar novo link** troca o link. Mande o link atual, que está no painel.
+
+### Os espectadores veem que a live está lotada
+
+Você chegou no **Máximo de espectadores ao mesmo tempo** (120, se você não mudou). Aumente no painel se o seu upload aguentar, mas o túnel grátis (modo seguro) aguenta umas 120 pessoas: acima disso, use o modo direto ou o seu próprio domínio.
+
+### O vídeo começa sem som
+
+Os navegadores começam os vídeos sem som. Quem assiste clica uma vez em **Ativar som**.
+
+### Trava para um espectador
+
+Provavelmente a internet dele está lenta. O player desce de qualidade sozinho (**Auto**). Ele também pode escolher a reprodução **Estável**, que deixa mais vídeo guardado.
+
+### Trava para todo mundo
+
+1. Veja os avisos no topo do painel. **"Espectadores demais para o seu upload"**: peça para o pessoal ligar **Ajudar a transmissão (P2P)** (vem desligado por padrão), ou diminua a taxa de bits (bitrate) do OBS.
+2. Confira se nada mais está usando o seu upload (backup na nuvem, downloads, outra transmissão com bitrate alto).
+3. Se o túnel gratuito continuar falhando, o [modo direto](/swarmcast/pt-br/live/direct-mode/) é o último recurso. Leia o aviso antes.
+
+### "Possível ataque"
+
+O cartão Proteção reage sozinho. Se o aviso disser que existe um link NOVO, mande o link novo. Quando passar, clique em **Encerrar alerta**. Veja [Segurança e proteção](/swarmcast/pt-br/live/protection/).
+
+## Outros
+
+### Só aparece a qualidade original
+
+O seu computador pode não ter um chip de vídeo que converte, ou o conversor de vídeo (ffmpeg) não está instalado. Veja [Qualidades](/swarmcast/pt-br/live/quality/).
+
+### Sem ícone na bandeja no Linux (GNOME)
+
+Instale a extensão "AppIndicator and KStatusNotifierItem Support" ou use a janela do SwarmCast.
+
+### Linux: "AppImages require FUSE to run"
+
+Veja [Instalar no Linux](/swarmcast/pt-br/install/linux/).
+
+## Dúvidas frequentes
+
+### O SwarmCast é grátis?
+
+Sim. Ele é gratuito e de código aberto (licença MIT). Não tem conta, assinatura nem anúncio.
+
+### Ele substitui a Twitch, o YouTube ou a Kick?
+
+Não. Ele serve para uma live **só para membros**, junto com a sua live pública ou sozinha. Dá para transmitir nos dois ao mesmo tempo ([Configurar o OBS](/swarmcast/pt-br/start/obs/)).
+
+### Quantas pessoas conseguem assistir?
+
+Depende do seu **upload** de internet e de quantos espectadores ajudam pelo P2P. O painel mostra uma estimativa. Mínimo: 10 Mbps de upload, 4 GB de memória e 2 núcleos de processador. Recomendado: 50 Mbps de upload ou mais, 8 GB e 4 núcleos.
+
+### Dá para fazer a live pelo celular?
+
+Não. O SwarmCast roda no computador onde o OBS roda (Windows, macOS ou Linux). Os espectadores podem assistir pelo celular.
+
+### O SwarmCast coleta dados meus ou de quem assiste?
+
+Não. O SwarmCast não tem telemetria nem estatísticas de uso. Veja [Privacidade e números de uso](/swarmcast/pt-br/about/privacy/).
+
+### Dá para usar o Streamlabs ou outro programa em vez do OBS Studio?
+
+O SwarmCast é testado com o OBS Studio. Qualquer programa que mande para um servidor RTMP personalizado, com chave de transmissão e quadro-chave de 2 segundos, deve funcionar, mas os guias mostram o OBS.
+
+## Enviar seus logs
+
+Quando algo dá errado, os logs mostram o que aconteceu. O SwarmCast junta tudo num arquivo para você:
+
+![O cartão Relatório de problema: 1 Exportar logs, 2 Salvo em …/Downloads/SwarmCast-logs-0.2.0-….zip (o nome de usuário está escondido aqui), 3 Mostrar na pasta.](../../../../assets/guides/help/pt-br/export.webp)
+
+1. No painel, desça até o cartão **Relatório de problema** e clique em **Exportar logs**. No app para computador, também dá para usar o ícone da bandeja (no Mac, o ícone da barra de menus) → **Exportar logs…**.
+2. O SwarmCast salva um arquivo ZIP com um nome como `SwarmCast-logs-0.2.0-20261026-1430.zip` na sua pasta **Downloads** e mostra onde ele está. Clique em **Mostrar na pasta** para achar o arquivo.
+3. Anexe o ZIP numa issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), ou mande para a pessoa que está te ajudando. Conte o que você fez e o que esperava que acontecesse.
+
+**O que vai dentro:** os logs dos últimos 14 dias (do SwarmCast, do app para computador, do receptor de vídeo, do túnel e do conversor de vídeo), um resumo do seu computador e das configurações do SwarmCast, a verificação do seu PC e o cartão **Atividade**.
+
+**O que nunca vai dentro:** a sua chave de transmissão, o link da live, o login do painel, senhas ou chaves. O arquivo é **anonimizado**: os endereços IP e os apelidos dos espectadores são trocados por rótulos como `ip-3f9a1c2b` e `viewer-8d02e4aa`. Nada é enviado sozinho: você escolhe quem recebe o arquivo. Em **Avançado** tem uma opção para manter os endereços IP completos; ligue só se o desenvolvedor pedir.
+
+Se o painel nem abrir, mande os arquivos mais recentes da pasta de logs:
+
+| Sistema | Pasta de logs |
+|---|---|
+| Windows | `%LOCALAPPDATA%\SwarmCast\logs` (cole na barra de endereço do Explorador de Arquivos) |
+| macOS | `~/Library/Application Support/SwarmCast/logs` (Finder → **Ir** → **Ir para a Pasta…**) |
+| Linux | `~/.local/share/swarmcast/logs` |
+
+O SwarmCast apaga sozinho os arquivos de log com mais de 14 dias (dá para mudar de 3 a 90 dias em **Relatório de problema** → **Avançado**).
+
+## Pedir ajuda
+
+1. [Exporte seus logs](#enviar-seus-logs), ou no cartão **Atividade** do painel, clique em **Copiar tudo**. Os segredos (chave de transmissão, link) já vêm escondidos.
+2. Abra uma issue no [GitHub](https://github.com/Lucas-Angelo/swarmcast/issues), anexe o ZIP ou cole o texto, e diga o seu sistema (Windows, macOS ou Linux) e o que você fez. Pode escrever em português.

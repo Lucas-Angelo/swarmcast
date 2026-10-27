@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'preact/hooks';
 import { HASH_FAILURE_THRESHOLD } from '@swarmcast/shared/constants';
 import type { ActivityEntry, AdminLogMessage, AdminState, DirectCheckResponse, Settings, ViewerInfo } from '@swarmcast/shared';
-import { formatNumber, getLang, humanDuration, LANGS, t, tc, toLang, translate, type Lang } from '@swarmcast/shared/i18n';
+import { formatNumber, getLang, guideUrl, humanDuration, LANGS, t, tc, toLang, translate, type Lang } from '@swarmcast/shared/i18n';
 import { applyLang, rememberLang } from '@swarmcast/shared/i18n/browser';
 import { ActivityConsole } from './Activity.js';
 import { api, errorText, post, subscribe } from './api.js';
+import { DesktopCard, UpdateBanner } from './DesktopCard.js';
+import { DiagnosticsCard } from './DiagnosticsCard.js';
+import { loadDesktop, setDesktop } from './desktop.js';
 import { Info } from './Info.js';
 import { Onboarding, RedoTutorialButton } from './onboarding/Onboarding.js';
 import { QualityCard } from './QualityCard.js';
@@ -50,11 +53,20 @@ export function App() {
 
   useEffect(
     () =>
-      subscribe(setS, setDown, (m: AdminLogMessage) =>
-        setActivity((prev) => (m.reset ? m.entries : [...prev, ...m.entries]).slice(-ACTIVITY_KEEP)),
+      subscribe(
+        setS,
+        setDown,
+        (m: AdminLogMessage) => setActivity((prev) => (m.reset ? m.entries : [...prev, ...m.entries]).slice(-ACTIVITY_KEEP)),
+        setDesktop,
       ),
     [],
   );
+  // Desktop app only (null in script mode: its card and banner stay hidden).
+  useEffect(() => {
+    void loadDesktop((p, m) => api(p, m)).then((d) => {
+      if (d) setDesktop(d);
+    });
+  }, []);
 
   const changeLang = (l: Lang): void => {
     applyLang(l);
@@ -101,7 +113,10 @@ export function App() {
     <div class="wrap" lang={lang}>
       <header class="top">
         <div class="top-main">
-          <div class="brand">SwarmCast</div>
+          <div class="brand sc-brand">
+            <span class="sc-symbol" aria-hidden="true" />
+            <span class="sc-wordmark">SwarmCast</span>
+          </div>
           <div class="row tight">
             <div class="state" data-testid="status">
               <span class={`dot ${dotClass}`} /> {statusText}
@@ -150,6 +165,7 @@ export function App() {
 
       {down && <div class="err">{t('admin.lostConnection')}</div>}
       {error !== null && <div class="err" data-testid="error">{errorText(error)}</div>}
+      <UpdateBanner phase={s.phase} />
       {s.warnings.map((w, i) => (
         <div class="warn" key={w}>{tc(s.warningCodes?.[i], w)}</div>
       ))}
@@ -220,7 +236,7 @@ export function App() {
             <button class="small" title={t('admin.obs.copyKey.tip')} onClick={() => copy('key', s.streamKey)}>{copied === 'key' ? t('common.copiedShort') : t('common.copy')}</button>
           </div>
           <div class="row tight small">
-            {s.obsConnected ? <span class="ok">{t('admin.obs.sending', { mbps: mbps(s.obsBitrateKbps) })}</span> : <span class="muted">{t('admin.obs.none')}</span>}
+            {s.obsConnected ? <span class="ok ok-dot">{t('admin.obs.sending', { mbps: mbps(s.obsBitrateKbps) })}</span> : <span class="muted">{t('admin.obs.none')}</span>}
             <Info text={t('admin.obs.pill.tip')} />
           </div>
           {autoStopText && (
@@ -329,6 +345,8 @@ export function App() {
 
       <QualityCard live={s.phase === 'live'} />
 
+      <DesktopCard />
+
       <section class="card mt">
         <h2 class="row-title">
           {t('admin.viewers.title')} <Info text={t('admin.viewers.tip')} />
@@ -341,7 +359,10 @@ export function App() {
           )}
         </h2>
         {s.viewers.length === 0 ? (
-          <p class="muted">{t('admin.viewers.nobody')}</p>
+          <div class="empty">
+            <span class="sc-mascot sc-mascot-sleep" aria-hidden="true" />
+            <p class="muted">{t('admin.viewers.nobody')}</p>
+          </div>
         ) : (
           <div class="table-wrap">
             <table data-testid="viewers">
@@ -372,6 +393,8 @@ export function App() {
         onClear={() => void act('clear-log', () => post('/api/activity/clear'))}
       />
 
+      <DiagnosticsCard />
+
       <footer>
         <span class="muted small">{t('admin.version', { version: s.version })}</span>
         <span class="row tight">
@@ -383,6 +406,9 @@ export function App() {
             ))}
           </select>
           <Info text={t('admin.lang.tip')} />
+          <a class="button" href={guideUrl(lang)} target="_blank" rel="noopener noreferrer" title={t('admin.help.tip')} data-testid="help-link">
+            {t('admin.help')}
+          </a>
           <RedoTutorialButton />
           <button title={t('admin.quit.tip')} onClick={() => act('quit', () => post('/api/app/quit'))}>{t('admin.quit')}</button>
         </span>
@@ -469,7 +495,7 @@ function SettingsForm({
   const [v, setV] = useState(settings);
   useEffect(
     () => setV(settings),
-    [settings.uploadLimitMbps, settings.autoStopMinutes, settings.alsoStreamingElsewhere, settings.showViewerCount, settings.maxViewers, settings.maxSessionsPerDevice],
+    [settings.uploadLimitMbps, settings.autoStopMinutes, settings.alsoStreamingElsewhere, settings.showViewerCount, settings.allowViewerP2P, settings.maxViewers, settings.maxSessionsPerDevice],
   );
   return (
     <form
@@ -511,6 +537,18 @@ function SettingsForm({
           {t('admin.set.showCount')}
         </label>{' '}
         <Info text={t('admin.set.showCount.tip')} />
+      </div>
+      <div class="field">
+        <label>
+          <input
+            type="checkbox"
+            data-testid="allow-viewer-p2p"
+            checked={v.allowViewerP2P}
+            onChange={(e) => setV({ ...v, allowViewerP2P: (e.target as HTMLInputElement).checked })}
+          />{' '}
+          {t('admin.set.allowP2P')}
+        </label>{' '}
+        <Info text={t('admin.set.allowP2P.tip')} />
       </div>
       <div class="field">
         <label>

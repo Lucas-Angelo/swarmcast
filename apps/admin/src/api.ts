@@ -1,4 +1,4 @@
-import type { AdminLogMessage, AdminSocketMessage, AdminState, ApiErrorBody, MessageKey, MessageParams } from '@swarmcast/shared';
+import type { AdminDesktopMessage, AdminLogMessage, AdminSocketMessage, AdminState, ApiErrorBody, MessageKey, MessageParams } from '@swarmcast/shared';
 import { tc } from '@swarmcast/shared/i18n';
 
 /** API error with the server's English text and, when known, a code to translate it. */
@@ -46,11 +46,21 @@ function isLogMessage(m: AdminSocketMessage): m is AdminLogMessage {
   return (m as Partial<AdminLogMessage>).type === 'log';
 }
 
+function isDesktopMessage(m: AdminSocketMessage): m is AdminDesktopMessage {
+  return (m as Partial<AdminDesktopMessage>).type === 'desktop';
+}
+
 /**
- * Subscribe to state pushes and activity-log messages; falls back to polling the state if the
- * socket drops (the log backlog is sent again on reconnect).
+ * Subscribe to state pushes, activity-log messages and (desktop app only) desktop state; falls
+ * back to polling the state if the socket drops (the log backlog and the desktop state are sent
+ * again on reconnect).
  */
-export function subscribe(onState: (s: AdminState) => void, onDown: (down: boolean) => void, onLog: (m: AdminLogMessage) => void = () => {}): () => void {
+export function subscribe(
+  onState: (s: AdminState) => void,
+  onDown: (down: boolean) => void,
+  onLog: (m: AdminLogMessage) => void = () => {},
+  onDesktop: (m: AdminDesktopMessage) => void = () => {},
+): () => void {
   let ws: WebSocket | null = null;
   let stopped = false;
   let poll: number | undefined;
@@ -64,6 +74,7 @@ export function subscribe(onState: (s: AdminState) => void, onDown: (down: boole
     ws.onmessage = (ev) => {
       const msg = JSON.parse(String(ev.data)) as AdminSocketMessage;
       if (isLogMessage(msg)) onLog(msg);
+      else if (isDesktopMessage(msg)) onDesktop(msg);
       else onState(msg);
     };
     ws.onclose = () => {

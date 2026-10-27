@@ -6,9 +6,12 @@
     <meta name="referrer" content="no-referrer" />
     <meta name="robots" content="noindex, nofollow" />
     <title data-i18n="join.pageTitle">Join the stream · SwarmCast</title>
-    <link rel="icon" href="data:," />
+    <link rel="icon" href="../../assets/brand/favicon/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
+    <header class="site-head">
+      <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
+    </header>
     <main class="card">
       <h1 data-i18n="join.title">Join the stream</h1>
       <p class="muted" data-i18n="join.intro">Pick a nickname so the streamer knows who is watching.</p>
@@ -25,6 +28,7 @@
         <input id="nickname" name="nickname" maxlength="24" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
         <p id="check" class="muted check" role="status" hidden>
           <span data-i18n="join.checking">Checking your browser…</span>
+          <progress id="check-progress" max="1" value="0" aria-label="Browser check progress" data-i18n-aria-label="join.checking.progress"></progress>
           <span class="tip"
             ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-check">i</button
             ><span class="tip-bubble" role="tooltip" id="tip-check" data-i18n="join.checking.tip"

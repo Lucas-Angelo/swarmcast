@@ -1,0 +1,4 @@
+/target/
+/gen/schemas/
+# Staged by scripts/build/desktop.mjs (server sidecar, MediaMTX, cloudflared, web apps).
+/staged/

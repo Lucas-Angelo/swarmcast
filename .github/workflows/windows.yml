@@ -6,10 +6,17 @@ name: Windows E2E
 # Google Chrome, Microsoft Edge and Firefox (Playwright), the real Cloudflare quick tunnel,
 # direct mode, the quality ladder and (best effort) real OBS Studio.
 
-# Runs monthly, manually (Actions tab / `gh workflow run`), or from a pull request comment
-# such as `/run all` (see pr-commands.yml). No push triggers: Actions minutes are paid on a
-# private repo.
+# Runs on pull requests and pushes to main (docs- and site-only changes skip it), monthly,
+# manually (the inputs pick other runners or suites), and as a gate of release.yml.
 on:
+  pull_request:
+    paths-ignore: &app-paths-ignore
+      - '**.md'
+      - 'docs/**'
+      - 'site/**'
+  push:
+    branches: [main]
+    paths-ignore: *app-paths-ignore
   schedule:
     - cron: '47 6 1 * *'
   workflow_dispatch:
@@ -20,18 +27,18 @@ on:
       suites:
         description: 'JSON list of suites'
         default: '["installer","app","quality","direct","obs"]'
+  workflow_call:
 
 permissions:
   contents: read
 
+# Superseded pull request runs are cancelled; runs on main, tags and schedules never are.
 concurrency:
-  group: windows-e2e-${{ github.ref }}
-  cancel-in-progress: true
+  group: windows-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: '1'
-  NODE_VERSION: 24.x
-  GO_VERSION: 1.27.x
 
 jobs:
   e2e:
@@ -44,7 +51,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     # Real OBS on a GPU-less VM is best effort until it is proven to work.
     continue-on-error: ${{ matrix.suite == 'obs' }}
-    timeout-minutes: 90
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -52,30 +59,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      # ffmpeg is only for the test harness (OBS-like feed, FFMPEG_BIN); the installer and the
+      # app run with a bare-OS PATH and never see it.
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/tray/go.sum
+          go: 'true'
+          ffmpeg: 'true'
 
       - name: Prepare
         run: |
           echo "SC_ARTIFACTS=$RUNNER_TEMP/sc-artifacts" >> "$GITHUB_ENV"
           echo "SC_RUNNER_LABEL=${{ matrix.os }}" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/sc-artifacts"
-
-      # Only the test harness uses this ffmpeg (OBS-like feed); the installer and the app run
-      # with a bare-OS PATH and never see it.
-      - name: Install ffmpeg (test feed)
-        shell: pwsh
-        run: |
-          choco install ffmpeg -y --no-progress | Out-Null
-          $f = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          & $f.FullName -hide_banner -version | Select-Object -First 1
-          "FFMPEG_BIN=$($f.FullName)" >> $env:GITHUB_ENV
 
       # Firefox decodes H.264/AAC through Media Foundation, which Windows Server only has as an
       # optional feature (Windows 10/11 have it, except the "N" editions).
@@ -87,7 +82,6 @@ jobs:
           "Server-Media-Foundation: $($f.InstallState)"
           if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
 
-      - run: npm ci
       - name: Playwright Firefox
         if: matrix.suite == 'app'
         run: npx playwright install firefox
@@ -127,9 +121,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          npm-ci: 'false'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: win-*

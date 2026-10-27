@@ -1,0 +1,23 @@
+{
+  "defaults": {
+    "width": 1024, "height": 1024, "steps": 30, "guidance": 4.0,
+    "negative": "text, letters, watermark, photo, photorealistic, 3d render, purple, violet, indigo, gradient background, busy background, blurry"
+  },
+  "jobs": [
+    {
+      "id": "M-honey", "dir": "M",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app. Chubby round body in warm golden honey amber with two deep dark brown stripes, soft cream face, big shiny friendly eyes, small happy smile, rosy cheeks, two small rounded translucent white wings, short antennae with round tips, wearing a tiny dark brown headset with a microphone, waving hello with one little hand. Flat vector cartoon illustration, bold simple shapes, clean thick dark brown outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [11, 66, 101, 202, 303, 404]
+    },
+    {
+      "id": "M-forest", "dir": "M",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app. Chubby round body in warm golden honey amber with two deep pine green teal stripes, soft cream face, big shiny friendly eyes, small happy smile, rosy cheeks, two small rounded translucent white wings, short antennae with round tips, wearing a tiny deep teal green headset with a microphone, waving hello with one little hand. Flat vector cartoon illustration, bold simple shapes, clean thick dark green outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [11, 66, 101, 202, 303, 404]
+    },
+    {
+      "id": "M-onair", "dir": "M",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app. Chubby round body in warm golden honey amber with two charcoal grey stripes, soft cream face, big shiny friendly eyes, small happy smile, rosy cheeks, two small rounded translucent white wings, short antennae with round tips, wearing a tiny bright vermilion orange-red headset with a microphone, waving hello with one little hand. Flat vector cartoon illustration, bold simple shapes, clean thick charcoal outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [11, 66, 101, 202, 303, 404]
+    }
+  ]
+}

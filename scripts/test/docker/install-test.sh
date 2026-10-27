@@ -8,7 +8,7 @@
 #   RELEASE_URL   URL of the real release folder (SHA256SUMS.txt, packages, start-linux.sh)
 #   CORRUPT_URL   URL of a release folder whose SHA256SUMS.txt lists a wrong checksum
 #   SCRIPT        Path of start-linux.sh inside the container (default /release/start-linux.sh)
-#   EXPECT_VER    Expected version (default 0.1.0)
+#   EXPECT_VER    Expected version (default 0.2.0)
 #   SKIP_SPEED    1 = pass --skip-speedtest to the first run too (default 0)
 set -u
 set -o pipefail
@@ -16,7 +16,7 @@ set -o pipefail
 RELEASE_URL="${RELEASE_URL:?RELEASE_URL is required}"
 CORRUPT_URL="${CORRUPT_URL:-}"
 SCRIPT="${SCRIPT:-/release/start-linux.sh}"
-EXPECT_VER="${EXPECT_VER:-0.1.0}"
+EXPECT_VER="${EXPECT_VER:-0.2.0}"
 SKIP_SPEED="${SKIP_SPEED:-0}"
 
 W="$(mktemp -d /tmp/sc-docker-test.XXXXXX)"
@@ -187,7 +187,7 @@ ADMIN="${LOGIN%/auth/*}"
 # argv[0] rather than /proc/PID/exe: under emulation (Rosetta/QEMU) exe is the emulator.
 eq "$(basename "$(tr '\0' '\n' <"/proc/$APP_PID/cmdline" 2>/dev/null | head -n1)")" "swarmcast" "start script exec'd into the app (same PID)"
 if [ -n "$LOGIN" ]; then
-  eq "$(curl -s -o /dev/null -c "$W/admin.jar" -w '%{http_code}' "$LOGIN")" "303" "GET /auth/<token> -> 303"
+  eq "$(curl -s -o /dev/null -c "$W/admin.jar" -w '%{http_code}' "$LOGIN")" "200" "GET /auth/<token> -> 200 (cookie + meta refresh)"
   eq "$(curl -s -o "$W/panel.html" -b "$W/admin.jar" -w '%{http_code}' "$ADMIN/")" "200" "GET / (panel) with cookie -> 200"
   if grep -qi '<script' "$W/panel.html"; then ok "panel HTML has a script tag"; else bad "panel HTML looks wrong"; fi
   eq "$(curl -s -o /dev/null -w '%{http_code}' "$ADMIN/api/state")" "401" "GET /api/state without cookie -> 401"
@@ -206,6 +206,9 @@ if [ -n "$LOGIN" ]; then
   eq "$(state | jq -r .obsConnected)" "true" "obsConnected true"
   LINK="$(state | jq -r .liveLink)"
   echo "  live link: ${LINK%/join/*}/join/<secret>"
+  # curl cannot solve the browser check (on by default since v0.2): check the default, then turn it off from the panel API.
+  eq "$(state | jq -r .security.settings.requireBrowserCheck)" "true" "browser check on by default"
+  eq "$(curl -s -o /dev/null -X PUT -b "$W/admin.jar" -H "origin: $ADMIN" -H 'content-type: application/json' -d "$(state | jq -c '.security.settings | .requireBrowserCheck = false')" -w '%{http_code}' "$ADMIN/api/security")" "200" "browser check turned off for the curl viewer"
   V="$W/viewer.jar"
   eq "$(curl -s -o /dev/null -c "$V" -b "$V" -w '%{http_code} %{redirect_url}' "$LINK")" "303 ${LINK%/join/*}/join" "GET live link -> 303 /join"
   if grep -q sc_ticket "$V"; then ok "ticket cookie set"; else bad "no ticket cookie"; fi

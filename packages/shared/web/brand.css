@@ -1,0 +1,281 @@
+/*
+ * SwarmCast brand layer, shared by the streamer panel (apps/admin) and the viewer pages
+ * (apps/viewer). Each app imports it first thing in its style.css; Vite bundles it, the
+ * tokens and the fonts into that app's /assets, so nothing loads from another host and the
+ * strict CSP (default-src 'none'; style-src/font-src/img-src 'self') holds.
+ *
+ * Single source of truth: assets/brand/tokens.css (colours, fonts, radii, shadows; light and
+ * dark through prefers-color-scheme or <html data-theme>). Never hard-code a colour in the
+ * apps: use a --sc-* token, or one of the few derived values below (built from tokens).
+ *
+ * Token mapping (what the apps used before -> brand token):
+ *   page background       --bg            -> --sc-bg
+ *   cards, inputs         --card          -> --sc-surface
+ *   tiles, quiet fills    (none)          -> --sc-surface-2
+ *   1px lines             --border        -> --sc-border (inputs, switch track: --sc-border-strong)
+ *   headings, values      --fg            -> --sc-ink
+ *   body text             --fg            -> --sc-text
+ *   secondary text        --muted         -> --sc-muted
+ *   primary fill          --accent        -> --sc-accent       (text on it: --sc-on-accent)
+ *   selected / callout    purple 8-10%    -> --sc-accent-soft
+ *   links, accent text    --accent        -> --sc-accent-strong
+ *   "waiting" fill        amber           -> --sc-secondary    (honey; text on it: --sc-on-secondary)
+ *   ok / done             --ok            -> --sc-success
+ *   warnings              --warn          -> --sc-warning
+ *   LIVE                  --live          -> --sc-live         (text on it: --sc-on-live)
+ *   errors, destructive   --danger        -> --sc-danger       (text on it: --sc-on-danger)
+ *   keyboard focus        purple ring     -> --sc-focus
+ *   body + headline font  system-ui       -> --sc-font-text    (Inter Variable, @fontsource-variable/inter)
+ *   wordmark only         (none)          -> --sc-font-display (Fredoka SemiBold, ./fonts)
+ *   code, console         ui-monospace    -> --sc-font-mono
+ *   weights               400-800         -> --sc-weight-regular | medium | semibold | bold
+ *   radii                 10-16px         -> --sc-radius-sm | md | lg | pill
+ *   shadows               glows           -> --sc-shadow (none); --sc-shadow-float for popovers/dialogs
+ */
+@import '../../../assets/brand/tokens.css';
+/* Inter Variable, self-hosted from the same package as the website (site/). */
+@import '@fontsource-variable/inter';
+
+/* Fredoka SemiBold (assets/brand/font/Fredoka-SemiBold.ttf, subset to Latin + Latin-1 as WOFF2,
+ * OFL licence in ./fonts). Display only: the wordmark, always at weight 600. */
+@font-face {
+  font-family: 'Fredoka';
+  font-style: normal;
+  font-weight: var(--sc-weight-semibold);
+  font-display: swap;
+  src: url('./fonts/fredoka-semibold-latin.woff2') format('woff2');
+}
+
+/* ---- Brand images (one place for both apps) ----------------------------------------------
+ * LOGO   the "(( bee ))" symbol, straight from assets/brand/symbol/ (light and on-dark versions).
+ *        Panel header, join, watch and "link not valid" pages.
+ * MASCOT assets/brand/mascot/mascot-{hello,sleep}.png, resized to 256 px WebP in ./img (the
+ *        1024 px originals are ~600 KB each). hello: setup tutorial welcome. sleep: empty viewers
+ *        list and the viewer's "stream ended" screen. To regenerate after a mascot change:
+ *        sips -Z 256 <png> then save as WebP (quality 88) with alpha.
+ * Elements are decorative (aria-hidden): the name "SwarmCast" is always in the text next to them. */
+.sc-symbol {
+  background: url('../../../assets/brand/symbol/swarmcast-symbol.svg') center / contain no-repeat;
+}
+.sc-mascot,
+.sc-mascot-hello {
+  background: url('./img/mascot-hello-256.webp') center / contain no-repeat;
+}
+.sc-mascot-sleep {
+  background-image: url('./img/mascot-sleep-256.webp');
+}
+:root[data-theme='dark'] .sc-symbol {
+  background-image: url('../../../assets/brand/symbol/swarmcast-symbol-on-dark.svg');
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) .sc-symbol {
+    background-image: url('../../../assets/brand/symbol/swarmcast-symbol-on-dark.svg');
+  }
+}
+
+.sc-symbol,
+.sc-mascot {
+  display: inline-block;
+  flex: none;
+}
+.sc-symbol {
+  width: 1.75em;
+  height: 1.75em;
+}
+.sc-mascot {
+  width: 96px;
+  height: 96px;
+}
+.sc-wordmark {
+  font-family: var(--sc-font-display);
+  font-weight: var(--sc-weight-semibold);
+  letter-spacing: 0.005em;
+  color: var(--sc-ink);
+}
+.sc-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-lg);
+  line-height: 1;
+}
+
+/* ---- Scales and derived values ------------------------------------------------------------ */
+:root {
+  /* Spacing: 4px grid. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+
+  /* Type: 12 · 13 · 14 · 15 · 17 · 20 · 26 · 32 px. */
+  --fs-xs: 0.75rem;
+  --fs-sm: 0.8125rem;
+  --fs-md: 0.875rem;
+  --fs-base: 0.9375rem;
+  --fs-lg: 1.0625rem;
+  --fs-xl: 1.25rem;
+  --fs-2xl: 1.625rem;
+  --fs-3xl: 2rem;
+
+  /* Status tints: 8% of the colour over the surface keeps that colour's text at AA on top. */
+  --tint-success: color-mix(in srgb, var(--sc-success) 8%, var(--sc-surface));
+  --tint-warning: color-mix(in srgb, var(--sc-warning) 8%, var(--sc-surface));
+  --tint-danger: color-mix(in srgb, var(--sc-danger) 8%, var(--sc-surface));
+  --tint-honey: color-mix(in srgb, var(--sc-secondary) 16%, var(--sc-surface));
+  --line-accent: color-mix(in srgb, var(--sc-accent) 45%, var(--sc-border));
+  --line-success: color-mix(in srgb, var(--sc-success) 45%, var(--sc-border));
+  --line-warning: color-mix(in srgb, var(--sc-warning) 45%, var(--sc-border));
+  --line-danger: color-mix(in srgb, var(--sc-danger) 45%, var(--sc-border));
+  --hover: color-mix(in srgb, var(--sc-ink) 5%, var(--sc-surface));
+  /* Not brand colours: the video letterbox and the dimmer behind dialogs are plain black. */
+  --video-bg: #000;
+  --on-video: #fff;
+  --scrim: rgb(0 0 0 / 0.5);
+}
+
+/* ---- Base --------------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  background: var(--sc-bg);
+  color: var(--sc-text);
+  font-family: var(--sc-font-text);
+  line-height: var(--lh, 1.5);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+h1,
+h2,
+h3 {
+  color: var(--sc-ink);
+}
+::selection {
+  background: color-mix(in srgb, var(--sc-accent) 25%, var(--sc-surface));
+  color: var(--sc-ink);
+}
+a {
+  color: var(--sc-accent-strong);
+  text-underline-offset: 2px;
+}
+:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: 2px;
+}
+input[type='checkbox'],
+input[type='radio'] {
+  accent-color: var(--sc-accent);
+}
+
+/* ---- Tooltips: an (i) button showing a bubble on hover, focus or tap ----------------------
+ * Behaviour: installTooltips() in packages/shared/src/i18n/browser.ts (event delegation). */
+.tip {
+  position: relative;
+  display: inline-flex;
+  vertical-align: middle;
+}
+.tip[hidden] {
+  display: none;
+}
+button.tip-btn {
+  width: 18px;
+  height: 18px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 1px solid var(--sc-border);
+  background: transparent;
+  color: var(--sc-muted);
+  font: 600 11px/1 var(--sc-font-text);
+  font-style: normal;
+  cursor: help;
+  transition:
+    color 0.12s,
+    border-color 0.12s;
+}
+button.tip-btn:hover {
+  color: var(--sc-accent-strong);
+  border-color: var(--sc-accent);
+  background: transparent;
+}
+/* Bigger hit area on touch screens without changing the look. */
+@media (pointer: coarse) {
+  button.tip-btn {
+    position: relative;
+  }
+  button.tip-btn::after {
+    content: '';
+    position: absolute;
+    inset: -10px;
+  }
+}
+.tip-bubble {
+  display: none;
+  position: fixed;
+  z-index: 1000;
+  left: 0;
+  top: 0;
+  width: max-content;
+  max-width: min(21rem, calc(100vw - 16px));
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-ink);
+  color: var(--sc-bg);
+  box-shadow: var(--sc-shadow-float);
+  font: 400 var(--fs-sm) / 1.45 var(--sc-font-text);
+  font-style: normal;
+  letter-spacing: normal;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+}
+.tip-bubble.open {
+  display: block;
+}
+
+/* ---- Icons: monochrome, drawn in currentColor (add the class; the icon is the ::before) ----- */
+[class*='sc-ico-']::before {
+  content: '';
+  display: inline-block;
+  width: 1.15em;
+  height: 1.15em;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+.sc-ico-volume::before {
+  -webkit-mask-image: url('./icons/volume.svg');
+  mask-image: url('./icons/volume.svg');
+}
+.sc-ico-eye::before {
+  -webkit-mask-image: url('./icons/eye.svg');
+  mask-image: url('./icons/eye.svg');
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

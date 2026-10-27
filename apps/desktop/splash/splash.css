@@ -1,0 +1,42 @@
+/* Colors, radius and font come only from the brand tokens (tokens.css, see tokens.stub.css). */
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+  margin: 0; background: var(--sc-bg); color: var(--sc-ink); font-family: var(--sc-font); font-size: 15px;
+  display: flex; align-items: center; justify-content: center;
+  -webkit-user-select: none; user-select: none; cursor: default;
+}
+.splash {
+  width: min(30rem, calc(100vw - 2rem)); text-align: center;
+  background: var(--sc-surface); border: 1px solid var(--sc-border); border-radius: calc(var(--sc-radius) * 1.4);
+  padding: 2.25rem 2rem 2rem;
+}
+.logo { display: block; width: 88px; height: 88px; margin: 0 auto 0.75rem; }
+.logo .tile { fill: var(--sc-accent); }
+.logo .dot { fill: var(--sc-on-accent); }
+.logo .waves { stroke: var(--sc-on-accent); }
+.brand { font-weight: 800; font-size: 1.05rem; letter-spacing: 0.01em; color: var(--sc-ink); }
+h1 { font-size: 1.3rem; margin: 1.1rem 0 0.4rem; line-height: 1.3; }
+.muted { color: var(--sc-muted); margin: 0; line-height: 1.45; white-space: pre-line; }
+.activity { height: 2.75rem; margin-top: 1.25rem; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.4rem; }
+.spinner {
+  width: 1.9rem; height: 1.9rem; border-radius: 50%;
+  border: 3px solid var(--sc-border); border-top-color: var(--sc-accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
+.bar { width: 100%; height: 0.55rem; border-radius: 999px; background: var(--sc-bg); border: 1px solid var(--sc-border); overflow: hidden; }
+.fill { height: 100%; width: 0; background: var(--sc-accent); border-radius: 999px; transition: width 0.2s ease-out; }
+.pct { font-size: 0.85rem; color: var(--sc-muted); font-variant-numeric: tabular-nums; }
+[hidden] { display: none !important; }
+.actions { display: none; gap: 0.6rem; justify-content: center; flex-wrap: wrap; margin-top: 1.5rem; }
+.splash[data-state='error'] .activity { display: none; }
+.splash[data-state='error'] .actions { display: flex; }
+.splash[data-state='error'] h1 { color: var(--sc-live); }
+button {
+  font: inherit; font-weight: 600; border-radius: var(--sc-radius); border: 1px solid var(--sc-border);
+  background: var(--sc-surface); color: var(--sc-ink); padding: 0.55rem 1rem; cursor: pointer;
+}
+button.primary { background: var(--sc-accent); color: var(--sc-on-accent); border-color: transparent; }
+button:focus-visible { outline: 2px solid var(--sc-focus); outline-offset: 2px; }

@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { Challenge } from 'altcha-lib';
 import type { CodedText, MessageKey, SecuritySettings, SecurityState } from '@swarmcast/shared';
 import type { ActivityLog } from '../core/activity.js';
@@ -6,8 +7,9 @@ import { coded } from '../core/messages.js';
 import type { PublicBlocklists } from './blocklists.js';
 import { ipPrefixLabel } from './cidr.js';
 import { AttackDetector, type DetectorOptions, type SignalName, type ThreatState } from './detector.js';
-import { JoinPow, type PowLevel, type PowVerdict } from './pow.js';
+import { JoinPow, type PowLevel, type PowResult } from './pow.js';
 import { ReactionPolicy, type ReactionActions } from './reactions.js';
+import { BrowserVerification } from './verified.js';
 
 /** Hooks the public server(s) call; implemented by SecurityShield. */
 export interface PublicSecurity {
@@ -32,7 +34,14 @@ export interface PublicSecurity {
   /** Browser check (proof-of-work) level required for new joins. */
   powLevel(): PowLevel;
   issuePow(): Promise<Challenge>;
-  verifyPow(payload: unknown): Promise<PowVerdict>;
+  verifyPow(payload: unknown): Promise<PowResult>;
+  /**
+   * The "verified" cookie of this device covers the level required now (always true while no
+   * check is required), so the proof-of-work can be skipped. Never a substitute for the link/ticket check or the ban check.
+   */
+  isVerified(token: string | undefined, deviceId: string | undefined): boolean;
+  /** New "verified" cookie value after this device solved a challenge of `level`. */
+  issueVerified(deviceId: string, level: 1 | 2): string;
 }
 
 /** Plain-words reason for each detector signal (message keys without params). */
@@ -64,6 +73,8 @@ export interface ShieldDeps {
   changed: () => void;
   now?: () => number;
   detector?: DetectorOptions;
+  /** HMAC key (hex) of the "verified" cookie, from secrets.json (random when omitted: tests). */
+  browserCheckKey?: string;
 }
 
 /**
@@ -73,6 +84,8 @@ export interface ShieldDeps {
 export class SecurityShield implements PublicSecurity {
   readonly detector: AttackDetector;
   readonly pow: JoinPow;
+  /** Survives stop()/start(): a browser stays remembered across lives (see verified.ts). */
+  readonly verification: BrowserVerification;
   private readonly policy: ReactionPolicy;
   private timer: NodeJS.Timeout | null = null;
   private tightened = false;
@@ -87,6 +100,7 @@ export class SecurityShield implements PublicSecurity {
     const now = d.now ?? Date.now;
     this.detector = new AttackDetector({ now, ...d.detector });
     this.pow = new JoinPow(now);
+    this.verification = new BrowserVerification(d.browserCheckKey ?? crypto.randomBytes(32).toString('hex'), now);
     this.policy = new ReactionPolicy(d.settings, {
       ...d.actions,
       backToSecure: async () => {
@@ -194,8 +208,16 @@ export class SecurityShield implements PublicSecurity {
     return this.pow.issue(this.powLevel() === 2 ? 2 : 1);
   }
 
-  verifyPow(payload: unknown): Promise<PowVerdict> {
-    return this.pow.verify(payload);
+  verifyPow(payload: unknown): Promise<PowResult> {
+    return this.pow.verifyLevel(payload);
+  }
+
+  isVerified(token: string | undefined, deviceId: string | undefined): boolean {
+    return this.verification.covers(token, deviceId, this.powLevel());
+  }
+
+  issueVerified(deviceId: string, level: 1 | 2): string {
+    return this.verification.issue(deviceId, level);
   }
 
   // ---- admission ----

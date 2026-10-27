@@ -1,0 +1,100 @@
+---
+// "1,230 downloads · 40 apps opened this week", from site/public/stats.json (GitHub's public
+// counters, see scripts/stats/). Hidden until the numbers exist; no third-party request.
+import Icon from './Icon.astro';
+import { BASE, pagePath, tr, type SiteLang } from '../lib/i18n';
+
+interface Props {
+  lang: SiteLang;
+}
+const { lang } = Astro.props;
+---
+
+<section class="sc-stats" data-testid="usage-stats" data-lang={lang} data-stats={`${BASE}/stats.json`} aria-label={tr(lang, 'stats.title')} hidden>
+  <dl>
+    <div data-testid="stats-downloads" hidden>
+      <dt>{tr(lang, 'stats.downloads')}</dt>
+      <dd data-n></dd>
+    </div>
+    <div data-testid="stats-apps" hidden>
+      <dt>{tr(lang, 'stats.apps')}</dt>
+      <dd data-n></dd>
+    </div>
+  </dl>
+  <p>
+    <span>{tr(lang, 'stats.note')}</span>
+    <a class="sc-link" href={pagePath(lang, `about/privacy#${tr(lang, 'anchor.stats')}`)}>
+      {tr(lang, 'stats.how')}
+      <Icon name="arrow-right" size={14} class="sc-arrow" />
+    </a>
+  </p>
+</section>
+
+<script>
+  import { formatCount, loadUsage } from '../lib/stats';
+  import type { SiteLang } from '../lib/i18n';
+
+  for (const root of document.querySelectorAll<HTMLElement>('.sc-stats')) {
+    const lang = (root.dataset.lang ?? 'en') as SiteLang;
+    void loadUsage(root.dataset.stats ?? '').then((u) => {
+      const fill = (id: string, n: number | null) => {
+        const item = root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+        if (!item || n === null) return false;
+        item.querySelector<HTMLElement>('[data-n]')!.textContent = formatCount(n, lang);
+        item.hidden = false;
+        return true;
+      };
+      const a = fill('stats-downloads', u.downloads);
+      const b = fill('stats-apps', u.appsWeek);
+      root.hidden = !(a || b);
+    });
+  }
+</script>
+
+<style>
+  .sc-stats[hidden],
+  .sc-stats [hidden] {
+    display: none;
+  }
+  .sc-stats {
+    display: grid;
+    gap: 1.25rem;
+  }
+  dl {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem 3rem;
+    margin: 0;
+  }
+  dl > div {
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 0.125rem;
+  }
+  dd {
+    margin: 0;
+    color: var(--sc-ink);
+    font-size: clamp(2rem, 1.6rem + 1.5vw, 2.75rem);
+    font-weight: 600;
+    line-height: 1.1;
+    letter-spacing: -0.03em;
+    font-variant-numeric: tabular-nums;
+  }
+  dt {
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  p {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+    color: var(--sc-muted);
+    font-size: var(--sc-text-small);
+  }
+  a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+  }
+</style>

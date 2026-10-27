@@ -1,0 +1,95 @@
+---
+// "Page not found", in both languages (GitHub Pages serves this one 404.html for every missing
+// path). A missing page under /pt-br/ shows the Portuguese block first. Not indexed.
+import { Image } from 'astro:assets';
+import SiteLayout from '../layouts/SiteLayout.astro';
+import { BASE, pagePath, type SiteLang } from '../lib/i18n';
+import sleepy from '../../../assets/brand/mascot/mascot-sleep.png';
+
+const text: Record<SiteLang, { title: string; lead: string; links: [string, string][] }> = {
+  en: {
+    title: 'Page not found',
+    lead: 'This page does not exist or has moved. One of these should help:',
+    links: [
+      ['', 'Home'],
+      ['guide', 'The guide'],
+      ['download', 'Download SwarmCast'],
+      ['help/troubleshooting', 'Troubleshooting and FAQ'],
+    ],
+  },
+  'pt-BR': {
+    title: 'Página não encontrada',
+    lead: 'Esta página não existe ou mudou de lugar. Um destes links deve ajudar:',
+    links: [
+      ['', 'Início'],
+      ['guide', 'O guia'],
+      ['download', 'Baixar o SwarmCast'],
+      ['help/troubleshooting', 'Problemas e dúvidas'],
+    ],
+  },
+};
+const ptFirst = `if (location.pathname.indexOf(${JSON.stringify(`${BASE}/pt-br/`)}) === 0) document.documentElement.dataset.nfPt = '';`;
+---
+
+<SiteLayout lang="en" slug="" title="Page not found · Página não encontrada | SwarmCast" description="This page does not exist. Esta página não existe." notFound>
+  <script is:inline set:html={ptFirst} />
+  <section class="sc-section sc-container sc-nf">
+    <Image class="sc-nf-mascot" src={sleepy} alt="" width={160} loading="eager" />
+    <div class="sc-nf-langs">
+      {
+        (['en', 'pt-BR'] as const).map((lang) => (
+          <div class="sc-nf-block" lang={lang} data-lang={lang}>
+            <h1 class="sc-h2">{text[lang].title}</h1>
+            <p class="sc-lead">{text[lang].lead}</p>
+            <ul>
+              {text[lang].links.map(([slug, label]) => (
+                <li>
+                  <a href={pagePath(lang, slug)}>{label}</a>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+</SiteLayout>
+
+<style>
+  .sc-nf {
+    display: grid;
+    justify-items: center;
+    gap: var(--sc-space-6);
+    text-align: center;
+  }
+  .sc-nf-mascot {
+    width: min(160px, 40vw);
+    height: auto;
+  }
+  .sc-nf-langs {
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+  }
+  :global(html[data-nf-pt]) .sc-nf-langs {
+    flex-direction: column-reverse;
+  }
+  .sc-nf-block {
+    display: grid;
+    gap: 0.75rem;
+    justify-items: center;
+  }
+  .sc-nf-block ul {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.5rem 1.5rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .sc-nf-block a {
+    color: var(--sc-accent-strong);
+    font-weight: 500;
+  }
+</style>

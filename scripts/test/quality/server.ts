@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { createApp } from '../../../apps/server/src/app.js';
+import { defaultConfig } from '../../../apps/server/src/core/config.js';
 import { pushTestStream } from '../../../apps/server/test/integration/helpers.js';
 
 export const QUALITY_PORTS = { rtmp: 45935, public: 45080, admin: 45081, mediamtxHls: 45888 };
@@ -22,6 +23,8 @@ const app = await createApp({
     speedTest: { enabled: false, intervalMinutes: 15 },
     // The upload cap must not be the bottleneck in these experiments (the browser emulates the network).
     uploadLimitMbps: 1000,
+    // bench.ts / menu-check.ts join with a plain POST (no browser check, which is on by default).
+    security: { ...defaultConfig().security, requireBrowserCheck: false },
     ffmpegPath: process.env.FFMPEG ?? 'ffmpeg',
     quality: {
       // Same renditions as auto mode with a GPU encoder (override: LADDER_HEIGHTS=720,480).

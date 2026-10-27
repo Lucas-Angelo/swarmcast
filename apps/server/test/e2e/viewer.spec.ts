@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { admin, adminState, currentTime, join, liveLink, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, adminState, currentTime, join, liveLink, stats, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
 
@@ -14,11 +14,28 @@ test('a viewer joins with the live link, picks a nickname and watches', async ({
   const { context, page } = await join(browser, nick);
   await waitPlaying(page);
   await expect(page.locator('#status')).toHaveText('Live');
-  // "Help the stream (P2P)" is on by default.
-  await expect(page.locator('#p2p')).toBeChecked();
+  // "Help the stream (P2P)" is off by default (opt-in).
+  await expect(page.locator('#p2p')).not.toBeChecked();
   await expect.poll(async () => (await viewerByNick(nick))?.connected).toBe(true);
   // The secret never stays in the address bar.
   expect(page.url()).not.toContain('/join/');
+  await context.close();
+});
+
+test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', async ({ browser, browserName }) => {
+  const { context, page } = await join(browser, `optin-${browserName}`);
+  await waitPlaying(page);
+  const p2p = page.locator('#p2p');
+  await expect(p2p).not.toBeChecked();
+  await expect(p2p).toBeEnabled();
+  expect((await stats(page)).p2pEnabled).toBe(false);
+  await p2p.check();
+  await expect.poll(async () => (await stats(page)).p2pEnabled).toBe(true);
+  await expect(page.locator('#p2p-stats')).toContainText('P2P on');
+  // Same browser, next visit: still on.
+  await page.reload();
+  await expect(page.locator('#p2p')).toBeChecked();
+  await expect.poll(async () => (await stats(page)).p2pEnabled).toBe(true);
   await context.close();
 });
 
@@ -71,13 +88,18 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   const { context, page } = await join(browser, `golive-${browserName}`);
   await waitPlaying(page);
   const goLive = page.getByTestId('go-live');
-  await expect(goLive).toHaveText('● LIVE');
+  await expect(goLive).toHaveText('LIVE');
   await page.evaluate(() => document.querySelector('video')!.pause());
-  await page.waitForTimeout(10_000);
   await expect(goLive).toContainText('Go live');
-  expect(Number(await goLive.getAttribute('data-behind'))).toBeGreaterThan(5);
+  // "Behind" counts from the live sync point (live edge − target delay). A viewer who joined a
+  // young stream starts closer to live than that delay, so the pause first uses up the gap:
+  // wait until it reads more than 5 s instead of a fixed time. The playhead must not move.
+  const pausedAt = await currentTime(page);
+  await expect.poll(async () => Number(await goLive.getAttribute('data-behind')), { timeout: 45_000, intervals: [1000] }).toBeGreaterThan(5);
+  await expect(goLive).toContainText('Go live');
+  expect(Math.abs((await currentTime(page)) - pausedAt)).toBeLessThan(0.5);
   await goLive.click();
-  await expect(goLive).toHaveText('● LIVE', { timeout: 15_000 });
+  await expect(goLive).toHaveText('LIVE', { timeout: 15_000 });
   const behind = await page.evaluate(() => {
     const hls = (window as unknown as { __hls: { liveSyncPosition: number | null } }).__hls;
     return (hls.liveSyncPosition ?? 0) - document.querySelector('video')!.currentTime;
@@ -93,7 +115,7 @@ test('viewers see how many people are watching', async ({ browser, browserName }
   const a = await join(browser, `countA-${browserName}`);
   const b = await join(browser, `countB-${browserName}`);
   for (const p of [a.page, b.page]) {
-    await expect(p.getByTestId('viewer-count')).toHaveText('👁 2 watching', { timeout: 20_000 });
+    await expect(p.getByTestId('viewer-count')).toHaveText('2 watching', { timeout: 20_000 });
   }
   await a.context.close();
   await b.context.close();

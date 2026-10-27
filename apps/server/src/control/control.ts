@@ -1,18 +1,56 @@
 import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { CONTROL_MAX_MESSAGE, HASH_FAILURE_THRESHOLD, clientMessageSchema, type ServerMessage } from '@swarmcast/shared';
+import {
+  CONTROL_MAX_MESSAGE,
+  HASH_FAILURE_THRESHOLD,
+  MAX_TRACKER_CHANNELS,
+  TRACKER_MAX_MESSAGE,
+  clientMessageSchema,
+  encodeTrackerFrame,
+  isTrackerFrame,
+  parseTrackerFrame,
+  type ServerMessage,
+} from '@swarmcast/shared';
 import type { AccessControl, Session } from '../access/access.js';
 import type { Logger } from '../core/logger.js';
+import type { TrackerChannel } from '../tracker/channel.js';
 
-type ControlSocket = WebSocket & { sessionId: string; alive: boolean; msgs: { n: number; at: number } };
+type ControlSocket = WebSocket & {
+  sessionId: string;
+  alive: boolean;
+  msgs: { n: number; at: number };
+  /** All frames (control + tracker) in the current 10 s window. */
+  frames: { n: number; at: number };
+  /** Tracker channel opens in the current minute. */
+  opens: { n: number; at: number };
+  upgradeReq: IncomingMessage;
+  channels: Map<number, TrackerChannel>;
+};
+
+/** Where tracker channels go (TrackerService). */
+export interface TrackerChannelHost {
+  openChannel(carrier: WebSocket, id: number, req: IncomingMessage, session: Session): TrackerChannel | null;
+}
+
+/** Frames of any kind per control socket per 10 s (30 control + 2 × 60 tracker, with room). */
+const MAX_FRAMES_PER_10S = 200;
+/** Tracker channel opens per control socket per minute (p2p-media-loader reconnects with back-off). */
+const MAX_CHANNEL_OPENS_PER_MIN = 12;
 
 /**
  * Control channel: server → viewer orders (kick, P2P revoke, block peers, end) and
  * viewer → server reports (stats, hash failures). WebSocket, because quick tunnels
  * do not support Server-Sent Events.
+ *
+ * It also carries the viewer's WebTorrent tracker connection as a channel
+ * (packages/shared/src/mux.ts): a quick tunnel counts every open WebSocket against its
+ * 200-requests-in-flight limit, so one socket per viewer instead of two doubles the audience
+ * it can hold.
  */
 export class ControlChannel {
+  /** Set by the live: tracker channels are refused until then. */
+  tracker: TrackerChannelHost | null = null;
   private readonly wss: WebSocketServer;
   private readonly conns = new Map<string, Set<ControlSocket>>();
   /** Peer ids every viewer must refuse to talk to. */
@@ -28,7 +66,9 @@ export class ControlChannel {
     private readonly access: AccessControl,
     private readonly log: Logger,
   ) {
-    this.wss = new WebSocketServer({ noServer: true, maxPayload: CONTROL_MAX_MESSAGE, perMessageDeflate: false, clientTracking: false });
+    // Tracker frames (WebRTC offers) are bigger than control messages; control frames are
+    // still held to CONTROL_MAX_MESSAGE in onMessage.
+    this.wss = new WebSocketServer({ noServer: true, maxPayload: TRACKER_MAX_MESSAGE + 16, perMessageDeflate: false, clientTracking: false });
     this.pingTimer = setInterval(() => this.heartbeat(), 20_000);
     this.pingTimer.unref();
   }
@@ -39,6 +79,10 @@ export class ControlChannel {
       s.sessionId = session.id;
       s.alive = true;
       s.msgs = { n: 0, at: Date.now() };
+      s.frames = { n: 0, at: Date.now() };
+      s.opens = { n: 0, at: Date.now() };
+      s.upgradeReq = req;
+      s.channels = new Map();
       let set = this.conns.get(session.id);
       if (!set) this.conns.set(session.id, (set = new Set()));
       set.add(s);
@@ -46,6 +90,8 @@ export class ControlChannel {
       if (set.size === 1) this.onPresence(session, true);
       s.on('pong', () => (s.alive = true));
       s.on('close', () => {
+        for (const ch of s.channels.values()) ch.remoteClosed();
+        s.channels.clear();
         set.delete(s);
         const current = this.access.sessions.get(session.id);
         if (current) current.connections = set.size;
@@ -56,7 +102,8 @@ export class ControlChannel {
         t: 'hello',
         sessionId: session.id,
         nickname: session.nickname,
-        p2pAllowed: session.p2pAllowed,
+        p2pAllowed: this.access.p2pAllowed(session),
+        p2pForAll: this.access.p2pForAll,
         blockedPeers: [...this.blockedPeers],
         viewerCount: this.viewerCount(),
       });
@@ -65,14 +112,27 @@ export class ControlChannel {
 
   private onMessage(s: ControlSocket, text: string, isBinary: boolean): void {
     const now = Date.now();
-    if (now - s.msgs.at > 10_000) s.msgs = { n: 0, at: now };
-    if (++s.msgs.n > 30 || isBinary) {
+    if (now - s.frames.at > 10_000) s.frames = { n: 0, at: now };
+    if (++s.frames.n > MAX_FRAMES_PER_10S || isBinary) {
       s.terminate();
       return;
     }
     const session = this.access.sessions.get(s.sessionId);
     if (!session) {
       s.close(4001, 'session ended');
+      return;
+    }
+    if (isTrackerFrame(text)) {
+      this.onTrackerFrame(s, text, session, now);
+      return;
+    }
+    if (text.length > CONTROL_MAX_MESSAGE) {
+      s.close(1009, 'message too big');
+      return;
+    }
+    if (now - s.msgs.at > 10_000) s.msgs = { n: 0, at: now };
+    if (++s.msgs.n > 30) {
+      s.terminate();
       return;
     }
     let parsed;
@@ -86,7 +146,7 @@ export class ControlChannel {
     session.lastSeenAt = now;
     switch (msg.t) {
       case 'stats':
-        session.p2pEnabled = msg.p2pEnabled && session.p2pAllowed;
+        session.p2pEnabled = msg.p2pEnabled && this.access.p2pAllowed(session);
         session.device = msg.device;
         session.stats = {
           httpBytes: msg.httpBytes,
@@ -113,6 +173,38 @@ export class ControlChannel {
       case 'pong':
         break;
     }
+  }
+
+  private onTrackerFrame(s: ControlSocket, text: string, session: Session, now: number): void {
+    const frame = parseTrackerFrame(text);
+    if (!frame) return;
+    if (frame.op === 'data') {
+      s.channels.get(frame.id)?.deliver(frame.payload);
+      return;
+    }
+    if (frame.op === 'close') {
+      const ch = s.channels.get(frame.id);
+      s.channels.delete(frame.id);
+      ch?.remoteClosed();
+      return;
+    }
+    // open
+    if (now - s.opens.at > 60_000) s.opens = { n: 0, at: now };
+    if (++s.opens.n > MAX_CHANNEL_OPENS_PER_MIN) {
+      s.terminate();
+      return;
+    }
+    const refuse = (): void => {
+      if (s.readyState === s.OPEN) s.send(encodeTrackerFrame({ op: 'close', id: frame.id }));
+    };
+    if (s.channels.has(frame.id) || s.channels.size >= MAX_TRACKER_CHANNELS || !this.tracker) return refuse();
+    const ch = this.tracker.openChannel(s, frame.id, s.upgradeReq, session);
+    if (!ch) return refuse();
+    s.channels.set(frame.id, ch);
+    // Closed from our side (P2P revoked, rate limit, live reset): forget it.
+    ch.once('close', () => {
+      if (s.channels.get(frame.id) === ch) s.channels.delete(frame.id);
+    });
   }
 
   private sendTo(s: WebSocket, msg: ServerMessage): void {

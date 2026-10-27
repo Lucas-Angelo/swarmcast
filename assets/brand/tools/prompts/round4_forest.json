@@ -1,0 +1,55 @@
+{
+  "defaults": {"width": 1024, "height": 1024, "zsteps": 9},
+  "jobs": [
+    {
+      "id": "A6-live", "dir": "A",
+      "prompt": "A cute friendly round bee mascot character for a live streaming app, broadcasting live and excited. Chubby round body in warm golden honey amber with two deep pine green teal stripes, soft cream face, big shiny friendly eyes, open happy smile, rosy cheeks, two small rounded translucent white wings, short antennae with round tips, wearing a tiny deep teal green headset with a microphone, holding a tiny retro video camera with a small glowing red recording light. Flat vector cartoon illustration, bold simple shapes, clean thick dark green outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "A7-sleep", "dir": "A",
+      "prompt": "A cute friendly round bee mascot character sleeping peacefully, eyes closed with a calm little smile, curled up and resting on a small soft honeycomb pillow. Chubby round body in warm golden honey amber with two deep pine green teal stripes, soft cream face, rosy cheeks, two small rounded translucent white wings folded, short antennae with round tips drooping, a tiny deep teal green headset resting around its neck. Flat vector cartoon illustration, bold simple shapes, clean thick dark green outline, sticker style, few colors, full body, centered on a plain white background, no text, no letters.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "A8-hello", "dir": "A",
+      "prompt": "A cute friendly round bee mascot character flying and waving hello with a big welcoming smile. Chubby round body in warm golden honey amber with two deep pine green teal stripes, soft cream face, big shiny friendly eyes, rosy cheeks, two small rounded translucent white wings spread out, short antennae with round tips, wearing a tiny deep teal green headset with a microphone. Flat vector cartoon illustration, bold simple shapes, clean thick dark green outline, sticker style, few colors, full body, centered on a plain white background, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "A9-icon", "dir": "A",
+      "prompt": "Square app icon: the round face of a cute friendly bee mascot with a cream face, golden honey amber head, big dark eyes, small smile, short antennae with round tips and a tiny cream headset with microphone, centered on a solid deep pine green teal background. Flat vector icon design, bold simple shapes, very few colors, readable at small size, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "B4f", "dir": "B",
+      "prompt": "Minimalist logo symbol: a rounded play button triangle pointing right, made of a swarm of small round dots and a few tiny bees, the dots stream in along curved flight paths from the left and pack together into the solid triangle shape. Deep pine green teal triangle with golden honey amber dots. Flat vector logo mark, bold simple geometric shapes, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "B5f", "dir": "B",
+      "prompt": "Minimalist logo symbol: a cute minimal bee whose striped body is a rounded play button triangle pointing right, golden honey amber with deep pine green teal stripes, two small rounded cream wings on top, a small round eye near the tip, a short dotted flight trail behind it. Flat vector logo mark, bold geometric shapes, very few colors, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "C3f", "dir": "C",
+      "prompt": "Minimalist logo symbol: a single honeycomb cell drawn as a soft rounded hexagon in deep pine green teal, inside it a golden honey amber dot with two curved broadcast signal arcs on each side, like a live broadcast icon inside a beehive cell. Flat vector logo mark, bold simple geometric shapes, two colors only, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "C4f", "dir": "C",
+      "prompt": "Minimalist logo symbol: a friendly traditional dome-shaped straw beehive (skep) in golden honey amber with rounded horizontal bands and a small dark arched entrance, acting as a broadcast tower: deep pine green teal radio signal arcs radiate from the top of the hive on both sides. Flat vector logo mark, bold simple shapes, two colors, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "D1f", "dir": "D",
+      "prompt": "Minimalist logo symbol: a cute minimal round bee seen from the front, golden honey amber oval body with two deep pine green teal stripes, two dot eyes and a small smile, two short antennae with round tips. Instead of wings it has broadcast radio wave arcs, two curved deep pine green teal arcs on each side of the body like the symbol (( )), so the bee looks like it is transmitting a live signal. Flat vector logo mark, bold simple geometric shapes, two colors only, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    },
+    {
+      "id": "D2f", "dir": "D",
+      "prompt": "Minimalist logo symbol: a small striped honey bee in golden amber and deep pine green teal, flying, its two wings drawn as curved broadcast signal arcs that spread outward like radio waves, round and friendly geometric style. Flat vector logo mark, bold simple shapes, two colors only, centered on a plain cream background, generous margin, no text.",
+      "seeds": [202, 11, 66, 101, 303, 404]
+    }
+  ]
+}

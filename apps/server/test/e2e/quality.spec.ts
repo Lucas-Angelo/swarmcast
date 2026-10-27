@@ -1,29 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import type { QualitySettingsUpdate, QualityState } from '@swarmcast/shared';
-import { adminApi, e2eServerPid, join, waitPlaying } from './fixtures.js';
+import type { QualityState } from '@swarmcast/shared';
+import { adminApi, join, ladderUpdate as update, reconnectObs, waitPlaying } from './fixtures.js';
 
 type Hls = { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; targetLatency: number };
 
 test.describe.configure({ mode: 'serial' });
-
-const PUSH_FILE = path.join('test-results', 'e2e-push.json');
-
-/** Make the fake OBS reconnect with these options (the e2e server reads the file on SIGUSR2). */
-function reconnectObs(options: { size?: string; kbps?: number } | null): void {
-  if (options) fs.writeFileSync(PUSH_FILE, JSON.stringify(options));
-  else fs.rmSync(PUSH_FILE, { force: true });
-  process.kill(e2eServerPid(), 'SIGUSR2');
-}
-
-function update(q: QualityState, ladder: Partial<QualitySettingsUpdate['ladder']>): QualitySettingsUpdate {
-  return {
-    ...q.settings,
-    ladder: { ...q.settings.ladder, ...ladder },
-    obsWebsocket: { enabled: q.settings.obsWebsocket.enabled, url: q.settings.obsWebsocket.url },
-  };
-}
 
 test('with the quality ladder on, the viewer menu lists the renditions; switching quality and profile keeps playing', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');
@@ -33,8 +14,9 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   test.setTimeout(240_000);
 
   try {
-    // Turn on 480p + 360p (manual: works with a GPU encoder or x264), then OBS reconnects at 720p.
-    await adminApi('PUT', '/api/quality', update(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'auto' }));
+    // Turn on 480p + 360p (manual, x264 forced: `auto` keeps only the original on a PC without a
+    // GPU encoder and with fewer than 6 CPU threads, like the CI runners), then OBS reconnects at 720p.
+    await adminApi('PUT', '/api/quality', update(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
     reconnectObs({ size: '1280x720', kbps: 2500 });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })

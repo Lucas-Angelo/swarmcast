@@ -4,6 +4,7 @@ import tls from 'node:tls';
 import type { CodedText, DirectModeState, MessageKey, MessageParams } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
 import { CodedError, coded } from '../core/messages.js';
+import { canBindPort } from '../core/ports.js';
 import type { Logger } from '../core/logger.js';
 import type { StateStore } from '../core/state.js';
 import type { CertificateIssuer, IssuedCert } from './certs.js';
@@ -36,7 +37,12 @@ export interface DirectDeps {
   /** TCP reachability probe used to confirm the port is closed afterwards. */
   probe?: (host: string, port: number) => Promise<boolean>;
   random?: () => number;
+  /** Can the public server listen on host:port? (tests; default: a real bind, see ports.ts) */
+  canBind?: (port: number, host: string) => Promise<boolean>;
 }
+
+/** Random ports tried before giving up (Windows can reserve large blocks of high ports). */
+const PORT_TRIES = 25;
 
 /** `message` is English; `code`/`params` let the panel translate it. */
 type Coded = { message: string; code: MessageKey; params?: MessageParams };
@@ -144,6 +150,24 @@ export class DirectMode {
   }
 
   /**
+   * A random high port the public server can really listen on. Checked before anything is
+   * mapped on the router: Windows reserves whole ranges of high ports (Hyper-V, WinNAT) where
+   * listening fails with EACCES, and another program may already use the port.
+   */
+  async pickBindablePort(host: string): Promise<number> {
+    const canBind = this.d.canBind ?? canBindPort;
+    const tried: number[] = [];
+    for (let i = 0; i < PORT_TRIES; i++) {
+      const port = this.pickPort();
+      if (tried.includes(port)) continue;
+      tried.push(port);
+      if (await canBind(port, host)) return port;
+    }
+    this.d.log.warn({ tried }, 'direct mode: no port could be opened');
+    throw new CodedError('err.directNoPort');
+  }
+
+  /**
    * Turn direct mode on. Opens exactly one random high external port pointing to the
    * public SwarmCast server (never 1935 or the admin port). Returns the base URL.
    */
@@ -153,7 +177,7 @@ export class DirectMode {
     if (!check.ok) throw new CodedError(check.code, check.params);
     if (check.needsManualForward && !opts.manualPortForward) throw new CodedError(check.code, check.params);
 
-    const externalPort = this.pickPort();
+    const externalPort = await this.pickBindablePort(check.family === 4 ? '0.0.0.0' : '::');
     const internalPort = externalPort;
     const localHost = check.family === 4 ? await this.d.localAddress() : '::';
     try {

@@ -17,6 +17,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   let app: App;
   let ffmpeg: ChildProcess | null = null;
   let jar: Jar;
+  const state = () => JSON.stringify({ phase: app.live.phase, source: app.live.origin.sourceKind, quality: app.live.quality.state() });
 
   beforeAll(async () => {
     app = await createApp({
@@ -27,10 +28,12 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
       configOverrides: {
         ports: PORTS,
         speedTest: { enabled: false, intervalMinutes: 15 },
-        // The system ffmpeg; manual ladder so the test also runs on machines without a GPU encoder.
+        // The system ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
+        // on machines without a GPU encoder and with fewer than 6 CPU threads (CI runners), where
+        // `encoder: 'auto'` keeps only the original quality to protect OBS.
         ffmpegPath: 'ffmpeg',
         quality: {
-          ladder: { mode: 'manual', enabled: true, heights: [720, 480], encoder: 'auto' },
+          ladder: { mode: 'manual', enabled: true, heights: [720, 480], encoder: 'libx264' },
           upload: { mode: 'manual', otherStreamKbps: null, headroomPercent: 15 },
           obsWebsocket: { enabled: false, url: 'ws://127.0.0.1:4455' },
         },
@@ -39,7 +42,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     await app.live.quality.probe();
     await app.live.start();
     ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });
-    await waitFor(() => app.live.phase === 'live' && app.live.origin.sourceKind === 'ladder' && app.live.quality.transcoder.status === 'running', 60_000, 'ladder to become live');
+    await waitFor(() => app.live.phase === 'live' && app.live.origin.sourceKind === 'ladder' && app.live.quality.transcoder.status === 'running', 60_000, 'ladder to become live', state);
     jar = await joinAs(BASE, app.live.snapshot().liveLink!, 'Ladder');
   });
 
@@ -102,7 +105,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     await waitFor(async () => {
       const pl = await (await jar.fetch('/hls/v720.m3u8')).text();
       return pl.includes('#EXT-X-DISCONTINUITY') && app.live.quality.transcoder.status === 'running';
-    }, 40_000, 'ladder restart');
+    }, 40_000, 'ladder restart', state);
     const after = await (await jar.fetch('/hls/v720.m3u8')).text();
     expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
     expect((after.match(/#EXT-X-MAP/g) ?? []).length).toBeGreaterThanOrEqual(1);
@@ -114,13 +117,13 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     const seqBefore = Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(before)![1]);
     const lastBefore = mediaSegments(before).pop()!;
     ffmpeg?.kill('SIGKILL');
-    await waitFor(() => app.live.quality.transcoder.status === 'off', 20_000, 'ladder stop after OBS left');
+    await waitFor(() => app.live.quality.transcoder.status === 'off', 20_000, 'ladder stop after OBS left', state);
     ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });
     const oldRun = lastBefore.split('_')[0]!;
     await waitFor(async () => {
       const res = await jar.fetch('/hls/v480.m3u8');
       return res.ok && mediaSegments(await res.text()).some((s) => !s.startsWith(oldRun));
-    }, 60_000, 'ladder back after reconnect');
+    }, 60_000, 'ladder back after reconnect', state);
     const after = await (await jar.fetch('/hls/v480.m3u8')).text();
     expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
     // If segments of the previous session are still listed, the restart is marked.

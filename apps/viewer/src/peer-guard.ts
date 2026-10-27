@@ -12,6 +12,8 @@
  * Installed before the player starts (import './peer-guard-install' first).
  */
 
+import { trackerMux } from './tracker-mux.js';
+
 export function asciiToHex(s: string): string {
   let out = '';
   for (let i = 0; i < s.length; i++) out += (s.charCodeAt(i) & 0xff).toString(16).padStart(2, '0');
@@ -26,12 +28,43 @@ export function iceUfrag(sdp: string | undefined): string | null {
 
 class Guard {
   private blocked = new Set<string>();
+  /** Peers this viewer dropped by itself (dead or too slow), until the given time (ms). */
+  private dropped = new Map<string, number>();
   private ufragToPeer = new Map<string, string>();
   private connections = new Map<RTCPeerConnection, string | null>();
-  trackerUrl = '';
 
   isBlocked(peerHex: string): boolean {
-    return this.blocked.has(peerHex);
+    return this.blocked.has(peerHex) || this.isDropped(peerHex);
+  }
+
+  private isDropped(peerHex: string): boolean {
+    const until = this.dropped.get(peerHex);
+    if (until === undefined) return false;
+    if (Date.now() < until) return true;
+    this.dropped.delete(peerHex);
+    return false;
+  }
+
+  /**
+   * Close our connection to a peer that does not deliver (local decision, not a server ban)
+   * and ignore its offers for `ms`. Returns the number of connections closed.
+   */
+  drop(peerHex: string, ms: number): number {
+    this.dropped.set(peerHex, Date.now() + ms);
+    return this.closePeer(peerHex);
+  }
+
+  /** Close every connection we have to this peer. */
+  closePeer(peerHex: string): number {
+    let closed = 0;
+    for (const [pc, peer] of this.connections) {
+      if (peer === peerHex) {
+        pc.close();
+        this.connections.delete(pc);
+        closed++;
+      }
+    }
+    return closed;
   }
 
   /** Inspect a tracker message. Returns false when it must be dropped. */
@@ -48,7 +81,7 @@ class Guard {
     }
     if (typeof msg.peer_id !== 'string') return true;
     const peerHex = asciiToHex(msg.peer_id);
-    if (this.blocked.has(peerHex)) return false;
+    if (this.isBlocked(peerHex)) return false;
     const ufrag = iceUfrag(msg.offer?.sdp ?? msg.answer?.sdp);
     if (ufrag) this.ufragToPeer.set(ufrag, peerHex);
     return true;
@@ -66,7 +99,7 @@ class Guard {
     const ufrag = iceUfrag(sdp);
     const peer = ufrag ? (this.ufragToPeer.get(ufrag) ?? null) : null;
     this.connections.set(pc, peer);
-    if (peer && this.blocked.has(peer)) {
+    if (peer && this.isBlocked(peer)) {
       pc.close();
       this.connections.delete(pc);
       return false;
@@ -116,17 +149,18 @@ export function installPeerGuard(): void {
       return (original as (...a: unknown[]) => Promise<void>).call(this, desc, ...rest);
     } as typeof proto.setRemoteDescription;
   }
+  // Tracker connections become channels inside the /control socket (tracker-mux.ts): one
+  // WebSocket per viewer through the quick tunnel. Every tracker message passes the guard first.
+  trackerMux.filter = (data) => peerGuard.onTrackerMessage(data);
   const NativeWS = window.WebSocket;
-  class GuardedWebSocket extends NativeWS {
+  class MuxedWebSocket extends NativeWS {
     constructor(url: string | URL, protocols?: string | string[]) {
-      super(url, protocols);
-      if (peerGuard.trackerUrl && String(url).startsWith(peerGuard.trackerUrl)) {
-        // Registered before the library sets onmessage, so it runs first and can stop it.
-        this.addEventListener('message', (ev) => {
-          if (!peerGuard.onTrackerMessage(ev.data)) ev.stopImmediatePropagation();
-        });
+      if (trackerMux.handles(String(url))) {
+        // A derived constructor may return another object instead of calling super().
+        return trackerMux.create(String(url)) as unknown as MuxedWebSocket;
       }
+      super(url, protocols);
     }
   }
-  window.WebSocket = GuardedWebSocket as typeof WebSocket;
+  window.WebSocket = MuxedWebSocket as typeof WebSocket;
 }

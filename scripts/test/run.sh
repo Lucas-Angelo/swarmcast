@@ -453,7 +453,7 @@ assert_no_staging
 assert_tmp_empty
 end
 
-begin "8b. second run from the bundle: already up to date; private repo (HTTP 404) is fine"
+begin "8b. second run from the bundle: already up to date; HTTP 404 from the release server is fine"
 make_bundle 0.1.0 "$URL/private-repo"
 : >"$REQ_LOG"
 run_bundle "${COMMON[@]}" --smoke-test
@@ -558,7 +558,7 @@ assert_no_file "$DATA/tools/ffmpeg/ffmpeg"
 assert_tmp_empty
 end
 
-begin "8i. no bundle, private repo (HTTP 404), nothing installed: points to the installer zip"
+begin "8i. no bundle, HTTP 404 from the release server, nothing installed: points to the installer zip"
 DATA="$WORK/empty home 404"
 run_script "$URL/private-repo" "${COMMON[@]}" --install-only
 assert_ne "$RC" 0 "non-zero exit code"

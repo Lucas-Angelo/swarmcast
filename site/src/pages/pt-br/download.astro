@@ -1,0 +1,11 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import DownloadPage from '../../components/DownloadPage.astro';
+import { copy } from '../../lib/copy';
+
+const c = copy['pt-BR'].download;
+---
+
+<SiteLayout lang="pt-BR" slug="download" title={c.metaTitle} description={c.description}>
+  <DownloadPage lang="pt-BR" />
+</SiteLayout>

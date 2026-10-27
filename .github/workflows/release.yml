@@ -1,5 +1,8 @@
 name: Release
 
+# On a `v*` tag: check the tag, run the full test suites (the same workflows that run on pull
+# requests, via workflow_call), build and sign every package, and publish the GitHub release
+# only if everything passed.
 on:
   push:
     tags: ['v*']
@@ -7,15 +10,13 @@ on:
 permissions:
   contents: read
 
-# One release run per tag. A re-pushed tag supersedes the previous run.
+# One release run per tag; a release run is never cancelled by another one.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 env:
   FORCE_COLOR: '1'
-  NODE_VERSION: 24.x
-  GO_VERSION: 1.27.x
 
 jobs:
   verify:
@@ -38,6 +39,25 @@ jobs:
             exit 1
           fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
+      # A published release is never changed or replaced (installed apps and the scripts may
+      # already have it): a re-pushed or moved tag of a released version stops here.
+      - name: No release exists for this tag yet
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::A GitHub release for ${GITHUB_REF_NAME} already exists; it is never changed. Ship the next version instead (see docs/RELEASING.md)."
+            exit 1
+          fi
+      # The desktop app's updater only installs packages signed with this key.
+      - name: The updater signing key must be set
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
+        run: |
+          if [ "$HAS_KEY" != true ]; then
+            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (Settings > Secrets and variables > Actions): without them the desktop installers have no update signatures."
+            exit 1
+          fi
       - name: CHANGELOG.md must have a section for this version
         shell: bash
         env:
@@ -48,31 +68,50 @@ jobs:
             exit 1
           fi
 
+  # ---- Gate: the full test suites. Nothing is built or published unless they all pass. ----
+  ci:
+    name: CI
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+  scripts:
+    name: Install scripts
+    needs: verify
+    uses: ./.github/workflows/scripts.yml
+  preflight:
+    name: Pre-release check
+    needs: verify
+    uses: ./.github/workflows/preflight.yml
+  windows:
+    name: Windows E2E
+    needs: verify
+    uses: ./.github/workflows/windows.yml
+  # Builds the desktop installers (updater artifacts signed with the Tauri key) and tests them
+  # on every OS; publish uploads the very artifacts that were tested.
+  desktop:
+    name: Desktop app
+    needs: verify
+    uses: ./.github/workflows/desktop.yml
+    with:
+      release: true
+      version: ${{ needs.verify.outputs.version }}
+    secrets:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
   build:
     name: Build ${{ matrix.target }}
-    needs: verify
+    needs: [verify, ci, scripts, preflight, windows, desktop]
     strategy:
       fail-fast: true
       matrix:
         include:
-          - target: windows-x64
-            os: windows-latest
-            smoke: true
-          - target: macos-arm64
-            os: macos-latest
-            smoke: true
-          - target: macos-x64
-            os: macos-15-intel
-            smoke: true
-          - target: linux-x64
-            os: ubuntu-latest
-            smoke: true
-          # Cross-built: private repositories get no free arm64 runners, so no smoke test.
-          - target: linux-arm64
-            os: ubuntu-latest
-            smoke: false
+          - { target: windows-x64, os: windows-latest }
+          - { target: macos-arm64, os: macos-latest }
+          - { target: macos-x64, os: macos-15-intel }
+          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 45
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -89,16 +128,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: npm
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: apps/tray/go.sum
-
-      - run: npm ci
+          go: 'true'
       - run: npm run build
       - name: Build tray helper
         run: node apps/tray/build.mjs --target "$TARGET" --vendor
@@ -201,7 +233,6 @@ jobs:
 
       # Runs the (signed, when signing is configured) staged build on its own platform.
       - name: Smoke test
-        if: matrix.smoke
         run: |
           exe=swarmcast
           if [ "$RUNNER_OS" = Windows ]; then exe=swarmcast.exe; fi
@@ -244,7 +275,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [verify, build]
+    needs: [verify, build, desktop]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -252,19 +283,13 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ github.ref_name }}
-      # Optional public mirror for the release assets (off unless both are set): the
-      # repository variable RELEASES_REPO (e.g. Lucas-Angelo/swarmcast-releases) and the
-      # secret RELEASES_REPO_TOKEN (fine-grained PAT, contents:write on that repo only).
-      # Only "true"/"false" here; the token is mapped into the mirror step alone.
-      RELEASES_REPO: ${{ vars.RELEASES_REPO }}
-      MIRROR: ${{ vars.RELEASES_REPO != '' && secrets.RELEASES_REPO_TOKEN != '' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - uses: ./.github/actions/setup
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          npm-ci: 'false'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: swarmcast-*
@@ -289,37 +314,16 @@ jobs:
             fi
           done
 
-      # With the mirror, the one-liners and the scripts' online update check must point at
-      # the public repository: rewrite the default release URL in the published copies
-      # (never in the source). Without the mirror, nothing changes.
-      - name: Point the published start scripts at the public mirror
-        if: env.MIRROR == 'true'
-        run: |
-          if ! [[ "$RELEASES_REPO" =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]]; then
-            echo "::error::Repository variable RELEASES_REPO must look like owner/repo (got '$RELEASES_REPO')."
-            exit 1
-          fi
-          from="github.com/${GITHUB_REPOSITORY}/releases"
-          to="github.com/${RELEASES_REPO}/releases"
-          sed -i "s#${from}#${to}#g" release/start-windows.ps1 release/start-linux.sh release/start-macos.command release/start-macos.sh
-          grep -q "^\$SC_DefaultReleaseUrl = 'https://${to}/latest/download'" release/start-windows.ps1
-          for f in release/start-linux.sh release/start-macos.command release/start-macos.sh; do
-            grep -q "^SC_DEFAULT_RELEASE_URL=\"https://${to}/latest/download\"" "$f"
-          done
-          echo "Published start scripts now download from https://${to}/latest/download"
-
-      # One zip per platform to send to the streamer while the repository is private: the
-      # start script(s), the package, a one-line SHA256SUMS.txt (the scripts install from
-      # these local files), a short README.txt and the full guide in both languages.
+      # One zip per platform for an offline script install: the start script(s), the package,
+      # a one-line SHA256SUMS.txt (the scripts install from these local files), a short
+      # README.txt and the full guide in both languages.
       - name: Build installer bundles
         run: |
           guides="$RUNNER_TEMP/guides"
           mkdir -p "$guides"
-          node scripts/build/guide-html.mjs docs/TUTORIAL_EN.md "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
-          node scripts/build/guide-html.mjs docs/TUTORIAL_PT-BR.md "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
-          if [ "$MIRROR" = true ]; then
-            sed -i "s#github.com/${GITHUB_REPOSITORY}/releases#github.com/${RELEASES_REPO}/releases#g" "$guides"/*.html
-          fi
+          # Generated from the website's pages (site/offline-guide.json): one source for both.
+          node scripts/build/guide-html.mjs "$guides/READ-ME - How to go live.html" --lang en --version "$VERSION"
+          node scripts/build/guide-html.mjs "$guides/LEIA-ME - Como fazer a live.html" --lang pt-BR --version "$VERSION"
 
           # README.txt: UTF-8 with BOM (Notepad/TextEdit pick the encoding), CRLF for Windows.
           readme() {
@@ -406,8 +410,7 @@ jobs:
 
       # --- uninstallers (scripts/uninstall-*) ---
       # Release assets, and each installer zip gets its platform's uninstaller (zip adds
-      # the files to the archive built above). They never download anything, so the
-      # public-mirror URL rewrite does not apply to them.
+      # the files to the archive built above).
       - name: Add uninstall scripts
         run: |
           cp scripts/uninstall-windows.ps1 scripts/uninstall-windows.cmd scripts/uninstall-linux.sh scripts/uninstall-macos.command release/
@@ -454,8 +457,6 @@ jobs:
           done
       # --- end uninstallers ---
 
-      - name: Generate SHA256SUMS.txt
-        run: node scripts/build/checksums.mjs release
       - name: Extract release notes from CHANGELOG.md
         run: |
           awk -v header="## [${VERSION}]" '
@@ -469,6 +470,25 @@ jobs:
             exit 1
           fi
           cat notes.md
+
+      # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
+      - name: Download the desktop installers
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release/desktop
+      # latest.json: what the app's updater reads at releases/latest/download/latest.json
+      # (version, notes, per-platform URL + signature). /latest skips pre-releases.
+      - name: Add latest.json (desktop updater manifest)
+        run: |
+          node scripts/build/updater-manifest.mjs --version "$VERSION" --notes-file notes.md --require-all \
+            --base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}" --out release/latest.json release/desktop
+          mv release/desktop/* release/
+          rmdir release/desktop
+
+      - name: Generate SHA256SUMS.txt
+        run: node scripts/build/checksums.mjs release
       - name: Create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -477,16 +497,3 @@ jobs:
           prerelease=()
           if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
           gh release create "$TAG" release/* --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
-
-      # Same assets and notes in the public mirror, so the one-liners work while this
-      # repository stays private. The mirror needs at least one commit (e.g. a README):
-      # the tag is created on its default branch.
-      - name: Publish to the public mirror
-        if: env.MIRROR == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_REPO_TOKEN }}
-        run: |
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" release/* -R "$RELEASES_REPO" --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
-          echo "Mirror: https://github.com/${RELEASES_REPO}/releases/tag/${TAG}"
