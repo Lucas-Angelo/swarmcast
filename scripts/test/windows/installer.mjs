@@ -351,8 +351,7 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   const text = () => readText(outLog);
   let app;
   try {
-    const admin = await adminLogin(text, 240_000);
-    app = { ...admin, inst: { exit: until(() => /EXIT (\d+)/.exec(text()), 90_000, 'exit').then((m) => Number(m[1]), () => 'timeout'), child: { pid: 0 } } };
+    app = await adminLogin(text, 240_000);
   } catch (e) {
     record('started with a Basic User token', 'fail', `${e.message}; output: ${text().slice(-1500)}`);
     return;
@@ -362,13 +361,21 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   info('token integrity level', groups.trim().replace(/\s+/g, ' ').slice(0, 200));
   check('ran without admin rights (no "runs as administrator" note)', !has(text(), 'runs as administrator'), /Medium/i.test(groups) ? 'Medium integrity' : groups.slice(0, 120));
   check('installed for the user only', ver(home) === V);
+  const tLogin = Date.now();
   await waitLiveLink(app);
+  info('Basic User run: live link after login', `${Math.round((Date.now() - tLogin) / 1000)} s`);
+  const tQuit = Date.now();
   await app.api('/api/app/quit', {}).catch(() => {});
-  const code = await app.inst.exit;
+  // The wrapper's "EXIT n" line, within 60 s of the quit request like quitAndVerify (the limit
+  // used to start at login, so a slow start to the live link ate into it).
+  const code = await until(() => /EXIT (\d+)/.exec(text()), 60_000, 'exit').then((m) => Number(m[1]), () => 'timeout');
+  info('Basic User run: exit after quit', `${Math.round((Date.now() - tQuit) / 1000)} s`);
   check('Basic User run: quits cleanly', code === 0, `exit ${code}`);
+  if (code !== 0) info('Basic User run: installer output (end)', text().slice(-1500));
   await sleep(1500);
   const left = processesUnder(home);
   check('Basic User run: no process left', left.length === 0, describeProcs(left));
+  copyAppLogs(home, 'basic-user');
 });
 
 await section('14. uninstaller (-KeepSettings while live, reinstall keeps the stream key, full uninstall from the installer zip)', async () => {
