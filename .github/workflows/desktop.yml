@@ -57,6 +57,11 @@ env:
   CARGO_TERM_COLOR: always
   # Tauri v2 build prerequisites on Linux (WebKitGTK 4.1, tray, AppImage tooling).
   LINUX_BUILD_DEPS: build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils
+  # What the AppImage needs from the host, as the Linux install guide lists it (the same list as
+  # scripts/test/desktop/appimage-host.sh and scripts/test/docker/Dockerfile.appimage): libGL and
+  # libEGL are on AppImage's excludelist, so the AppImage cannot bring them (libEGL.so.1 is not on
+  # the Ubuntu 24.04 runner image).
+  APPIMAGE_HOST_PACKAGES: libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
 
 jobs:
   rust:
@@ -263,15 +268,18 @@ jobs:
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
-      # The .deb pulls its own libraries. Those are downloaded here first (time limit per try,
-      # retries, another mirror after a slow try), so the test's `apt-get install ./*.deb`
-      # resolves and installs them from the local cache. Xvfb and D-Bus come with the image.
+      # The AppImage runs first, with only the host libraries the install guide lists. The .deb
+      # pulls its own libraries: those are downloaded here first (time limit per try, retries,
+      # another mirror after a slow try), so the test's `apt-get install ./*.deb` resolves and
+      # installs them from the local cache. Xvfb and D-Bus come with the image.
       # TODO(WP2a): `apt-retry.sh download` into the .deb cache, and APT_DEBS for verify.mjs.
-      - name: Linux display and the .deb's dependencies
+      - name: Linux display, the AppImage's host libraries and the .deb's dependencies
         if: runner.os == 'Linux'
         run: |
           command -v xvfb-run dbus-run-session
           .github/scripts/apt-retry.sh update
+          # shellcheck disable=SC2086 # a list of package names
+          .github/scripts/apt-retry.sh install -y --no-install-recommends $APPIMAGE_HOST_PACKAGES
           deb="$(ls release/desktop/*.deb | head -n 1)"
           .github/scripts/apt-retry.sh install -y --no-install-recommends --download-only "./$deb"
       # Linux: a virtual display and a session bus (WebKitGTK and the tray talk D-Bus), without
