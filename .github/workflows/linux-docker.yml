@@ -1,0 +1,166 @@
+name: Linux in Docker
+
+# The Docker suites of scripts/test/docker (README there), natively on x64 and arm64 runners:
+# - the start script and the real package on Ubuntu 22.04, 24.04 and Debian 12 (run.sh: missing
+#   tools, install, update, corrupted checksum, start, stream, viewer, Ctrl+C / SIGTERM / SIGKILL);
+# - the desktop AppImage on a minimal host of each base, with only the packages the website's
+#   Linux page lists (appimage.sh);
+# - real OBS Studio streaming to the package (obs.sh), and the Playwright suite in the official
+#   Playwright image (e2e.sh).
+# The real Cloudflare quick tunnel check (run.sh part d) runs on the weekly schedule only.
+#
+# Runs weekly, manually, and on pull requests that touch the Docker suites or the Linux scripts.
+on:
+  pull_request:
+    paths: &docker-paths
+      - 'scripts/test/docker/**'
+      - 'scripts/start-linux.sh'
+      - 'scripts/uninstall-linux.sh'
+      - '.github/workflows/linux-docker.yml'
+  push:
+    branches: [main]
+    paths: *docker-paths
+  schedule:
+    - cron: '17 5 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Superseded pull request runs are cancelled; runs on main, schedules and manual runs never are.
+concurrency:
+  group: linux-docker-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  FORCE_COLOR: '1'
+  CARGO_TERM_COLOR: always
+  # Tauri v2 build prerequisites on Linux (same list as desktop.yml).
+  LINUX_BUILD_DEPS: build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils
+
+jobs:
+  # The script-mode package and the AppImage of this commit, once per architecture, on the
+  # oldest supported Ubuntu like desktop.yml (glibc baseline).
+  build:
+    name: Build linux-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x64, os: ubuntu-22.04 }
+          - { arch: arm64, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      TARGET: linux-${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          go: 'true'
+      # The only apt on the runner: the desktop build's own dependencies, through apt-retry.sh
+      # (time limit per try, retries, another mirror after a slow try).
+      - name: Linux build dependencies
+        run: |
+          .github/scripts/apt-retry.sh update
+          # shellcheck disable=SC2086 # a list of packages
+          .github/scripts/apt-retry.sh install -y --no-install-recommends $LINUX_BUILD_DEPS
+      - name: Rust toolchain
+        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+      - run: npm run build
+      - name: Build tray helper
+        run: node apps/tray/build.mjs --target "$TARGET" --vendor
+      - name: Package, AppImage and a release folder
+        run: |
+          node scripts/build/package.mjs --target "$TARGET"
+          node scripts/build/desktop.mjs --target "$TARGET" --bundles appimage
+          mkdir -p linux-release
+          cp release/SwarmCast-v*-"$TARGET".tar.gz scripts/start-linux.sh linux-release/
+          node scripts/build/checksums.mjs linux-release
+          cp release/desktop/"$TARGET"/*.AppImage linux-release/
+          echo "VERSION=$(node -p "require('./package.json').version")" > linux-release/VERSION.env
+          ls -la linux-release
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-docker-${{ matrix.arch }}
+          path: linux-release/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+  # One job per base image and architecture, all native (no QEMU).
+  release:
+    name: ${{ matrix.base }} ${{ matrix.arch }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        base: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12']
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 30
+    env:
+      BASE: ${{ matrix.base }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-docker-${{ matrix.arch }}
+          path: linux-release
+      - name: Start script and package (run.sh a-c, tunnel d on the schedule)
+        run: |
+          tunnel=(--no-tunnel-test)
+          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$BASE" = ubuntu:24.04 ]; then tunnel=(); fi
+          scripts/test/docker/run.sh --release linux-release --serial "${tunnel[@]}" "$BASE"
+      - name: AppImage on a minimal host (appimage.sh)
+        if: ${{ !cancelled() }}
+        run: |
+          . linux-release/VERSION.env
+          scripts/test/docker/appimage.sh --version "$VERSION" linux-release/*.AppImage "$BASE"
+
+  obs:
+    name: OBS Studio ${{ matrix.arch }}
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-docker-${{ matrix.arch }}
+          path: linux-release
+      - run: scripts/test/docker/obs.sh --release linux-release
+
+  e2e:
+    name: Playwright in Docker ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # e2e.sh reads the Playwright version from package-lock.json; the container does the rest
+      # (npm ci, binaries, build, firefox + chromium).
+      - run: scripts/test/docker/e2e.sh
+      - name: Upload the Playwright reports
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: docker-e2e-${{ matrix.arch }}
+          path: test-results/docker-e2e/
+          if-no-files-found: ignore
+          retention-days: 14
