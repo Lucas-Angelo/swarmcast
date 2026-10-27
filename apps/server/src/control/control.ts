@@ -102,7 +102,8 @@ export class ControlChannel {
         t: 'hello',
         sessionId: session.id,
         nickname: session.nickname,
-        p2pAllowed: session.p2pAllowed,
+        p2pAllowed: this.access.p2pAllowed(session),
+        p2pForAll: this.access.p2pForAll,
         blockedPeers: [...this.blockedPeers],
         viewerCount: this.viewerCount(),
       });
@@ -145,7 +146,7 @@ export class ControlChannel {
     session.lastSeenAt = now;
     switch (msg.t) {
       case 'stats':
-        session.p2pEnabled = msg.p2pEnabled && session.p2pAllowed;
+        session.p2pEnabled = msg.p2pEnabled && this.access.p2pAllowed(session);
         session.device = msg.device;
         session.stats = {
           httpBytes: msg.httpBytes,

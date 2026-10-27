@@ -227,7 +227,17 @@ export class PlaylistStitcher {
   private version = '#EXT-X-VERSION:7';
   private header: string[] = [];
 
-  constructor(private readonly maxEntries = 20) {}
+  /**
+   * @param maxEntries Segments kept at least (more if upstream lists more).
+   * @param minWindowS Seconds kept at least: a playlist with shorter segments (the ladder's
+   *   audio is cut every second, video every 2 s) keeps more entries, so every playlist offers
+   *   the same time window. Otherwise the audio window is half the video one and a player
+   *   that falls behind after a stall has video but no audio to play.
+   */
+  constructor(
+    private readonly maxEntries = 20,
+    public minWindowS = 0,
+  ) {}
 
   /** Feed the upstream playlist and the prefix of its entries that is cached. Returns true if anything was added. */
   update(p: MediaPlaylist, ready: MediaEntry[]): boolean {
@@ -256,8 +266,13 @@ export class PlaylistStitcher {
       if (this.seenOrder.length > 1000) this.seen.delete(this.seenOrder.shift()!);
       added = true;
     }
-    while (this.window.length > Math.max(this.maxEntries, ready.length)) this.dropFirst();
+    while (this.window.length > Math.max(this.maxEntries, ready.length) && this.durationS() - this.window[0]!.duration >= this.minWindowS - 0.5) this.dropFirst();
     return added;
+  }
+
+  /** Seconds the playlist currently covers. */
+  durationS(): number {
+    return this.window.reduce((sum, e) => sum + e.duration, 0);
   }
 
   private dropFirst(): void {

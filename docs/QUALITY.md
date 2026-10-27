@@ -28,7 +28,8 @@ This page records the decisions behind the quality options (1080p/720p/480p with
   - 2 s segments let the player sit at any multiple of 2 s behind live, and let peers trade smaller pieces.
 - **What we change instead.**
   - The player waits **20 s** behind live (10 segments) instead of 14 s.
-  - The playlist window viewers see is **20 segments (40 s)**: the origin's stitcher keeps up to 20 cached segments even though MediaMTX lists 15. So a viewer who falls behind after stalls is not pushed off the playlist.
+  - The playlist window viewers see is **40 s in every playlist** (`PLAYLIST_WINDOW_S` in packages/shared): the furthest a player sits behind live (Stable's `liveMaxLatencyDuration`, 36 s) plus 2 segments to fetch the oldest one. MediaMTX and the ladder list that many 2 s segments, and the origin's stitcher keeps every playlist at that many seconds from its actual segment durations: the ladder cuts its shared audio rendition every second, so the audio playlist keeps 40 entries (with a fixed count of 20 it held only 20 s, and a player 20 s behind live sat on the oldest audio segment). Change a profile delay and the windows follow (a unit test checks the invariant).
+  - The player fits its delay into the shortest playlist it uses (video or audio): `liveMaxLatencyDuration` ≤ window − 2 target durations and `liveSyncDuration` ≤ that − 2 target durations, so with an older server whose audio playlist holds 20 s, Stable plays about 12 s behind live instead of freezing.
 
 ### hls.js settings
 hls.js 1.7.3 defaults are from `src/config.ts`. `apps/viewer/src/player-config.ts` holds both profiles. The table shows the main values.

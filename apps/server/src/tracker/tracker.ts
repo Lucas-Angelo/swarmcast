@@ -106,7 +106,7 @@ export class TrackerService {
     if (!socket?.sessionId) return new Error('not authenticated');
     const session = this.access.sessions.get(socket.sessionId);
     if (!session) return new Error('session ended');
-    if (!session.p2pAllowed) return new Error('p2p not allowed');
+    if (!this.access.p2pAllowed(session)) return new Error('p2p not allowed');
     if (!this.allowed.has(infoHash)) return new Error('unknown stream');
     // Each offer reaches one random peer: capping offers per announce (plus the per-socket
     // message rate limit) limits how fast one member can learn other viewers' IPs.

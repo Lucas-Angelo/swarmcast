@@ -13,6 +13,39 @@ export const DEFAULT_PORTS = {
 /** Target HLS segment duration in seconds. OBS keyframe interval must match. */
 export const SEGMENT_DURATION_S = 2;
 
+/**
+ * Live delays of the viewer's playback profiles (hls.js liveSyncDuration /
+ * liveMaxLatencyDuration, seconds). apps/viewer/src/player-config.ts builds its profiles from
+ * these, and the server sizes every playlist window from them (PLAYLIST_WINDOW_S), so the two
+ * cannot drift apart.
+ */
+export const PLAYER_LIVE_DELAYS = {
+  stable: { liveSyncDuration: 20, liveMaxLatencyDuration: 36 },
+  'low-delay': { liveSyncDuration: 8, liveMaxLatencyDuration: 20 },
+} as const;
+
+/** hls.js raises the target delay after stalls, by at most one target duration. */
+export const PLAYER_STALL_INCREASE_S = SEGMENT_DURATION_S;
+
+/**
+ * The furthest behind live a player ever sits: hls.js jumps back to liveSyncDuration (+ stall
+ * increase) as soon as the delay passes liveMaxLatencyDuration, so it never needs anything older.
+ */
+export const MAX_PLAYER_DELAY_S = Math.max(
+  ...Object.values(PLAYER_LIVE_DELAYS).map((d) => Math.max(d.liveMaxLatencyDuration, d.liveSyncDuration + PLAYER_STALL_INCREASE_S)),
+);
+
+/** Room to fetch the oldest segment a player at MAX_PLAYER_DELAY_S still needs. */
+export const PLAYLIST_SAFETY_MARGIN_S = 2 * SEGMENT_DURATION_S;
+
+/** Seconds every live playlist (video and audio, original and ladder) must cover. */
+export const PLAYLIST_WINDOW_S = MAX_PLAYER_DELAY_S + PLAYLIST_SAFETY_MARGIN_S;
+
+/** Entries a playlist of `segmentDurationS` segments needs to cover PLAYLIST_WINDOW_S. */
+export function playlistEntries(segmentDurationS: number): number {
+  return Math.ceil(PLAYLIST_WINDOW_S / segmentDurationS);
+}
+
 /** Lifetime of a viewer session JWT. Renewed while the stream is live. */
 export const SESSION_TTL_S = 10 * 60;
 

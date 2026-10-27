@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { SEGMENT_DURATION_S } from '@swarmcast/shared';
+import { playlistEntries, SEGMENT_DURATION_S } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
 import { ManagedChild, type Reaper } from '../process/children.js';
 
@@ -54,8 +54,8 @@ export function renderMediaMtxConfig(o: Omit<MediaMtxOptions, 'binary' | 'runDir
     'hlsAlwaysRemux: true',
     // Standard fMP4 HLS (not LL-HLS): plain segments are what P2P can share.
     'hlsVariant: fmp4',
-    // 15 × 2 s: enough room behind the live edge for the player's P2P window.
-    'hlsSegmentCount: 15',
+    // Enough segments to cover PLAYLIST_WINDOW_S (the furthest behind live a player sits).
+    `hlsSegmentCount: ${playlistEntries(SEGMENT_DURATION_S)}`,
     // Minimum duration: MediaMTX cuts at the first keyframe after it, so with OBS keyframes
     // every SEGMENT_DURATION_S seconds the segments are exactly that long. Using the full
     // value here would round 1.999 s up to the next keyframe (4 s segments).

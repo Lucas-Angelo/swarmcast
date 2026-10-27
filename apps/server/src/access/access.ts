@@ -56,8 +56,16 @@ export class AccessControl extends EventEmitter<AccessEvents> {
    */
   private bannedDevices = new Set<string>();
 
+  /** The streamer's switch for everyone ("Allow P2P for viewers"); per-viewer removal comes on top. */
+  p2pForAll = true;
+
   constructor(private readonly now: () => number = Date.now) {
     super();
+  }
+
+  /** May this viewer use P2P right now (global switch and per-viewer removal)? */
+  p2pAllowed(session: Pick<Session, 'p2pAllowed'>): boolean {
+    return this.p2pForAll && session.p2pAllowed;
   }
 
   /** Begin a new live: fresh id, signing key and link secret. */

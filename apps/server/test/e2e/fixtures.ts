@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import type { AdminState } from '@swarmcast/shared';
+import type { AdminState, QualitySettingsUpdate, QualityState } from '@swarmcast/shared';
 
 let adminCookie: string | null = null;
 let adminUrl = '';
@@ -49,6 +49,62 @@ export async function forcePowLevel(level: 0 | 1 | 2): Promise<number> {
   return ((await res.json()) as { browserCheck: number }).browserCheck;
 }
 
+/** Test-only: seconds every playlist keeps (40 by default; 20 emulates v0.2.0 ladder audio). */
+export async function setPlaylistWindow(seconds: number): Promise<void> {
+  const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { testControlUrl: string };
+  await fetch(`${env.testControlUrl}/playlist-window/${seconds}`, { method: 'POST' });
+}
+
+/**
+ * Start a playback monitor in the page: `stallReport()` then returns the longest time (ms)
+ * the playhead did not move while playing, since the last reset.
+ */
+export async function startStallMonitor(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __stall?: { last: number; at: number; max: number; timer: number } };
+    if (w.__stall) clearInterval(w.__stall.timer);
+    const v = document.querySelector('video')!;
+    const st = { last: v.currentTime, at: performance.now(), max: 0, timer: 0 };
+    st.timer = window.setInterval(() => {
+      const now = performance.now();
+      if (v.paused || v.currentTime > st.last + 0.05) {
+        st.last = v.currentTime;
+        st.at = now;
+      } else {
+        st.max = Math.max(st.max, now - st.at);
+      }
+    }, 200);
+    w.__stall = st;
+  });
+}
+
+export async function stallReport(page: Page): Promise<{ maxStallMs: number; currentStallMs: number; currentTime: number }> {
+  return page.evaluate(() => {
+    const st = (window as unknown as { __stall: { last: number; at: number; max: number } }).__stall;
+    const v = document.querySelector('video')!;
+    const current = v.paused || v.currentTime > st.last + 0.05 ? 0 : performance.now() - st.at;
+    return { maxStallMs: Math.max(st.max, current), currentStallMs: current, currentTime: v.currentTime };
+  });
+}
+
+const PUSH_FILE = path.join('test-results', 'e2e-push.json');
+
+/** Make the fake OBS reconnect with these options (the e2e server reads the file on SIGUSR2). */
+export function reconnectObs(options: { size?: string; kbps?: number } | null): void {
+  if (options) fs.writeFileSync(PUSH_FILE, JSON.stringify(options));
+  else fs.rmSync(PUSH_FILE, { force: true });
+  process.kill(e2eServerPid(), 'SIGUSR2');
+}
+
+/** Quality settings with some ladder fields changed (body for PUT /api/quality). */
+export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpdate['ladder']>): QualitySettingsUpdate {
+  return {
+    ...q.settings,
+    ladder: { ...q.settings.ladder, ...ladder },
+    obsWebsocket: { enabled: q.settings.obsWebsocket.enabled, url: q.settings.obsWebsocket.url },
+  };
+}
+
 /** pid of the e2e server (for test-only signals). */
 export function e2eServerPid(): number {
   return (JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { pid: number }).pid;
@@ -61,8 +117,9 @@ export async function liveLink(): Promise<string> {
 }
 
 /** Make the link point at the test base URL (it already does without a tunnel). */
-export async function join(browser: Browser, nickname: string, link?: string): Promise<{ context: BrowserContext; page: Page }> {
+export async function join(browser: Browser, nickname: string, link?: string, setup?: (context: BrowserContext) => Promise<void>): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext();
+  await setup?.(context);
   const page = await context.newPage();
   await page.goto(link ?? (await liveLink()));
   await expect(page).toHaveURL(/\/join$/);
@@ -89,6 +146,9 @@ export interface ViewerStats {
   p2pUpBytes: number;
   peers: string[];
   hashFailures: number;
+  httpFallbacks: number;
+  peersDropped: number;
+  stallRecoveries: number;
   p2pEnabled: boolean;
   p2pAllowed: boolean;
 }

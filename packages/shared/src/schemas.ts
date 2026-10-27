@@ -87,10 +87,11 @@ export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
 export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; blockedPeers: string[]; viewerCount: number | null }
+  /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone. */
+  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; blockedPeers: string[]; viewerCount: number | null }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
-  | { t: 'p2p'; allowed: boolean }
+  | { t: 'p2p'; allowed: boolean; forAll?: boolean }
   | { t: 'block-peers'; peerIds: string[] }
   | { t: 'unblock-peers'; peerIds: string[] }
   | { t: 'kicked' }
@@ -137,6 +138,8 @@ export const settingsSchema = z.object({
   alsoStreamingElsewhere: z.boolean(),
   /** Show viewers how many people are watching (only the number). */
   showViewerCount: z.boolean().default(true),
+  /** Viewers may share video with each other (P2P). Off = emergency switch: everyone on HTTPS. */
+  allowViewerP2P: z.boolean().default(true),
   /** Cap on simultaneous viewer sessions (omitted = keep the current value). */
   maxViewers: z.number().int().min(1).max(100_000).optional(),
   /** Sessions one browser may hold (omitted = keep the current value). */

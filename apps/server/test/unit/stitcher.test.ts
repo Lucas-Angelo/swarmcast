@@ -101,3 +101,27 @@ describe('multivariant cleanup', () => {
     expect(out).toContain('URI="audio.m3u8"');
   });
 });
+
+describe('PlaylistStitcher time window', () => {
+  // The ladder cuts audio every second and video every 2 s, with the same 20-entry list.
+  // Counting entries only gave audio half the video window (20 s vs 40 s): a player 20 s
+  // behind live sat on the oldest audio segment and froze after any stall.
+  it('keeps at least minWindowS seconds, whatever the segment length', () => {
+    const audio = new PlaylistStitcher(20, 40);
+    const video = new PlaylistStitcher(20, 40);
+    for (let n = 0; n < 60; n++) {
+      feed(audio, media('a', n, 20).replaceAll('#EXTINF:2.000000,', '#EXTINF:1.000000,'));
+      if (n % 2 === 0) feed(video, media('v', n / 2, 20));
+    }
+    expect(audio.length).toBe(40);
+    expect(audio.durationS()).toBe(40);
+    expect(video.length).toBe(20);
+    expect(video.durationS()).toBe(40);
+  });
+
+  it('counts entries only when no time window is set (old behaviour)', () => {
+    const st = new PlaylistStitcher(20);
+    for (let n = 0; n < 30; n++) feed(st, media('a', n, 20).replaceAll('#EXTINF:2.000000,', '#EXTINF:1.000000,'));
+    expect(st.length).toBe(20);
+  });
+});

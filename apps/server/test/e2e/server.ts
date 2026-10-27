@@ -66,7 +66,14 @@ process.on('SIGUSR2', () => {
 
 // Test-only control port (127.0.0.1, random port, never part of the app): POST /pow-level/<0|1|2>
 // sets the level the attack shield would choose by itself, without flooding the server.
+// POST /playlist-window/<seconds> sets how many seconds every playlist keeps (p2p.spec.ts
+// emulates v0.2.0 servers, whose ladder audio playlist held only 20 s).
 const control = http.createServer((req, res) => {
+  const w = /^\/playlist-window\/(\d+)$/.exec(req.url ?? '');
+  if (req.method === 'POST' && w) {
+    app.live.origin.windowSeconds = Number(w[1]);
+    return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ windowSeconds: app.live.origin.windowSeconds }));
+  }
   const m = /^\/pow-level\/([012])$/.exec(req.url ?? '');
   if (req.method !== 'POST' || !m) return void res.writeHead(404).end();
   (app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void }).setAutoPow(Number(m[1]) as 0 | 1 | 2);

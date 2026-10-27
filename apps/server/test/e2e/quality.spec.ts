@@ -1,29 +1,10 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { expect, test } from '@playwright/test';
-import type { QualitySettingsUpdate, QualityState } from '@swarmcast/shared';
-import { adminApi, e2eServerPid, join, waitPlaying } from './fixtures.js';
+import type { QualityState } from '@swarmcast/shared';
+import { adminApi, join, ladderUpdate as update, reconnectObs, waitPlaying } from './fixtures.js';
 
 type Hls = { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; targetLatency: number };
 
 test.describe.configure({ mode: 'serial' });
-
-const PUSH_FILE = path.join('test-results', 'e2e-push.json');
-
-/** Make the fake OBS reconnect with these options (the e2e server reads the file on SIGUSR2). */
-function reconnectObs(options: { size?: string; kbps?: number } | null): void {
-  if (options) fs.writeFileSync(PUSH_FILE, JSON.stringify(options));
-  else fs.rmSync(PUSH_FILE, { force: true });
-  process.kill(e2eServerPid(), 'SIGUSR2');
-}
-
-function update(q: QualityState, ladder: Partial<QualitySettingsUpdate['ladder']>): QualitySettingsUpdate {
-  return {
-    ...q.settings,
-    ladder: { ...q.settings.ladder, ...ladder },
-    obsWebsocket: { enabled: q.settings.obsWebsocket.enabled, url: q.settings.obsWebsocket.url },
-  };
-}
 
 test('with the quality ladder on, the viewer menu lists the renditions; switching quality and profile keeps playing', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');

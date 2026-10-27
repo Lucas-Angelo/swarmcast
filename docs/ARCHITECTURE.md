@@ -63,7 +63,7 @@ Source map (`apps/server/src`):
 ## Media path
 
 1. OBS publishes to `rtmp://127.0.0.1:1935/live` with key `sc_…`. The generated MediaMTX config allows exactly one path, `live/<key>`, so publishing to any other path is rejected. Every protocol except RTMP ingest and local HLS is disabled, including `moq`, `rtsp`, `webrtc`, `srt`, `api`, `metrics`, `pprof` and `playback`.
-2. MediaMTX remuxes the stream to standard fMP4 HLS (not LL-HLS) with a 15-segment playlist. It cuts segments at the first keyframe after `hlsSegmentDuration: 1s`, so with OBS keyframes every 2 s each segment is 2 s long.
+2. MediaMTX remuxes the stream to standard fMP4 HLS (not LL-HLS) with a playlist sized to `PLAYLIST_WINDOW_S` (packages/shared: the furthest a player sits behind live, plus a margin; 20 × 2 s today). It cuts segments at the first keyframe after `hlsSegmentDuration: 1s`, so with OBS keyframes every 2 s each segment is 2 s long.
 3. `HlsOrigin` polls MediaMTX about once a second. It passes MediaMTX's cookie check and `hlsSession` cookie, caches the segments in memory (about 60 s are kept) and hashes each one with SHA-256. It then rewrites the playlists so they list only segments that are already cached and hashed.
    - With quality options on (a GPU encoder, or chosen by hand), one ffmpeg process reads the stream from MediaMTX, copies the source and encodes 720p/480p into one multivariant playlist; the origin then pulls from that directory instead. Playlists are stitched, so a restart becomes an `EXT-X-DISCONTINUITY`. See [QUALITY.md](QUALITY.md).
 4. `/hls/manifest.json` is a compact JWS (EdDSA/Ed25519, `typ: swarmcast-manifest`). Its payload is `{liveId, version, issuedAt, segments: {"/hls/<file>": sha256}}`.

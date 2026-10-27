@@ -133,6 +133,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     const ports = d.config.ports;
     this.origin = new HlsOrigin(`http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`, d.log);
     this.limiter = BandwidthLimiter.fromMbps(d.config.uploadLimitMbps);
+    this.access.p2pForAll = d.config.allowViewerP2P;
     this.tracker = new TrackerService(this.access, d.log);
     this.control = new ControlChannel(this.access, d.log);
     // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
@@ -199,8 +200,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.access.on('p2p-changed', (s) => {
       if (s.p2pAllowed) this.activity.action('log.p2pAllowed', { nickname: s.nickname });
       else if (!s.autoRemovedFromP2P) this.activity.action('log.p2pRemoved', { nickname: s.nickname });
-      this.control.send(s.id, { t: 'p2p', allowed: s.p2pAllowed });
-      if (!s.p2pAllowed) {
+      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: this.access.p2pForAll });
+      if (!this.access.p2pAllowed(s)) {
         this.tracker.disconnectSession(s.id);
         this.control.blockPeers([...s.peerIds]);
       } else {
@@ -610,6 +611,21 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     return !!this.access.setP2PAllowed(sessionId, allowed);
   }
 
+  /**
+   * "Allow P2P for viewers" (panel): off is the emergency switch. Every viewer is told over the
+   * control channel (P2P off live, playback goes on over HTTPS) and dropped from the tracker;
+   * back on, viewers who were not removed one by one may use P2P again.
+   */
+  private setP2PForAll(on: boolean): void {
+    this.d.config.allowViewerP2P = on;
+    this.access.p2pForAll = on;
+    this.activity.action(on ? 'log.p2pForAllOn' : 'log.p2pForAllOff');
+    for (const s of this.access.sessions.values()) {
+      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: on });
+      if (!on) this.tracker.disconnectSession(s.id);
+    }
+  }
+
   clearBans(): void {
     this.access.clearBans();
     this.activity.action('log.bansCleared');
@@ -626,6 +642,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     if (s.maxViewers !== undefined) this.d.config.maxViewers = s.maxViewers;
     if (s.maxSessionsPerDevice !== undefined) this.d.config.maxSessionsPerDevice = s.maxSessionsPerDevice;
     if (countChanged) this.viewerCountChanged();
+    if (s.allowViewerP2P !== this.access.p2pForAll) this.setP2PForAll(s.allowViewerP2P);
     // In automatic upload mode the adaptive controller owns the limiter.
     this.quality.applyManualLimit();
     this.d.saveConfig(this.d.config);
@@ -760,7 +777,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   snapshot(): AdminState {
     const sessions = [...this.access.sessions.values()];
     const connected = this.connectedSessions();
-    const helping = connected.filter((s) => s.p2pEnabled && s.p2pAllowed);
+    const helping = connected.filter((s) => s.p2pEnabled && this.access.p2pAllowed(s));
     const totalHttp = connected.reduce((a, s) => a + s.stats.httpBytes, 0);
     const totalP2P = connected.reduce((a, s) => a + s.stats.p2pDownBytes, 0);
     const share = totalHttp + totalP2P > 0 ? totalP2P / (totalHttp + totalP2P) : 0;
@@ -839,6 +856,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         autoStopMinutes: this.d.config.autoStopMinutes,
         alsoStreamingElsewhere: this.d.config.alsoStreamingElsewhere,
         showViewerCount: this.d.config.showViewerCount,
+        allowViewerP2P: this.d.config.allowViewerP2P,
         maxViewers: this.d.config.maxViewers,
         maxSessionsPerDevice: this.d.config.maxSessionsPerDevice,
       },

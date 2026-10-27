@@ -331,7 +331,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       controlUrl: `${ws}://${host}/control`,
       stunServers: deps.stunServers(),
       swarmId: deps.swarmId(),
-      p2pAllowed: s.p2pAllowed,
+      p2pAllowed: access.p2pAllowed(s),
       segmentDurationS: SEGMENT_DURATION_S,
     };
   });
@@ -400,7 +400,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     if (url.pathname === '/control') {
       deps.control.handleUpgrade(req, socket, head, res.session);
     } else {
-      if (!res.session.p2pAllowed) return reject(403, 'Forbidden');
+      if (!access.p2pAllowed(res.session)) return reject(403, 'Forbidden');
       deps.tracker.handleUpgrade(req, socket, head, res.session);
     }
   }

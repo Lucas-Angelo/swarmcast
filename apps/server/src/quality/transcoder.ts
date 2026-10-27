@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SEGMENT_DURATION_S, type CodedText, type EncoderId, type Rung, type TranscoderStatus, type X264Preset } from '@swarmcast/shared';
+import { playlistEntries, SEGMENT_DURATION_S, type CodedText, type EncoderId, type Rung, type TranscoderStatus, type X264Preset } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
 import { coded } from '../core/messages.js';
 import { ManagedChild, type Reaper } from '../process/children.js';
@@ -60,7 +60,9 @@ export function buildLadderArgs(i: LadderArgsInput): string[] {
     // Half the target: ffmpeg cuts at the first keyframe AFTER hls_time, so with keyframes
     // exactly every `seg` seconds a full-length value can skip one and make 2×seg segments.
     '-hls_time', String(Math.max(1, seg / 2)),
-    '-hls_list_size', String(i.listSize ?? 20),
+    // Sized for the 2 s video segments. The audio rendition is cut every hls_time (1 s), so
+    // its list covers less; the origin's stitcher keeps cached audio up to PLAYLIST_WINDOW_S.
+    '-hls_list_size', String(i.listSize ?? playlistEntries(seg)),
     '-hls_flags', 'delete_segments+independent_segments+program_date_time+temp_file',
     '-hls_delete_threshold', '4',
     '-hls_segment_type', 'fmp4',

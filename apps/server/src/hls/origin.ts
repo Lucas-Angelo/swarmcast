@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { SourceInfo } from '@swarmcast/shared';
+import { PLAYLIST_WINDOW_S, type SourceInfo } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
 import {
   SAFE_NAME,
@@ -148,8 +148,22 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   maxSegmentDurationS = 0;
   /** While true the origin keeps polling (so source info is known) but never reports itself available. */
   private holdOff = false;
-  /** Playlist window length (segments) for viewers. */
-  windowSegments = 20;
+  /**
+   * Seconds every playlist viewers get must cover (shared PLAYLIST_WINDOW_S: the furthest
+   * behind live a player sits, plus a margin). Kept per playlist from its actual segment
+   * durations, so the ladder's 1 s audio segments get twice the entries of 2 s video.
+   */
+  get windowSeconds(): number {
+    return this._windowSeconds;
+  }
+
+  /** Changing it applies to every playlist from its next update (tests emulate older servers). */
+  set windowSeconds(s: number) {
+    this._windowSeconds = s;
+    for (const st of this.stitchers.values()) st.minWindowS = s;
+  }
+
+  private _windowSeconds = PLAYLIST_WINDOW_S;
 
   constructor(
     source: string | HlsSource,
@@ -342,7 +356,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
         if (!audio.has(name)) maxSegment = Math.max(maxSegment, maxRecentDuration(ready));
         if (src !== this.source) return;
         let st = this.stitchers.get(name);
-        if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(this.windowSegments)));
+        if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(0, this.windowSeconds)));
         changed = st.update(parsed, ready) || changed;
         let bytes = 0;
         let seconds = 0;

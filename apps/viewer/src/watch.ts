@@ -1,13 +1,28 @@
 import './peer-guard-install.js';
 import './style.css';
 import { formatNumber, t, type MessageKey } from './i18n.js';
-import Hls, { type ErrorData } from 'hls.js';
+import Hls, { type ErrorData, type LevelDetails } from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
+import { debug as p2pDebug } from 'p2p-media-loader-core';
 import type { ServerMessage, ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
 import { createLatencyToggle } from './latency-toggle.js';
+import { CoreActivity, PeerStrikes, withHttpFallback } from './p2p-fallback.js';
 import { asciiToHex, peerGuard } from './peer-guard.js';
-import { createManifestReloader, hlsConfigFor, type applyProfile, loadProfile, p2pCoreConfigFor, saveEstimate, streamSwarmIdBuilder } from './player-config.js';
+import {
+  createManifestReloader,
+  hlsConfigFor,
+  latencyFor,
+  mismatchWindow,
+  type applyProfile,
+  loadProfile,
+  p2pCoreConfigFor,
+  type PlaylistWindow,
+  saveEstimate,
+  streamSwarmIdBuilder,
+  urgentSecondsFor,
+} from './player-config.js';
+import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 
@@ -48,7 +63,7 @@ function tip(text: string): HTMLSpanElement {
 }
 
 /** Quality menu (Auto/1080p/720p/480p/360p) and the Stable / Lower-delay switch, with tooltips. */
-function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1]): void {
+function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null): void {
   const qualityGroup = document.createElement('div');
   qualityGroup.className = 'control-group quality-group';
   playerControls.appendChild(qualityGroup);
@@ -65,7 +80,7 @@ function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<t
   const toggle = createLatencyToggle(
     latencyGroup,
     { hls, engine },
-    { isMobile },
+    { isMobile, window },
     {
       stable: t('watch.latency.stable'),
       lowDelay: t('watch.latency.lowDelay'),
@@ -110,6 +125,19 @@ function showP2PLine(text: string | null, isStats = false): void {
   if (text !== null) p2pStats.textContent = text;
 }
 
+/** Test/diagnostics only: `?debug=1` (or localStorage sc.debug=1) turns on hls.js and P2P logs. */
+const debugMode = ((): boolean => {
+  try {
+    return new URLSearchParams(location.search).get('debug') === '1' || localStorage.getItem('sc.debug') === '1';
+  } catch {
+    return false;
+  }
+})();
+if (debugMode) p2pDebug.enable('p2pml-core:hybrid-loader*,p2pml-core:request*,p2pml-core:p2p-loader*');
+const debugLog = (msg: string): void => {
+  if (debugMode) console.warn(`[swarmcast] ${msg}`);
+};
+
 const isMobile = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
 
 /** Live counters (also exposed read-only on window for diagnostics and tests). */
@@ -120,8 +148,15 @@ const stats = {
   http429: 0,
   peers: new Set<string>(),
   hashFailures: 0,
+  /** Fragments the P2P core held too long and that were fetched over HTTPS instead. */
+  httpFallbacks: 0,
+  /** Peers dropped locally because they did not deliver. */
+  peersDropped: 0,
+  stallRecoveries: 0,
   p2pEnabled: false,
   p2pAllowed: true,
+  /** The streamer's switch for everyone (false = P2P off for this live). */
+  p2pForAll: true,
   playing: false,
 };
 (window as unknown as { __swarmcast: unknown }).__swarmcast = {
@@ -212,6 +247,7 @@ async function main(): Promise<void> {
   const profile = loadProfile();
   const hls = new HlsWithP2P({
     ...hlsConfigFor(profile, { isMobile }),
+    debug: debugMode,
     p2p: {
       core: {
         swarmId: cfg.swarmId,
@@ -231,6 +267,64 @@ async function main(): Promise<void> {
   });
 
   const engine = hls.p2pEngine;
+
+  // How much the playlists in use (video AND audio: the audio one can be shorter) still offer.
+  const liveDetails = (): { video?: LevelDetails; audio?: LevelDetails } => {
+    const v = hls.levels[hls.currentLevel >= 0 ? hls.currentLevel : hls.loadLevel]?.details;
+    const a = hls.audioTracks[hls.audioTrack]?.details;
+    return { ...(v?.live ? { video: v } : {}), ...(a?.live ? { audio: a } : {}) };
+  };
+  const playlistWindow = (): PlaylistWindow | null => {
+    const { video, audio } = liveDetails();
+    return mismatchWindow(video, audio);
+  };
+  const windowStart = (): number | null => {
+    const d = Object.values(liveDetails());
+    return d.length === 0 ? null : Math.max(...d.map((x) => x.fragmentStart));
+  };
+  // Keep the live delay inside that window (player-config.ts latencyFor). Set on the config,
+  // not hls.targetLatency, so hls.js keeps its stall count.
+  const fitLatency = (): void => {
+    const fit = latencyFor(loadProfile(), playlistWindow());
+    if (hls.config.liveSyncDuration !== fit.liveSyncDuration || hls.config.liveMaxLatencyDuration !== fit.liveMaxLatencyDuration) {
+      debugLog(`live delay ${fit.liveSyncDuration}s (max ${fit.liveMaxLatencyDuration}s) for window ${JSON.stringify(playlistWindow())}`);
+      hls.config.liveMaxLatencyDuration = fit.liveMaxLatencyDuration;
+      hls.config.liveSyncDuration = fit.liveSyncDuration;
+    }
+  };
+  hls.on(Hls.Events.LEVEL_UPDATED, fitLatency);
+  hls.on(Hls.Events.AUDIO_TRACK_LOADED, fitLatency);
+
+  // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
+  // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
+  const activity = new CoreActivity();
+  activity.attach(engine);
+  const strikes = new PeerStrikes();
+  const strikePeer = (peerId: string | undefined, why: string): void => {
+    if (!peerId || !strikes.strike(peerId)) return;
+    stats.peersDropped += 1;
+    debugLog(`dropping peer ${peerId} (${why})`);
+    peerGuard.drop(asciiToHex(peerId), 120_000);
+  };
+  engine.addEventListener('onSegmentError', (d) => {
+    if (d.downloadSource === 'p2p' && d.error.type !== 'abort') strikePeer(d.peerId, d.error.type);
+  });
+  const p2pLoader = hls.config.fLoader;
+  if (p2pLoader) {
+    hls.config.fLoader = withHttpFallback(p2pLoader, {
+      media: () => hls.media,
+      urgentS: () => urgentSecondsFor(loadProfile()),
+      activity,
+      onFallback: ({ url, type, reason, waitedMs, attempt }) => {
+        stats.httpFallbacks += 1;
+        debugLog(`HTTP fallback (${reason}, ${type}, waited ${Math.round(waitedMs)} ms, core: ${attempt?.source ?? 'idle'}) ${url.split('/').pop()}`);
+        if (attempt?.source === 'p2p') strikePeer(attempt.peerId, 'too slow');
+      },
+      onFallbackLoaded: (bytes) => {
+        stats.httpBytes += bytes;
+      },
+    });
+  }
   engine.addEventListener('onChunkDownloaded', (bytes, source) => {
     if (source === 'p2p') stats.p2pDownBytes += bytes;
     else stats.httpBytes += bytes;
@@ -240,7 +334,7 @@ async function main(): Promise<void> {
   });
   engine.addEventListener('onPeerConnect', (p) => {
     stats.peers.add(p.peerId);
-    if (peerGuard.isBlocked(asciiToHex(p.peerId))) peerGuard.block([asciiToHex(p.peerId)]);
+    if (peerGuard.isBlocked(asciiToHex(p.peerId))) peerGuard.closePeer(asciiToHex(p.peerId));
   });
   engine.addEventListener('onPeerClose', (p) => {
     stats.peers.delete(p.peerId);
@@ -252,7 +346,7 @@ async function main(): Promise<void> {
     }
   });
 
-  mountPlayerControls(hls, engine);
+  mountPlayerControls(hls, engine, playlistWindow);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
@@ -336,7 +430,7 @@ async function main(): Promise<void> {
 
   const renderP2PLine = (): void => {
     if (!stats.p2pAllowed) {
-      showP2PLine(t('watch.p2pRevoked'));
+      showP2PLine(t(stats.p2pForAll ? 'watch.p2pRevoked' : 'watch.p2pOffForAll'));
     } else if (stats.p2pEnabled) {
       const total = stats.httpBytes + stats.p2pDownBytes;
       const share = total > 0 ? Math.round((stats.p2pDownBytes / total) * 100) : 0;
@@ -356,8 +450,9 @@ async function main(): Promise<void> {
   setInterval(renderP2PLine, 2000);
 
   connectControl(cfg, {
-    onP2P: (allowed) => {
+    onP2P: (allowed, forAll) => {
       stats.p2pAllowed = allowed;
+      stats.p2pForAll = forAll ?? true;
       if (!allowed) setP2P(false);
       else if (!stats.p2pEnabled && p2pWanted()) setP2P(true);
       updateP2PUi();
@@ -377,13 +472,26 @@ async function main(): Promise<void> {
   hls.loadSource(cfg.playlistUrl);
   hls.attachMedia(video);
   (window as unknown as { __hls: unknown }).__hls = hls;
+
+  // If playback stays stuck anyway, restart loading where every track has data (stall-recovery.ts).
+  installStallRecovery({
+    video,
+    hls,
+    windowStart,
+    isEnded: () => ended,
+    reload: () => hls.loadSource(cfg.playlistUrl),
+    log: (msg) => {
+      stats.stallRecoveries += 1;
+      debugLog(msg);
+    },
+  });
 }
 
 function sendControl(msg: unknown): void {
   if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
 }
 
-function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean) => void } | null): void {
+function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean, forAll?: boolean) => void } | null): void {
   let attempts = 0;
   const open = (): void => {
     if (ended) return;
@@ -406,10 +514,10 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean)
         case 'hello':
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
-          handlers?.onP2P(msg.p2pAllowed);
+          handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll);
           break;
         case 'p2p':
-          handlers?.onP2P(msg.allowed);
+          handlers?.onP2P(msg.allowed, msg.forAll);
           break;
         case 'viewers':
           showViewerCount(msg.count);

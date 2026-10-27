@@ -36,6 +36,8 @@ export const configSchema = z.object({
   alsoStreamingElsewhere: z.boolean().default(true),
   /** Viewers see how many people are watching (only the number, never names). */
   showViewerCount: z.boolean().default(true),
+  /** Viewers may share video with each other (P2P); the panel's emergency switch for everyone. */
+  allowViewerP2P: z.boolean().default(true),
   /** Hard cap on simultaneous viewer sessions; new joins get "full" beyond it (app-level DoS guard). */
   maxViewers: z.number().int().min(1).max(100_000).default(QUICK_TUNNEL_MAX_VIEWERS),
   /** Sessions one browser (device cookie) may hold; the oldest is replaced beyond it. */

@@ -90,6 +90,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `security.blocklists` | `["spamhaus-drop","spamhaus-drop-v6","firehol-level1"]` | Built-in lists; `"feodo"` (abuse.ch Feodo Tracker, already inside FireHOL level1) is optional |
 | `security.extraBlocklistUrls` | `[]` | Extra `https://` lists (one IP/CIDR per line), e.g. blocklist.de or Tor exit lists. Not recommended: aggressive lists block innocent viewers |
 | `showViewerCount` | true | Show viewers how many people are watching (panel) |
+| `allowViewerP2P` | true | Viewers may share video with each other (panel "Allow P2P for viewers"; off = P2P stops for everyone live, playback goes on over HTTPS) |
 | `diagnostics.logRetentionDays` | 14 | Days of logs and log exports kept in `<data>/logs` and `<data>/exports` (3 to 90; the folders are also kept under 100 MB) (panel: Problem report → Advanced) |
 | `autoStopMinutes` | 10 | Stop everything after this long without video from OBS |
 | `alsoStreamingElsewhere` | true | Reserve upload for another platform you stream to at the same time (e.g. Twitch, YouTube, Kick) in the capacity estimate |

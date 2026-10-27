@@ -495,7 +495,7 @@ function SettingsForm({
   const [v, setV] = useState(settings);
   useEffect(
     () => setV(settings),
-    [settings.uploadLimitMbps, settings.autoStopMinutes, settings.alsoStreamingElsewhere, settings.showViewerCount, settings.maxViewers, settings.maxSessionsPerDevice],
+    [settings.uploadLimitMbps, settings.autoStopMinutes, settings.alsoStreamingElsewhere, settings.showViewerCount, settings.allowViewerP2P, settings.maxViewers, settings.maxSessionsPerDevice],
   );
   return (
     <form
@@ -537,6 +537,18 @@ function SettingsForm({
           {t('admin.set.showCount')}
         </label>{' '}
         <Info text={t('admin.set.showCount.tip')} />
+      </div>
+      <div class="field">
+        <label>
+          <input
+            type="checkbox"
+            data-testid="allow-viewer-p2p"
+            checked={v.allowViewerP2P}
+            onChange={(e) => setV({ ...v, allowViewerP2P: (e.target as HTMLInputElement).checked })}
+          />{' '}
+          {t('admin.set.allowP2P')}
+        </label>{' '}
+        <Info text={t('admin.set.allowP2P.tip')} />
       </div>
       <div class="field">
         <label>

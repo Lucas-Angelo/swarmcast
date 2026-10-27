@@ -1,5 +1,22 @@
 import { expect, test, type Page } from '@playwright/test';
-import { admin, adminState, currentTime, enableP2P, join, stats, viewerByNick, waitPlaying } from './fixtures.js';
+import type { AdminState, QualityState } from '@swarmcast/shared';
+import {
+  admin,
+  adminApi,
+  adminState,
+  currentTime,
+  enableP2P,
+  join,
+  ladderUpdate,
+  liveLink,
+  reconnectObs,
+  setPlaylistWindow,
+  stallReport,
+  startStallMonitor,
+  stats,
+  viewerByNick,
+  waitPlaying,
+} from './fixtures.js';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -115,4 +132,146 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
   expect((await adminState()).warnings.join(' ')).toMatch(/removed from P2P automatically/);
   await honest.context.close();
   await evilCtx.close();
+});
+
+test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser, browserName }) => {
+  const { context, page } = await join(browser, `allp2p-${browserName}`);
+  await waitPlaying(page);
+  await expect(page.locator('#p2p')).toBeChecked();
+  const settings = (await adminState()).settings;
+  try {
+    await adminApi<AdminState['settings']>('PUT', '/api/settings', { ...settings, allowViewerP2P: false });
+    await expect(page.locator('#p2p')).toBeDisabled();
+    await expect(page.locator('#p2p')).not.toBeChecked();
+    await expect(page.locator('#p2p-stats')).toContainText('turned off P2P for this live');
+    expect((await stats(page)).p2pEnabled).toBe(false);
+    expect((await adminState()).settings.allowViewerP2P).toBe(false);
+    const t = await currentTime(page);
+    await expect.poll(async () => (await currentTime(page)) - t, { timeout: 20_000 }).toBeGreaterThan(2);
+  } finally {
+    await adminApi('PUT', '/api/settings', { ...settings, allowViewerP2P: true });
+  }
+  // Back on: the viewer's own choice (on) applies again.
+  await expect(page.locator('#p2p')).toBeEnabled();
+  await expect(page.locator('#p2p')).toBeChecked();
+  expect((await stats(page)).p2pEnabled).toBe(true);
+  await context.close();
+});
+
+// Regression for the "frozen forever after one stall" bug (P2P on, quality ladder on):
+// - the ladder's audio playlist held only 20 s (1 s segments, 20 entries) on v0.2.0 servers,
+//   emulated here with a 20 s playlist window; the Stable profile played 20 s behind live;
+// - p2p-media-loader kept requests for segments that slid out of the playlist pending forever;
+// - after a stall hls.js jumped to before the oldest audio segment and never played again.
+// Next to a peer that accepts the WebRTC connection but trickles data (one chunk every 1.8 s:
+// just under the core's 2 s no-bytes timeout, so the core never gives up on it), with a P2P
+// core that does not fall back to HTTPS by itself, a P2P viewer must keep playing, and must
+// come back by itself after a forced stall (network throttled). The viewer before the fix
+// froze here within seconds.
+test('a peer that barely delivers never starves playback, even after a forced stall', async ({ browser, browserName }) => {
+  test.skip(browserName !== 'chromium', 'network throttling needs CDP (Chromium)');
+  test.skip(process.platform === 'win32', 'uses SIGUSR2 to reconnect the fake OBS');
+  const q0 = await adminApi<QualityState>('GET', '/api/quality');
+  test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');
+  test.setTimeout(480_000);
+
+  const contexts: Array<{ close(): Promise<void> }> = [];
+  try {
+    await setPlaylistWindow(20);
+    await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'auto' }));
+    reconnectObs({ size: '1280x720', kbps: 2500 });
+    await expect
+      .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
+      .toEqual([720, 480, 360]);
+    // Let the playlists fill up (the audio one to its 20 s window).
+    await new Promise((r) => setTimeout(r, 25_000));
+
+    // The bad peer joins first, so it holds segments the honest viewer will ask it for.
+    // Both on 480p: one swarm per quality, so they are peers of each other.
+    const same480 = (c: import('@playwright/test').BrowserContext) => c.addInitScript(() => localStorage.setItem('sc.quality-height', '480'));
+    const slowCtx = await browser.newContext();
+    contexts.push(slowCtx);
+    await same480(slowCtx);
+    await slowCtx.addInitScript(() => {
+      const send = RTCDataChannel.prototype.send as (this: RTCDataChannel, d: unknown) => void;
+      let chain = Promise.resolve();
+      RTCDataChannel.prototype.send = function (this: RTCDataChannel, data: unknown) {
+        // Every message goes through one queue so the protocol order is kept; only the data
+        // chunks (> 1000 bytes) wait.
+        const binary = (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) && data.byteLength > 1000;
+        const copy =
+          typeof data === 'string'
+            ? data
+            : data instanceof ArrayBuffer
+              ? data.slice(0)
+              : new Uint8Array((data as ArrayBufferView).buffer.slice((data as ArrayBufferView).byteOffset, (data as ArrayBufferView).byteOffset + (data as ArrayBufferView).byteLength));
+        chain = chain
+          .then(() => new Promise((r) => setTimeout(r, binary ? 1800 : 0)))
+          .then(() => {
+            if (this.readyState === 'open') send.call(this, copy);
+          })
+          .catch(() => {});
+      } as typeof RTCDataChannel.prototype.send;
+    });
+    const slow = await slowCtx.newPage();
+    await slow.goto(await liveLink());
+    await slow.fill('#nickname', `trickle-${browserName}`);
+    await slow.click('#join');
+    await waitPlaying(slow);
+    await enableP2P(slow);
+    await slow.waitForTimeout(8000);
+
+    // The honest viewer is on a tunnel-like link (300 ms round trip), like real viewers.
+    const TUNNEL = { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 };
+    const ctx = await browser.newContext();
+    contexts.push(ctx);
+    await same480(ctx);
+    const page = await ctx.newPage();
+    const cdp = await ctx.newCDPSession(page);
+    await cdp.send('Network.emulateNetworkConditions', TUNNEL);
+    await page.goto(await liveLink());
+    await page.fill('#nickname', `steady-${browserName}`);
+    await page.click('#join');
+    await waitPlaying(page);
+    await expect(page.locator('#p2p')).toBeChecked();
+    // Fault injection: the P2P core may no longer fetch anything over HTTPS by itself, only
+    // from peers. That is the state seen live, where the core held a soon-needed segment
+    // without ever starting it; here it holds every segment, waiting for the trickling peer.
+    await page.evaluate(() => {
+      const none = { simultaneousHttpDownloads: 0 };
+      (window as unknown as { __hls: { p2pEngine: { applyDynamicConfig(c: unknown): void } } }).__hls.p2pEngine.applyDynamicConfig({ core: { ...none, mainStream: none, secondaryStream: none } });
+    });
+    await expect.poll(async () => (await stats(page)).peers.length, { timeout: 90_000 }).toBeGreaterThan(0);
+
+    // 60 s of normal playback next to the trickling peer: no stall longer than a few seconds.
+    await startStallMonitor(page);
+    await page.waitForTimeout(60_000);
+    const before = await stallReport(page);
+    expect(before.maxStallMs, 'stall next to a slow peer').toBeLessThan(4000);
+
+    // Forced stall: 25 s at 40 kbit/s drains the buffer and pushes the delay past the
+    // catch-up limit, which is where the old player froze for good.
+    await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 300, downloadThroughput: 5000, uploadThroughput: 5000 });
+    await page.waitForTimeout(25_000);
+    await cdp.send('Network.emulateNetworkConditions', TUNNEL);
+
+    // It comes back by itself...
+    await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [1000] }).toBe(0);
+    // ...and keeps playing smoothly.
+    await startStallMonitor(page);
+    const t0 = await currentTime(page);
+    await page.waitForTimeout(30_000);
+    const after = await stallReport(page);
+    expect(after.currentTime - t0, 'playhead advanced after the forced stall').toBeGreaterThan(25);
+    expect(after.maxStallMs, 'stall after recovering').toBeLessThan(4000);
+    const s = await stats(page);
+    console.log(`steady viewer: ${s.httpFallbacks} HTTPS fallbacks, ${s.peersDropped} peers dropped, ${s.stallRecoveries} stall recoveries, ${Math.round(s.p2pDownBytes / 1024)} kB over P2P`);
+  } finally {
+    for (const c of contexts) await c.close().catch(() => {});
+    await setPlaylistWindow(40);
+    const q = await adminApi<QualityState>('GET', '/api/quality');
+    await adminApi('PUT', '/api/quality', ladderUpdate(q, { mode: 'manual', enabled: false }));
+    reconnectObs(null);
+    await expect.poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.length, { timeout: 90_000, intervals: [1000] }).toBeLessThanOrEqual(1);
+  }
 });
