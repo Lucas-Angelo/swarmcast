@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import path from 'node:path';
 import readline from 'node:readline';
 import type { Logger } from '../core/logger.js';
 
@@ -65,11 +66,13 @@ export class ManagedChild extends EventEmitter<{ line: [line: string, stream: 's
   /** Graceful stop, escalating to a hard kill after `graceMs`. */
   async stop(graceMs = 3000): Promise<void> {
     if (this.exited || !this.proc.pid) return;
-    killTree(this.proc.pid, 'SIGTERM');
+    const pid = this.proc.pid;
+    // Graceful first: delivered now, the grace period below is the wait.
+    await killTree(pid, 'SIGTERM', { waitMs: 0 });
     const timeout = new Promise<'timeout'>((r) => setTimeout(() => r('timeout'), graceMs).unref());
     if ((await Promise.race([this.exitPromise.then(() => 'exited' as const), timeout])) === 'timeout') {
       this.log.warn({ child: this.name }, 'child did not exit in time, killing');
-      killTree(this.proc.pid, 'SIGKILL');
+      if (!(await killTree(pid, 'SIGKILL'))) this.log.warn({ child: this.name, pid }, 'child still running after a forced kill');
       await Promise.race([this.exitPromise, new Promise((r) => setTimeout(r, 2000).unref())]);
     }
   }
@@ -79,20 +82,84 @@ export class ManagedChild extends EventEmitter<{ line: [line: string, stream: 's
   }
 }
 
-export function killTree(pid: number, signal: NodeJS.Signals): void {
+export interface KillTreeOptions {
+  /** How long to wait, after the kill was delivered, for the processes to be gone. Default 2000 ms; 0: do not wait. */
+  waitMs?: number;
+}
+
+/** taskkill by absolute path: a `taskkill` earlier on PATH (Git, MSYS, a shim) is never run. */
+function taskkillExe(): string {
+  return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
+}
+
+/** True while the process group `pgid` has a member (POSIX). */
+function groupAlive(pgid: number): boolean {
   try {
-    if (process.platform === 'win32') {
-      // /T kills the whole tree, /F forces it.
-      spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-    } else {
-      process.kill(-pid, signal);
-    }
-  } catch {
+    process.kill(-pgid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
+/** Resolves when taskkill exited (it only returns once the processes were terminated), at most after `capMs`. */
+function runTaskkill(pid: number, capMs = 5000): Promise<void> {
+  return new Promise((resolve) => {
+    let tk: ChildProcess;
     try {
-      process.kill(pid, signal);
+      // /T: the whole tree (children found through their parent pid), /F: forced.
+      tk = spawn(taskkillExe(), ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     } catch {
-      /* already gone */
+      resolve();
+      return;
     }
+    const cap = setTimeout(() => {
+      tk.kill();
+      resolve();
+    }, capMs);
+    cap.unref();
+    const done = (): void => {
+      clearTimeout(cap);
+      resolve();
+    };
+    tk.once('exit', done);
+    tk.once('error', done);
+  });
+}
+
+/**
+ * Kill a process and its children, and wait for the facts: resolves once the kill was
+ * delivered (Windows: taskkill has exited) and the processes are gone, or `waitMs` passed.
+ * Resolves true when they are gone.
+ *
+ * - Windows: `taskkill /T /F` (always forced; `signal` does not apply). Only `pid` itself can be
+ *   checked afterwards; a grandchild whose parent had already exited is not part of the tree
+ *   any more (the end state is a Job Object for script mode too, as in the desktop app).
+ * - POSIX: `signal` to the process group (our children are spawned detached, as group leaders),
+ *   then waits until no member of the group is left; falls back to the process alone.
+ */
+export async function killTree(pid: number, signal: NodeJS.Signals, opts: KillTreeOptions = {}): Promise<boolean> {
+  const waitMs = opts.waitMs ?? 2000;
+  let alive: () => boolean = () => isAlive(pid);
+  if (process.platform === 'win32') {
+    await runTaskkill(pid);
+  } else {
+    try {
+      process.kill(-pid, signal);
+      alive = () => groupAlive(pid) || isAlive(pid);
+    } catch {
+      try {
+        process.kill(pid, signal);
+      } catch {
+        /* already gone */
+      }
+    }
+  }
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    if (!alive()) return true;
+    if (Date.now() >= deadline) return false;
+    await new Promise((r) => setTimeout(r, 25));
   }
 }
 
@@ -166,14 +233,20 @@ export class Reaper {
   }
 }
 
+/** Longest the reaper waits for its kills (taskkill up to 5 s, then up to 2 s until gone). */
+const REAP_CAP_MS = 8000;
+
 /** Entry point of the reaper process (`swarmcast --reaper <parentPid>`). */
 export function runReaper(parentPid: number): void {
   const pids = new Set<number>();
-  const reap = (): never => {
-    for (const pid of pids) killTree(pid, 'SIGKILL');
-    // taskkill is asynchronous on Windows; give it a moment.
-    setTimeout(() => process.exit(0), process.platform === 'win32' ? 1500 : 50);
-    return undefined as never;
+  let reaping = false;
+  const reap = (): void => {
+    if (reaping) return;
+    reaping = true;
+    // Exit once every tree is really gone (taskkill finished, then each pid checked), not after
+    // a guess; a hung kill cannot keep the reaper alive past REAP_CAP_MS.
+    setTimeout(() => process.exit(0), REAP_CAP_MS).unref();
+    void Promise.all([...pids].map((pid) => killTree(pid, 'SIGKILL', { waitMs: 2000 }))).finally(() => process.exit(0));
   };
   // Ctrl+C / closing the terminal: SwarmCast itself shuts children down gracefully;
   // the reaper only acts once its parent is gone.
