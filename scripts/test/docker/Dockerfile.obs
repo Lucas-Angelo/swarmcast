@@ -3,8 +3,8 @@
 #   docker build -f Dockerfile.obs -t swarmcast-test-obs .
 FROM ubuntu:24.04
 RUN set -e; \
-    apt-get update; \
-    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
       obs-studio xvfb xauth libgl1-mesa-dri libegl-mesa0 libglx-mesa0 mesa-utils \
       fonts-dejavu-core ffmpeg curl ca-certificates tar gzip jq procps iproute2 util-linux \
       python3 python3-websockets; \
