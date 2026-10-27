@@ -286,7 +286,8 @@ mode the server does it on first start (no `system-check.json`, or a different a
 | Unit (vitest, cargo test) | protocol encode/decode, autostart entry generation per OS, system check thresholds, i18n completeness, update state |
 | Integration (vitest) | real server with `--desktop` driven by a fake shell over stdio: ready, state, start/stop, quit, stdin EOF, fatal on busy ports |
 | macOS (local + CI arm64/x64) | build `.app`/`.dmg`, install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
-| Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
+| Linux (CI runners) | Ubuntu 22.04/24.04 x64 and 24.04 arm64 (`desktop.yml`): install `.deb` and AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
+| Linux (Docker, CI x64 + arm64, weekly) | the AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 with only the host packages the website lists (`scripts/test/docker/appimage.sh`, `linux-docker.yml`): starts, panel login, `/api/desktop`, webview up, Quit leaves nothing running |
 | Windows (CI) | NSIS silent install, launch, panel through the admin API, Job object (killing the app ends the server), autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
 CI: `.github/workflows/desktop.yml` runs `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`
