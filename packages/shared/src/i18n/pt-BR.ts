@@ -35,6 +35,7 @@ export const ptBR: Messages = {
   'err.leftovers': 'Ainda ativo ou acessível: {problems}',
   'err.startFirst': 'Ligue o SwarmCast primeiro.',
   'err.directAlreadyOn': 'O modo direto já está ligado.',
+  'err.directNoPort': 'O modo direto não conseguiu abrir uma porta neste computador: as que tentou estão reservadas pelo Windows ou em uso por outro programa. Tente de novo.',
   'err.routerPortOpen': 'O roteador ainda está com a porta {port} aberta.',
   'err.notAuthorized': 'Sem autorização',
   'err.requestFailed': 'A requisição falhou ({status})',

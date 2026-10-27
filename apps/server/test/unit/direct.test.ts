@@ -1,5 +1,7 @@
 import https from 'node:https';
+import net from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { canBindPort } from '../../src/core/ports.js';
 import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { CGNAT_MESSAGE, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
@@ -243,5 +245,50 @@ describe('direct mode TLS without SNI (browsers never send SNI for an IP address
         .on('error', reject);
     });
     expect(body).toMatch(/^200 /);
+  });
+});
+
+describe('direct mode: a port the computer can really open', () => {
+  // Windows reserves whole ranges of high ports (Hyper-V/WinNAT); listening there fails with
+  // EACCES. Such ports (and ports in use) are skipped before anything is mapped on the router.
+  it('skips ports that cannot be bound and maps the first one that can', async () => {
+    const seq = [0.1, 0.2, 0.3];
+    let i = 0;
+    const refused: number[] = [];
+    const d = new DirectMode(
+      deps({
+        random: () => seq[Math.min(i++, seq.length - 1)]!,
+        canBind: async (port, host) => {
+          expect(host).toBe('0.0.0.0');
+          if (port < 30000) {
+            refused.push(port);
+            return false;
+          }
+          return true;
+        },
+      }),
+    );
+    const url = await d.enable();
+    expect(refused).toEqual([24000, 28000]);
+    expect(url).toBe('https://203.0.113.7:32000');
+    expect([...igd.mappings.keys()]).toEqual([32000]);
+    await d.disable();
+  });
+
+  it('gives a clear error, and maps nothing, when no port can be opened', async () => {
+    let n = 0;
+    const d = new DirectMode(deps({ random: () => (n++ % 1000) / 1000, canBind: async () => false }));
+    await expect(d.enable()).rejects.toMatchObject({ code: 'err.directNoPort' });
+    expect(igd.mappings.size).toBe(0);
+    expect(d.active).toBe(false);
+  });
+
+  it('canBindPort is false for a port another server holds', async () => {
+    const srv = net.createServer();
+    await new Promise<void>((r) => srv.listen(0, '0.0.0.0', () => r()));
+    const port = (srv.address() as net.AddressInfo).port;
+    expect(await canBindPort(port, '0.0.0.0')).toBe(false);
+    await new Promise<void>((r) => srv.close(() => r()));
+    expect(await canBindPort(port, '0.0.0.0')).toBe(true);
   });
 });

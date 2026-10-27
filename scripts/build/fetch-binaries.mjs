@@ -2,7 +2,8 @@
 // Download MediaMTX and cloudflared for one platform and verify them against the
 // SHA-256 values pinned in versions.json (copied from the upstream release checksums).
 //
-// Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
+// Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg] [--only ffmpeg]
+//   --only <tool>: just that tool, even one that is not bundled (CI uses it for the pinned ffmpeg).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -62,12 +63,14 @@ function findFile(dir, name) {
   return null;
 }
 
-export async function fetchBinaries(target, outDir, { withOptional = false } = {}) {
+export async function fetchBinaries(target, outDir, { withOptional = false, only } = {}) {
   fs.mkdirSync(outDir, { recursive: true });
+  if (only && !versions[only]) throw new Error(`Unknown tool "${only}" (versions.json has ${Object.keys(versions).join(', ')})`);
   for (const [tool, spec] of Object.entries(versions)) {
+    if (only && tool !== only) continue;
     // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
     // unless a packager explicitly opts in (and then ships its license + source).
-    if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) continue;
+    if (spec.bundle === false && !(only || withOptional || process.argv.includes(`--with-${tool}`))) continue;
     const a = spec.assets[target];
     if (!a) throw new Error(`No ${tool} build for ${target}`);
     const finalPath = path.join(outDir, path.basename(a.binary));
@@ -110,7 +113,7 @@ export async function fetchBinaries(target, outDir, { withOptional = false } = {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = arg('target', hostTarget());
   const out = path.resolve(arg('out', path.join(root, 'vendor', target)));
-  fetchBinaries(target, out).catch((err) => {
+  fetchBinaries(target, out, { only: arg('only') }).catch((err) => {
     console.error(`✗ ${err.message}`);
     process.exit(1);
   });

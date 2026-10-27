@@ -40,6 +40,7 @@ export const en = {
   'err.leftovers': '{problems}',
   'err.startFirst': 'Turn on SwarmCast first.',
   'err.directAlreadyOn': 'Direct mode is already on.',
+  'err.directNoPort': 'Direct mode could not open a port on this computer: the ones tried are reserved by Windows or used by another program. Try again.',
   'err.routerPortOpen': 'The router still has port {port} open.',
   'err.notAuthorized': 'Not authorized',
   'err.requestFailed': 'Request failed ({status})',

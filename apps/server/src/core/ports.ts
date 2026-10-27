@@ -15,7 +15,12 @@ export function isListening(port: number, host = '127.0.0.1', timeoutMs = 1000):
   });
 }
 
-function canBind(port: number, host: string): Promise<boolean> {
+/**
+ * True when this process could listen on host:port right now. False for a port in use and for
+ * one the OS refuses (on Windows, Hyper-V/WinNAT reserve whole ranges of high ports, listed by
+ * `netsh interface ipv4 show excludedportrange protocol=tcp`; listening there fails with EACCES).
+ */
+export function canBindPort(port: number, host: string): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = net.createServer();
     srv.once('error', () => resolve(false));
@@ -29,8 +34,8 @@ function canBind(port: number, host: string): Promise<boolean> {
  * would then silently lose its local clients), so the wildcard address is checked too.
  */
 export async function isPortFree(port: number, host = '127.0.0.1'): Promise<boolean> {
-  if (!(await canBind(port, host))) return false;
-  if (host === '127.0.0.1' || host === 'localhost') return canBind(port, '0.0.0.0');
+  if (!(await canBindPort(port, host))) return false;
+  if (host === '127.0.0.1' || host === 'localhost') return canBindPort(port, '0.0.0.0');
   return true;
 }
 
