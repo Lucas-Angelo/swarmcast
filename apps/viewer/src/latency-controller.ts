@@ -224,6 +224,7 @@ export class DelayController {
   private tuning!: Tuning;
   private targetS = 0;
   private ceiling: number | null = null;
+  private growthLimit: number | null = null;
   private state: NetworkState = 'steady';
   private rateMode: RateMode = 'normal';
   private frags: FragmentSample[] = [];
@@ -274,13 +275,26 @@ export class DelayController {
   }
 
   /**
-   * Extra upper limit from the playlists actually served (player-config.ts latencyFor: an
-   * older server whose audio playlist is shorter than the video one), null = none.
+   * Hard upper limit from the playlists actually served (player-config.ts latencyFor: an older
+   * server whose audio playlist is shorter than the video one), null = none. It caps the
+   * target (and so hls.js' live sync position); the network's own target is kept underneath.
    */
   setCeiling(seconds: number | null): void {
-    // Only caps what is played: the network's own target is kept, so a window that grows (the
-    // stream just started) lets the delay go back to it.
     this.ceiling = seconds !== null && Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  }
+
+  /**
+   * How far back the shortest live playlist in use reaches right now (stream just started, or a
+   * server keeping fewer segments), null = no limit. The controller never builds delay past it
+   * (no slow-down, no hold), but does not pull the playhead closer to live because of it either:
+   * a short window at stream start grows by itself.
+   */
+  setGrowthLimit(seconds: number | null): void {
+    this.growthLimit = seconds !== null && Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+  }
+
+  private get growthMaxS(): number {
+    return this.growthLimit === null ? this.maxS : Math.min(this.maxS, this.growthLimit);
   }
 
   /** Highest target now: the profile bound, lowered by the playlist ceiling if any. */
@@ -327,7 +341,7 @@ export class DelayController {
     this.rateMode = 'normal';
     if (latency === null || !Number.isFinite(latency)) return { target: this.target, holdS: 0 };
     if (now - this.lastHoldAt < tu.holdEveryS) return { target: this.target, holdS: 0 };
-    const room = this.maxS - latency;
+    const room = this.growthMaxS - latency;
     const holdS = clamp(Math.min(this.target - latency, room), 0, tu.maxHoldS);
     if (holdS < 0.5) return { target: this.target, holdS: 0 };
     this.lastHoldAt = now;
@@ -516,7 +530,7 @@ export class DelayController {
       this.rateMode = 'catch-up';
     }
     // Slow down (raise the delay) only on an unstable network.
-    const canSlow = this.state === 'unstable' && !overMax;
+    const canSlow = this.state === 'unstable' && !overMax && input.latency < this.growthMaxS - tu.slowDown.startBelow;
     if (this.rateMode === 'slow-down') {
       if (!canSlow || d > -tu.slowDown.stopBelow) this.rateMode = 'normal';
     } else if (this.rateMode === 'normal' && canSlow && d < -tu.slowDown.startBelow) {

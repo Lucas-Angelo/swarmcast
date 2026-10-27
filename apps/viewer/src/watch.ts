@@ -316,10 +316,11 @@ async function main(): Promise<void> {
     const w = playlistWindow();
     const fit = latencyFor(loadProfile(), w);
     const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
-    // Same rule as latencyFor, on the shortest window: liveSyncDuration ≤ min(max, window − 2 TD) − 2 TD.
-    const sw = shortestWindow();
-    const top = sw ? latencyFor(loadProfile(), sw).liveMaxLatencyDuration : null;
-    adaptive?.setCeiling(sw && top !== null ? Math.max(2 * sw.targetDurationS, Math.floor(top - 2 * sw.targetDurationS)) : null);
+    // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
+    // the target itself; the shortest window only stops the controller building delay past it.
+    const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
+    adaptive?.setCeiling(room(w));
+    adaptive?.setGrowthLimit(room(shortestWindow()));
     if (hls.config.liveMaxLatencyDuration !== max) {
       debugLog(`live delay max ${max}s for window ${JSON.stringify(w)}`);
       hls.config.liveMaxLatencyDuration = max;

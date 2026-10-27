@@ -174,6 +174,30 @@ describe('bounds', () => {
     expect(ctl.target).toBe(20);
   });
 
+  it('a short window (stream start) does not pull the playhead closer to live, but no delay is built past it', () => {
+    const ctl = new DelayController({ profile: 'stable', now: 0 });
+    ctl.setGrowthLimit(4);
+    // The target hls.js uses stays the profile's (hls.js keeps the playhead inside the window).
+    expect(ctl.target).toBe(20);
+    let maxRate = 0;
+    let minRate = 2;
+    for (let t = 0; t < 60; t++) {
+      if (t % 2 === 0) ctl.onFragment({ at: t, durationS: 2, loadS: 1.8, source: 'http' });
+      const d = ctl.tick({ now: t, latency: 6, forwardBuffer: 5, bandwidthEstimate: 3_000_000, levelBitrate: BITRATE, playing: true });
+      maxRate = Math.max(maxRate, d.playbackRate);
+      minRate = Math.min(minRate, d.playbackRate);
+    }
+    expect(ctl.networkState).toBe('unstable');
+    expect(maxRate).toBe(1);
+    expect(minRate).toBe(1);
+    // A stall: no hold past the window either.
+    expect(ctl.onStallStart(61, 6).holdS).toBe(0);
+    // Once the playlists have grown, it builds delay again.
+    ctl.setGrowthLimit(32);
+    const d = ctl.tick({ now: 62, latency: 6, forwardBuffer: 5, bandwidthEstimate: 3_000_000, levelBitrate: BITRATE, playing: true });
+    expect(d.playbackRate).toBe(0.95);
+  });
+
   it('a delay above the ceiling (the window shrank) is caught up, not slowed down further', () => {
     const ctl = new DelayController({ profile: 'stable', now: 0 });
     ctl.setCeiling(12);

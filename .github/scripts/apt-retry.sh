@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # apt-get with a time limit per try and retries, for GitHub's Ubuntu runners.
 #   .github/scripts/apt-retry.sh install -y --no-install-recommends xvfb
+#   .github/scripts/apt-retry.sh --run npx playwright install-deps firefox webkit   (a command that runs apt itself)
 #
 # GitHub's own Ubuntu mirror (azure.archive.ubuntu.com) sometimes trickles: one package took
 # 7 minutes and the job hit its timeout. apt's own retries only catch errors and stalls, not a
@@ -25,10 +26,15 @@ switch_mirror() {
   fi
 }
 
+cmd=($SUDO apt-get "$@")
+if [ "${1:-}" = --run ]; then
+  shift
+  cmd=("$@")
+fi
 for i in $(seq 1 "$TRIES"); do
-  if $SUDO timeout "$TRY_TIMEOUT" apt-get "$@"; then exit 0; fi
-  echo "::warning::apt-get $1 failed or took more than ${TRY_TIMEOUT} s (try $i of $TRIES)"
+  if timeout "$TRY_TIMEOUT" "${cmd[@]}"; then exit 0; fi
+  echo "::warning::${cmd[*]} failed or took more than ${TRY_TIMEOUT} s (try $i of $TRIES)"
   switch_mirror
 done
-echo "::error::apt-get $* failed $TRIES times"
+echo "::error::${cmd[*]} failed $TRIES times"
 exit 1

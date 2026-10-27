@@ -24,8 +24,10 @@ export interface AdaptiveDelay {
   /** Playback is paused by us inside a stall (show "Buffering", not "Paused"). */
   readonly holding: boolean;
   setProfile(id: DelayProfileId): void;
-  /** Upper limit from the playlists served (player-config.ts latencyFor), null = none. */
+  /** Hard upper limit from a playlist mismatch (player-config.ts latencyFor), null = none. */
   setCeiling(seconds: number | null): void;
+  /** How far back the shortest live playlist reaches: no delay is built past it. */
+  setGrowthLimit(seconds: number | null): void;
   /** Debug and test view (window.__swarmcast.delay). */
   snapshot(): Record<string, unknown>;
 }
@@ -205,6 +207,9 @@ export function attachAdaptiveDelay(
     setCeiling(seconds) {
       ctl.setCeiling(seconds);
       applyTarget();
+    },
+    setGrowthLimit(seconds) {
+      ctl.setGrowthLimit(seconds);
     },
     snapshot() {
       return {
