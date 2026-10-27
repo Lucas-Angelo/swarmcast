@@ -7,11 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-
-- **Twice the audience on the free tunnel.** We measured that a Cloudflare quick tunnel counts every open WebSocket against its 200-requests-in-flight limit, so with two sockets per viewer it filled up at about 100 viewers. Viewers now keep one WebSocket (the P2P tracker rides on the control connection), and the tunnel holds about 120 viewers with room for the video. "Max viewers at once" now starts at 120 (a saved 500, the old default, becomes 120 once), and the panel warns when the tunnel gets close to its limit, counting open connections and requests. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26); measuring tool: `scripts/test/tunnel-limit/`.
-
-## [0.2.0] - Unreleased
+## [0.2.0] - 2026-10-26
 
 The desktop app release: SwarmCast now installs like any other app, opens in its own window and updates itself. The website is the single guide for streamers.
 
@@ -39,6 +35,7 @@ The desktop app release: SwarmCast now installs like any other app, opens in its
 
 ### Changed
 
+- **Twice the audience on the free tunnel.** We measured that a Cloudflare quick tunnel counts every open WebSocket against its 200-requests-in-flight limit, so with two sockets per viewer it filled up at about 100 viewers. Viewers now keep one WebSocket (the P2P tracker rides on the control connection), and the tunnel holds about 120 viewers with room for the video. "Max viewers at once" now starts at 120 (a saved 500, the old default, becomes 120 once), and the panel warns when the tunnel gets close to its limit, counting open connections and requests. Details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26); measuring tool: `scripts/test/tunnel-limit/`.
 - The panel and the viewer pages use the new brand: flat Forest & Cream look in light and dark, the real logo and mascot, Inter for text and Fredoka for the wordmark (all self-hosted).
 - The browser check on join is on by default and done once per browser: a signed cookie remembers it (30 days on a fixed address; once per live with the free quick tunnel, whose address changes every live). It is asked again only when an attack needs a stronger check. Configs from v0.1.0 that saved the old default (`false`) are switched on once; turning it off afterwards is kept. The join page shows a progress bar while it checks.
 - Logs: one file per day (`<data>/logs/swarmcast-YYYY-MM-DD.log`, cut at 5 MB), kept for 14 days by default (3 to 90 in Problem report → Advanced) and under 100 MB in total. The old `swarmcast.log` is removed by the same retention.
@@ -50,6 +47,7 @@ The desktop app release: SwarmCast now installs like any other app, opens in its
 
 ### Fixed
 
+- **P2P could freeze playback for good.** With the ladder on, the audio playlist covered only 20 s while the Stable profile plays 20 s behind live; a P2P request for a segment that had just left the playlist never started and never timed out, and hls.js recovery kept jumping outside the audio window. Now every playlist covers the furthest player delay plus a margin (derived from one shared constant), segments needed soon are fetched over HTTPS when no peer delivers them in time, slow peers are dropped, and a stall watchdog restarts loading by itself. The panel also has "Allow P2P for viewers" to turn P2P off for everyone at once.
 - Panel login works on the first try from the desktop app and the browser: `/auth/<token>` sets the cookie and opens the panel from its own page instead of a redirect, so the `SameSite=Strict` cookie is always sent.
 - Quitting while SwarmCast is still starting is immediate: the tunnel start, the speed test, the first-run check and the video converter download are cancelled instead of being waited for.
 - Linux: the "start with the computer" entry is skipped once the app is removed (`TryExec`), instead of failing at every login.
