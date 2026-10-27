@@ -18,9 +18,9 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 ## The controls
 
-- **● LIVE / Go live:** you are about 20 seconds behind the streamer, which is normal. If you fell behind, click **Go live**.
+- **● LIVE / Go live:** you are 10 to 30 seconds behind the streamer, which is normal. Next to it, "~14 s behind live" shows your delay: it adjusts itself to your connection (closer to live on steady internet, further back when it wobbles, so the video does not pause). If you fell behind, click **Go live**.
 - **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
-- **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (about 8 seconds), good for chatting, but pauses more easily.
+- **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P):** off by default; you can turn it on (see below).
 
 On a phone the same controls sit under the video:

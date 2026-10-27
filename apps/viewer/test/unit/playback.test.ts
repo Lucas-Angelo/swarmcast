@@ -1,7 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { PLAYER_LIVE_DELAYS, PLAYLIST_WINDOW_S, SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { latencyFor, mismatchWindow, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
-import { planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
+import { installStallRecovery, planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
 
 describe('latencyFor', () => {
   it('uses the delays the server sizes its playlists from, untouched in a full window', () => {
@@ -84,5 +84,25 @@ describe('planStallRecovery', () => {
     expect(planStallRecovery({ ...s, stalledMs: 8000, attempts: 1, windowStart: 30 })).toEqual({ action: 'wait' });
     expect(planStallRecovery({ ...s, stalledMs: 9000, attempts: 1, windowStart: 30 })).toEqual({ action: 'restart', to: 50 });
     expect(planStallRecovery({ ...s, stalledMs: 24_000, attempts: 4 })).toEqual({ action: 'reload' });
+  });
+});
+
+describe('installStallRecovery', () => {
+  it('ignores the adaptive delay hold, acts on a real stall', () => {
+    vi.useFakeTimers();
+    try {
+      const video = { paused: false, ended: false, readyState: 2, currentTime: 10, buffered: { length: 0, start: () => 0, end: () => 0 } } as unknown as HTMLVideoElement;
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      let held = true;
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload: vi.fn(), isHeld: () => held });
+      vi.advanceTimersByTime(20_000);
+      expect(hls.startLoad).not.toHaveBeenCalled();
+      held = false;
+      vi.advanceTimersByTime(20_000);
+      expect(hls.startLoad).toHaveBeenCalled();
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

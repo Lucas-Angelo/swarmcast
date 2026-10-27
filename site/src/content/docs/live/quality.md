@@ -21,6 +21,16 @@ The converter runs at low priority. If it falls behind or your processor is almo
 
 A viewer at 480p costs about a quarter of your upload compared with 1080p. When many people watch, the players move down by themselves, and your upload goes further. Viewers who help through [P2P](/swarmcast/live/p2p/) cost you even less.
 
+## How far behind live viewers are
+
+Each viewer's player picks its own delay behind live and keeps adjusting it to that viewer's connection. With **Stable** (the default) it starts at about 20 seconds:
+
+- **Steady internet** (video arrives much faster than it plays, no pauses): the delay slowly drifts down to about **10–12 seconds**. The player plays a tiny bit faster (at most 5 %) for a while to get there, so nobody notices a jump.
+- **Shaky internet** (mobile data that keeps changing, pauses): the delay grows towards **30 seconds**, so the player keeps more video ready. After a pause it moves back at once, inside that same pause, so there is no second one later.
+- Viewers who get video from other viewers over P2P stay at 12 seconds or more, which leaves time for the sharing.
+
+With **Lower delay** it moves between 6 and 10 seconds. Viewers see their delay next to the status (for example "~14 s behind live"), and the panel's viewers table shows each viewer's delay in the **Delay** column. It never goes past what your server keeps of the stream, so nobody falls off it.
+
 ## Change it yourself
 
 In the **Quality for viewers** card you can:

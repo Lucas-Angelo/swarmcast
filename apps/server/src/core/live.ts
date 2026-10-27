@@ -839,6 +839,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         httpBytes: s.stats.httpBytes,
         hashFailures: s.hashFailures,
         autoRemovedFromP2P: s.autoRemovedFromP2P,
+        delayS: s.delayS,
       })),
       stats: {
         viewersConnected: connected.length,

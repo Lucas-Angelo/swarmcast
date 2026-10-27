@@ -264,6 +264,9 @@ export const ptBR: Messages = {
   'admin.col.bad': 'Dados ruins',
   'admin.col.bad.tip':
     'Quantos pedaços de vídeo dessa pessoa falharam na checagem de integridade (impressão digital errada) e foram descartados pelos outros. Depois de {count} relatos ela sai do P2P automaticamente.',
+  'admin.col.delay': 'Atraso',
+  'admin.col.delay.tip':
+    'Quantos segundos atrás do ao vivo essa pessoa está assistindo. Isso se ajusta sozinho a cada conexão: mais perto do ao vivo com internet firme, mais para trás com dados móveis instáveis para o vídeo não travar.',
   'admin.col.actions': 'Ações',
   'admin.col.actions.tip':
     'Tirar do P2P: a pessoa continua assistindo, mas para de compartilhar vídeo (e de ver o IP dos outros). Expulsar: ela é desconectada e esse aparelho não entra mais nesta live.',
@@ -356,7 +359,7 @@ export const ptBR: Messages = {
   'watch.buffering': 'Carregando…',
   'watch.paused': 'Pausado',
   'watch.status.tip':
-    'Conectando: carregando a live. Ao vivo: você está assistindo. Carregando: esperando mais vídeo (internet lenta, sua ou de quem transmite). A live fica uns 20 segundos atrás de quem transmite (uns 8 segundos com "Menos atraso").',
+    'Conectando: carregando a live. Ao vivo: você está assistindo. Carregando: esperando mais vídeo (internet lenta, sua ou de quem transmite). A live fica de 10 a 30 segundos atrás de quem transmite, ajustado à sua conexão (de 6 a 10 segundos com "Menos atraso").',
   'watch.waiting': 'Esperando a live…',
   'watch.lotsOfViewers': 'Muita gente assistindo agora — tentando de novo…',
   'watch.playbackError': 'Erro na reprodução — recarregando…',
@@ -367,6 +370,9 @@ export const ptBR: Messages = {
   'watch.viewers.tip': 'Pessoas assistindo esta live agora.',
   'watch.atLive': 'AO VIVO',
   'watch.goLive': 'Ir para o ao vivo',
+  'watch.delay': '~{count} s atrás do ao vivo',
+  'watch.delay.tip':
+    'Quanto você está atrás de quem transmite. Isso se ajusta sozinho à sua conexão: chega mais perto do ao vivo enquanto sua internet está firme e recua um pouco quando ela oscila, para o vídeo não travar. "AO VIVO" / "Ir para o ao vivo" pula para o momento atual.',
   'watch.atLive.tip': 'Você está no ao vivo (uns {latency} atrás de quem transmite, o que é normal).',
   'watch.goLive.tip': 'Você está {behind} atrás do ao vivo. Clique para pular para o momento atual.',
   'watch.goLive.tipUnknown': 'Clique para pular para o momento atual.',
@@ -511,7 +517,7 @@ export const ptBR: Messages = {
   'quality.shed.behind': 'Desligadas nesta live para o OBS continuar liso (o PC não deu conta): {heights}.',
   'quality.shed.cpu': 'Desligadas nesta live para o OBS continuar liso (a CPU ficou quase toda ocupada): {heights}.',
   'quality.shed.tip': 'O SwarmCast nunca deixa o conversor tirar CPU do OBS. Elas voltam na próxima vez que o OBS conectar; escolha menos qualidades se isso se repetir.',
-  'quality.offStable': 'Quem assiste ainda tem o buffer Estável (uns 20 s), que segura a maioria das travadas.',
+  'quality.offStable': 'Quem assiste ainda tem o buffer Estável (de 10 a 30 s, ajustado à conexão de cada um), que segura a maioria das travadas.',
   'quality.advanced': 'Avançado',
   'quality.encoder.label': 'Codificador:',
   'quality.encoder.best': 'O melhor disponível (recomendado)',
@@ -571,8 +577,8 @@ export const ptBR: Messages = {
   'watch.latency.title': 'Reprodução',
   'watch.latency.stable': 'Estável',
   'watch.latency.lowDelay': 'Menos atraso',
-  'watch.latency.hint.stable': 'Uns 20 s atrás do ao vivo. A reprodução mais lisa; a melhor para P2P.',
-  'watch.latency.hint.lowDelay': 'Uns 8 s atrás do ao vivo. Pode travar com conexão fraca.',
+  'watch.latency.hint.stable': 'De 10 a 30 s atrás do ao vivo, ajustado à sua conexão. A reprodução mais lisa; a melhor para P2P.',
+  'watch.latency.hint.lowDelay': 'De 6 a 10 s atrás do ao vivo. Pode travar com conexão fraca.',
   'watch.latency.tip':
     'Estável deixa mais vídeo pronto, então travadinhas da internet não pausam a live. Menos atraso fica mais perto do ao vivo (bom para o chat), mas trava mais fácil. Sua escolha fica salva.',
   // ---- attack protection ----

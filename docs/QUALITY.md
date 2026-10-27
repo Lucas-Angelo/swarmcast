@@ -7,8 +7,9 @@ This page records the decisions behind the quality options (1080p/720p/480p with
 | Topic | Decision |
 |---|---|
 | Segment duration | Keep **2 s** segments from OBS's 2 s keyframes. Most platforms (Twitch, YouTube, Kick) also recommend 2 s, and the encoder may be shared with the stream she sends to another platform. Get stability from a bigger buffer, not longer segments. |
-| Default player profile | **Stable**: about 20 s behind live, 40 s live window, conservative ABR. |
-| Optional profile | **Lower delay**: about 8 s behind live. The viewer can switch at any time. |
+| Default player profile | **Stable**: starts 20 s behind live, then **adapts per viewer** between 10 s (firm network; 12 s while getting P2P segments) and 30 s (unstable network). 40 s live window, conservative ABR. |
+| Optional profile | **Lower delay**: starts 8 s behind live and adapts in a narrow 6–10 s band. The viewer can switch at any time. |
+| Adaptive delay (v0.2.1) | `apps/viewer/src/latency-controller.ts`: segment load times, bandwidth variance, stalls, buffer trend and HTTP vs P2P decide each viewer's target; lowering uses playbackRate ≤ 1.05 (≤ 1.1 in Lower delay), raising happens inside a stall. Bounds from `MAX_PLAYER_DELAY_S` (`packages/shared/src/playback.ts`). See [Adaptive delay](#adaptive-delay). |
 | Multi-quality | **SwarmCast transcodes locally with ffmpeg**: one process copies the source and encodes 720p, 480p and 360p on the **GPU encoder**. Without one, a 3-second CPU test decides whether **one** small rendition (480p or 360p, x264 veryfast/superfast or OpenH264, one thread, below-normal priority) fits within **1 core** on a PC with ≥ 6 threads. |
 | Default | **On automatically** when ffmpeg is installed and the probe finds a working hardware encoder (or the CPU test passes), with the safe renditions preselected; **off with the reason** otherwise. The streamer's explicit choice ("Stream in multiple qualities" + rendition checkboxes) is saved as `quality.ladder.mode: "manual"` and always wins on later runs. |
 | CPU safety while live | The converter never takes CPU from OBS: when it falls behind real time (windowed speed < 1.0×, 0.97 with a noise margin) or the whole machine stays ≥ 90 % busy for 10 s, the most expensive rendition is dropped (30 s cool-down between drops), down to the original quality alone. The panel and the activity log say so. |
@@ -27,9 +28,9 @@ This page records the decisions behind the quality options (1080p/720p/480p with
   - The tunnel limits requests *in flight* (200, open WebSockets included; measured, see [ARCHITECTURE.md](ARCHITECTURE.md#quick-tunnel-limit-measured-2026-10-26)), not the request rate. A playlist request is in flight for one round trip, so 0.5 extra req/s per viewer adds about 0.1 in flight. What fills the tunnel is one open WebSocket per viewer plus segment downloads that peers did not serve.
   - 2 s segments let the player sit at any multiple of 2 s behind live, and let peers trade smaller pieces.
 - **What we change instead.**
-  - The player waits **20 s** behind live (10 segments) instead of 14 s.
+  - The player waits **20 s** behind live (10 segments) instead of 14 s. Since v0.2.1 that is where it starts: the [adaptive delay](#adaptive-delay) then moves each viewer between 10 and 30 s.
   - The playlist window viewers see is **40 s in every playlist** (`PLAYLIST_WINDOW_S` in packages/shared): the furthest a player sits behind live (Stable's `liveMaxLatencyDuration`, 36 s) plus 2 segments to fetch the oldest one. MediaMTX and the ladder list that many 2 s segments, and the origin's stitcher keeps every playlist at that many seconds from its actual segment durations: the ladder cuts its shared audio rendition every second, so the audio playlist keeps 40 entries (with a fixed count of 20 it held only 20 s, and a player 20 s behind live sat on the oldest audio segment). Change a profile delay and the windows follow (a unit test checks the invariant).
-  - The player fits its delay into the shortest playlist it uses (video or audio): `liveMaxLatencyDuration` ≤ window − 2 target durations and `liveSyncDuration` ≤ that − 2 target durations, so with an older server whose audio playlist holds 20 s, Stable plays about 12 s behind live instead of freezing.
+  - The player fits its delay into the shortest playlist it uses (video or audio): `liveMaxLatencyDuration` ≤ window − 2 target durations and `liveSyncDuration` ≤ that − 2 target durations, so with an older server whose audio playlist holds 20 s, Stable plays at most about 12 s behind live instead of freezing (that fit is the adaptive delay's ceiling).
 
 ### hls.js settings
 hls.js 1.7.3 defaults are from `src/config.ts`. `apps/viewer/src/player-config.ts` holds both profiles. The table shows the main values.
@@ -39,7 +40,7 @@ hls.js 1.7.3 defaults are from `src/config.ts`. `apps/viewer/src/player-config.t
 | `lowLatencyMode` | true | false | false | false | No LL-HLS: partial segments cannot go over P2P, and quick tunnels add RTT to every part. |
 | `liveSyncDuration` | 3 × TD | 7 × 2 s = 14 s | **20 s** | 8 s | Distance behind live, which is the most buffer the player can ever hold. |
 | `liveMaxLatencyDuration` | ∞ | 12 × 2 s = 24 s | **36 s** | 20 s | Past this, hls.js jumps back to live. Must stay below the 40 s window. |
-| `maxLiveSyncPlaybackRate` | 1 | 1 | **1.05** | 1.1 | Gentle catch-up after stalls instead of drifting further behind forever. |
+| `maxLiveSyncPlaybackRate` | 1 | 1 | **1.05** | 1.1 | Highest catch-up rate. hls.js itself only uses it with `lowLatencyMode`, so before v0.2.1 it did nothing; the [adaptive delay](#adaptive-delay) controller now drives playbackRate with these limits. |
 | `maxBufferLength` / `maxMaxBufferLength` | 30 / 600 | 20 / 30 | 30 / 40 | 12 / 20 | Never the limit in Stable: the live edge is. |
 | `backBufferLength` | ∞ | 10 | 10 (6 on mobile) | 6 | MSE memory on phones. |
 | `abrEwmaDefaultEstimate` | 500 kbps | default | saved estimate, else **2 Mbps** | same | Start near the right rendition. Saved on `pagehide`. |
@@ -55,6 +56,40 @@ hls.js 1.7.3 defaults are from `src/config.ts`. `apps/viewer/src/player-config.t
 - **`highDemandTimeWindow`** (default 15 s, before 6 s): Stable uses **8 s** and Lower delay 4 s. Segments closer than this to the playhead always come over HTTPS. In Stable that leaves about 12 s (20 − 8) in which a peer can supply a segment first. Before, it was about 8 s (14 − 6).
 - **HTTP and P2P windows:** `httpDownloadTimeWindow` and `p2pDownloadTimeWindow` keep their defaults. Shrinking the HTTP window raises the P2P share, but it also makes hls.js wait on peers, which is the opposite of "stutter less".
 - **Swarm ids:** before this change the viewer used one swarm id per stream type (`swarmcast-<id>-main`). With several renditions, p2p-media-loader 4.0 refuses to register two streams with the same id (`onStreamRegistrationError`). Without per-variant swarms, peers would also trade 720p bytes for 1080p requests, which would fail validation and look like an attack. So the id now includes the height (`variantStreamSwarmId`), and the tracker allowlists each served height (`TrackerService.setVariants`).
+
+### Adaptive delay
+Since v0.2.1 the delay behind live is no longer fixed per profile: each viewer's player adapts its own target to its connection. Pure decision code in `apps/viewer/src/latency-controller.ts` (unit tests: `apps/viewer/test/unit/latency-controller.test.ts`), wiring in `apps/viewer/src/adaptive-delay.ts`, a few hook lines in `watch.ts`.
+
+**Bounds** (`ADAPTIVE_DELAY` in `packages/shared/src/playback.ts`). `MAX_PLAYER_DELAY_S` (`constants.ts`, 36 s) is the furthest a player ever sits behind live (hls.js jumps back past `liveMaxLatencyDuration`, 36 s in Stable), and `PLAYLIST_WINDOW_S` (40 s) covers it with two segments of margin. The highest adaptive target is `MAX_PLAYER_DELAY_S` − 6 s headroom (one long stall), capped at 30 s; with hls.js' stall increase it stays below 36 s (unit tested). So the delay can never outgrow the server's playlist window. With an older server whose audio playlist is shorter, the player's window fit (`latencyFor`) lowers that ceiling further (`setCeiling`). The adaptive delay owns `liveSyncDuration`; the window fit only sets `liveMaxLatencyDuration`. The stall watchdog (`stall-recovery.ts`) ignores the controller's deliberate hold.
+
+| Profile | Start | Firm network | Firm, P2P segments in the last 2 min | Unstable network | Max catch-up rate |
+|---|---|---|---|---|---|
+| Stable | 20 s | 10 s | 12 s | 30 s | 1.05× |
+| Lower delay | 8 s | 6 s | 6 s | 10 s | 1.1× |
+
+**Inputs** (one tick per second, statistics over the last 60 s):
+- **Segment load time / segment duration** (hls.js `FRAG_LOADED`; for segments p2p-media-loader fetched ahead, its own download time from `onSegmentStart` → `onSegmentLoaded`). Only HTTP segments count: a slow peer says nothing about the viewer's own link, and the urgent ones always come over HTTP anyway.
+- **Bandwidth headroom** = hls.js bandwidth estimate / bitrate of the rendition playing (from the playlist, else measured from segment sizes), capped at 4× before its coefficient of variation is computed (on a fast link a jittery 50–500 Mbps estimate is still "plenty").
+- **Stalls**: `waiting` events after the first frame, not caused by a seek or a pause, and their length.
+- **Buffer trend**: least-squares slope, over 30 s, of the gap between the end of the buffer and the live edge (latency − forward buffer). It grows when downloads fall behind the live edge, and does not move when playbackRate changes.
+- **HTTP vs P2P**: p2p-media-loader's `downloadSource` per segment.
+
+**Network state, with hysteresis**:
+| State | Enter when | Leave when |
+|---|---|---|
+| Firm | for 20 s: median load ratio ≤ 0.35 and p90 ≤ 0.6 (≥ 4 HTTP segments; with fewer, ≥ 50 % from peers), headroom ≥ 2× with CoV ≤ 0.2, buffer trend ≤ +0.05 s/s, no stall for 2 min | for 5 s: median > 0.5, p90 > 0.8, CoV > 0.3, headroom < 1.5× or trend > +0.1 s/s; at once on a stall |
+| Unstable | for 5 s: p90 load ratio ≥ 0.9 or median ≥ 0.6, CoV ≥ 0.35, headroom < 1.2× or trend ≥ +0.15 s/s; at once on a stall | 30 s without any of these and without a stall |
+| Steady | otherwise | |
+
+**Behaviour**:
+- **Firm**: the target drifts down by 0.04 s per second (Lower delay 0.02), so 20 → 15 s takes about 2 min and → 10 s about 4 min, and never more than 3 s (2 s) below the current delay, so playback can always follow it. Playback catches up at 1.025× within 2 s of the target and 1.05× further away (Lower delay 1.05× / 1.1×), only with ≥ 4 s buffered (2 s), and stops 0.25 s from the target. Never a seek.
+- **Unstable**: the target rises by 0.1 s per second (0.05) while the signals stay bad, and playback slows to 0.95× (pitch preserved) until the delay reaches it. It never speeds up while unstable, unless the delay is above the upper bound.
+- **Stall**: the target rises at once by 3 s (Lower delay 1.5 s), × 2 or × 3 with recent stalls (5 min memory, long stalls count more). Playback is already frozen, so the player keeps it frozen up to 4 s (2 s) longer to reach the new target in the same freeze instead of stalling again later; the hold never goes past the upper bound (the playlist window). If the stall itself lasted longer, nothing is added: the delay it caused just sticks (the target becomes at least the delay after the stall). No lowering for 2 min after a stall.
+- **Far behind after a pause**: the target does not fall while the delay is more than 3 s (2 s) above it, playback catches up at 1.05× (1.1×), and the target resumes its drift once the delay is close. A pause longer than `liveMaxLatencyDuration` makes hls.js jump back as before. "Go live" seeks to hls.js' `liveSyncPosition`, which uses the adaptive target.
+- **Profile switch** starts over at the profile's start delay. If the viewer picks a speed in the browser's own controls, the controller leaves playbackRate alone until it is back to 1×.
+- **Lower delay adapts too, in a narrow band.** We chose 6–10 s over a fixed 8 s: the same code path for both profiles; ±2 s is what hls.js' own `liveSyncOnStallIncrease` already allowed (up to one target duration); a viewer who asked for less delay gets 6 s on a firm network, and on an unstable one 10 s cuts the stalls that 8 s showed on 4G with dropouts (table in section 4), while staying well below Stable.
+- **What the viewer sees**: "~14 s behind live" next to the status, with a tooltip saying it adjusts itself to the connection. The player reports the rounded delay in its 5 s stats message, and the panel's viewers table shows it (**Delay** column).
+- **Tests**: unit scenarios (steady fast network, oscillating 4G, single, long and repeated stalls, P2P-heavy, bounds fuzz, buffer trend, hysteresis) and `apps/server/test/e2e/adaptive-delay.spec.ts` (Chromium + WebKit; Chromium with CDP throttling). `?delaySpeed=10` on the watch page runs the controller's dwell times, quiet period and drift rates 10× faster for tests; playbackRate limits stay real.
 
 ## 2. Multi-quality options
 

@@ -95,6 +95,23 @@ describe('"remove from P2P"', () => {
     expect(s.p2pAllowed).toBe(true);
   });
 
+  it('the delay a player reports shows in the viewers table; out-of-range values are refused', () => {
+    const live = makeLive();
+    live.access.begin();
+    const s = live.access.createSession({ nickname: 'late', deviceId: 'd', device: 'desktop', ip: 'ip' });
+    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
+    const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
+    const stats = { t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 0, p2pUpBytes: 0, peers: 0, http429: 0, device: 'desktop' };
+    expect(live.snapshot().viewers.find((v) => v.nickname === 'late')?.delayS).toBeNull();
+    onMessage(sock, JSON.stringify({ ...stats, delayS: 14 }), false);
+    expect(live.snapshot().viewers.find((v) => v.nickname === 'late')?.delayS).toBe(14);
+    onMessage(sock, JSON.stringify({ ...stats, delayS: 9999 }), false);
+    expect(s.delayS).toBe(14);
+    // An older player without the field: unknown again.
+    onMessage(sock, JSON.stringify(stats), false);
+    expect(s.delayS).toBeNull();
+  });
+
   it('floods on the control channel terminate the socket', () => {
     const live = makeLive();
     live.access.begin();

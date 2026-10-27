@@ -272,6 +272,17 @@ form button[type='submit'] {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
+/* "~14 s behind live": the viewer's own delay, which adapts to the connection. */
+.tip.delay {
+  align-items: center;
+  gap: var(--sp-2);
+}
+.delay-badge {
+  font-weight: var(--sc-weight-medium);
+  font-size: var(--fs-md);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
 .bar-actions {
   display: flex;
   align-items: center;

@@ -155,6 +155,7 @@ export class ControlChannel {
           peers: msg.peers,
         };
         session.http429 = msg.http429;
+        session.delayS = msg.delayS ?? null;
         break;
       case 'hash-fail': {
         const accused = msg.peerId ? this.access.sessionByPeerId(msg.peerId) : undefined;

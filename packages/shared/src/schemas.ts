@@ -73,6 +73,8 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
     /** HTTP 429 responses seen (Cloudflare quick tunnel concurrency limit). */
     http429: z.number().int().nonnegative().max(1e9).default(0),
     device: deviceKindSchema,
+    /** Seconds behind live right now (adaptive delay); absent before playback. */
+    delayS: z.number().nonnegative().max(600).optional(),
   }),
   z.object({
     t: z.literal('hash-fail'),
@@ -232,6 +234,8 @@ export interface ViewerInfo {
   httpBytes: number;
   hashFailures: number;
   autoRemovedFromP2P: boolean;
+  /** Seconds behind live, as the player last reported (null: not playing yet). */
+  delayS: number | null;
 }
 
 export interface SpeedTestResult {

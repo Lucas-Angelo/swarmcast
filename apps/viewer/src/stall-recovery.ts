@@ -61,6 +61,8 @@ export interface StallRecoveryOptions {
   reload(): void;
   log?(msg: string): void;
   isEnded?(): boolean;
+  /** Playback is held on purpose (adaptive delay, adaptive-delay.ts): not a stall. */
+  isHeld?(): boolean;
 }
 
 function ranges(v: HTMLMediaElement): Array<[number, number]> {
@@ -77,7 +79,7 @@ export function installStallRecovery(o: StallRecoveryOptions): () => void {
   let lastRanges = '';
   const tick = (): void => {
     // Not paused = playback was asked for (autoplay or the viewer), so this covers the start too.
-    const stalled = !o.isEnded?.() && !video.paused && !video.ended && video.readyState < 3;
+    const stalled = !o.isEnded?.() && !o.isHeld?.() && !video.paused && !video.ended && video.readyState < 3;
     if (!stalled) {
       since = 0;
       attempts = 0;
