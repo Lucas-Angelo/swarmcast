@@ -143,7 +143,7 @@ async function adminLogin(output) {
  */
 function pushStream(rtmpUrl, key) {
   const bin = process.env.FFMPEG_BIN || 'ffmpeg';
-  const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=640x360:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', '1200k', '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`], { stdio: ['ignore', 'ignore', 'pipe'] });
+  const child = spawn(bin, ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', 'testsrc2=size=bogus:rate=30', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', '1200k', '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`], { stdio: ['ignore', 'ignore', 'pipe'] });
   let err = '';
   let ended = null;
   child.stderr.on('data', (d) => (err += d));
@@ -229,6 +229,7 @@ async function runSession({ releaseUrl, tunnel, browser }) {
     step(`[${label}] live link`, pattern.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, '/join/…'));
 
     ffmpeg = pushStream(s0.rtmpUrl, s0.streamKey);
+    console.log(`WP1 CANARY: feed started at ${new Date().toISOString()} (size=bogus)`);
     await until(async () => (await api('/api/state')).phase === 'live', 90_000, 'phase live', () => ffmpeg.died());
     step(`[${label}] OBS-like RTMP stream accepted (phase live)`, true);
 

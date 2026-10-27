@@ -101,6 +101,11 @@ export async function section(name, fn) {
   log(`===== ${name}`);
   const t0 = Date.now();
   const failsBefore = results.filter((r) => r.status === 'fail').length;
+  // WP1 CANARY (throwaway): the first section of every suite fails, to prove the failure dump.
+  if (!globalThis.__wp1Canary) {
+    globalThis.__wp1Canary = true;
+    record('WP1 canary: forced failure', 'fail', 'throwaway canary, reverted before the gate');
+  }
   try {
     await fn();
   } catch (e) {
