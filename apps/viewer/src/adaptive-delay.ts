@@ -185,7 +185,7 @@ export function attachAdaptiveDelay(
   });
 
   const applyTarget = (): void => {
-    const t = Math.round(ctl.target * 10) / 10;
+    const t = Math.round(ctl.syncTarget * 10) / 10;
     if (Math.abs((hls.config.liveSyncDuration ?? 0) - t) >= 0.1) hls.targetLatency = t;
   };
 
@@ -236,11 +236,13 @@ export function attachAdaptiveDelay(
     },
     setGrowthLimit(seconds) {
       ctl.setGrowthLimit(seconds);
+      applyTarget();
     },
     snapshot() {
       return {
         delay: latency(),
         target: ctl.target,
+        syncTarget: ctl.syncTarget,
         state: last.state,
         rateMode: last.rateMode,
         playbackRate: video.playbackRate,

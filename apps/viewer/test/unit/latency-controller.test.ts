@@ -192,6 +192,8 @@ describe('bounds', () => {
     expect(minRate).toBe(1);
     // A stall: no hold past the window either.
     expect(ctl.onStallStart(61, 6).holdS).toBe(0);
+    // hls.js syncs (start, Go live, watchdog restarts) inside the window, not on its oldest segment.
+    expect(ctl.syncTarget).toBe(4);
     // Once the playlists have grown, it builds delay again.
     ctl.setGrowthLimit(32);
     const d = ctl.tick({ now: 62, latency: 6, forwardBuffer: 5, bandwidthEstimate: 3_000_000, levelBitrate: BITRATE, playing: true });

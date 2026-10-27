@@ -297,6 +297,16 @@ export class DelayController {
     return this.growthLimit === null ? this.maxS : Math.min(this.maxS, this.growthLimit);
   }
 
+  /**
+   * The delay hls.js should sync to (hls.targetLatency: start position, "Go live", the stall
+   * watchdog's restarts): the target, but never further back than the playlists in use reach.
+   * Past that, the sync position would sit on the oldest segment, about to leave the playlist.
+   * (Catch-up and slow-down still follow `target`.)
+   */
+  get syncTarget(): number {
+    return Math.min(this.target, this.growthMaxS);
+  }
+
   /** Highest target now: the profile bound, lowered by the playlist ceiling if any. */
   get maxS(): number {
     return this.ceiling === null ? this.bounds.max : Math.min(this.bounds.max, this.ceiling);
