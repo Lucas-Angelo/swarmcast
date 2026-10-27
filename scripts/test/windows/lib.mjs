@@ -141,6 +141,34 @@ export function closeStrayBrowsers() {
 }
 
 /**
+ * Indented process tree, one line per process: "<pid> (ppid <ppid>) <name>: <command line>".
+ * A process whose parent is gone (or is itself, like the System Idle Process) is a root. Every
+ * process is listed exactly once: a parent pid that Windows reused for a later process can form
+ * a cycle that no root reaches, and those processes are listed as extra roots, marked.
+ */
+export function processTree(list) {
+  const pids = new Set(list.map((p) => p.pid));
+  const ROOT = Symbol('root');
+  const kids = new Map();
+  for (const p of list) {
+    const parent = pids.has(p.ppid) && p.ppid !== p.pid ? p.ppid : ROOT;
+    if (!kids.has(parent)) kids.set(parent, []);
+    kids.get(parent).push(p);
+  }
+  for (const k of kids.values()) k.sort((a, b) => a.pid - b.pid);
+  const lines = [];
+  const seen = new Set();
+  const visit = (p, depth, note = '') => {
+    seen.add(p.pid);
+    lines.push(`${'  '.repeat(depth)}${p.pid} (ppid ${p.ppid}${note}) ${p.name}: ${(p.cmd || p.path || '').slice(0, 600)}`);
+    for (const c of kids.get(p.pid) ?? []) if (!seen.has(c.pid)) visit(c, depth + 1);
+  };
+  for (const p of kids.get(ROOT) ?? []) if (!seen.has(p.pid)) visit(p, 0);
+  for (const p of [...list].sort((a, b) => a.pid - b.pid)) if (!seen.has(p.pid)) visit(p, 0, ', parent pid reused');
+  return lines.join('\n');
+}
+
+/**
  * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
  * TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
  * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
@@ -167,24 +195,7 @@ export function failureDump(tag) {
   add('process tree (pid, ppid, name, command line)', () => {
     const list = processes();
     names = new Map(list.map((p) => [p.pid, p.name]));
-    const pids = new Set(list.map((p) => p.pid));
-    const kids = new Map();
-    for (const p of list) {
-      const parent = pids.has(p.ppid) && p.ppid !== p.pid ? p.ppid : 0;
-      if (!kids.has(parent)) kids.set(parent, []);
-      kids.get(parent).push(p);
-    }
-    const lines = [];
-    const walk = (parent, depth, seen) => {
-      for (const p of (kids.get(parent) ?? []).sort((a, b) => a.pid - b.pid)) {
-        if (seen.has(p.pid)) continue;
-        seen.add(p.pid);
-        lines.push(`${'  '.repeat(depth)}${p.pid} (ppid ${p.ppid}) ${p.name}: ${(p.cmd || p.path).slice(0, 600)}`);
-        walk(p.pid, depth + 1, seen);
-      }
-    };
-    walk(0, 0, new Set());
-    return lines.join('\n');
+    return processTree(list);
   });
   const owner = (pid) => `${pid} ${names.get(pid) ?? '?'}`;
   add('TCP listeners (address:port owner)', () =>
