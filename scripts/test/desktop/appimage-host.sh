@@ -30,19 +30,23 @@ GUIDE_PACKAGES='libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfri
 # For the test only (a desktop has its own display server and session bus).
 TEST_PACKAGES='xvfb xauth dbus'
 
-inner=$(cat <<'EOF'
-set -euo pipefail
+# The container's script, with the two lists written in as text (not passed in the environment).
+header=$(printf "set -euo pipefail\nguide='%s'\ntest_only='%s'" "$GUIDE_PACKAGES" "$TEST_PACKAGES")
+body=$(cat <<'EOF'
 export DEBIAN_FRONTEND=noninteractive
 apt-get -o Acquire::Retries=3 update -qq
 fuse=libfuse2
 if apt-cache show libfuse2t64 >/dev/null 2>&1; then fuse=libfuse2t64; fi
-apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends $GUIDE_PACKAGES $fuse $TEST_PACKAGES >/dev/null
-echo "host packages (guide): $GUIDE_PACKAGES $fuse"
-echo "host packages (test only): $TEST_PACKAGES"
+# shellcheck disable=SC2086 # lists of package names
+apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends $guide $fuse $test_only >/dev/null
+echo "host packages (guide): $guide $fuse"
+echo "host packages (test only): $test_only"
 export NO_AT_BRIDGE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 LIBGL_ALWAYS_SOFTWARE=1
 xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- /opt/node/bin/node /opt/test/verify.mjs --appimage-only /in
 EOF
 )
+inner="$header
+$body"
 
 failed=0
 for image in "${images[@]}"; do
@@ -56,7 +60,6 @@ for image in "${images[@]}"; do
   # --init reaps the AppImage's children; WebKitGTK and Mesa use shared memory.
   if timeout -k 15 900 docker run --rm --init --shm-size=512m \
     -v "$dir:/in:ro" -v "$here:/opt/test:ro" -v "$node_root:/opt/node:ro" "${logs[@]}" \
-    -e GUIDE_PACKAGES="$GUIDE_PACKAGES" -e TEST_PACKAGES="$TEST_PACKAGES" \
     "$image" bash -c "$inner"; then
     echo "::endgroup::"
     echo "PASS AppImage on $image"

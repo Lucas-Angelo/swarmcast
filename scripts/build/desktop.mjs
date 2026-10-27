@@ -207,7 +207,8 @@ if (fast) {
   env.CARGO_PROFILE_RELEASE_LTO ??= 'false';
   env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS ??= '16';
   if (isWin) overlay.bundle.windows = { nsis: { compression: 'none' } };
-  console.warn(`⚠ --fast: test build (lto=${env.CARGO_PROFILE_RELEASE_LTO}, codegen-units=${env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS}${isWin ? ', NSIS uncompressed' : ''}), never publish it`);
+  // Fixed text only: `env` also holds the updater signing key, so nothing from it is logged.
+  console.warn(`⚠ --fast: test build (no LTO, parallel codegen${isWin ? ', NSIS uncompressed' : ''}), never publish it`);
 }
 const overlayFile = path.join(stageDir, 'tauri.build.json');
 fs.writeFileSync(overlayFile, `${JSON.stringify(overlay, null, 2)}\n`);
