@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "generatedAt": "2026-10-27T08:38:50.535Z",
+  "repo": "Lucas-Angelo/swarmcast",
+  "downloads": {
+    "total": 10,
+    "byKind": {
+      "installer": 5,
+      "package": 5
+    },
+    "byOs": {
+      "windows": 2,
+      "macos": 4,
+      "linux": 4
+    },
+    "about": 10
+  },
+  "apps": null,
+  "latest": {
+    "tag": "v0.2.0",
+    "version": "0.2.0",
+    "url": "https://github.com/Lucas-Angelo/swarmcast/releases/tag/v0.2.0",
+    "publishedAt": "2026-10-27T08:37:20Z",
+    "assets": {
+      "linux-appimage-arm64": {
+        "name": "SwarmCast_0.2.0_aarch64.AppImage",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_aarch64.AppImage",
+        "size": 152128008
+      },
+      "macos-arm64": {
+        "name": "SwarmCast_0.2.0_aarch64.dmg",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_aarch64.dmg",
+        "size": 75823165
+      },
+      "linux-appimage-x64": {
+        "name": "SwarmCast_0.2.0_amd64.AppImage",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_amd64.AppImage",
+        "size": 154606072
+      },
+      "linux-deb-x64": {
+        "name": "SwarmCast_0.2.0_amd64.deb",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_amd64.deb",
+        "size": 82256016
+      },
+      "linux-deb-arm64": {
+        "name": "SwarmCast_0.2.0_arm64.deb",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_arm64.deb",
+        "size": 82582142
+      },
+      "windows-x64": {
+        "name": "SwarmCast_0.2.0_x64-setup.exe",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_x64-setup.exe",
+        "size": 67243001
+      },
+      "macos-x64": {
+        "name": "SwarmCast_0.2.0_x64.dmg",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.2.0/SwarmCast_0.2.0_x64.dmg",
+        "size": 81932412
+      }
+    }
+  }
+}
