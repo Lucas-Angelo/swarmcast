@@ -51,6 +51,8 @@ const themeScript = `(function () {
     <link rel="alternate" hreflang="pt-BR" href={new URL(pt, links.site).href} />
     <link rel="alternate" hreflang="x-default" href={new URL(en, links.site).href} />
     <link rel="icon" href={favicon} type="image/svg+xml" />
+    <link rel="icon" href={`${links.base}/favicon-32.png`} type="image/png" sizes="32x32" />
+    <link rel="apple-touch-icon" href={`${links.base}/apple-touch-icon.png`} />
     <link rel="sitemap" href={`${links.base}/sitemap-index.xml`} />
     <meta name="referrer" content="strict-origin-when-cross-origin" />
     <meta name="theme-color" media="(prefers-color-scheme: light)" content={colors.light} />

@@ -87,6 +87,9 @@ export default defineConfig({
         { tag: 'meta', attrs: { name: 'referrer', content: 'strict-origin-when-cross-origin' } },
         { tag: 'meta', attrs: { name: 'theme-color', media: '(prefers-color-scheme: light)', content: colors.light } },
         { tag: 'meta', attrs: { name: 'theme-color', media: '(prefers-color-scheme: dark)', content: colors.dark } },
+        // PNG and Apple fallbacks next to the SVG favicon (browsers that skip SVG icons).
+        { tag: 'link', attrs: { rel: 'icon', href: `${links.base}/favicon-32.png`, type: 'image/png', sizes: '32x32' } },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: `${links.base}/apple-touch-icon.png` } },
       ],
       plugins: [
         starlightLinksValidator({
