@@ -27,8 +27,12 @@ export const opt = (n, d) => {
 };
 export const flag = (n) => args.includes(`--${n}`);
 
-export const ART = path.resolve(process.env.SC_ARTIFACTS ?? path.join(os.tmpdir(), 'sc-win-artifacts'));
+// CI sets SC_ARTIFACTS (the uploaded folder). Otherwise a new private folder (mkdtemp: unique
+// name, mode 0700), never a fixed name in the shared temp dir that another user could create or
+// point elsewhere with a symlink first.
+export const ART = process.env.SC_ARTIFACTS ? path.resolve(process.env.SC_ARTIFACTS) : fs.mkdtempSync(path.join(os.tmpdir(), 'sc-win-artifacts-'));
 fs.mkdirSync(ART, { recursive: true });
+if (!process.env.SC_ARTIFACTS) console.log(`artifacts (results, logs, screenshots, failure dumps): ${ART}`);
 export const SUITE = opt('suite', path.basename(process.argv[1] ?? 'suite', '.mjs'));
 export const RUNNER = process.env.SC_RUNNER_LABEL ?? process.env.ImageOS ?? os.release();
 const harnessLog = path.join(ART, `${SUITE}-harness.log`);
