@@ -68,12 +68,57 @@ function show(v: Value): string | null {
   return String(v);
 }
 
+/**
+ * The installer and the desktop check write their values in English (start-*.sh / .ps1,
+ * apps/server/src/desktop/system-check.ts). Words are translated by check id; numbers and
+ * units ("8 GB", "120 Mbps") are shown as written.
+ */
+const VALUES: Partial<Record<CheckId, Array<[RegExp, MessageKey, string?]>>> = {
+  ports: [
+    [/^free$/i, 'onb.sys.val.free'],
+    [/^in use: (.+)$/i, 'onb.sys.val.inUse', 'ports'],
+  ],
+  obs: [
+    [/^installed$/i, 'onb.sys.val.installed'],
+    [/^not found$/i, 'onb.sys.val.notFound'],
+  ],
+  github: [
+    [/^reachable$/i, 'onb.sys.val.reachable'],
+    [/^unreachable \(not needed\)$/i, 'onb.sys.val.unreachableOk'],
+    [/^unreachable$/i, 'onb.sys.val.unreachable'],
+  ],
+  release: [
+    [/^reachable \(latest (v\S+)\)$/i, 'onb.sys.val.reachableLatest', 'version'],
+    [/^not reachable \(fine\)$/i, 'onb.sys.val.unreachableOk'],
+    [/^unreachable$/i, 'onb.sys.val.unreachable'],
+    [/^(v\S+) \(desktop app\)$/i, 'onb.sys.val.desktopApp', 'version'],
+  ],
+  upload: [
+    [/^not measured \(skipped\)$/i, 'onb.sys.val.notMeasured'],
+    [/^speed test failed$/i, 'onb.sys.val.speedFailed'],
+  ],
+  download: [
+    [/^not measured \(skipped\)$/i, 'onb.sys.val.notMeasured'],
+    [/^speed test failed$/i, 'onb.sys.val.speedFailed'],
+  ],
+};
+
+/** A check value in the panel's language (unknown values are shown as written). */
+export function translateValue(id: string, value: string | null): string | null {
+  if (value === null || !isCheckId(id)) return value;
+  for (const [re, key, param] of VALUES[id] ?? []) {
+    const m = re.exec(value.trim());
+    if (m) return param ? t(key, { [param]: m[1]! }) : t(key);
+  }
+  return value;
+}
+
 export interface CheckRow {
   id: string;
   status: CheckStatus;
   icon: string;
   label: string;
-  /** e.g. "8 GB" — the measured value as the script wrote it (English units). */
+  /** e.g. "8 GB" — the measured value (words translated, units as the script wrote them). */
   value: string | null;
   /** "minimum 4 GB · recommended 8 GB" (translated), or null. */
   target: string | null;
@@ -93,7 +138,7 @@ export function checkRow(r: SystemCheckResult): CheckRow {
     status: r.status,
     icon: ICON[r.status] ?? '?',
     label: known ? t(LABEL[r.id as CheckId]) : r.id,
-    value: r.status === 'skipped' ? t('onb.sys.skipped') : show(r.value),
+    value: r.status === 'skipped' ? t('onb.sys.skipped') : translateValue(r.id, show(r.value)),
     target: r.status === 'skipped' ? null : target,
     advice: bad ? (known ? t(FIX[r.id as CheckId]) : t('onb.sys.fix.generic')) : null,
     detail: r.detail?.trim() ? r.detail.trim() : null,
