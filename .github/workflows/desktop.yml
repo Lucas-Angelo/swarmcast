@@ -211,7 +211,9 @@ jobs:
           - { target: linux-x64, os: ubuntu-24.04 }
           - { target: linux-arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    # Linux installs the .deb's dependencies through apt (that is part of the test), and
+    # GitHub's Ubuntu mirror can be very slow: apt-retry.sh gives it time to try another mirror.
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -233,10 +235,16 @@ jobs:
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
-      # The app window needs a display; the .deb pulls its own libraries.
-      - name: Linux display
+      # The app window needs a display; the .deb pulls its own libraries. Those are downloaded
+      # here first (time limit per try, retries, another mirror after a slow try), so the
+      # test's `apt-get install ./*.deb` resolves and installs them from the local cache.
+      - name: Linux display and the .deb's dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends xvfb
+        run: |
+          .github/scripts/apt-retry.sh update
+          .github/scripts/apt-retry.sh install -y --no-install-recommends xvfb
+          deb="$(ls release/desktop/*.deb | head -n 1)"
+          .github/scripts/apt-retry.sh install -y --no-install-recommends --download-only "./$deb"
       - name: Install, launch, panel, autostart, kill, quit, uninstall, update A -> B
         run: |
           run=()

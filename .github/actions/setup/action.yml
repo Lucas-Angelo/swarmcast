@@ -19,10 +19,13 @@ runs:
   steps:
     # A stalled download from the Ubuntu mirror is retried instead of waiting for minutes
     # (this also covers `playwright install --with-deps` and the desktop build dependencies).
+    # (Also inside a job container, which runs as root without sudo.)
     - name: apt retries and timeouts (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null
+      run: |
+        sudo=""; [ "$(id -u)" = 0 ] || sudo=sudo
+        printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | $sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null
 
     # One npm cache for the root workspace and the website (site/ has its own lockfile).
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -39,13 +42,35 @@ runs:
         go-version: 1.27.x
         cache-dependency-path: apps/tray/go.sum
 
+    # Linux x64: the same pinned BtbN release as Windows below (GPL build, for libx264), SHA-256
+    # verified, instead of apt: GitHub's Ubuntu mirror sometimes stalls for many minutes, and the
+    # E2E job runs in the Playwright container. Extracted with Python (that image has no xz).
+    # Hash from BtbN's checksums.sha256.
     - name: Install ffmpeg (Linux)
       if: inputs.ffmpeg == 'true' && runner.os == 'Linux'
       shell: bash
+      env:
+        FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz
+        FFMPEG_SHA256: 68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269
       run: |
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends ffmpeg
-        echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
+        if [ "$(uname -m)" != x86_64 ]; then echo "::error::the pinned ffmpeg build for the tests is x64 only"; exit 1; fi
+        archive="$RUNNER_TEMP/ffmpeg-gpl.tar.xz"
+        curl --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 -o "$archive" "$FFMPEG_URL"
+        echo "$FFMPEG_SHA256  $archive" | sha256sum -c -
+        dir="$RUNNER_TEMP/ffmpeg"
+        mkdir -p "$dir"
+        python3 - "$archive" "$dir" <<'PY'
+        import sys, tarfile
+        with tarfile.open(sys.argv[1], 'r:xz') as t:
+            try:
+                t.extractall(sys.argv[2], filter='data')
+            except TypeError:  # Python without extraction filters
+                t.extractall(sys.argv[2])
+        PY
+        ff="$(find "$dir" -type f -name ffmpeg -path '*/bin/*' | head -n 1)"
+        [ -n "$ff" ] && [ -x "$ff" ] || { echo "::error::ffmpeg not found in $FFMPEG_URL"; exit 1; }
+        echo "FFMPEG_BIN=$ff" >> "$GITHUB_ENV"
+        dirname "$ff" >> "$GITHUB_PATH"
     - name: Install ffmpeg (macOS)
       if: inputs.ffmpeg == 'true' && runner.os == 'macOS'
       shell: bash

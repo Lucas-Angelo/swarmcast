@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 // Keep in sync with apps/server/test/e2e/server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
 const PUBLIC = 38080 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
+const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 
 export default defineConfig({
   testDir: 'apps/server/test/e2e',
@@ -30,8 +31,9 @@ export default defineConfig({
       name: 'chromium',
       use: {
         ...devices['Desktop Chrome'],
-        // Google Chrome (not Chromium) ships H.264/AAC decoders.
-        channel: process.env.PW_CHROMIUM_CHANNEL ?? 'chrome',
+        // Google Chrome ships H.264/AAC decoders. PW_CHROMIUM_CHANNEL='' uses Playwright's own
+        // Chromium (CI's Linux E2E job, in the Playwright image, where it plays H.264/AAC too).
+        ...(chromiumChannel ? { channel: chromiumChannel } : {}),
         launchOptions: { args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'] },
       },
     },

@@ -78,11 +78,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          # Ubuntu runs inside the official Playwright image: browsers and their system
+          # libraries are preinstalled, so the job needs no apt (GitHub's Ubuntu mirror has
+          # stalled `playwright install --with-deps` for 20+ minutes). The image version must
+          # be the @playwright/test version in package-lock.json (checked below). Its bundled
+          # Chromium plays H.264/AAC on Linux (scripts/test/docker/codec-probe.mjs), and Google
+          # Chrome is not in it, so the chromium project runs without `channel: 'chrome'`.
+          - os: ubuntu-latest
+            container: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea
+            playwright: '1.64.1'
+            chromium-channel: ''
+          - os: macos-latest
+            container: ''
+            playwright: ''
+            chromium-channel: chrome
     runs-on: ${{ matrix.os }}
-    # Ubuntu's apt and `playwright install --with-deps` alone have taken 13–22 min on runners.
+    container: ${{ matrix.container }}
     timeout-minutes: 45
+    env:
+      PW_CHROMIUM_CHANNEL: ${{ matrix.chromium-channel }}
     steps:
+      # The container runs as root, but GitHub mounts a HOME owned by the runner user, and
+      # Firefox refuses to start as root in another user's home (Playwright's CI docs).
+      - name: HOME for root (container)
+        if: matrix.container != ''
+        run: echo "HOME=/root" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -91,9 +112,18 @@ jobs:
           ffmpeg: 'true'
       - run: npm run fetch-bins
       - run: npm run build
-      # The Playwright version comes from package-lock.json. The `chromium` project runs
+      - name: The Playwright image matches package-lock.json
+        if: matrix.container != ''
+        run: |
+          locked="$(node -p "require('@playwright/test/package.json').version")"
+          if [ "$locked" != "${{ matrix.playwright }}" ]; then
+            echo "::error file=.github/workflows/ci.yml::@playwright/test is $locked but the E2E image is v${{ matrix.playwright }}: update the image tag and digest"
+            exit 1
+          fi
+      # macOS: the Playwright version comes from package-lock.json. The `chromium` project runs
       # Google Chrome (channel: 'chrome', for H.264/AAC), which GitHub's runner images ship.
-      - run: npx playwright install --with-deps chromium firefox webkit
+      - if: matrix.container == ''
+        run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:e2e
       - name: Upload Playwright report
         if: failure()
