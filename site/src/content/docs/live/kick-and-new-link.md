@@ -5,7 +5,7 @@ description: Remove someone from your live, stop someone from sharing video, and
 
 Everyone watching appears in the panel's **Viewers** card, with the nickname they typed and their device (PC or Phone).
 
-![The Viewers card: Bia, Rafa_gamer and Theo with their device, P2P on, data shared, and the buttons 1 Remove from P2P and 2 Kick.](../../../assets/guides/live/en/viewers.webp)
+![The Viewers card: Bia, Rafa_gamer and Theo with their device, P2P on (these three turned it on), data shared, and the buttons 1 Remove from P2P and 2 Kick.](../../../assets/guides/live/en/viewers.webp)
 
 ## Remove one person: Kick
 

@@ -53,7 +53,7 @@ Clique em **Concluir**. Para ver o tutorial de novo, clique em **Refazer o tutor
 
 ## O painel
 
-![O painel durante uma live: 1 Ao vivo: 3 espectadores e OBS: enviando, 2 o link da live (escondido aqui), 3 Configuração do OBS, 4 Espectadores e ajuda P2P, 5 Proteção.](../../../../assets/guides/start/pt-br/panel.webp)
+![O painel durante uma live: 1 Ao vivo: 3 espectadores e OBS: enviando, 2 o link da live (escondido aqui), 3 Configuração do OBS, 4 Espectadores e ajuda P2P (quem ligou o P2P compartilha vídeo), 5 Proteção.](../../../../assets/guides/start/pt-br/panel.webp)
 
 1. **No alto:** se você está ao vivo, se o OBS está enviando e o botão **Desligar tudo**.
 2. **Link da live para seus inscritos:** o link para mandar. Veja [Fazer a live](/swarmcast/pt-br/live/go-live/).

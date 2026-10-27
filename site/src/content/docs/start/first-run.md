@@ -53,7 +53,7 @@ Click **Finish**. To see the tutorial again, click **Redo setup tutorial** at th
 
 ## The panel
 
-![The panel during a live: 1 Live: 3 viewers and OBS: sending, 2 the live link (hidden here), 3 OBS settings, 4 Viewers & P2P help, 5 Protection.](../../../assets/guides/start/en/panel.webp)
+![The panel during a live: 1 Live: 3 viewers and OBS: sending, 2 the live link (hidden here), 3 OBS settings, 4 Viewers & P2P help (viewers who turned P2P on share video), 5 Protection.](../../../assets/guides/start/en/panel.webp)
 
 1. **At the top:** whether you are live, whether OBS is sending, and **Stop everything**.
 2. **Live link for your subscribers:** the link to share. See [Go live](/swarmcast/live/go-live/).

@@ -14,7 +14,7 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, e 3 a chave Ajudar a transmissão (P2P).](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
@@ -25,11 +25,11 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 No celular, os mesmos controles ficam embaixo do vídeo:
 
-![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P).](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ## Ajudar a transmissão (P2P)
 
-Com essa opção ligada, o seu navegador passa pedaços do vídeo para outros espectadores, a live fica mais lisa para todo mundo e a internet de quem transmite rende mais.
+Ela fica desligada até você ligar. Com essa opção ligada, o seu navegador passa pedaços do vídeo para outros espectadores, a live fica mais lisa para todo mundo e a internet de quem transmite rende mais.
 
 Bom saber: **outros espectadores que também estão com ela ligada conseguem ver o seu IP.** Isso só mostra a sua localização aproximada (cidade) e a sua operadora de internet. Não mostra o seu nome, o seu endereço nem nada do seu aparelho. Jogos online e chamadas de vídeo funcionam do mesmo jeito.
 

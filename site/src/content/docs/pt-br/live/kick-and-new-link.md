@@ -5,7 +5,7 @@ description: Tire alguém da live, impeça alguém de compartilhar vídeo e troq
 
 Todo mundo que está assistindo aparece no cartão **Espectadores** do painel, com o apelido que digitou e o aparelho (PC ou Celular).
 
-![O cartão Espectadores: Bia, Rafa_gamer e Theo com o aparelho, P2P ligado, dados compartilhados e os botões 1 Tirar do P2P e 2 Expulsar.](../../../../assets/guides/live/pt-br/viewers.webp)
+![O cartão Espectadores: Bia, Rafa_gamer e Theo com o aparelho, P2P ligado (os três ligaram), dados compartilhados e os botões 1 Tirar do P2P e 2 Expulsar.](../../../../assets/guides/live/pt-br/viewers.webp)
 
 ## Tirar uma pessoa: Expulsar
 

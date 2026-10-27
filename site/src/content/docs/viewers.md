@@ -14,7 +14,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, and 3 the Help the stream (P2P) switch.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
@@ -25,11 +25,11 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 On a phone the same controls sit under the video:
 
-![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch.](../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ## Help the stream (P2P)
 
-With this switch on, your browser passes pieces of the video to other viewers, so the live runs smoother for everyone and the streamer's internet goes further.
+It is off until you turn it on. With this switch on, your browser passes pieces of the video to other viewers, so the live runs smoother for everyone and the streamer's internet goes further.
 
 Please know: **other viewers who also have it on can see your IP address.** That only shows your approximate location (city) and internet provider. It does not show your name, your home address or anything on your device. Online games and video calls work the same way.
 
