@@ -32,11 +32,11 @@ Clique em **Tentar de novo**. Se continuar falhando, clique em **Abrir pasta de 
 - Confira se o SwarmCast está aberto e se o topo do painel diz **Esperando o OBS começar a transmitir…** ou **Ao vivo**. Se disser **Desligado**, clique em **Ligar o SwarmCast**.
 - O servidor tem que ser exatamente `rtmp://127.0.0.1:1935/live`.
 - A chave tem que ser a do painel. Use os botões **Copiar** em vez de digitar.
-- Com o plugin Multiple output, clique em **Start** ao lado do SwarmCast.
+- Com o plugin Multiplas saídas, clique em **Iniciar** ao lado do SwarmCast. Com o Aitum Vertical, clique no botão de antena do painel Vertical.
 
 ### "O intervalo de quadros-chave parece errado"
 
-No OBS: **Configurações** → **Saída** → **Modo de saída: Avançado** → **Transmissão** → **Intervalo de quadro-chave: 2 s**. Veja [Configurar o OBS](/swarmcast/pt-br/start/obs/).
+No OBS: **Configurações** → **Saída** → **Modo de saída: Avançado** → **Transmissão** → **Intervalo de keyframes: 2 s**. Veja [Configurar o OBS](/swarmcast/pt-br/start/obs/).
 
 ## O link e os espectadores
 

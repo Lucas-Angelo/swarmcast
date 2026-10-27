@@ -6,7 +6,7 @@ description: Toda live, passo a passo - ligar o SwarmCast, iniciar o OBS, mandar
 ## Em toda live
 
 1. **Abra o SwarmCast.** Ele liga sozinho e mostra **Esperando o OBS começar a transmitir…**. Se o topo do painel disser **Desligado**, clique em **Ligar o SwarmCast**.
-2. **Comece a transmitir no OBS.** Com o plugin Multiple output, clique também em **Start** ao lado do SwarmCast (não precisa se marcou "Sync start").
+2. **Comece a transmitir no OBS.** Com o plugin Multiplas saídas (Multiple output), clique também em **Iniciar** ao lado do SwarmCast (não precisa se marcou "Sincronizar início com o OBS"). Com o Aitum Vertical, clique também no botão verde de antena do painel Vertical.
 
    ![Controles do OBS: 1 Iniciar transmissão. Imagem do OBS em inglês.](../../../../../../apps/admin/src/onboarding/img/obs-start-streaming.png)
 
@@ -38,7 +38,7 @@ O painel mostra o que importa:
 
 ## Quando terminar
 
-1. Pare a transmissão no OBS (e o destino do SwarmCast no painel Multiple output, se ele não parar sozinho).
+1. Pare a transmissão no OBS (e o destino do SwarmCast no painel Multiplas saídas, ou o botão de antena do painel Vertical, se ele não parar sozinho).
 2. No painel, clique em **Desligar tudo** e espere aparecer **"Desligado: nada no seu computador está acessível"**.
 
 Fechar o SwarmCast também desliga tudo. Se você fechar a janela com a live no ar, o SwarmCast pergunta: **Encerrar e sair** ou **Deixar rodando na bandeja**.

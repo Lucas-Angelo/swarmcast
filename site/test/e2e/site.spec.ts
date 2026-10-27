@@ -328,6 +328,7 @@ test.describe('phones', () => {
     ['landing-pt-BR-mobile', '/swarmcast/pt-br/', 'lang-switch'],
     ['download-pt-BR-mobile', '/swarmcast/pt-br/download/', 'lang-switch'],
     ['obs-en-mobile', '/swarmcast/start/obs/', 'lang-mobile'],
+    ['obs-pt-BR-mobile', '/swarmcast/pt-br/start/obs/', 'lang-mobile'],
     ['troubleshooting-pt-BR-mobile', '/swarmcast/pt-br/help/troubleshooting/', 'lang-mobile'],
   ] as const) {
     test(`${url} fits a 360 px screen and keeps the language link visible`, async ({ browser }) => {
@@ -359,6 +360,33 @@ test('the guide has an overview page and the logo goes home', async ({ browser }
   await expect(page).toHaveURL(/\/swarmcast\/$/);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Guide' }).click();
   await expect(page).toHaveURL(/\/swarmcast\/guide\/$/);
+  await context.close();
+});
+
+test('the OBS guide offers both methods, with screenshots in the page language', async ({ browser }) => {
+  const { context, page } = await open(browser);
+  for (const [url, lang, same, other, only] of [
+    ['/swarmcast/start/obs/', 'en', 'A. Same scene everywhere', 'B. A different scene for SwarmCast', 'Only SwarmCast'],
+    ['/swarmcast/pt-br/start/obs/', 'pt-br', 'A. A mesma cena em todo lugar', 'B. Outra cena para o SwarmCast', 'Só no SwarmCast'],
+  ] as const) {
+    await page.goto(url);
+    const main = page.locator('main');
+    // The chooser at the top links to each method.
+    for (const name of [same, other, only]) {
+      await expect(main.getByRole('heading', { level: 2, name, exact: true })).toBeVisible();
+      await expect(main.getByRole('link', { name, exact: true }).first()).toBeVisible();
+    }
+    // One screenshot per step, from the page's own language folder, all loaded.
+    const imgs = main.locator('img');
+    expect(await imgs.count()).toBeGreaterThanOrEqual(15);
+    for (const img of await imgs.all()) {
+      await img.scrollIntoViewIfNeeded();
+      await expect(img).toHaveJSProperty('complete', true);
+      expect(await img.evaluate((i: HTMLImageElement) => i.naturalWidth)).toBeGreaterThan(0);
+    }
+    // The first picture is the Docks menu, named as OBS shows it in that language.
+    await expect(imgs.first()).toHaveAttribute('alt', lang === 'en' ? /Docks menu/ : /menu Painéis/);
+  }
   await context.close();
 });
 

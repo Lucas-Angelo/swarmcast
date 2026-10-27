@@ -3,7 +3,7 @@ title: Desinstalar
 description: Tire o SwarmCast do Windows, do macOS ou do Linux, mantendo ou apagando as configurações e a chave de transmissão.
 ---
 
-Desinstalar nunca mexe no OBS. Se quiser, apague você mesmo o destino do SwarmCast (painel Multiple output) ou o servidor personalizado no OBS.
+Desinstalar nunca mexe no OBS. Se quiser, apague você mesmo o destino do SwarmCast (painel Multiplas saídas), as configurações de transmissão do Vertical (Aitum Vertical) ou o servidor personalizado no OBS.
 
 ## Windows
 

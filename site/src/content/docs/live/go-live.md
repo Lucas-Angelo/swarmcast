@@ -6,7 +6,7 @@ description: Every live, step by step - turn SwarmCast on, start OBS, share the 
 ## Every live
 
 1. **Open SwarmCast.** It turns on by itself and shows **Waiting for OBS to start streaming…**. If the top of the panel says **Off**, click **Turn on SwarmCast**.
-2. **Start streaming in OBS.** With the Multiple output plugin, also click **Start** next to SwarmCast (not needed if you ticked "Sync start").
+2. **Start streaming in OBS.** With the Multiple output plugin, also click **Start** next to SwarmCast (not needed if you ticked "Sync start with OBS"). With Aitum Vertical, also click the green antenna button in the Vertical panel.
 
    ![OBS controls: 1 Start Streaming.](../../../../../apps/admin/src/onboarding/img/obs-start-streaming.png)
 
@@ -38,7 +38,7 @@ The panel shows what matters:
 
 ## When you finish
 
-1. Stop streaming in OBS (and the SwarmCast target in the Multiple output panel, if it does not stop by itself).
+1. Stop streaming in OBS (and the SwarmCast target in the Multiple output panel, or the antenna button in the Vertical panel, if it does not stop by itself).
 2. In the panel click **Stop everything** and wait for **"Off: nothing on your computer is reachable"**.
 
 Quitting SwarmCast also turns everything off. If you close the window while you are live, SwarmCast asks: **Stop and quit**, or **Keep running in the tray**.

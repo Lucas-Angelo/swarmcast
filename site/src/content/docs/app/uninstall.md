@@ -3,7 +3,7 @@ title: Uninstall
 description: Remove SwarmCast from Windows, macOS or Linux, with or without your settings and stream key.
 ---
 
-Uninstalling never changes OBS. If you want, remove the SwarmCast target (Multiple output panel) or the custom server from OBS yourself.
+Uninstalling never changes OBS. If you want, remove the SwarmCast target (Multiple output panel), the Vertical streaming settings (Aitum Vertical) or the custom server from OBS yourself.
 
 ## Windows
 

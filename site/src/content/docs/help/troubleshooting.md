@@ -32,7 +32,7 @@ Click **Try again**. If it keeps failing, click **Open logs folder** and send th
 - Check that SwarmCast is open and the top of the panel says **Waiting for OBS to start streaming…** or **Live**. If it says **Off**, click **Turn on SwarmCast**.
 - The server must be exactly `rtmp://127.0.0.1:1935/live`.
 - The key must be the one from the panel. Use the **Copy** buttons instead of typing.
-- With the Multiple output plugin, click **Start** next to SwarmCast.
+- With the Multiple output plugin, click **Start** next to SwarmCast. With Aitum Vertical, click the antenna button in the Vertical panel.
 
 ### "The keyframe interval looks wrong"
 
