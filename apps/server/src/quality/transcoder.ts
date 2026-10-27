@@ -145,7 +145,12 @@ export interface TranscoderOptions {
  */
 export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready: [] }> {
   status: TranscoderStatus = 'off';
+  /** Restarts of the current ladder (back to 0 on every start; drives the backoff and "failed"). */
   restarts = 0;
+  /** ffmpeg processes started since this transcoder was created (monotonic, never reset). */
+  launches = 0;
+  /** Unexpected ffmpeg exits since this transcoder was created (monotonic; stops are not crashes). */
+  crashes = 0;
   message?: CodedText;
   outDir: string | null = null;
   private child: ManagedChild | null = null;
@@ -212,6 +217,7 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     this.set(this.restarts === 0 ? 'starting' : 'restarting');
     const child = new ManagedChild('ffmpeg-ladder', this.o.ffmpeg, args, { cwd: this.outDir }, this.o.reaper, this.o.log);
     this.child = child;
+    this.launches += 1;
     if (child.pid) {
       try {
         // OBS (and her stream to other platforms) must always win the CPU.
@@ -237,6 +243,7 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     child.once('exit', (code, signal) => {
       if (this.child === child) this.child = null;
       if (this.stopping) return;
+      this.crashes += 1;
       this.restarts += 1;
       const max = this.o.maxRestarts ?? 5;
       if (this.restarts > max) {

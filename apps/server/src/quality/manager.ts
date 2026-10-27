@@ -35,7 +35,7 @@ import type { TrackerService } from '../tracker/tracker.js';
 import { cpuCores, probeEncoders, testCpu } from './encoders.js';
 import { installFfmpeg, resolveFfmpeg, type InstallProgress } from './ffmpeg.js';
 import { withRetries } from '../core/retry.js';
-import { CpuSampler, LoadGuard, type ShedReason } from './load-guard.js';
+import { CpuSampler, LoadGuard, type LoadGuardOptions, type ShedReason } from './load-guard.js';
 import { ObsWebsocketClient, tcpConnectRtt } from './signals.js';
 import { Transcoder, renderLadderMultivariant } from './transcoder.js';
 import { RttTracker, UploadController } from './upload-controller.js';
@@ -67,6 +67,8 @@ export interface QualityDeps {
   probe?: typeof probeEncoders;
   installFfmpeg?: typeof installFfmpeg;
   cpuTest?: typeof testCpu;
+  /** The load guard (tests): an instance, or options for the default one. */
+  loadGuard?: LoadGuard | Partial<LoadGuardOptions>;
   /** Whole-machine CPU busy percent since the last call (tests). */
   cpuBusy?: () => number | undefined;
   tickMs?: number;
@@ -104,7 +106,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
   private lastBackoff?: UploadState['lastBackoff'];
   private ceiling?: number;
   private mediamtxSource: MediaMtxSource;
-  private readonly guard = new LoadGuard();
+  private readonly guard: LoadGuard;
   private readonly cpuSampler = new CpuSampler();
   private shed?: { reason: ShedReason; heights: number[]; at: number };
   private ladderSource: SourceInfo | null = null;
@@ -112,6 +114,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
 
   constructor(private readonly d: QualityDeps) {
     super();
+    this.guard = d.loadGuard instanceof LoadGuard ? d.loadGuard : new LoadGuard(d.loadGuard);
     this.ffmpegPath = resolveFfmpeg({ configPath: d.config.ffmpegPath, binDir: d.binDir, dataDir: d.dataDir });
     this.transcoder = new Transcoder({ ffmpeg: this.ffmpegPath ?? 'ffmpeg', inputUrl: d.rtmpReadUrl, workDir: d.runDir, reaper: d.reaper, log: d.log, secret: d.streamKey });
     this.transcoder.on('status', (s) => {

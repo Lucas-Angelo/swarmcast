@@ -34,6 +34,7 @@ import type { TrackerService } from '../tracker/tracker.js';
 import type { Logger } from '../core/logger.js';
 import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
+import { resettableRateLimits } from './rate-limit-store.js';
 import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
 
 /** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
@@ -155,7 +156,10 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   const cookieBase = { path: '/', httpOnly: true, secure: opts.secureCookies, sameSite: 'lax' as const };
 
   await app.register(cookie);
+  const limits = resettableRateLimits();
+  app.decorate('resetRateLimits', limits.reset);
   await app.register(rateLimit, {
+    store: limits.Store,
     global: true,
     max: direct ? 300 : 900,
     timeWindow: '1 minute',

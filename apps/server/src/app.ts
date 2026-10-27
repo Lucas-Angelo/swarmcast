@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +22,7 @@ import { lookupPublicIps } from './direct/publicip.js';
 import { ManifestSigner } from './hls/manifest.js';
 import { MediaMtx } from './media/mediamtx.js';
 import { Reaper } from './process/children.js';
+import type { LoadGuard, LoadGuardOptions } from './quality/load-guard.js';
 import { ExternalTunnel, NoTunnel, type TunnelProvider } from './tunnel/provider.js';
 import { QuickTunnel } from './tunnel/quick.js';
 import { PublicBlocklists, blocklistSources } from './security/blocklists.js';
@@ -43,6 +45,11 @@ export interface AppOptions {
    * when another SwarmCast is running or the RTMP port is busy.
    */
   desktop?: DesktopBridge;
+  /**
+   * The quality ladder's load guard (tests): a guard instance, or options for the default one.
+   * Tests about the ladder itself pass thresholds that never drop a rendition.
+   */
+  loadGuard?: LoadGuard | Partial<LoadGuardOptions>;
 }
 
 export interface App {
@@ -54,10 +61,18 @@ export interface App {
   adminUrl: string;
   /** URL that logs the browser into the admin panel. */
   adminLoginUrl: string;
+  /**
+   * The port the panel really listens on. `config.ports.admin: 0` (tests) lets the OS pick a
+   * free one; `config.ports` always holds the real ports once they are bound (the public port
+   * from the moment the live starts: `live.publicPort`).
+   */
+  adminPort: number;
   direct: DirectMode;
   reaper: Reaper | null;
   /** Log retention and "Export logs". */
   diagnostics: Diagnostics;
+  /** Test hook: forget every rate-limit counter of the panel and of the public server. */
+  resetRateLimits(): void;
   close(): Promise<void>;
 }
 
@@ -162,7 +177,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     log,
     version,
     secureCookies: config.tunnel.provider !== 'none',
-    quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper },
+    quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper, ...(opts.loadGuard ? { loadGuard: opts.loadGuard } : {}) },
   });
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
   setTimeout(() => {
@@ -171,7 +186,8 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
 
   // The panel and the local public server can live on any free port (the tunnel and the
   // browser follow them); only RTMP must stay fixed because OBS is configured with it.
-  const adminPort = await firstFreePort(config.ports.admin);
+  // Port 0 (tests): the OS picks a free port at listen time, never probe-then-bind.
+  const adminPort = config.ports.admin === 0 ? 0 : await firstFreePort(config.ports.admin);
   if (adminPort === null) {
     throw new StartupError('ports-busy', `Ports ${config.ports.admin}-${config.ports.admin + 19} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
   }
@@ -201,8 +217,13 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     reaper,
     diagnostics,
     admin: undefined as unknown as FastifyInstance,
-    adminUrl: `http://127.0.0.1:${config.ports.admin}`,
-    adminLoginUrl: `http://127.0.0.1:${config.ports.admin}/auth/${token}`,
+    adminUrl: '',
+    adminLoginUrl: '',
+    adminPort: 0,
+    resetRateLimits: () => {
+      app.admin.resetRateLimits();
+      live.resetRateLimits();
+    },
     close: () => {
       closing ??= (async () => {
         log.info('shutting down: stopping the live');
@@ -232,6 +253,10 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     diagnostics,
   });
   await app.admin.listen({ host: '127.0.0.1', port: config.ports.admin });
+  app.adminPort = (app.admin.server.address() as AddressInfo).port;
+  config.ports = { ...config.ports, admin: app.adminPort };
+  app.adminUrl = `http://127.0.0.1:${app.adminPort}`;
+  app.adminLoginUrl = `${app.adminUrl}/auth/${token}`;
   void direct.init().catch(() => {});
   log.info({ version, dataDir: paths.dataDir }, 'SwarmCast ready');
   return app;

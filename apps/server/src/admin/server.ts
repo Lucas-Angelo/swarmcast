@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
 import cookie from '@fastify/cookie';
@@ -22,6 +23,7 @@ import type { Diagnostics } from '../diagnostics/diagnostics.js';
 import type { LiveController } from '../core/live.js';
 import type { Logger } from '../core/logger.js';
 import { codeOf, coded } from '../core/messages.js';
+import { resettableRateLimits } from '../public/rate-limit-store.js';
 import { applySecurityHeaders } from '../public/security.js';
 import { registerDesktopRoutes } from './desktop-routes.js';
 import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
@@ -31,6 +33,7 @@ import { registerQualityRoutes } from './quality-routes.js';
 import { registerSystemCheckRoutes } from './system-check-routes.js';
 
 export interface AdminOptions {
+  /** 0: any free port (tests); read the real one from `server.address()` after `listen`. */
   port: number;
   adminDir: string;
   live: LiveController;
@@ -55,22 +58,30 @@ export interface AdminOptions {
  */
 export async function createAdminServer(o: AdminOptions): Promise<FastifyInstance> {
   const app = Fastify({ logger: false, bodyLimit: 16 * 1024, forceCloseConnections: true });
-  const allowedHosts = new Set([`127.0.0.1:${o.port}`, `localhost:${o.port}`]);
-  const allowedOrigins = new Set([...allowedHosts].map((h) => `http://${h}`));
+  // Port 0 (tests) listens on a free port chosen by the OS: the Host/Origin allowlist and the
+  // CSP follow the port the server really got, known once it listens.
+  const boundPort = (): number => o.port || ((app.server.address() as AddressInfo | null)?.port ?? 0);
+  let policy: { port: number; hosts: Set<string>; origins: Set<string>; csp: string } | null = null;
+  const policyFor = (port: number): NonNullable<typeof policy> => {
+    if (policy?.port === port) return policy;
+    const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
+    const csp = [
+      "default-src 'none'",
+      "script-src 'self'",
+      "style-src 'self'",
+      "img-src 'self' data:",
+      // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
+      "font-src 'self'",
+      `connect-src 'self' ws://127.0.0.1:${port} ws://localhost:${port}`,
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+    ].join('; ');
+    policy = { port, hosts, origins: new Set([...hosts].map((h) => `http://${h}`)), csp };
+    return policy;
+  };
   const tokenHash = crypto.createHash('sha256').update(o.token).digest();
-  const csp = [
-    "default-src 'none'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data:",
-    // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
-    "font-src 'self'",
-    `connect-src 'self' ws://127.0.0.1:${o.port} ws://localhost:${o.port}`,
-    "base-uri 'none'",
-    "form-action 'self'",
-    "frame-ancestors 'none'",
-    "object-src 'none'",
-  ].join('; ');
 
   // Stylesheet + favicon of the sign-in and "not authorized" pages (gate.ts), read once.
   const gate = gateHead(o.adminDir);
@@ -79,16 +90,19 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     !!t && t.length < 200 && crypto.timingSafeEqual(crypto.createHash('sha256').update(t).digest(), tokenHash);
 
   await app.register(cookie);
-  await app.register(rateLimit, { max: 600, timeWindow: '1 minute' });
+  const limits = resettableRateLimits();
+  app.decorate('resetRateLimits', limits.reset);
+  await app.register(rateLimit, { max: 600, timeWindow: '1 minute', store: limits.Store });
 
   app.addHook('onRequest', async (req, reply) => {
+    const { hosts, origins, csp } = policyFor(boundPort());
     applySecurityHeaders(reply, csp, false);
     reply.header('Cache-Control', 'no-store');
-    if (!allowedHosts.has(req.headers.host ?? '')) {
+    if (!hosts.has(req.headers.host ?? '')) {
       return reply.code(421).send('Wrong host');
     }
     const origin = req.headers.origin;
-    if (origin && !allowedOrigins.has(origin)) return reply.code(403).send('Forbidden origin');
+    if (origin && !origins.has(origin)) return reply.code(403).send('Forbidden origin');
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       if (!origin) return reply.code(403).send('Missing origin');
       // JSON only: a cross-site form cannot send it without a CORS preflight (which we never allow).
@@ -214,10 +228,11 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 });
   app.server.on('upgrade', (req, socket, head) => {
     const cookies = app.parseCookie(req.headers.cookie ?? '');
+    const { hosts, origins } = policyFor(boundPort());
     if (
       new URL(req.url ?? '/', 'http://x').pathname !== '/ws' ||
-      !allowedHosts.has(req.headers.host ?? '') ||
-      !allowedOrigins.has(req.headers.origin ?? '') ||
+      !hosts.has(req.headers.host ?? '') ||
+      !origins.has(req.headers.origin ?? '') ||
       !tokenOk(cookies[ADMIN_COOKIE])
     ) {
       o.log.debug('panel WebSocket refused');
