@@ -79,7 +79,11 @@ jobs:
         with:
           npm-ci: 'false'
       - name: Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install "$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)" --profile minimal --component rustfmt,clippy --no-self-update
+        # Also the default: rust-cache and the scripts run cargo outside this folder too.
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt,clippy --no-self-update
+          rustup default "$channel"
       # Saved from main only: pull requests restore main's cache instead of each storing a copy
       # (the repository's 10 GB cache limit).
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -139,7 +143,11 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
       - name: Rust toolchain (rust-toolchain.toml)
-        run: rustup toolchain install "$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)" --profile minimal --no-self-update
+        # Also the default: rust-cache computes its key with the default rustc.
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --no-self-update
+          rustup default "$channel"
       # Saved from main only (see the rust job). target/ holds the dependencies twice: for the
       # release profile and for the --fast test builds.
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
