@@ -145,7 +145,7 @@ function Invoke-Captured([string]$Exe, [string]$Arguments, [int]$TimeoutSec) {
 }
 
 # Runs the desktop app's NSIS uninstaller silently, in place, and waits for it. Returns
-# @{ Code; Out; TimedOut; Seconds }. "_?=<dir>" must come last and unquoted (NSIS reads the
+# @{ Code; Out; TimedOut; Seconds; Threw }. "_?=<dir>" must come last and unquoted (NSIS reads the
 # rest of the command line as the folder): it runs the uninstaller from its folder instead
 # of a copy in TEMP that returns at once, so the wait and the exit code are real. NSIS is a
 # GUI program: it is started like a double-click (no redirected output, which it never
@@ -162,9 +162,9 @@ function Invoke-NsisUninstaller([string]$Exe, [string]$Dir, [int]$TimeoutSec) {
     $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
     $p = [System.Diagnostics.Process]::Start($psi)
   } catch {
-    return @{ Code = -1; Out = "could not start ${Exe}: $($_.Exception.Message)"; TimedOut = $false; Seconds = 0 }
+    return @{ Code = -1; Out = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"; TimedOut = $false; Seconds = 0; Threw = $true }
   }
-  if ($null -eq $p) { return @{ Code = -1; Out = "could not start $Exe"; TimedOut = $false; Seconds = 0 } }
+  if ($null -eq $p) { return @{ Code = -1; Out = "the shell started no process for $Exe"; TimedOut = $false; Seconds = 0; Threw = $true } }
   if (-not $p.WaitForExit($TimeoutSec * 1000)) {
     try { $p.Kill() } catch { }
     return @{ Code = -1; Out = ''; TimedOut = $true; Seconds = [int]$sw.Elapsed.TotalSeconds }
@@ -632,11 +632,17 @@ function Uninstall-DesktopApp {
       Say-Warn "The desktop app's uninstaller did not finish in $SC_UninstallTimeout s; removing its files directly."
     } elseif ($r.Code -ne 0) {
       Say-Warn "The desktop app's uninstaller stopped with exit code $($r.Code)$(Get-NsisExitMeaning $r.Code); removing its files directly."
-      # The reason it could not be started, so a failure explains itself.
+      # Always one line of why, so a failure explains itself: the reason it could not be run,
+      # its output (an NSIS uninstaller normally prints none), or that the exit code came from
+      # the uninstaller process itself.
       $detail = "$($r.Out)".Trim()
-      if ($detail) {
-        if ($detail.Length -gt 1500) { $detail = '...' + $detail.Substring($detail.Length - 1500) }
+      if ($detail.Length -gt 1500) { $detail = '...' + $detail.Substring($detail.Length - 1500) }
+      if ($r.Threw) {
+        Say "  The uninstaller could not be run: $detail"
+      } elseif ($detail) {
         Say "  Uninstaller said: $detail"
+      } else {
+        Say "  Uninstaller said nothing (exit code $($r.Code) came from the uninstaller process itself)."
       }
     } else {
       Say-Ok "The desktop app's uninstaller finished (exit code 0, $($r.Seconds) s)."
