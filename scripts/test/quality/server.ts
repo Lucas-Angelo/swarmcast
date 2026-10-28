@@ -3,6 +3,7 @@
 //   node --import tsx scripts/test/quality/server.ts            (ladder: 1080p copy + 720p + 480p)
 //   LADDER=off node --import tsx scripts/test/quality/server.ts  (source only, like before)
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
@@ -11,6 +12,8 @@ import { defaultConfig } from '../../../apps/server/src/core/config.js';
 import { pushTestStream } from '../../../apps/server/test/integration/helpers.js';
 
 export const QUALITY_PORTS = { rtmp: 45935, public: 45080, admin: 45081, mediamtxHls: 45888 };
+/** Test-only control port: GET /env, what bench.ts and menu-check.ts need to sign in to the panel. */
+export const QUALITY_CONTROL_PORT = 45082;
 const ladderOn = process.env.LADDER !== 'off';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-quality-'));
@@ -47,13 +50,24 @@ const push = (): void => {
 };
 push();
 
-const out = path.join('test-results', 'quality');
-fs.mkdirSync(out, { recursive: true });
-fs.writeFileSync(path.join(out, 'env.json'), JSON.stringify({ adminLoginUrl: app.adminLoginUrl, adminUrl: app.adminUrl, base: `http://127.0.0.1:${QUALITY_PORTS.public}`, readyAt: Date.now() }));
+const readyAt = Date.now();
+const control = http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url === '/env') {
+    const env = { adminUrl: app.adminUrl, adminLoginPath: new URL(app.adminLoginUrl).pathname, base: `http://127.0.0.1:${QUALITY_PORTS.public}`, readyAt };
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(env));
+  } else {
+    res.writeHead(404).end();
+  }
+});
+await new Promise<void>((resolve, reject) => {
+  control.once('error', reject);
+  control.listen(QUALITY_CONTROL_PORT, '127.0.0.1', resolve);
+});
 console.log(`quality server ready (ladder ${ladderOn ? 'on' : 'off'})`);
 
 const shutdown = async (): Promise<void> => {
   stopping = true;
+  control.close();
   ffmpeg?.kill('SIGKILL');
   await app.close();
   process.exit(0);
