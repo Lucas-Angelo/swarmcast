@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { BLOCKLIST_REFRESH_MS, DEFAULT_BLOCKLISTS, PublicBlocklists, blocklistSources, parseBlocklist } from '../../src/security/blocklists.js';
+import { BLOCKLIST_REFRESH_MS, DEFAULT_BLOCKLISTS, PublicBlocklists, blocklistCacheText, blocklistSources, parseBlocklist, readBodyCapped } from '../../src/security/blocklists.js';
 import { silentLog } from './helpers.js';
 
 const SPAMHAUS_JSON = [
@@ -38,6 +38,31 @@ describe('blocklist parsing', () => {
   it('ignores garbage and absurdly wide entries (a broken list must not block everyone)', () => {
     expect(parseBlocklist('0.0.0.0/0\n::/0\n1.0.0.0/7\n2000::/3\nhello\n{"cidr":5}\n{bad json\n300.1.1.1')).toEqual([]);
     expect(parseBlocklist('224.0.0.0/3\n1.0.0.0/8')).toHaveLength(1);
+  });
+
+  it('caches only canonical networks, which read back to the same ranges', () => {
+    for (const list of [SPAMHAUS_JSON, NETSET, SPAMHAUS_TXT]) {
+      const ranges = parseBlocklist(list);
+      const text = blocklistCacheText(ranges);
+      expect(text).toMatch(/^([0-9a-f.:]+\/\d{1,3}\n)+$/);
+      expect(parseBlocklist(text)).toEqual(ranges);
+    }
+    expect(blocklistCacheText(parseBlocklist(SPAMHAUS_JSON))).toBe('1.10.16.0/20\n2001:678:254:0:0:0:0:0/48\n');
+  });
+
+  it('stops reading a body as soon as it passes the size limit, with or without Content-Length', async () => {
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(c) {
+        pulled++;
+        c.enqueue(new Uint8Array(1024).fill(0x31));
+      },
+    });
+    await expect(readBodyCapped(new Response(endless), 10 * 1024)).rejects.toThrow('list too large');
+    expect(pulled).toBeLessThan(20);
+    await expect(readBodyCapped(new Response('x', { headers: { 'content-length': '999999' } }), 1000)).rejects.toThrow('list too large');
+    expect(await readBodyCapped(new Response('1.2.3.4\n'), 8)).toBe('1.2.3.4\n');
+    await expect(readBodyCapped(new Response('1.2.3.4\n'), 7)).rejects.toThrow('list too large');
   });
 
   it('maps config to sources (extra URLs get stable ids)', () => {
@@ -95,6 +120,8 @@ describe('PublicBlocklists', () => {
     expect(meta).toMatchObject({ fetchedAt: now, entries: 2 });
     expect(bl.info()).toMatchObject({ networks: 8, updatedAt: now });
     if (process.platform !== 'win32') expect(fs.statSync(path.join(dir, 'spamhaus-drop.txt')).mode & 0o777).toBe(0o600);
+    // The cache holds the parsed networks, not the bytes as downloaded (no metadata, no comments).
+    expect(fs.readFileSync(path.join(dir, 'spamhaus-drop.txt'), 'utf8')).toBe('1.10.16.0/20\n2001:678:254:0:0:0:0:0/48\n');
 
     // Fresh lists are not downloaded again; stale ones are (every 24 h).
     await bl.refresh();

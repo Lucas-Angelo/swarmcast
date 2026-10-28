@@ -44,8 +44,11 @@ const TRIES = 6;
 const STALL_MS = Number(process.env.SC_DOWNLOAD_STALL_MS ?? 30_000);
 const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter(Boolean).join(': ');
 
-/** One try: the body is streamed to `dest`, and the try is aborted when no bytes arrive for STALL_MS. */
-async function fetchOnce(url, dest) {
+/**
+ * One try: the body is collected in memory, and the try is aborted when no bytes arrive for
+ * STALL_MS. Nothing is written here: the caller checks the bytes first.
+ */
+async function fetchOnce(url) {
   const ac = new AbortController();
   let timer;
   const arm = () => {
@@ -65,7 +68,7 @@ async function fetchOnce(url, dest) {
       chunks.push(chunk);
       arm();
     }
-    fs.writeFileSync(dest, Buffer.concat(chunks));
+    return Buffer.concat(chunks);
   } catch (err) {
     throw ac.signal.aborted && ac.signal.reason instanceof Error ? ac.signal.reason : err;
   } finally {
@@ -73,17 +76,30 @@ async function fetchOnce(url, dest) {
   }
 }
 
-export async function download(url, dest) {
+/**
+ * Download `url` to `dest` when its SHA-256 is `sha256`. The bytes are checked in memory and only
+ * bytes that match reach the disk (written to `dest.part`, then renamed). A mismatch is final:
+ * the pin or the upstream file is wrong, and downloading again would not change that.
+ * `fetchImpl` is for tests.
+ */
+export async function download(url, dest, sha256, { fetchImpl = fetchOnce, waitMs = (attempt) => 2 ** attempt * 1000 } = {}) {
+  if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) throw new Error(`no pinned SHA-256 for ${url}`);
   for (let attempt = 1; ; attempt++) {
+    let bytes;
     try {
-      await fetchOnce(url, dest);
-      return;
+      bytes = await fetchImpl(url);
     } catch (err) {
       if (err.final || attempt === TRIES) throw new Error(`${why(err)} (${url}, try ${attempt} of ${TRIES})`);
-      const wait = 2 ** attempt;
-      console.warn(`  try ${attempt} of ${TRIES} failed (${why(err)}); again in ${wait} s`);
-      await new Promise((r) => setTimeout(r, wait * 1000));
+      const wait = waitMs(attempt);
+      console.warn(`  try ${attempt} of ${TRIES} failed (${why(err)}); again in ${wait / 1000} s`);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
     }
+    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (actual !== sha256) throw new Error(`Checksum mismatch for ${url}: expected ${sha256}, got ${actual}`);
+    fs.writeFileSync(`${dest}.part`, bytes);
+    fs.renameSync(`${dest}.part`, dest);
+    return;
   }
 }
 
@@ -153,11 +169,11 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
     } else {
       const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
       console.log(`↓ ${url}`);
-      await download(url, archive);
-      const actual = sha256(archive);
-      if (actual !== a.sha256) {
+      try {
+        await download(url, archive, a.sha256);
+      } catch (err) {
         fs.rmSync(work, { recursive: true, force: true });
-        throw new Error(`Checksum mismatch for ${a.asset}: expected ${a.sha256}, got ${actual}`);
+        throw err;
       }
       if (cached) {
         // Copy, then rename: a job killed halfway never leaves a partial entry.
