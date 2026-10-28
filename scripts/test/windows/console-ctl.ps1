@@ -89,7 +89,14 @@ public static class ScCon {
 
   // Moves hWnd (size and z-order kept), for a second click when something covered its X.
   public static void DpiAware() { SetProcessDPIAware(); }
-  public static void MoveTo(IntPtr hWnd, int x, int y) { SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004); }
+  [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
+  // Moves hWnd so its whole title bar is on the primary screen, its X 20 px from the right edge.
+  public static string MoveIntoView(IntPtr hWnd) {
+    RECT r; GetWindowRect(hWnd, out r);
+    int x = Math.Max(0, GetSystemMetrics(0) - (r.Right - r.Left) - 20), y = 120;
+    SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004);
+    return String.Format("{0},{1}", x, y);
+  }
 
   // Clicks the close button of hWnd with real mouse input. Returns what it did; "clicked" only
   // when the press and release were both injected on a verified close button.
@@ -134,6 +141,7 @@ public static class ScCon {
     SetCursorPos(p.X, p.Y);
     Thread.Sleep(150);
     POINT now; GetCursorPos(out now);
+    if (now.X != p.X || now.Y != p.Y) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": the cursor stopped at {0},{1} (point off the screen?), not clicked", now.X, now.Y); }
     INPUT[] down = new INPUT[1]; down[0].type = 0; down[0].u.mi.dwFlags = 0x0002; // MOUSEEVENTF_LEFTDOWN
     INPUT[] up = new INPUT[1]; up[0].type = 0; up[0].u.mi.dwFlags = 0x0004;       // MOUSEEVENTF_LEFTUP
     int size = Marshal.SizeOf(typeof(INPUT));
@@ -212,11 +220,12 @@ switch ($Action) {
               else { $note = "$note; no Close button in UI Automation either" }
             }
             if ($note -match 'covered by') {
-              # Another always-on-top window sits on the X (seen on windows-11-arm): move the
-              # console window into the open and click again.
-              [ScCon]::MoveTo($target, 240, 320)
+              # Another always-on-top window sits on the X: move the window (staying on the screen)
+              # and try once more. A full-screen overlay (windows-11-arm has a 1024 x 768
+              # PickerHost window) still covers it; then UI Automation closes it instead.
+              $at = [ScCon]::MoveIntoView($target)
               Start-Sleep -Milliseconds 300
-              $note = "$note; moved to 240,320: $([ScCon]::Click($target))"
+              $note = "$note; moved to ${at}: $([ScCon]::Click($target))"
             }
           }
           'uia' {
