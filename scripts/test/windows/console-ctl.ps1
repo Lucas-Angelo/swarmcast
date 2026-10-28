@@ -88,11 +88,15 @@ public static class ScCon {
   }
 
   // Moves hWnd (size and z-order kept), for a second click when something covered its X.
+  public static void DpiAware() { SetProcessDPIAware(); }
   public static void MoveTo(IntPtr hWnd, int x, int y) { SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004); }
 
   // Clicks the close button of hWnd with real mouse input. Returns what it did; "clicked" only
   // when the press and release were both injected on a verified close button.
-  public static string Click(IntPtr hWnd) {
+  public static string Click(IntPtr hWnd) { return Click(hWnd, -1, -1); }
+  // With x, y >= 0: click there (the close button's rectangle from UI Automation, for windows
+  // that draw their own title bar, like Windows Terminal) instead of the WM_NCHITTEST search.
+  public static string Click(IntPtr hWnd, int atX, int atY) {
     SetProcessDPIAware();
     IntPtr desk = OpenInputDesktop(0, false, 0x0100);
     if (desk == IntPtr.Zero) return "no input desktop (locked or non-interactive session)";
@@ -105,6 +109,11 @@ public static class ScCon {
     // Find the close button by asking the window itself (WM_NCHITTEST = HTCLOSE) along the top
     // edge of its frame, so the click is on the X whatever the theme, DPI or caption size.
     RECT w; GetWindowRect(hWnd, out w);
+    POINT p; string where;
+    if (atX >= 0 && atY >= 0) {
+      p.X = atX; p.Y = atY;
+      where = String.Format("close button from UI Automation, click at {0},{1}", p.X, p.Y);
+    } else {
     int minX = int.MaxValue, maxX = int.MinValue, rowY = 0;
     for (int y = w.Top + 2; y < w.Top + 60 && minX == int.MaxValue; y += 3) {
       for (int x = w.Right - 2; x > w.Right - 220 && x > w.Left; x -= 2) {
@@ -115,11 +124,12 @@ public static class ScCon {
     int cx = (minX + maxX) / 2, minY = rowY, maxY = rowY;
     while (minY > w.Top && HitTest(hWnd, cx, minY - 1) == 20) minY--;
     while (maxY < w.Top + 80 && HitTest(hWnd, cx, maxY + 1) == 20) maxY++;
-    POINT p; p.X = cx; p.Y = (minY + maxY) / 2;
-    string where = String.Format("close button {0},{1}-{2},{3} (WM_NCHITTEST), click at {4},{5}", minX, minY, maxX, maxY, p.X, p.Y);
+    p.X = cx; p.Y = (minY + maxY) / 2;
+    where = String.Format("close button {0},{1}-{2},{3} (WM_NCHITTEST), click at {4},{5}", minX, minY, maxX, maxY, p.X, p.Y);
     long hit = HitTest(hWnd, p.X, p.Y);
-    IntPtr under = GetAncestor(WindowFromPoint(p), 2); // GA_ROOT
     if (hit != 20) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": not the close button (hit test {0}), not clicked", hit); }
+    }
+    IntPtr under = GetAncestor(WindowFromPoint(p), 2); // GA_ROOT
     if (under != hWnd) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + ": covered by window " + Describe(under) + ", not clicked"; }
     SetCursorPos(p.X, p.Y);
     Thread.Sleep(150);
@@ -137,6 +147,27 @@ public static class ScCon {
   }
 }
 '@
+# Screen coordinates in physical pixels for the hit tests, UI Automation and SendInput alike.
+[ScCon]::DpiAware()
+
+# Center of the Close button of window $Hwnd as UI Automation sees it, or $null.
+function Get-UiaCloseButtonPoint([IntPtr]$Hwnd) {
+  try {
+    Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+    $A = [System.Windows.Automation.AutomationElement]
+    $root = $A::FromHandle($Hwnd)
+    $isButton = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    foreach ($b in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $isButton)) {
+      $c = $b.Current
+      if ($c.AutomationId -eq 'CloseButton' -or $c.Name -eq 'Close') {
+        $r = $c.BoundingRectangle
+        if ($r.Width -gt 0 -and $r.Height -gt 0) { return @([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
+      }
+    }
+  } catch { }
+  return $null
+}
+
 [void][ScCon]::FreeConsole()
 if (-not [ScCon]::AttachConsole([uint32]$TargetPid)) {
   Write-Output ("attach failed: win32 error {0}" -f [Runtime.InteropServices.Marshal]::GetLastWin32Error())
@@ -173,6 +204,13 @@ switch ($Action) {
         switch ($m) {
           'click' {
             $note = [ScCon]::Click($target)
+            if ($note -match 'no close button found') {
+              # A window that draws its own title bar (Windows Terminal) answers no HTCLOSE: take
+              # its Close button's rectangle from UI Automation and click that.
+              $pt = Get-UiaCloseButtonPoint $target
+              if ($pt) { $note = "$note; $([ScCon]::Click($target, $pt[0], $pt[1]))" }
+              else { $note = "$note; no Close button in UI Automation either" }
+            }
             if ($note -match 'covered by') {
               # Another always-on-top window sits on the X (seen on windows-11-arm): move the
               # console window into the open and click again.
