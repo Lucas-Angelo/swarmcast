@@ -190,21 +190,24 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
 
 // ---- stream health (GET /health) ----
 
-/** Seconds the shortest media playlist (video or audio) viewers get covers right now. */
-function playlistSeconds(): number {
+/**
+ * Every media playlist (video and audio) viewers get: the seconds it covers, and the
+ * discontinuity number a player gives its newest segment (the sequence plus the tags before it).
+ */
+function mediaPlaylists(): Array<{ name: string; seconds: number; lastCc: number }> {
   const multivariant = app.live.origin.getPlaylist('index.m3u8') ?? '';
   const names = new Set<string>();
   for (const line of multivariant.split('\n')) {
     const uri = line.startsWith('#') ? /URI="([^"]+)"/.exec(line)?.[1] : line.trim();
     if (uri) names.add(uri.split('?')[0]!.split('/').pop()!);
   }
-  let shortest: number | null = null;
-  for (const name of names) {
-    let s = 0;
-    for (const m of (app.live.origin.getPlaylist(name) ?? '').matchAll(/#EXTINF:([\d.]+)/g)) s += Number(m[1]);
-    shortest = shortest === null ? s : Math.min(shortest, s);
-  }
-  return Math.round((shortest ?? 0) * 10) / 10;
+  return [...names].map((name) => {
+    const text = app.live.origin.getPlaylist(name) ?? '';
+    let seconds = 0;
+    for (const m of text.matchAll(/#EXTINF:([\d.]+)/g)) seconds += Number(m[1]);
+    const lastCc = Number(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/.exec(text)?.[1] ?? 0) + (text.match(/^#EXT-X-DISCONTINUITY$/gm)?.length ?? 0);
+    return { name, seconds: Math.round(seconds * 10) / 10, lastCc };
+  });
 }
 
 interface Health {
@@ -215,6 +218,7 @@ interface Health {
   variants: number[];
   sinceSegmentMs: number | null;
   playlistS: number;
+  playlists: Array<{ name: string; seconds: number; lastCc: number }>;
   windowSeconds: number;
   ladder: string;
   threat: string;
@@ -230,8 +234,13 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
   const L = app.live;
   const variants = L.origin.variants().map((v) => v.height);
   const since = L.origin.lastSegmentAt ? Date.now() - L.origin.lastSegmentAt : null;
-  const playlistS = playlistSeconds();
+  const playlists = mediaPlaylists();
+  const playlistS = playlists.length ? Math.min(...playlists.map((p) => p.seconds)) : 0;
   const problems: string[] = [];
+  // A player matches audio to video (and one quality to another) by discontinuity number: if
+  // the newest segments disagree, nothing new ever plays (seen when OBS reconnected twice
+  // within seconds: playlist.ts DiscontinuityClock).
+  if (new Set(playlists.map((p) => p.lastCc)).size > 1) problems.push(`discontinuity numbers differ: ${playlists.map((p) => `${p.name} ${p.lastCc}`).join(', ')}`);
   if (L.phase !== 'live') problems.push(`phase is ${L.phase}`);
   if (!L.origin.available) problems.push('the origin serves no playlist');
   if (variants.length !== qualities) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected ${qualities}`);
@@ -246,6 +255,7 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
     variants,
     sinceSegmentMs: since,
     playlistS,
+    playlists,
     windowSeconds: L.origin.windowSeconds,
     ladder: L.quality.state().transcoder.status,
     threat: shield.detector.state,
