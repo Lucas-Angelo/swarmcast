@@ -4,7 +4,7 @@ import { enableP2P, expect, liveLink, test, uid, waitPlaying } from './fixtures.
 // limit (docs/ARCHITECTURE.md), so a viewer keeps exactly one: /control, which also carries the
 // WebTorrent tracker (apps/viewer/src/tracker-mux.ts). That the tracker really works over it
 // is covered by p2p.spec.ts (peers find each other through it).
-test('a viewer holds one WebSocket; the tracker rides on /control', async ({ browser }) => {
+test('a viewer holds one WebSocket; the tracker rides on /control', { tag: '@ui' }, async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   const sockets: string[] = [];

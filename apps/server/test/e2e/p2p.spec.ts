@@ -22,8 +22,6 @@ import {
   waitPlaying,
 } from './fixtures.js';
 
-test.describe.configure({ mode: 'serial' });
-
 // Playwright's WebKit build gathers neither STUN (srflx) candidates nor resolvable mDNS
 // host candidates, so two WebKit contexts cannot connect over WebRTC. Real Safari can.
 test.skip(({ browserName }) => browserName === 'webkit', 'Playwright WebKit has no usable ICE candidates for WebRTC');
@@ -64,7 +62,7 @@ async function connectedPair(browser: import('@playwright/test').Browser, a: str
   };
 }
 
-test('viewers who opt in exchange video over P2P (verified by hash)', async ({ browser }) => {
+test('viewers who opt in exchange video over P2P (verified by hash)', { tag: '@media' }, async ({ browser }) => {
   const { pa, pb, close } = await connectedPair(browser, uid('p2pA'), uid('p2pB'));
   await expect
     .poll(async () => (await stats(pa)).p2pDownBytes + (await stats(pb)).p2pDownBytes, { timeout: 90_000, intervals: [2000] })
@@ -74,7 +72,7 @@ test('viewers who opt in exchange video over P2P (verified by hash)', async ({ b
   await close();
 });
 
-test('"Remove from P2P" disconnects the peer from others while it keeps watching', async ({ browser }) => {
+test('"Remove from P2P" disconnects the peer from others while it keeps watching', { tag: '@media' }, async ({ browser }) => {
   const nickB = uid('revokeB');
   const { pa, pb, close } = await connectedPair(browser, uid('revokeA'), nickB);
   const b = await viewerByNick(nickB);
@@ -96,7 +94,7 @@ test('"Remove from P2P" disconnects the peer from others while it keeps watching
   await close();
 });
 
-test('a malicious peer sending altered data is rejected and removed from P2P', async ({ browser }) => {
+test('a malicious peer sending altered data is rejected and removed from P2P', { tag: '@media' }, async ({ browser }) => {
   test.slow();
   const evilNick = uid('evil');
   // The malicious viewer joins first so it holds segments the honest one will ask for.
@@ -142,7 +140,7 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
   await evilCtx.close();
 });
 
-test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser }) => {
+test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', { tag: '@media' }, async ({ browser }) => {
   const { context, page } = await join(browser, uid('allp2p'));
   await waitPlaying(page);
   await enableP2P(page);
@@ -180,7 +178,7 @@ test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; view
 // a 4-vCPU runner encodes as little as the scenario needs next to Chrome and the throttle.
 const SOAK_BEFORE_S = 40;
 const SOAK_AFTER_S = 20;
-test('a peer that barely delivers never starves playback, even after a forced stall', async ({ browser, browserName }) => {
+test('a peer that barely delivers never starves playback, even after a forced stall', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'network throttling needs CDP (Chromium)');
   const q0 = await adminApi<QualityState>('GET', '/api/quality');
   test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');
