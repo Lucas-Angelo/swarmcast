@@ -1,4 +1,4 @@
-# The Rust the desktop app is built and checked with, locally and in CI (desktop.yml installs it
+# The Rust the desktop app is built and checked with, locally and in CI (.github/actions/setup-rust installs it
 # from here). Pinned so a new stable release or runner image never changes the build or the
 # rust-cache key by itself; bump it deliberately.
 [toolchain]

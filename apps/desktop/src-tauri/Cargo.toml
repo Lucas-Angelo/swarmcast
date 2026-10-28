@@ -17,7 +17,7 @@ tauri-build = { version = "^2.7.4", features = [] }
 # cannot be updated within Tauri 2: tauri 2.12, wry, tao, muda, tray-icon, webkit2gtk 2.0 and
 # libappindicator all require gtk ^0.18, and only gtk 0.19 (on glib 0.22) moved on. It is not
 # exploitable here: nothing compiled into the app creates a VariantStrIter
-# (glib::Variant::array_iter_str), and scripts/test/desktop/glib-advisory.mjs (desktop.yml,
+# (glib::Variant::array_iter_str), and scripts/test/desktop/glib-advisory.mjs (_node.yml,
 # Rust checks) fails the build if that changes. Not compiled on macOS or Windows at all.
 tauri = { version = "^2.12.5", features = ["tray-icon", "image-png"] }
 tauri-plugin-updater = "^2.14.0"

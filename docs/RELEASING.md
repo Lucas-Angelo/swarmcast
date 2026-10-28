@@ -126,25 +126,32 @@ Release tags:
 Only the admin role (`actor_id` 5; check it in the bypass picker) can create, move or delete `v*` tags,
 so a stray `git push --tags` or `--force` cannot change a release tag.
 
-**CI.** It runs automatically on every pull request and push to `main` (standard runners are free on a
-public repository), again on the 1st of every month (to catch dead third-party downloads or runner image
-changes), and by hand from **Actions → (workflow) → Run workflow**; the **Re-run** button repeats a run.
-A newer push to a pull request cancels its older runs; runs on `main` and tags are never cancelled.
+**CI.** One workflow, `pipeline.yml`, runs automatically on every pull request and push to `main`
+(standard runners are free on a public repository), again on the 1st of every month with everything (to
+catch dead third-party downloads or runner image changes), and by hand from **Actions → Pipeline → Run
+workflow**; the **Re-run** button repeats a run. A newer push to a pull request cancels its older run;
+runs on `main` and tags are never cancelled. Its stages, how it builds once and tests the same bytes
+everywhere, and what each change runs are in [.github/workflows/README.md](../.github/workflows/README.md).
 
-| Workflow | What | Runs on |
-|----------|------|---------|
-| `ci.yml` | lint, typecheck, build, unit, integration and E2E tests, `npm audit`, tray helper | Windows, macOS, Ubuntu |
-| `scripts.yml` | start and uninstall scripts against a fake release | Windows (PowerShell 5.1), macOS, Ubuntu |
-| `preflight.yml` | clean-machine check of the real script-mode package (install, live, watch, P2P, tunnel) | Windows, macOS arm64 + Intel, Ubuntu 22.04 + latest |
-| `windows.yml` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
-| `desktop.yml` | `cargo fmt`/`clippy`/`test`, desktop installers per target, clean-machine install/launch/autostart/update/uninstall tests | Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
-| `codeql.yml` | code scanning (TypeScript, Go, Rust, the workflows) | Ubuntu |
-| `site.yml`, `stats.yml` | the website and the usage numbers (section 6) | Ubuntu |
-| `release.yml` | on a `v*` tag: the suites above as a gate, then build, sign and publish (section 4) | all |
+| Stage | What | Runs on |
+|-------|------|---------|
+| `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, tray helper, `cargo fmt` | Ubuntu |
+| `build`, `desktop` | the web build, the script-mode packages, the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
+| `node` | unit and integration tests, `cargo clippy`/`test` | Windows, macOS, Ubuntu |
+| `e2e` | Playwright (Chrome, Firefox, WebKit), split into the `ui` and `media` tests | macOS, Ubuntu |
+| `windows` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
+| `clean-machine` | per runner image: the start and uninstall scripts (when they changed), the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
+| `site` | the website's tests, when it changed | Ubuntu |
+| `ci-ok` | the one required check: green only when every stage the change needs passed | Ubuntu |
 
-Changes that only touch `docs/`, `site/` or `.md` files do not rebuild the app (`scripts.yml` and
-`site.yml` run for the pages they use). The usage-stats job writes only to its own `stats` branch
-(section 6), which the rulesets do not cover.
+Other workflows: `codeql.yml` (code scanning of TypeScript, Go, Rust and the workflows), `site.yml` and
+`stats.yml` (the website and the usage numbers, section 6), `soak.yml` and `linux-docker.yml` (stability
+measurements and the Docker suites), and `release.yml` (on a `v*` tag: the whole pipeline as a gate, then
+sign and publish, section 4).
+
+Changes that only touch `docs/`, `site/` or `.md` files skip the app stages: `ci-ok` is green within a
+minute (and the `site` stage runs for the pages they use). The usage-stats job writes only to its own
+`stats` branch (section 6), which the rulesets do not cover.
 
 ## 3. Secrets
 
@@ -233,14 +240,15 @@ Installed apps and the scripts may already have it. A mistake is fixed by shippi
 5. **Watch the release workflow** in the **Actions** tab. It runs by itself on the tag and:
    1. checks that the tag matches `package.json`, that `CHANGELOG.md` has a section for the version and
       that the updater signing secrets exist, and that no GitHub release exists yet for the tag;
-   2. runs the full test suites (the same checks as pull requests, plus the install-script, pre-release,
-      Windows and desktop-installer tests). If anything fails, nothing is published;
-   3. builds and smoke-tests the server package on each platform, and signs the binaries when the
-      code-signing secrets exist;
-   4. builds the desktop installers and signs their update packages with the updater key (from the
-      `release` environment, section 3);
-   5. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
-      `CHANGELOG.md` section.
+   2. runs the whole pipeline, every stage, the same as for pull requests, with the desktop installers
+      built with full optimisation and their update packages signed with the updater key (from the
+      `release` environment, section 3). If anything fails, nothing is published;
+   3. signs the server packages the pipeline built and tested when the code-signing secrets exist, and
+      smoke-tests them on each platform;
+   4. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
+      `CHANGELOG.md` section: it uploads every asset to a draft first, checks them, attests them (build
+      provenance, `gh attestation verify <file> -R Lucas-Angelo/swarmcast`) and only then publishes the
+      draft, so nothing edits a published release.
 6. **Check the result** (a few minutes after it finishes):
    - the release is marked **Latest** and has every asset listed below;
    - `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json` shows the new
