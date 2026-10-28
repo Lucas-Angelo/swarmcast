@@ -246,7 +246,7 @@ jobs:
         with:
           go: 'true'
           ffmpeg: 'true'
-      # What _clean-machine.yml's preflight step does (with the package built here), without the Playwright browser download: verify.mjs --chrome
+      # What _desktop.yml's clean-machine preflight step does (with the package built here), without the Playwright browser download: verify.mjs --chrome
       # drives the Google Chrome of the runner image. No --tunnel by default: Cloudflare
       # rate-limits quick tunnels, so the soak would measure Cloudflare. To soak the tunnel
       # too, put "--tunnel" in the plan entry's args.
@@ -282,7 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The scripts and their tests need only Node.js (like _clean-machine.yml).
+      # The scripts and their tests need only Node.js (like _desktop.yml's clean-machine job).
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
@@ -326,7 +326,7 @@ jobs:
           path: release/update-test
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
-      # As in _clean-machine.yml: the AppImage's host libraries, and the .deb's dependencies
+      # As in _desktop.yml's clean-machine job: the AppImage's host libraries, and the .deb's dependencies
       # downloaded first (apt-retry.sh), so the test's own `apt-get install ./*.deb` installs them
       # from the local cache.
       - name: The AppImage's host libraries and the .deb's dependencies (Linux)

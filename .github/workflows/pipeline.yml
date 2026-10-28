@@ -2,10 +2,10 @@ name: Pipeline
 
 # The one CI entry point for pull requests, the merge queue and main (.github/README.md):
 #
-#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ─┐
-#            ├─ build (web + windows pkgs) ─┤                                ├─ ci-ok
-#            │                              └─ desktop ×5 ── clean-machine ×6┤
-#            └─ site (when the site changed) ─────────────────────────────────┘
+#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ──────────┐
+#            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
+#            │                              └─ desktop <target> ×5: build ─ clean-machine┤
+#            └─ site (when the site changed) ──────────────────────────────────────────┘
 #
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
@@ -90,17 +90,65 @@ jobs:
     if: needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/_build.yml
 
-  desktop:
-    name: desktop
-    needs: build
+  # One call per target: its build, then its clean-machine jobs (one per runner image), which
+  # start as soon as that target's build is done. Only a release passes the updater key on (from
+  # release.yml); other runs sign with a throwaway key made in the job.
+  desktop-windows-x64:
+    name: desktop windows-x64
+    needs: [changes, build]
     uses: ./.github/workflows/_desktop.yml
     with:
+      target: windows-x64
       release: ${{ inputs.release == true }}
-    # Only a release passes the updater key on (from release.yml); other runs sign with a
-    # throwaway key made in the job.
-    secrets:
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
+      screenshots: ${{ inputs.screenshots == true }}
+    secrets: &tauri-key
       TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+
+  desktop-macos-arm64:
+    name: desktop macos-arm64
+    needs: [changes, build]
+    uses: ./.github/workflows/_desktop.yml
+    with:
+      target: macos-arm64
+      release: ${{ inputs.release == true }}
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
+      screenshots: ${{ inputs.screenshots == true }}
+    secrets: *tauri-key
+
+  desktop-macos-x64:
+    name: desktop macos-x64
+    needs: [changes, build]
+    uses: ./.github/workflows/_desktop.yml
+    with:
+      target: macos-x64
+      release: ${{ inputs.release == true }}
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
+      screenshots: ${{ inputs.screenshots == true }}
+    secrets: *tauri-key
+
+  desktop-linux-x64:
+    name: desktop linux-x64
+    needs: [changes, build]
+    uses: ./.github/workflows/_desktop.yml
+    with:
+      target: linux-x64
+      release: ${{ inputs.release == true }}
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
+      screenshots: ${{ inputs.screenshots == true }}
+    secrets: *tauri-key
+
+  desktop-linux-arm64:
+    name: desktop linux-arm64
+    needs: [changes, build]
+    uses: ./.github/workflows/_desktop.yml
+    with:
+      target: linux-arm64
+      release: ${{ inputs.release == true }}
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
+      screenshots: ${{ inputs.screenshots == true }}
+    secrets: *tauri-key
 
   # ---------------------------------------------------------------- test stage
   node:
@@ -121,14 +169,6 @@ jobs:
       runners: ${{ inputs.windows-runners || '["windows-latest"]' }}
       suites: ${{ inputs.windows-suites || '["installer","app","quality","direct","obs"]' }}
 
-  clean-machine:
-    name: clean-machine
-    needs: [changes, quick, desktop]
-    uses: ./.github/workflows/_clean-machine.yml
-    with:
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
-      screenshots: ${{ inputs.screenshots == true }}
-
   site:
     name: site
     needs: changes
@@ -138,7 +178,7 @@ jobs:
   # ---------------------------------------------------------------- the required check
   ci-ok:
     name: ci-ok
-    needs: [changes, quick, build, desktop, node, e2e, windows, clean-machine, site]
+    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -152,7 +192,7 @@ jobs:
           APP: ${{ needs.changes.outputs.app }}
           SITE: ${{ needs.changes.outputs.site }}
         run: |
-          app_stages='quick build desktop node e2e windows clean-machine'
+          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node e2e windows'
           bad=0
           {
             echo '## ci-ok'
@@ -177,7 +217,7 @@ jobs:
             [ "$verdict" = ok ] || bad=$((bad + 1))
             mark=$([ "$verdict" = ok ] && echo '✅' || echo "❌ $verdict")
             echo "| $stage | $result | $mark |" >> "$GITHUB_STEP_SUMMARY"
-            printf '%-14s %-10s %s\n' "$stage" "$result" "$verdict"
+            printf '%-22s %-10s %s\n' "$stage" "$result" "$verdict"
           done
           if [ "$bad" -gt 0 ]; then
             echo "::error title=ci-ok::$bad stage(s) failed, were cancelled or did not run (see the table above)"

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Clean-machine test of the desktop app installers (docs/DESKTOP.md, "Testing"), run by
-// .github/workflows/_clean-machine.yml on fresh CI machines. It changes the machine (installs the
+// .github/workflows/_desktop.yml (clean-machine job) on fresh CI machines. It changes the machine (installs the
 // app, writes the autostart entry, deletes the SwarmCast data folder): do not run it on yours.
 //
 //   node scripts/test/desktop/verify.mjs --installers release/desktop/<target> \
