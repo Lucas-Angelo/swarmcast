@@ -1,27 +1,16 @@
 name: Website
 
-# Builds the website in site/ (Astro Starlight, English + Brazilian Portuguese) and deploys it
-# to GitHub Pages: https://lucas-angelo.github.io/swarmcast/
+# Deploys the website in site/ to GitHub Pages: https://lucas-angelo.github.io/swarmcast/
+# The build and tests are _site.yml; pull requests run them through pipeline.yml (no deploy).
 #
-# - pull_request (site paths): build, type check, link check and browser tests; never deploys.
-# - push to main (same paths): the same, then deploy.
-# - after "Usage stats" (stats.yml) succeeds: rebuild with the fresh numbers, then deploy.
+# - push to main touching the site: build, test, deploy;
+# - after "Usage stats" (stats.yml) succeeds: rebuild with the fresh numbers, then deploy;
 # - workflow_dispatch: build; deploys only when run on main.
 #
 # Needs Settings → Pages → Source: "GitHub Actions" (the deploy job fails until then).
 # The usage numbers are read from the `stats` branch written by stats.yml; without it the
 # site just hides them.
 on:
-  pull_request:
-    paths:
-      - 'site/**'
-      - 'docs/img/**'
-      - 'assets/brand/**'
-      - 'apps/admin/src/onboarding/img/**'
-      - 'packages/shared/src/i18n/**'
-      - 'packages/shared/web/font-licenses.mjs'
-      - '.github/actions/**'
-      - '.github/workflows/site.yml'
   push:
     branches: [main]
     paths:
@@ -33,6 +22,7 @@ on:
       - 'packages/shared/web/font-licenses.mjs'
       - '.github/actions/**'
       - '.github/workflows/site.yml'
+      - '.github/workflows/_site.yml'
   workflow_run:
     workflows: [Usage stats]
     types: [completed]
@@ -42,76 +32,21 @@ permissions:
   contents: read
 
 concurrency:
-  group: site-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: site-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   build:
-    name: Build and test
+    name: Website
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    defaults:
-      run:
-        working-directory: site
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      # Node + the root workspace: it provides vitest for the site's unit tests (site/test/unit),
-      # which `astro check` also type-checks.
-      - uses: ./.github/actions/setup
-
-      - name: Install the site's dependencies
-        run: npm ci --no-audit --no-fund
-
-      - name: Unit tests
-        working-directory: .
-        run: npx vitest run site/test/unit
-
-      # Public data written by stats.yml (GitHub's own download counters, no telemetry).
-      - name: Get the usage numbers
-        run: |
-          if git fetch --quiet --depth=1 origin stats 2>/dev/null && git show FETCH_HEAD:summary.json > public/stats.json; then
-            echo "Usage numbers from the stats branch:"; head -c 400 public/stats.json; echo
-          else
-            rm -f public/stats.json
-            echo "No stats branch yet: the site hides the numbers."
-          fi
-
-      - name: Type check
-        run: npm run check
-
-      # Fails on broken internal links (starlight-links-validator).
-      - name: Build
-        run: npm run build
-
-      # Google Chrome from the runner image (site/playwright.config.ts): no browser download and
-      # no apt (`install --with-deps chromium` made this job's p90 9.9 min).
-      - name: Browser tests (Playwright, Google Chrome)
-        run: npm run test:e2e
-
-      - name: Keep the test report
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: site-playwright-report
-          path: |
-            site/playwright-report
-            site/test-results
-          retention-days: 7
-
-      - name: Upload the site for Pages
-        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
-        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
-        with:
-          path: site/dist
+    uses: ./.github/workflows/_site.yml
+    with:
+      pages: ${{ github.ref == 'refs/heads/main' }}
 
   deploy:
     name: Deploy to GitHub Pages
     needs: build
-    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

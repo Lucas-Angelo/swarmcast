@@ -1,0 +1,91 @@
+name: site
+
+# Builds and tests the website in site/ (Astro Starlight, English + Brazilian Portuguese): unit
+# tests, type check, build with the internal link check, browser tests, and the streamer guides
+# the installer zips carry (made from the site's pages). Called by pipeline.yml for pull requests
+# and pushes that touch the site, and by site.yml (with pages: true) before it deploys.
+on:
+  workflow_call:
+    inputs:
+      pages:
+        description: Upload site/dist as the GitHub Pages artifact.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  site:
+    name: build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: site
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Node + the root workspace: it provides vitest for the site's unit tests (site/test/unit),
+      # which `astro check` also type-checks.
+      - uses: ./.github/actions/setup
+
+      - name: Install the site's dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Unit tests
+        working-directory: .
+        run: npx vitest run site/test/unit
+
+      # The installer zips carry these guides as HTML, generated from the site's pages
+      # (site/offline-guide.json). Screenshots are embedded as data: URIs; anything else with src=
+      # would load from outside.
+      - name: Render the streamer guides
+        working-directory: .
+        run: |
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-en.html" --lang en
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
+          if grep -qiP '<script|src=(?!"data:)' "$RUNNER_TEMP"/guide-*.html; then
+            echo "::error::The guides must stay self-contained (no scripts, no external resources)."
+            exit 1
+          fi
+
+      # Public data written by stats.yml (GitHub's own download counters, no telemetry).
+      - name: Get the usage numbers
+        run: |
+          if git fetch --quiet --depth=1 origin stats 2>/dev/null && git show FETCH_HEAD:summary.json > public/stats.json; then
+            echo "Usage numbers from the stats branch:"; head -c 400 public/stats.json; echo
+          else
+            rm -f public/stats.json
+            echo "No stats branch yet: the site hides the numbers."
+          fi
+
+      - name: Type check
+        run: npm run check
+
+      # Fails on broken internal links (starlight-links-validator).
+      - name: Build
+        run: npm run build
+
+      # Google Chrome from the runner image (site/playwright.config.ts): no browser download and
+      # no apt (`install --with-deps chromium` made this job's p90 9.9 min).
+      - name: Browser tests (Playwright, Google Chrome)
+        run: npm run test:e2e
+
+      - name: Keep the test report
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: site-playwright-report
+          path: |
+            site/playwright-report
+            site/test-results
+          retention-days: 7
+
+      - name: Upload the site for Pages
+        if: inputs.pages
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site/dist

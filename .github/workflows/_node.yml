@@ -1,0 +1,103 @@
+name: node
+
+# Per OS (pipeline.yml test stage): the unit tests (macOS and Windows; Ubuntu runs them in
+# `quick`), the integration tests (the parallel `integration` project, then the serial
+# `integration-media` one: vitest.integration.config.ts), and the desktop shell's Rust checks
+# (clippy, cargo test, crate licences, the glib advisory guard). Uses web-dist from _build.yml.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: '1'
+  CARGO_TERM_COLOR: always
+
+jobs:
+  node:
+    name: unit, integration, rust (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        # Pinned Ubuntu, so an image switch never lands in the middle of a change (ubuntu-latest
+        # moves to 26.04 from 2026-10-19). The monthly run adds ubuntu-latest as a canary.
+        os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          ffmpeg: 'true'
+          apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
+      - uses: ./.github/actions/get-build
+        with:
+          names: web-dist
+
+      # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
+      - name: Unit tests (macOS, Windows)
+        if: runner.os != 'Linux'
+        run: |
+          npm ci --prefix site --no-audit --no-fund
+          npm test
+      - name: Upload the unit test results
+        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-unit-${{ matrix.os }}
+          path: test-results/vitest-unit.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Downloads MediaMTX and cloudflared for the host into vendor/<target>/ and verifies them
+      # against the SHA-256 values pinned in scripts/build/versions.json.
+      - run: npm run fetch-bins
+      # Lifecycle tests that rely on POSIX signals skip themselves on Windows.
+      - name: Integration tests
+        if: ${{ !cancelled() }}
+        run: npm run test:integration
+      # Kept for every run that was not cancelled (green ones too): per-test results and timings,
+      # and the fake OBS's ffmpeg stderr (fake-obs.log).
+      - name: Upload the integration test results and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-${{ matrix.os }}
+          path: |
+            test-results/
+            !test-results/vitest-unit.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      # ---- apps/desktop/src-tauri ----
+      - uses: ./.github/actions/setup-rust
+        if: ${{ !cancelled() }}
+        with:
+          components: clippy
+          cache-key: checks
+      - name: cargo clippy
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop/src-tauri
+        run: cargo clippy --locked --all-targets -- -D warnings
+      - name: cargo test
+        if: ${{ !cancelled() }}
+        working-directory: apps/desktop/src-tauri
+        run: cargo test --locked
+      # Dependabot alert GHSA-wrw7-89jp-8q8g (glib 0.18, locked by Tauri 2's GTK 3 stack): not
+      # exploitable while nothing compiled for Linux uses glib::VariantStrIter. This keeps it so.
+      - name: glib advisory guard
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: node scripts/test/desktop/glib-advisory.mjs
+      # Licences of the crates compiled into the app (this OS's target): fails on a crate with no
+      # licence or one outside the allowed list, like the installer build does.
+      - name: Crate licences
+        if: ${{ !cancelled() }}
+        run: node scripts/build/crate-licenses.mjs --check
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}

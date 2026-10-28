@@ -1,0 +1,169 @@
+name: clean-machine
+
+# One job per runner image (pipeline.yml test stage), each a fresh machine that gets, as separate
+# steps, whatever applies to it:
+# - install scripts: the start and uninstall scripts against a fake release on 127.0.0.1
+#   (scripts/test/run.sh, run.ps1 on Windows PowerShell 5.1), when they changed (input scripts);
+# - preflight: the real script-mode package (pkg-<target>) installed by the real start script into
+#   an empty data folder, a synthetic OBS feed, Google Chrome watching, P2P, kick, link rotation,
+#   "Stop everything", quit, nothing left behind, and playback through a real Cloudflare quick
+#   tunnel (scripts/test/preflight/verify.mjs). Not on the arm64 image (no Google Chrome there);
+# - desktop: the real installers (desktop-<target>): install, launch, panel login, autostart,
+#   kill, quit, the uninstallers, and an update from build A to them with the settings kept
+#   (scripts/test/desktop/verify.mjs);
+# - AppImage on a minimal host: bare ubuntu:22.04 and ubuntu:24.04 containers with only the
+#   libraries the install guide lists (scripts/test/docker/appimage.sh, also run weekly on more
+#   bases by linux-docker.yml). The runner image has Mesa, fonts and X already, so the desktop
+#   step cannot show a missing one.
+on:
+  workflow_call:
+    inputs:
+      scripts:
+        description: Also run the install-script tests (on the three images that have them).
+        type: boolean
+        default: true
+      screenshots:
+        description: Also capture the Windows installer pages and app window for the website guide (artifact only).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: '1'
+  # What the AppImage needs from the host, as the Linux install guide lists it (the same list as
+  # scripts/test/docker/Dockerfile.appimage): libGL and libEGL are on AppImage's excludelist, so
+  # the AppImage cannot bring them (libEGL.so.1 is not on the Ubuntu 24.04 runner image).
+  APPIMAGE_HOST_PACKAGES: libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
+
+jobs:
+  test:
+    name: ${{ matrix.target }} on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, target: windows-x64, preflight: true, scripts: true }
+          - { os: macos-latest, target: macos-arm64, preflight: true, scripts: true }
+          # The last Intel macOS image GitHub offers (until August 2027).
+          - { os: macos-15-intel, target: macos-x64, preflight: true }
+          - { os: ubuntu-22.04, target: linux-x64, preflight: true, appimage: true }
+          - { os: ubuntu-24.04, target: linux-x64, preflight: true, scripts: true }
+          - { os: ubuntu-24.04-arm, target: linux-arm64, appimage: true }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      TARGET: ${{ matrix.target }}
+      SC_DESKTOP_ARTIFACTS: ${{ github.workspace }}/desktop-test-logs
+      SC_DESKTOP_SCREENSHOTS: ${{ inputs.screenshots && format('{0}/guide-screenshots', github.workspace) || '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # Preflight drives Google Chrome through Playwright (npm ci) and streams an ffmpeg feed. The
+      # desktop step's apt downloads go into the .deb cache.
+      - uses: ./.github/actions/setup
+        with:
+          npm-ci: ${{ matrix.preflight == true }}
+          ffmpeg: ${{ matrix.preflight == true }}
+          apt-debs: ${{ runner.os == 'Linux' && format('desktop-test-{0}', matrix.target) || '' }}
+      - name: Version
+        run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------- install scripts
+      - name: Install scripts (macOS / Linux)
+        if: inputs.scripts && matrix.scripts && runner.os != 'Windows'
+        run: |
+          bash scripts/test/run.sh
+          bash scripts/test/uninstall.sh
+      - name: Install scripts (Windows PowerShell 5.1)
+        if: inputs.scripts && matrix.scripts && runner.os == 'Windows'
+        shell: cmd
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\run.ps1 || exit /b 1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\uninstall.ps1
+
+      # ---------------------------------------------------------------- preflight
+      - uses: ./.github/actions/get-build
+        if: ${{ !cancelled() && matrix.preflight }}
+        with:
+          names: pkg-${{ matrix.target }}
+      # No Playwright browser download: verify.mjs --chrome drives the Google Chrome that the x64
+      # runner images ship.
+      - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
+        if: ${{ !cancelled() && matrix.preflight }}
+        run: |
+          cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
+          cp scripts/start-macos.command release/start-macos.sh
+          node scripts/build/checksums.mjs release
+          ls -la release
+          node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome
+
+      # ---------------------------------------------------------------- desktop app
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: desktop-${{ matrix.target }}
+          path: release/desktop
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: update-test-${{ matrix.target }}
+          path: release/update-test
+      # The AppImage runs first, with only the host libraries the install guide lists. The .deb
+      # pulls its own libraries: they are downloaded here first (time limit per try, retries,
+      # another mirror after a slow try) into the .deb cache ($APT_DEBS), from which the test's
+      # `apt-get install ./*.deb` installs them. Xvfb and D-Bus come with the image.
+      - name: Linux display, the AppImage's host libraries and the .deb's dependencies
+        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        run: |
+          command -v xvfb-run dbus-run-session
+          .github/scripts/apt-retry.sh update
+          # shellcheck disable=SC2086 # a list of package names
+          .github/scripts/apt-retry.sh install -y --no-install-recommends $APPIMAGE_HOST_PACKAGES
+          deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
+          .github/scripts/apt-retry.sh download -y --no-install-recommends "./$deb"
+      # The update test serves the real installers with this latest.json on 127.0.0.1 (build A
+      # trusts the key that signed them, see _desktop.yml).
+      # Linux: a virtual display and a session bus (WebKitGTK and the tray talk D-Bus), without
+      # the accessibility bridge and the DMA-BUF renderer (no GPU under Xvfb).
+      - name: Desktop (install, launch, panel, autostart, kill, quit, uninstall, update A -> real)
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:47811 \
+            --out release/desktop/latest.json release/desktop
+          run=()
+          if [ "$RUNNER_OS" = Linux ]; then
+            export NO_AT_BRIDGE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1
+            run=(xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session --)
+          fi
+          "${run[@]}" node scripts/test/desktop/verify.mjs --installers release/desktop \
+            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811
+
+      # ---------------------------------------------------------------- AppImage, minimal host
+      - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
+        if: ${{ !cancelled() && matrix.appimage }}
+        run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04
+
+      - name: Upload the app logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: desktop-test-logs-${{ matrix.target }}-${{ matrix.os }}
+          path: desktop-test-logs/
+          if-no-files-found: ignore
+          retention-days: 14
+      - name: Upload the guide screenshots
+        if: always() && inputs.screenshots && runner.os == 'Windows'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guide-screenshots-${{ matrix.target }}
+          path: guide-screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}

@@ -1,0 +1,69 @@
+name: build
+
+# Build once, test many (pipeline.yml). One Ubuntu job, in parallel with `quick`:
+# - web-dist: `npm run build` (viewer, admin, the server bundle), the only `npm run build` of a
+#   run; the node, E2E and desktop jobs download it;
+# - pkg-windows-x64: the windows-x64 script-mode package and a "newer" one for the update tests,
+#   cross-built here (pkg needs no Windows), with the Windows tray helper; the Windows suites
+#   and the Windows desktop build download it.
+# The macOS and Linux packages are built by their desktop build jobs (_desktop.yml): macOS needs
+# a Mac for pkg's ad-hoc signature and the cgo tray, and the clean-machine tests of those
+# targets wait for the desktop build anyway.
+#
+# Artifacts are tar files (upload-artifact drops the executable bit), unpacked by
+# ./.github/actions/get-build. Kept 3 days for pull requests, 14 otherwise.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  web:
+    name: web + windows-x64 packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RETENTION: ${{ github.event_name == 'pull_request' && 3 || 14 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          go: 'true'
+          downloads: 'true'
+      - run: npm run build
+      - name: Pack web-dist
+        run: tar -cf "$RUNNER_TEMP/web-dist.tar" apps/viewer/dist apps/admin/dist apps/server/dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/web-dist.tar
+          if-no-files-found: error
+          retention-days: ${{ env.RETENTION }}
+
+      - name: Tray helper (windows-x64)
+        run: node apps/tray/build.mjs --target windows-x64 --vendor
+      # The "newer" package first: package.mjs rewrites release/staging/windows-x64, which must end
+      # up holding the real one (the Windows desktop build and the release signing use it).
+      - name: windows-x64 packages (newer, then the real one)
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          newer="$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")"
+          node scripts/build/package.mjs --target windows-x64 --version "$newer"
+          node scripts/build/package.mjs --target windows-x64 --version "$version"
+          tar -cf "$RUNNER_TEMP/pkg-windows-x64.tar" release/staging/windows-x64 \
+            "release/SwarmCast-v$version-windows-x64.zip" "release/SwarmCast-v$newer-windows-x64.zip"
+          tar -tvf "$RUNNER_TEMP/pkg-windows-x64.tar" | grep -v '/web/' | head -n 20
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pkg-windows-x64
+          path: ${{ runner.temp }}/pkg-windows-x64.tar
+          if-no-files-found: error
+          retention-days: ${{ env.RETENTION }}
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}
