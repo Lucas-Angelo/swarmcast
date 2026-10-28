@@ -1,14 +1,100 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test';
+import { expect, test as base, type Browser, type BrowserContext, type Page, type TestInfo } from '@playwright/test';
 import type { AdminState, QualitySettingsUpdate, QualityState } from '@swarmcast/shared';
+import { NICKNAME_MAX } from '@swarmcast/shared';
+
+export { expect };
+
+function e2eEnv(): { adminLoginUrl: string; adminUrl: string; dataDir: string; downloadsDir: string; pid: number; testControlUrl: string } {
+  return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as ReturnType<typeof e2eEnv>;
+}
+
+/** What GET /health on the test control port answers (apps/server/test/e2e/server.ts). */
+export interface StreamHealth {
+  ok: boolean;
+  problems: string[];
+  phase: string;
+  variants: number[];
+  sinceSegmentMs: number | null;
+  playlistS: number;
+  previousTest: string;
+  [k: string]: unknown;
+}
+
+async function control<T>(method: 'GET' | 'POST', pathname: string, body?: unknown): Promise<T> {
+  const res = await fetch(`${e2eEnv().testControlUrl}${pathname}`, {
+    method,
+    ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
+  });
+  if (!res.ok) throw new Error(`test control ${method} ${pathname}: HTTP ${res.status} ${await res.text()}`);
+  return (await res.json()) as T;
+}
+
+/** Test-only: back to the server's starting state (see reset() in server.ts). */
+export function resetServer(o: { hard?: boolean; test?: string } = {}): Promise<{ previous: string; did: string[] }> {
+  return control('POST', `/reset${o.hard ? '?hard=1' : ''}`, o.test === undefined ? {} : { test: o.test });
+}
+
+/** Test-only: the stream's health, waiting up to `waitMs` for it (and for `minPlaylistS` of playlist). */
+export function streamHealth(o: { waitMs?: number; minPlaylistS?: number } = {}): Promise<StreamHealth> {
+  return control('GET', `/health?waitMs=${o.waitMs ?? 0}&minPlaylistS=${o.minPlaylistS ?? 0}`);
+}
+
+/**
+ * Wait until the live playlist covers `seconds` (viewers normally join a stream that has run
+ * for a while: right after OBS starts the playlist is short and players sit at the live edge).
+ */
+export async function waitForPlaylist(seconds: number, timeoutMs = 90_000): Promise<void> {
+  const h = await streamHealth({ waitMs: timeoutMs, minPlaylistS: seconds });
+  if (!h.ok) throw new Error(`the stream is not ready: ${h.problems.join('; ')} (${JSON.stringify(h)})`);
+}
+
+/**
+ * Every test starts on a server in its starting state with a healthy stream: the gate resets
+ * what earlier tests changed (viewers, bans, rate limits, the attack shield, settings, the
+ * ladder and the fake OBS options), then waits for the stream. If it stays unhealthy, OBS
+ * reconnects and the gate waits once more; still unhealthy, the test fails at once, naming the
+ * test before it, instead of every later test timing out in waitPlaying.
+ */
+export const test = base.extend<{ streamGate: void }>({
+  streamGate: [
+    // eslint-disable-next-line no-empty-pattern -- Playwright reads the fixtures a function uses from its first argument
+    async ({}, use, testInfo) => {
+      const title = `${testInfo.project.name} › ${testInfo.titlePath.slice(1).join(' › ')}${testInfo.retry ? ` (retry ${testInfo.retry})` : ''}`;
+      const r = await resetServer({ test: title });
+      let h = await streamHealth({ waitMs: r.did.includes('fake OBS reconnected') ? 30_000 : 10_000 });
+      if (!h.ok) {
+        testInfo.annotations.push({ type: 'stream-unhealthy', description: `after "${r.previous}": ${h.problems.join('; ')}` });
+        await resetServer({ hard: true });
+        h = await streamHealth({ waitMs: 45_000 });
+        if (!h.ok) throw new Error(`stream unhealthy after "${r.previous}" (OBS reconnected, still: ${h.problems.join('; ')}): ${JSON.stringify(h)}`);
+      }
+      await use();
+    },
+    { auto: true },
+  ],
+});
+
+const PROJECT_LETTER: Record<string, string> = { chromium: 'c', firefox: 'f', webkit: 'w' };
+
+/**
+ * A nickname unique to this attempt (project, retry and --repeat-each index), so a retry or a
+ * repeat never finds an earlier attempt's viewer. Nicknames are at most 24 characters.
+ */
+export function uid(prefix: string, info: TestInfo = base.info()): string {
+  const project = PROJECT_LETTER[info.project.name] ?? info.project.name.slice(0, 2);
+  const id = `${prefix}-${project}${info.retry}x${info.repeatEachIndex}`;
+  if (id.length > NICKNAME_MAX) throw new Error(`nickname "${id}" is longer than ${NICKNAME_MAX} characters: shorten the prefix "${prefix}"`);
+  return id;
+}
 
 let adminCookie: string | null = null;
 let adminUrl = '';
 
 async function adminAuth(): Promise<string> {
   if (adminCookie) return adminCookie;
-  const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { adminLoginUrl: string; adminUrl: string };
+  const env = e2eEnv();
   adminUrl = env.adminUrl;
   const res = await fetch(env.adminLoginUrl, { redirect: 'manual' });
   adminCookie = res.headers.getSetCookie()[0]!.split(';')[0]!;
@@ -44,15 +130,12 @@ export async function adminApi<T = unknown>(method: string, pathname: string, bo
 
 /** Test-only: force the attack shield's automatic browser check level (0 = back to the settings). */
 export async function forcePowLevel(level: 0 | 1 | 2): Promise<number> {
-  const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { testControlUrl: string };
-  const res = await fetch(`${env.testControlUrl}/pow-level/${level}`, { method: 'POST' });
-  return ((await res.json()) as { browserCheck: number }).browserCheck;
+  return (await control<{ browserCheck: number }>('POST', `/pow-level/${level}`)).browserCheck;
 }
 
 /** Test-only: seconds every playlist keeps (40 by default; 20 emulates v0.2.0 ladder audio). */
 export async function setPlaylistWindow(seconds: number): Promise<void> {
-  const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { testControlUrl: string };
-  await fetch(`${env.testControlUrl}/playlist-window/${seconds}`, { method: 'POST' });
+  await control('POST', `/playlist-window/${seconds}`);
 }
 
 /**
@@ -97,13 +180,12 @@ export async function stallReport(page: Page): Promise<{ maxStallMs: number; cur
   });
 }
 
-const PUSH_FILE = path.join('test-results', 'e2e-push.json');
-
-/** Make the fake OBS reconnect with these options (the e2e server reads the file on SIGUSR2). */
-export function reconnectObs(options: { size?: string; kbps?: number } | null): void {
-  if (options) fs.writeFileSync(PUSH_FILE, JSON.stringify(options));
-  else fs.rmSync(PUSH_FILE, { force: true });
-  process.kill(e2eServerPid(), 'SIGUSR2');
+/**
+ * Make the fake OBS reconnect with these options (null = the defaults: 640x360 at 30 fps,
+ * veryfast, 1.2 Mbps). The next test's gate puts the defaults back by itself.
+ */
+export async function reconnectObs(options: { size?: string; kbps?: number; fps?: number; preset?: string } | null): Promise<void> {
+  await control('POST', '/obs', options);
 }
 
 /** Quality settings with some ladder fields changed (body for PUT /api/quality). */
@@ -115,9 +197,9 @@ export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpd
   };
 }
 
-/** pid of the e2e server (for test-only signals). */
-export function e2eServerPid(): number {
-  return (JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { pid: number }).pid;
+/** What the e2e server wrote at start (panel login URL, data and downloads folders). */
+export function serverEnv(): { adminLoginUrl: string; dataDir: string; downloadsDir: string } {
+  return e2eEnv();
 }
 
 /** Wait until OBS (ffmpeg) is live, then return the current link. */
@@ -198,8 +280,8 @@ export async function enableP2P(page: Page): Promise<void> {
 }
 
 /**
- * The viewer with this nickname. When a test is retried the first attempt's session (same
- * nickname, now disconnected) is still listed, so prefer a connected one, then the newest.
+ * The viewer with this nickname (nicknames come from uid(), so they are unique to the attempt).
+ * If one ever appears twice, prefer a connected one, then the newest.
  */
 export async function viewerByNick(nick: string): Promise<AdminState['viewers'][number] | undefined> {
   const matches = (await adminState()).viewers.filter((v) => v.nickname === nick);

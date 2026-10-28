@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
-import { adminApi } from './fixtures.js';
+import type { Page } from '@playwright/test';
+import { adminApi, expect, test } from './fixtures.js';
 
 // "Problem report" card: Export logs writes the ZIP on the server side (the e2e server points
 // SWARMCAST_DOWNLOADS_DIR at a temporary folder), so it works without browser downloads.
@@ -13,8 +13,14 @@ function env(): { adminLoginUrl: string; downloadsDir: string } {
 
 async function openPanel(page: Page, lang?: string): Promise<void> {
   const url = env().adminLoginUrl;
+  const origin = new URL(url).origin;
+  // /auth/<token> sets the cookie and then sends the page on to / by itself (a meta refresh,
+  // admin/gate.ts). A second goto before that navigation is done is interrupted by it.
   await page.goto(url);
-  if (lang) await page.goto(`${new URL(url).origin}/?lang=${lang}`);
+  await expect(page).toHaveURL(`${origin}/`);
+  await expect(page.getByTestId('status')).toBeVisible();
+  if (!lang) return;
+  await page.goto(`${origin}/?lang=${lang}`);
   await expect(page.getByTestId('status')).toBeVisible();
 }
 
@@ -54,7 +60,6 @@ test('the retention setting is saved (3 to 90 days)', async ({ page }) => {
   await card.getByTestId('log-retention-save').click();
   await expect(card.getByText('Saved ✓')).toBeVisible();
   expect(await adminApi('GET', '/api/diagnostics')).toEqual({ logRetentionDays: 30 });
-  await adminApi('PUT', '/api/diagnostics', { logRetentionDays: 14 });
 });
 
 test('the card is translated to pt-BR', async ({ page }) => {
@@ -65,5 +70,4 @@ test('the card is translated to pt-BR', async ({ page }) => {
   await expect(card.getByTestId('export-logs')).toHaveText('Exportar logs');
   await card.getByText('Avançado').click();
   await expect(card.getByText('Incluir os endereços IP completos (só se o desenvolvedor pedir)')).toBeVisible();
-  await page.goto(`${new URL(env().adminLoginUrl).origin}/?lang=en`);
 });

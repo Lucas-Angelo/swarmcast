@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import type { AdminState, QualityState } from '@swarmcast/shared';
 import {
   admin,
@@ -6,6 +6,7 @@ import {
   adminState,
   currentTime,
   enableP2P,
+  expect,
   join,
   ladderUpdate,
   liveLink,
@@ -14,6 +15,8 @@ import {
   stallReport,
   startStallMonitor,
   stats,
+  test,
+  uid,
   viewerByNick,
   waitPlaying,
 } from './fixtures.js';
@@ -55,8 +58,8 @@ async function connectedPair(browser: import('@playwright/test').Browser, a: str
   };
 }
 
-test('viewers who opt in exchange video over P2P (verified by hash)', async ({ browser, browserName }) => {
-  const { pa, pb, close } = await connectedPair(browser, `p2pA-${browserName}`, `p2pB-${browserName}`);
+test('viewers who opt in exchange video over P2P (verified by hash)', async ({ browser }) => {
+  const { pa, pb, close } = await connectedPair(browser, uid('p2pA'), uid('p2pB'));
   await expect
     .poll(async () => (await stats(pa)).p2pDownBytes + (await stats(pb)).p2pDownBytes, { timeout: 90_000, intervals: [2000] })
     .toBeGreaterThan(0);
@@ -65,10 +68,9 @@ test('viewers who opt in exchange video over P2P (verified by hash)', async ({ b
   await close();
 });
 
-test('"Remove from P2P" disconnects the peer from others while it keeps watching', async ({ browser, browserName }, testInfo) => {
-  // One nickname per attempt: on a retry, the previous attempt's session is still listed.
-  const nickB = `revokeB-${browserName}-${testInfo.retry}`;
-  const { pa, pb, close } = await connectedPair(browser, `revokeA-${browserName}-${testInfo.retry}`, nickB);
+test('"Remove from P2P" disconnects the peer from others while it keeps watching', async ({ browser }) => {
+  const nickB = uid('revokeB');
+  const { pa, pb, close } = await connectedPair(browser, uid('revokeA'), nickB);
   const b = await viewerByNick(nickB);
   await admin(`/api/viewers/${b!.sessionId}/p2p`, { allowed: false });
   // A drops every connection to B…
@@ -87,9 +89,9 @@ test('"Remove from P2P" disconnects the peer from others while it keeps watching
   await close();
 });
 
-test('a malicious peer sending altered data is rejected and removed from P2P', async ({ browser, browserName }) => {
+test('a malicious peer sending altered data is rejected and removed from P2P', async ({ browser }) => {
   test.slow();
-  const evilNick = `evil-${browserName}`;
+  const evilNick = uid('evil');
   // The malicious viewer joins first so it holds segments the honest one will ask for.
   const evilCtx = await browser.newContext();
   await evilCtx.addInitScript(() => {
@@ -118,7 +120,7 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
   await enableP2P(evil);
   await evil.waitForTimeout(6000);
 
-  const honest = await join(browser, `honest-${browserName}`);
+  const honest = await join(browser, uid('honest'));
   await waitPlaying(honest.page);
   await enableP2P(honest.page);
 
@@ -135,8 +137,8 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
   await evilCtx.close();
 });
 
-test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser, browserName }) => {
-  const { context, page } = await join(browser, `allp2p-${browserName}`);
+test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser }) => {
+  const { context, page } = await join(browser, uid('allp2p'));
   await waitPlaying(page);
   await enableP2P(page);
   const settings = (await adminState()).settings;
@@ -180,7 +182,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
   try {
     await setPlaylistWindow(20);
     await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
-    reconnectObs({ size: '1280x720', kbps: 2500 });
+    await reconnectObs({ size: '1280x720', kbps: 2500 });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
       .toEqual([720, 480, 360]);
@@ -216,7 +218,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     });
     const slow = await slowCtx.newPage();
     await slow.goto(await liveLink());
-    await slow.fill('#nickname', `trickle-${browserName}`);
+    await slow.fill('#nickname', uid('trickle'));
     await slow.click('#join');
     await waitPlaying(slow);
     await enableP2P(slow);
@@ -231,7 +233,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     const cdp = await ctx.newCDPSession(page);
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
     await page.goto(await liveLink());
-    await page.fill('#nickname', `steady-${browserName}`);
+    await page.fill('#nickname', uid('steady'));
     await page.click('#join');
     await waitPlaying(page);
     await enableP2P(page);
@@ -277,7 +279,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await setPlaylistWindow(40);
     const q = await adminApi<QualityState>('GET', '/api/quality');
     await adminApi('PUT', '/api/quality', ladderUpdate(q, { mode: 'manual', enabled: false }));
-    reconnectObs(null);
+    await reconnectObs(null);
     await expect.poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.length, { timeout: 90_000, intervals: [1000] }).toBeLessThanOrEqual(1);
   }
 });

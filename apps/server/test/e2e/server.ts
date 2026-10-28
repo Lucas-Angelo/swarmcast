@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
+import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
 import { pushTestStream } from '../integration/helpers.js';
 
@@ -69,12 +70,14 @@ await app.live.start();
 
 let ffmpeg: ChildProcess | null = null;
 let stopping = false;
-// What the fake OBS sends; quality.spec.ts changes it (file + SIGUSR2) to make OBS reconnect
-// with a bigger picture, which is when a new rendition plan applies.
+// What the fake OBS sends; quality.spec.ts changes it (POST /obs) to make OBS reconnect with a
+// bigger picture, which is when a new rendition plan applies. Kept in a file so a restarted
+// fake OBS (it restarts by itself one second after it exits) uses the same options.
 const PUSH_FILE = path.join('test-results', 'e2e-push.json');
-const pushOptions = (): { size?: string; kbps?: number } => {
+type PushOptions = { size?: string; kbps?: number; fps?: number; preset?: string };
+const pushOptions = (): PushOptions => {
   try {
-    return JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')) as { size?: string; kbps?: number };
+    return JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')) as PushOptions;
   } catch {
     return {};
   }
@@ -89,25 +92,209 @@ const push = (): void => {
 fs.mkdirSync('test-results', { recursive: true });
 fs.rmSync(PUSH_FILE, { force: true });
 push();
-process.on('SIGUSR2', () => {
-  // Reconnect "OBS" with the options in PUSH_FILE.
+/** Reconnect "OBS" (it restarts with the options in PUSH_FILE). */
+const reconnectObs = (options: PushOptions | null): void => {
+  if (options) fs.writeFileSync(PUSH_FILE, JSON.stringify(options));
+  else fs.rmSync(PUSH_FILE, { force: true });
   ffmpeg?.kill('SIGKILL');
-});
+};
+// scripts/docs/screenshots.mjs writes PUSH_FILE itself, then sends SIGUSR2.
+process.on('SIGUSR2', () => ffmpeg?.kill('SIGKILL'));
 
-// Test-only control port (127.0.0.1, random port, never part of the app): POST /pow-level/<0|1|2>
-// sets the level the attack shield would choose by itself, without flooding the server.
-// POST /playlist-window/<seconds> sets how many seconds every playlist keeps (p2p.spec.ts
-// emulates v0.2.0 servers, whose ladder audio playlist held only 20 s).
-const control = http.createServer((req, res) => {
-  const w = /^\/playlist-window\/(\d+)$/.exec(req.url ?? '');
-  if (req.method === 'POST' && w) {
-    app.live.origin.windowSeconds = Number(w[1]);
-    return void res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ windowSeconds: app.live.origin.windowSeconds }));
+// ---- the state every test starts from (POST /reset) ----
+const initial = {
+  settings: structuredClone(app.live.snapshot().settings),
+  security: structuredClone(app.live.securitySettings()),
+  quality: structuredClone(app.config.quality),
+  diagnostics: structuredClone(app.diagnostics.settings()),
+  windowSeconds: app.live.origin.windowSeconds,
+};
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const shield = app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void; detector: { state: string } };
+/** The test that ran before the current one (an unhealthy stream names it). */
+let previousTest = '(none: first test on this server)';
+let currentTest = previousTest;
+
+/**
+ * Back to the state the server started in. Only what differs is reset, so after a test that
+ * changed nothing this costs a few milliseconds. The fake OBS reconnects only when it has to
+ * (ladder on, other push options) or with `hard` (which also starts the live again if it
+ * stopped). Returns what was reset.
+ */
+async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: string; did: string[] }> {
+  if (o.test !== undefined && o.test !== currentTest) {
+    previousTest = currentTest;
+    currentTest = o.test;
   }
-  const m = /^\/pow-level\/([012])$/.exec(req.url ?? '');
-  if (req.method !== 'POST' || !m) return void res.writeHead(404).end();
-  (app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void }).setAutoPow(Number(m[1]) as 0 | 1 | 2);
-  res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ browserCheck: app.live.shield.powLevel() }));
+  const L = app.live;
+  const did: string[] = [];
+  if (L.phase === 'off') {
+    await L.start();
+    did.push('live started');
+  }
+  if (L.access.sessions.size > 0) {
+    L.disconnectAll();
+    did.push('viewers disconnected');
+  }
+  if (L.access.bannedCount > 0) {
+    L.clearBans();
+    did.push('bans cleared');
+  }
+  app.resetRateLimits();
+  shield.setAutoPow(0);
+  if (shield.detector.state !== 'normal') {
+    L.clearAttackAlert();
+    did.push('attack alert ended');
+  }
+  if (!same(L.securitySettings(), initial.security)) {
+    L.updateSecurity(structuredClone(initial.security));
+    did.push('security settings');
+  }
+  if (!same(L.snapshot().settings, initial.settings)) {
+    L.updateSettings(structuredClone(initial.settings));
+    did.push('settings');
+  }
+  if (!L.onboardingDone) {
+    L.setOnboardingDone(true);
+    did.push('onboarding');
+  }
+  if (!same(app.diagnostics.settings(), initial.diagnostics)) {
+    app.diagnostics.updateSettings(structuredClone(initial.diagnostics));
+    did.push('diagnostics settings');
+  }
+  if (L.origin.windowSeconds !== initial.windowSeconds) {
+    L.origin.windowSeconds = initial.windowSeconds;
+    did.push('playlist window');
+  }
+  let obs = !!o.hard;
+  if (!same(app.config.quality, initial.quality)) {
+    L.quality.updateSettings({ ...structuredClone(initial.quality), obsWebsocket: { ...initial.quality.obsWebsocket } });
+    did.push('quality settings');
+  }
+  // A running ladder stops only when OBS reconnects.
+  if (L.quality.state().transcoder.status !== 'off' || L.origin.variants().length > 1) obs = true;
+  if (fs.existsSync(PUSH_FILE)) obs = true;
+  if (obs) {
+    reconnectObs(null);
+    did.push('fake OBS reconnected');
+  }
+  return { previous: previousTest, did };
+}
+
+// ---- stream health (GET /health) ----
+
+/** Seconds the playlist of the first variant covers right now. */
+function playlistSeconds(): number {
+  const name = app.live.origin.variants()[0]?.name;
+  const text = name ? app.live.origin.getPlaylist(name) : undefined;
+  let s = 0;
+  for (const m of (text ?? '').matchAll(/#EXTINF:([\d.]+)/g)) s += Number(m[1]);
+  return Math.round(s * 10) / 10;
+}
+
+interface Health {
+  ok: boolean;
+  problems: string[];
+  phase: string;
+  available: boolean;
+  variants: number[];
+  sinceSegmentMs: number | null;
+  playlistS: number;
+  windowSeconds: number;
+  ladder: string;
+  threat: string;
+  fakeObs: { pid: number | null; running: boolean; options: PushOptions };
+  previousTest: string;
+}
+
+/** Healthy: live, one quality, a new segment within 2.5 segment durations, `minPlaylistS` of playlist. */
+function healthNow(minPlaylistS: number): Health {
+  const L = app.live;
+  const variants = L.origin.variants().map((v) => v.height);
+  const since = L.origin.lastSegmentAt ? Date.now() - L.origin.lastSegmentAt : null;
+  const playlistS = playlistSeconds();
+  const problems: string[] = [];
+  if (L.phase !== 'live') problems.push(`phase is ${L.phase}`);
+  if (!L.origin.available) problems.push('the origin serves no playlist');
+  if (variants.length !== 1) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected 1`);
+  if (since === null) problems.push('no segment yet');
+  else if (since > 2.5 * SEGMENT_DURATION_S * 1000) problems.push(`no new segment for ${since} ms`);
+  if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s, ${minPlaylistS} s wanted`);
+  return {
+    ok: problems.length === 0,
+    problems,
+    phase: L.phase,
+    available: L.origin.available,
+    variants,
+    sinceSegmentMs: since,
+    playlistS,
+    windowSeconds: L.origin.windowSeconds,
+    ladder: L.quality.state().transcoder.status,
+    threat: shield.detector.state,
+    fakeObs: { pid: ffmpeg?.pid ?? null, running: !!ffmpeg && ffmpeg.exitCode === null && ffmpeg.signalCode === null, options: pushOptions() },
+    previousTest,
+  };
+}
+
+/** Waits up to `waitMs` for a healthy stream; answers with the last state seen. */
+async function health(waitMs: number, minPlaylistS: number): Promise<Health> {
+  const end = Date.now() + waitMs;
+  for (;;) {
+    const h = healthNow(minPlaylistS);
+    if (h.ok || Date.now() >= end) return h;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
+// Test-only control port (127.0.0.1, random port, never part of the app):
+// - POST /reset[?hard=1] {test?}: back to the starting state (reset() above);
+// - GET /health?waitMs=&minPlaylistS=: the stream's health, waiting up to waitMs for it;
+// - POST /obs {options | null}: the fake OBS reconnects with these push options;
+// - POST /pow-level/<0|1|2>: the level the attack shield would choose by itself, without
+//   flooding the server;
+// - POST /playlist-window/<seconds>: how many seconds every playlist keeps (p2p.spec.ts
+//   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s).
+const json = (res: http.ServerResponse, status: number, body: unknown): void => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
+async function readJson(req: http.IncomingMessage): Promise<unknown> {
+  let text = '';
+  for await (const chunk of req) text += String(chunk);
+  try {
+    return text ? (JSON.parse(text) as unknown) : null;
+  } catch {
+    return null;
+  }
+}
+const control = http.createServer((req, res) => {
+  void (async () => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    const post = req.method === 'POST';
+    if (post && url.pathname === '/reset') {
+      const body = (await readJson(req)) as { test?: unknown } | null;
+      const r = await reset({ hard: url.searchParams.get('hard') === '1', ...(typeof body?.test === 'string' ? { test: body.test } : {}) });
+      if (r.did.length) app.log.info({ test: currentTest, did: r.did }, 'e2e reset');
+      return json(res, 200, r);
+    }
+    if (req.method === 'GET' && url.pathname === '/health') {
+      const h = await health(Math.min(120_000, Number(url.searchParams.get('waitMs') ?? 0)), Number(url.searchParams.get('minPlaylistS') ?? 0));
+      if (!h.ok) app.log.warn({ test: currentTest, health: h }, 'e2e stream unhealthy');
+      return json(res, 200, h);
+    }
+    if (post && url.pathname === '/obs') {
+      reconnectObs(((await readJson(req)) as PushOptions | null) ?? null);
+      return json(res, 200, { options: pushOptions() });
+    }
+    const w = /^\/playlist-window\/(\d+)$/.exec(url.pathname);
+    if (post && w) {
+      app.live.origin.windowSeconds = Number(w[1]);
+      return json(res, 200, { windowSeconds: app.live.origin.windowSeconds });
+    }
+    const m = /^\/pow-level\/([012])$/.exec(url.pathname);
+    if (post && m) {
+      shield.setAutoPow(Number(m[1]) as 0 | 1 | 2);
+      return json(res, 200, { browserCheck: app.live.shield.powLevel() });
+    }
+    res.writeHead(404).end();
+  })().catch((err: unknown) => json(res, 500, { error: (err as Error).message }));
 });
 await new Promise<void>((r) => control.listen(0, '127.0.0.1', r));
 const testControlUrl = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
