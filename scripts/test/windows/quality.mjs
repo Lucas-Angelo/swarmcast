@@ -9,7 +9,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, info, installerResult, joinAndPlay, killUnder, launchBrowser, listening, must, onCleanup,
+  appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, installerResult, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
   opt, processesUnder, pushStream, quitAndVerify, readText, record, repoRoot, runInstaller, section, serve, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
@@ -147,15 +147,35 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
     const m = /\/hls\/(?:[^/]*_)?(v\d+)/.exec(r.url());
     if (m) seen.add(m[1]);
   });
+  // F4/B9 evidence: every hls.js level event, error and instance change (stall recovery can
+  // reload the source, which makes a new hls.js), plus the viewer's stall-recovery log lines.
+  await installHlsProbe(v.page);
+  v.page.on('console', (m) => {
+    if (/stall recovery|reload/i.test(m.text())) log(`[ladder-viewer] ${m.text().slice(0, 300)}`);
+  });
   const menu = await v.page.$('select.quality-menu, #player-controls select, select[aria-label*="quality" i]');
   if (menu) {
     const opts = await menu.$$eval('option', (os) => os.map((o) => [o.value, o.textContent]));
     const low = opts.find(([, t]) => /480/.test(t ?? ''));
+    const t0 = Date.now();
     if (low) await menu.selectOption(low[0]);
-    await until(() => seen.has('v480'), 30_000, 'v480 requests after picking 480p in the menu').then(
-      () => check('viewer quality menu switches to 480p', true, opts.map(([, t]) => t).join(' / ')),
-      (e) => check('viewer quality menu switches to 480p', false, e.message),
-    );
+    // The player's own state, not only its requests: the level hls.js plays and loads is 480p,
+    // and a 480p fragment arrived.
+    const state = await v.page
+      .waitForFunction(() => {
+        const h = window.__hls;
+        const lv = h?.levels ?? [];
+        const cur = lv[h?.currentLevel]?.height;
+        const load = lv[h?.loadLevel]?.height;
+        return cur === 480 && load === 480 && (window.__scHls?.frag480 ?? 0) > 0 ? { cur, load, auto: h.autoLevelEnabled } : null;
+      }, undefined, { timeout: 20_000, polling: 250 })
+      .then((h) => h.jsonValue(), () => null);
+    const probe = await hlsProbe(v.page);
+    log(`hls.js events around the 480p pick: ${probe.events.map((e) => `${e.t}ms #${e.inst} ${e.ev}${e.level !== undefined ? ` L${e.level}` : ''}${e.details ? ` ${e.details}` : ''}`).join(', ').slice(0, 4000)}`);
+    const detail = `${state ? `currentLevel and loadLevel at 480p in ${Math.round((Date.now() - t0) / 1000)} s` : `after 20 s: currentLevel ${probe.cur ?? '?'}p, loadLevel ${probe.load ?? '?'}p, auto ${probe.auto}, 480p fragments ${probe.frag480}`}; hls.js instances ${probe.instances}; stall recoveries ${probe.stallRecoveries}; v480 requested: ${seen.has('v480')}; menu ${opts.map(([, t]) => t).join(' / ')}`;
+    check('viewer quality menu switches to 480p (player state)', !!state, detail);
+    // B9: a reload by the stall watchdog must not drop the viewer's manual choice.
+    if (probe.instances > 1) record('manual 480p kept across a source reload', probe.cur === 480 ? 'pass' : 'warn', probe.cur === 480 ? `${probe.instances} hls.js instances, still 480p` : `BUG? ${probe.instances} hls.js instances and the level is ${probe.cur}p after the reload (B9)`);
     if (low) await menu.selectOption(opts[0][0]);
   } else {
     info('viewer quality menu', 'not in this viewer build (watch.ts integration pending): testing hls.js automatic switching instead');

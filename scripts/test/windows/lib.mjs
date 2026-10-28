@@ -69,6 +69,22 @@ export const info = (name, detail) => record(name, 'info', detail);
  * prefixed "BUG") instead of failing the job, and as a plain pass once the bug is fixed.
  */
 export const bug = (name, ok, detail = '') => record(name, ok ? 'pass' : 'warn', ok ? '' : `BUG: ${detail}`);
+/**
+ * Only for checks that go through a third party's network (the Cloudflare tunnel): `fn(attempt)`
+ * gets one retry. A pass on the retry is recorded as warn "passed on retry" (retry: true), which
+ * the soak summary counts separately; no other check is ever retried.
+ */
+export async function checkWithRetry(name, fn) {
+  const first = await fn(1).then(() => null, (e) => e ?? new Error('failed'));
+  if (!first) return check(name, true);
+  const why = (e) => String(e?.message ?? e).split('\n')[0];
+  log(`${name}: first try failed (${why(first)}), retrying once`);
+  const second = await fn(2).then(() => null, (e) => e ?? new Error('failed'));
+  if (second) return check(name, false, `${why(first)} | retry: ${why(second)}`);
+  record(name, 'warn', `passed on retry; first try: ${why(first)}`);
+  results[results.length - 1].retry = true;
+  return true;
+}
 /** Like check(), but aborts the current section when it fails. */
 export function must(name, ok, detail = '') {
   check(name, ok, detail);
@@ -700,7 +716,7 @@ export async function gotoRetry(page, url) {
   // A brand-new trycloudflare name may still be negatively cached by the OS resolver.
   for (let i = 0; ; i++) {
     try {
-      await page.goto(url, { timeout: 60_000 });
+      await page.goto(url, { timeout: 60_000, waitUntil: 'commit' });
       return;
     } catch (e) {
       if (!/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ERR_CONNECTION|NS_ERROR_NET|NS_ERROR_CONNECTION/.test(String(e)) || i >= 18) throw e;
@@ -713,7 +729,7 @@ export async function gotoRetry(page, url) {
 export async function join(browser, link, nickname, ctxOpts = {}) {
   const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
   await gotoRetry(v.page, link);
-  await v.page.waitForURL(/\/join$/, { timeout: 60_000 });
+  await v.page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'commit' });
   await v.page.fill('#nickname', nickname);
   await v.page.click('#join');
   return v;
@@ -732,12 +748,54 @@ export async function waitPlaying(page, timeoutMs = 90_000, minTime = 1.5) {
 
 export async function joinAndPlay(browser, link, nickname, ctxOpts = {}) {
   const v = await join(browser, link, nickname, ctxOpts);
-  await v.page.waitForURL(/\/watch$/, { timeout: 60_000 });
+  await v.page.waitForURL(/\/watch$/, { timeout: 60_000, waitUntil: 'commit' });
   await waitPlaying(v.page);
   return v;
 }
 
 export const stats = (page) => page.evaluate(() => window.__swarmcast.stats);
+
+/**
+ * Records hls.js events in the viewer page (window.__scHls): level switching/switched/loading,
+ * errors, destroy, and the count of 480p fragments, re-attached whenever the viewer creates a
+ * new hls.js instance (a source reload by the stall watchdog does). Read it with hlsProbe().
+ */
+export async function installHlsProbe(page) {
+  await page.evaluate(() => {
+    const w = window;
+    if (w.__scHls) return;
+    const probe = { events: [], instances: 0, frag480: 0 };
+    w.__scHls = probe;
+    let hooked = null;
+    const hook = () => {
+      const h = w.__hls;
+      if (!h || h === hooked) return;
+      hooked = h;
+      const inst = ++probe.instances;
+      const E = h.constructor?.Events ?? {};
+      for (const name of ['MANIFEST_PARSED', 'LEVEL_SWITCHING', 'LEVEL_SWITCHED', 'LEVEL_LOADING', 'FRAG_LOADED', 'ERROR', 'DESTROYING']) {
+        if (!E[name]) continue;
+        h.on(E[name], (_e, d) => {
+          const level = d?.level ?? d?.frag?.level;
+          if (name === 'FRAG_LOADED') {
+            if (h.levels?.[level]?.height === 480) probe.frag480++;
+            return;
+          }
+          if (probe.events.length < 400) probe.events.push({ t: Math.round(performance.now()), inst, ev: name, level, details: d?.details, fatal: d?.fatal });
+        });
+      }
+    };
+    hook();
+    setInterval(hook, 200);
+  });
+}
+export async function hlsProbe(page) {
+  return page.evaluate(() => {
+    const h = window.__hls;
+    const p = window.__scHls ?? { events: [], instances: 0, frag480: 0 };
+    return { ...p, cur: h?.levels?.[h.currentLevel]?.height, load: h?.levels?.[h.loadLevel]?.height, auto: h?.autoLevelEnabled, stallRecoveries: window.__swarmcast?.stats?.stallRecoveries };
+  });
+}
 
 /** Panel page logged in through the per-run URL. */
 export async function openPanel(browser, loginUrl, label = 'panel', ctxOpts = {}) {
