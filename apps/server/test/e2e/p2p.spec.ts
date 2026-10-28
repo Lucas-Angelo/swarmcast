@@ -30,15 +30,20 @@ test.skip(({ browserName }) => browserName === 'webkit', 'Playwright WebKit has 
 
 // Viewers normally join a stream that has been running for a while. Right after OBS starts
 // the playlist is short, players sit at the live edge and every segment is "urgent"
-// (fetched over HTTPS), so give the playlist time to fill up first.
-test.beforeAll(async () => {
-  const { liveLink } = await import('./fixtures.js');
-  await liveLink();
-  const since = (globalThis as { __scLiveSince?: number }).__scLiveSince ?? Date.now();
-  (globalThis as { __scLiveSince?: number }).__scLiveSince = since;
-  const wait = 32_000 - (Date.now() - since);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+// (fetched over HTTPS), so wait until the server's playlist holds 32 s (at once when it does:
+// this used to sleep 32 s again in every worker, so after every retry).
+test.beforeEach(async () => {
+  await waitForPlaylist(32);
 });
+
+/** Seconds of video buffered ahead of the playhead (what a peer can share right now). */
+function bufferAhead(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const v = document.querySelector('video')!;
+    for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime < v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
+    return 0;
+  });
+}
 
 async function connectedPair(browser: import('@playwright/test').Browser, a: string, b: string): Promise<{ pa: Page; pb: Page; close: () => Promise<void> }> {
   const A = await join(browser, a);
@@ -83,7 +88,8 @@ test('"Remove from P2P" disconnects the peer from others while it keeps watching
   // (polled, so a brief stall on a busy machine doesn't fail the check)
   const t = await currentTime(pb);
   await expect.poll(async () => (await currentTime(pb)) - t, { timeout: 20_000 }).toBeGreaterThan(2);
-  // Over the next tracker announce B does not come back.
+  // Over the next tracker announce (clients re-announce every 12 s) B does not come back: a
+  // negative check, so it has to wait that long.
   await pa.waitForTimeout(15_000);
   expect((await stats(pa)).peers.length).toBe(0);
   expect((await stats(pb)).peers.length).toBe(0);
@@ -113,13 +119,12 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
     } as typeof RTCDataChannel.prototype.send;
   });
   const evil = await evilCtx.newPage();
-  const { liveLink } = await import('./fixtures.js');
   await evil.goto(await liveLink());
   await evil.fill('#nickname', evilNick);
   await evil.click('#join');
   await waitPlaying(evil);
   await enableP2P(evil);
-  await evil.waitForTimeout(6000);
+  await expect.poll(() => bufferAhead(evil), { timeout: 30_000, intervals: [500] }).toBeGreaterThan(6);
 
   const honest = await join(browser, uid('honest'));
   await waitPlaying(honest.page);
@@ -131,8 +136,7 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
     .toBe(true);
   // The honest viewer never played bad data and keeps watching.
   const t = await currentTime(honest.page);
-  await honest.page.waitForTimeout(3000);
-  expect(await currentTime(honest.page)).toBeGreaterThan(t + 1.5);
+  await expect.poll(async () => (await currentTime(honest.page)) - t, { timeout: 15_000 }).toBeGreaterThan(1.5);
   expect((await adminState()).warnings.join(' ')).toMatch(/removed from P2P automatically/);
   await honest.context.close();
   await evilCtx.close();
@@ -228,13 +232,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await waitPlaying(slow);
     await enableP2P(slow);
     // It holds the segments just ahead of where the honest viewer will play (same delay).
-    await expect
-      .poll(() => slow.evaluate(() => {
-        const v = document.querySelector('video')!;
-        for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime < v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
-        return 0;
-      }), { timeout: 30_000, intervals: [500] })
-      .toBeGreaterThan(6);
+    await expect.poll(() => bufferAhead(slow), { timeout: 30_000, intervals: [500] }).toBeGreaterThan(6);
 
     // The honest viewer is on a tunnel-like link (300 ms round trip), like real viewers.
     const TUNNEL = { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 };
