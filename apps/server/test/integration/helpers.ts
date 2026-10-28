@@ -1,18 +1,18 @@
-import { spawn, type ChildProcess, execFileSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
+import { ffmpegBin, hasFfmpeg as ffmpegRuns, liveFeedArgs, type FeedOptions } from '../../../../scripts/test/lib/ffmpeg.mjs';
+import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 
-export const hasFfmpeg = (() => {
-  try {
-    execFileSync('ffmpeg', ['-version'], { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-})();
+export { until, waitForLine, WaitError } from '../../../../scripts/test/lib/wait.mjs';
+export { isAlive, spawnTracked, stopTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
+
+/** The ffmpeg every test uses, by absolute path ($FFMPEG_BIN in CI, else the first on PATH). */
+export const FFMPEG_BIN = ffmpegBin();
+export const hasFfmpeg = ffmpegRuns();
 
 export function tmpDir(prefix = 'sc-it-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -23,67 +23,34 @@ export function maskStreamKeys(text: string): string {
   return text.replace(/(rtmp:\/\/[^\s/]+\/[^\s/]+\/)[^\s/.:'"]+/g, '$1[key]');
 }
 
+/** The fake OBS: a tracked ffmpeg (`exited`, `tail()`, `stop()` that confirms it is gone). */
+export type Feed = Tracked;
+
 /**
  * Push a synthetic stream with a 2 s keyframe interval (like OBS should be configured).
  * Default 640x360 at 1.2 Mbps; `cbr` pads to a constant bitrate (like OBS's CBR) so segment
  * sizes match the nominal bitrate even for the easy-to-compress test pattern.
- * ffmpeg's stderr is appended to `logFile` (default test-results/fake-obs.log, uploaded by CI)
+ * ffmpeg's output is appended to `logFile` (default test-results/fake-obs.log, uploaded by CI)
  * between a start and an exit line, so a dead feed leaves its reason behind. CI artifacts of a
  * public repo are downloadable: every line has its stream key masked.
+ * Pass the feed in `abortOn` of every wait that needs it: a feed that dies fails the wait at
+ * once, with ffmpeg's last lines.
  */
-export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: number; cbr?: boolean; logFile?: string } = {}): ChildProcess {
-  const kbps = o.kbps ?? 1200;
-  const logFile = path.resolve(o.logFile ?? path.join('test-results', 'fake-obs.log'));
+export function startFeed(rtmpUrl: string, o: FeedOptions & { logFile?: string } = {}): Feed {
   const key = rtmpUrl.slice(rtmpUrl.lastIndexOf('/') + 1);
   const mask = (text: string): string => maskStreamKeys(key ? text.replaceAll(key, '[key]') : text);
-  const write = (text: string): void => {
-    try {
-      fs.mkdirSync(path.dirname(logFile), { recursive: true });
-      fs.appendFileSync(logFile, mask(text));
-    } catch {
-      /* the log is evidence only */
-    }
-  };
-  const child = spawn(
-    'ffmpeg',
-    [
-      '-hide_banner', '-loglevel', 'error', '-re',
-      '-f', 'lavfi', '-i', `testsrc2=size=${o.size ?? '640x360'}:rate=30`,
-      '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
-      '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', `${kbps}k`,
-      ...(o.cbr ? ['-minrate', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps}k`, '-x264-params', 'nal-hrd=cbr:filler=1'] : []),
-      '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', rtmpUrl,
-    ],
-    { stdio: ['ignore', 'ignore', 'pipe'] },
-  );
-  const tag = `fake OBS pid ${child.pid ?? '?'}`;
-  write(`--- ${new Date().toISOString()} ${tag}: ${o.size ?? '640x360'} ${kbps} kbps${o.cbr ? ' cbr' : ''} -> ${rtmpUrl}\n`);
-  // Whole lines only, so a key split across two chunks is still masked.
-  let partial = '';
-  child.stderr?.setEncoding('utf8');
-  child.stderr?.on('data', (d: string) => {
-    const text = partial + d;
-    const cut = text.lastIndexOf('\n') + 1;
-    partial = text.slice(cut);
-    if (cut) write(text.slice(0, cut));
+  const kbps = o.kbps ?? 1200;
+  return spawnTracked(FFMPEG_BIN, liveFeedArgs(rtmpUrl, o), {
+    name: 'fake OBS',
+    logFile: o.logFile ?? path.join('test-results', 'fake-obs.log'),
+    mask,
+    describe: `${o.size ?? '640x360'} ${kbps} kbps${o.cbr ? ' cbr' : ''} live x264 -> ${rtmpUrl}`,
   });
-  child.on('error', (e) => write(`--- ${new Date().toISOString()} ${tag}: ${e.message}\n`));
-  child.on('close', (code, signal) => {
-    write(`${partial ? partial + '\n' : ''}--- ${new Date().toISOString()} ${tag} exited (${signal ?? `code ${code}`})\n`);
-    partial = '';
-  });
-  return child;
 }
 
-/** `detail` describes the state at the timeout, so a CI failure says why. */
-export async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs: number, what: string, detail?: () => string): Promise<void> {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (await cond()) return;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-  throw new Error(`timed out waiting for ${what}${detail ? ` (${detail()})` : ''}`);
+/** `startFeed` for callers that only need the ChildProcess (the E2E and quality servers). */
+export function pushTestStream(rtmpUrl: string, o: FeedOptions & { logFile?: string } = {}): ChildProcess {
+  return startFeed(rtmpUrl, o).child;
 }
 
 /** Tiny cookie jar for fetch-based "browsers". */
