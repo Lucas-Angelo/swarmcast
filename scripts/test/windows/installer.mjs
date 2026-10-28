@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  ART, adminLogin, appLog, check, copyAppLogs, descendants, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
+  ART, addSweepPath, adminLogin, appLog, check, copyAppLogs, descendants, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
   launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
   runInstaller, section, serve, sha256File, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
 } from './lib.mjs';
@@ -193,8 +193,15 @@ await section('8. one-liner: irm <local>/start-windows.ps1 | iex', async () => {
   child.stdout.on('data', (d) => (o += d));
   child.stderr.on('data', (d) => (o += d));
   onCleanup(() => killTree(child.pid));
-  const gone = await until(() => child.exitCode !== null, 90_000, 'piped setup error').then(() => true, () => false);
+  // Wait for the error itself (or an early exit), then 5 s more: a host that survives that long
+  // after the error has kept the window open. Waiting the full 90 s for an exit that never comes
+  // proved nothing more.
+  const tErr = Date.now();
+  await until(() => child.exitCode !== null || has(o, 'Could not download SwarmCast'), 90_000, 'piped setup error').catch(() => {});
+  if (child.exitCode === null) await sleep(5000);
+  const gone = child.exitCode !== null;
   const errShown = has(o, 'Could not download SwarmCast');
+  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s (shown: ${errShown}; host ${gone ? `exited ${child.exitCode}` : 'alive 5 s later'})`);
   if (gone) {
     record('piped run: an error keeps the PowerShell window open', 'warn', `BUG: after "${errShown ? 'Could not download SwarmCast…' : 'error'}" the script calls "exit ${child.exitCode}", which closes the interactive PowerShell window of a user who pasted the one-liner, so the message disappears. (start-windows.ps1 Stop-Setup/exit)`);
   } else {
@@ -327,6 +334,7 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   const home = path.join(local, 'SC basic user');
   fs.rmSync(home, { recursive: true, force: true });
   const dir = 'C:\\sc-basic';
+  addSweepPath(dir);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const outLog = path.join(dir, 'out.log');
