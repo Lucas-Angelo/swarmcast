@@ -4,13 +4,11 @@ import { strFromU8, unzipSync } from 'fflate';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LogExportResult } from '@swarmcast/shared';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage } from '../../src/desktop/protocol.js';
-import { allocAppPorts, Jar, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
+import { allocAppPorts, Jar, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 // The real server from source, with a temporary data folder, HOME and Downloads folder
 // (SWARMCAST_DOWNLOADS_DIR): never the user's own SwarmCast data or ~/Downloads.
 
-const ROOT = path.resolve(__dirname, '../../../..');
-const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const VIEWER_IP = '203.0.113.99';
 
 interface Started {
@@ -38,7 +36,7 @@ function start(ports: Record<string, number>, args: string[]): Started {
   // A log line with a viewer's IP address (as if written by an older run).
   fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'logs', 'swarmcast.log.1'), JSON.stringify({ level: 'warn', msg: `viewer from ${VIEWER_IP} was rate-limited` }) + '\n');
-  const proc = spawnTracked(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-autostart', '--data-dir', dataDir, ...args], {
+  const proc = spawnTracked(process.execPath, serverArgs(['--no-tunnel', '--no-autostart', '--data-dir', dataDir, ...args]), {
     name: 'SwarmCast',
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
