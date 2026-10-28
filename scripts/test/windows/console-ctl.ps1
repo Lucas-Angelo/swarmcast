@@ -87,6 +87,9 @@ public static class ScCon {
     return !IsWindow(hWnd);
   }
 
+  // Moves hWnd (size and z-order kept), for a second click when something covered its X.
+  public static void MoveTo(IntPtr hWnd, int x, int y) { SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004); }
+
   // Clicks the close button of hWnd with real mouse input. Returns what it did; "clicked" only
   // when the press and release were both injected on a verified close button.
   public static string Click(IntPtr hWnd) {
@@ -117,7 +120,7 @@ public static class ScCon {
     long hit = HitTest(hWnd, p.X, p.Y);
     IntPtr under = GetAncestor(WindowFromPoint(p), 2); // GA_ROOT
     if (hit != 20) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": not the close button (hit test {0}), not clicked", hit); }
-    if (under != hWnd) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": covered by window 0x{0:x}, not clicked", under.ToInt64()); }
+    if (under != hWnd) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + ": covered by window " + Describe(under) + ", not clicked"; }
     SetCursorPos(p.X, p.Y);
     Thread.Sleep(150);
     POINT now; GetCursorPos(out now);
@@ -170,6 +173,13 @@ switch ($Action) {
         switch ($m) {
           'click' {
             $note = [ScCon]::Click($target)
+            if ($note -match 'covered by') {
+              # Another always-on-top window sits on the X (seen on windows-11-arm): move the
+              # console window into the open and click again.
+              [ScCon]::MoveTo($target, 240, 320)
+              Start-Sleep -Milliseconds 300
+              $note = "$note; moved to 240,320: $([ScCon]::Click($target))"
+            }
           }
           'uia' {
             Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
