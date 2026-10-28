@@ -858,7 +858,9 @@ export async function installHlsProbe(page) {
         h.on(E[name], (_e, d) => {
           const level = d?.level ?? d?.frag?.level;
           if (name === 'FRAG_LOADED') {
-            if (h.levels?.[level]?.height === 480) probe.frag480++;
+            // Main (video) fragments only: an audio rendition's fragments carry the audio track index
+            // in frag.level, which would read as a video level (21 bogus "480p" fragments once).
+            if (d?.frag?.type === 'main' && h.levels?.[level]?.height === 480) probe.frag480++;
             return;
           }
           if (probe.events.length < 400) probe.events.push({ t: Math.round(performance.now()), inst, ev: name, level, details: typeof d?.details === 'string' ? d.details : undefined, fatal: d?.fatal });

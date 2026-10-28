@@ -158,23 +158,28 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
   const menu = await v.page.$('select.quality-menu, #player-controls select, select[aria-label*="quality" i]');
   if (menu) {
     const opts = await menu.$$eval('option', (os) => os.map((o) => [o.value, o.textContent]));
-    const low = opts.find(([, t]) => /480/.test(t ?? ''));
+    // The manual 480p entry, never "Auto (480p)": the Auto entry names the level it plays now,
+    // and picking it changes nothing (value -1 keeps hls.js ABR in charge).
+    const low = opts.find(([val, t]) => val !== '-1' && /^\s*480p\s*$/.test(t ?? ''));
+    const fragsBefore = (await hlsProbe(v.page)).frag480;
     const t0 = Date.now();
     if (low) await menu.selectOption(low[0]);
-    // The player's own state, not only its requests: the level hls.js plays and loads is 480p,
-    // and a 480p fragment arrived.
-    const state = await v.page
-      .waitForFunction(() => {
-        const h = window.__hls;
-        const lv = h?.levels ?? [];
-        const cur = lv[h?.currentLevel]?.height;
-        const load = lv[h?.loadLevel]?.height;
-        return cur === 480 && load === 480 && (window.__scHls?.frag480 ?? 0) > 0 ? { cur, load, auto: h.autoLevelEnabled } : null;
-      }, undefined, { timeout: 20_000, polling: 250 })
-      .then((h) => h.jsonValue(), () => null);
+    // The player's own state, not only its requests: ABR is off, the level hls.js plays and
+    // loads is 480p, and a 480p video fragment arrived after the pick.
+    const state = low
+      ? await v.page
+          .waitForFunction((before) => {
+            const h = window.__hls;
+            const lv = h?.levels ?? [];
+            const cur = lv[h?.currentLevel]?.height;
+            const load = lv[h?.loadLevel]?.height;
+            return !h?.autoLevelEnabled && cur === 480 && load === 480 && (window.__scHls?.frag480 ?? 0) > before ? { cur, load } : null;
+          }, fragsBefore, { timeout: 20_000, polling: 250 })
+          .then((h) => h.jsonValue(), () => null)
+      : null;
     const probe = await hlsProbe(v.page);
     log(`hls.js events around the 480p pick: ${probe.events.map((e) => `${e.t}ms #${e.inst} ${e.ev}${e.level !== undefined ? ` L${e.level}` : ''}${e.details ? ` ${e.details}` : ''}`).join(', ').slice(0, 4000)}`);
-    const detail = `${state ? `currentLevel and loadLevel at 480p in ${Math.round((Date.now() - t0) / 1000)} s` : `after 20 s: currentLevel ${probe.cur ?? '?'}p, loadLevel ${probe.load ?? '?'}p, auto ${probe.auto}, 480p fragments ${probe.frag480}`}; hls.js instances ${probe.instances}; stall recoveries ${probe.stallRecoveries}; v480 requested: ${seen.has('v480')}; menu ${opts.map(([, t]) => t).join(' / ')}`;
+    const detail = `${!low ? 'no manual "480p" entry in the menu' : state ? `ABR off, currentLevel and loadLevel at 480p in ${Math.round((Date.now() - t0) / 1000)} s` : `after 20 s: currentLevel ${probe.cur ?? '?'}p, loadLevel ${probe.load ?? '?'}p, auto ${probe.auto}, 480p video fragments ${probe.frag480 - fragsBefore} since the pick`}; hls.js instances ${probe.instances}; stall recoveries ${probe.stallRecoveries}; v480 requested: ${seen.has('v480')}; menu ${opts.map(([, t]) => t).join(' / ')}`;
     check('viewer quality menu switches to 480p (player state)', !!state, detail);
     // B9: a reload by the stall watchdog must not drop the viewer's manual choice.
     if (probe.instances > 1) record('manual 480p kept across a source reload', probe.cur === 480 ? 'pass' : 'warn', probe.cur === 480 ? `${probe.instances} hls.js instances, still 480p` : `BUG? ${probe.instances} hls.js instances and the level is ${probe.cur}p after the reload (B9)`);
@@ -198,8 +203,18 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
     const target = rung.kbps + 128;
     record(`${rung.height}p rendition bitrate close to its target (${qNow.plan.encoder})`, got > 0 && got <= target * 1.5 ? 'pass' : 'warn', `measured ${got} kbps vs target ~${target} kbps (video ${rung.kbps} + audio); source ${qNow.variants.find((x) => x.height === qNow.plan.rungs[0].height)?.bandwidthKbps} kbps`);
   }
-  const stillPlaying = await v.page.evaluate(() => !document.querySelector('video').paused);
-  check('playback continued through the level switches', stillPlaying);
+  // "Continued" = the video advances again. A snapshot of video.paused is not that: after a stall
+  // the viewer's adaptive delay pauses on purpose for a few seconds (a hold, adaptive-delay.ts)
+  // to grow the delay, then plays on.
+  const t1 = await v.page.evaluate(() => document.querySelector('video').currentTime);
+  const advanced = await v.page
+    .waitForFunction((from) => {
+      const el = document.querySelector('video');
+      return !el.paused && el.currentTime > from + 1;
+    }, t1, { timeout: 30_000, polling: 250 })
+    .then(() => true, () => false);
+  const delay = await v.page.evaluate(() => JSON.stringify(window.__swarmcast?.delay ?? null)).catch(() => 'null');
+  check('playback continued through the level switches', advanced, `${advanced ? 'playing' : 'not advancing 30 s after the switches'}; adaptive delay ${delay.slice(0, 300)}`);
   await v.context.close();
 
   const stop = await app.api('/api/live/stop', {});
