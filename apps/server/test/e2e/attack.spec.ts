@@ -12,9 +12,7 @@ import {
 
 // The gate (fixtures.ts) starts it with fresh rate-limit buckets and, for the next test, empties
 // the buckets this flood filled and ends the alert if an assertion failed before the panel did.
-test.describe.configure({ mode: "serial" });
-
-test("a flood of invalid join links is detected, turns on the browser check, and real viewers still join", async ({
+test("a flood of invalid join links is detected, turns on the browser check, and real viewers still join", { tag: "@media" }, async ({
   browser,
   browserName,
   baseURL,

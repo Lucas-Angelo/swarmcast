@@ -24,8 +24,6 @@ interface Delay {
 
 const delayOf = (page: Page): Promise<Delay> => page.evaluate(() => (window as unknown as { __swarmcast: { delay: Delay } }).__swarmcast.delay);
 
-test.describe.configure({ mode: 'serial' });
-
 /** Once the live playlist is long enough to start ~20 s behind live: join, then reopen the player on the fast clock. */
 async function watchWithFastClock(browser: Parameters<typeof join>[0], nick: string, before?: (page: Page) => Promise<void>): Promise<Awaited<ReturnType<typeof join>>> {
   await waitForPlaylist(32);
@@ -37,7 +35,7 @@ async function watchWithFastClock(browser: Parameters<typeof join>[0], nick: str
   return joined;
 }
 
-test('on a good network the delay drifts below 15 s, the status line shows it, and Go live still works', async ({ browser, browserName }) => {
+test('on a good network the delay drifts below 15 s, the status line shows it, and Go live still works', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName === 'firefox', 'checked on Chromium and WebKit');
   test.setTimeout(240_000);
   const nick = uid('delaygood');
@@ -99,7 +97,7 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   await context.close();
 });
 
-test('on a throttled, oscillating network the delay rises and stalls stay rare', async ({ browser, browserName }) => {
+test('on a throttled, oscillating network the delay rises and stalls stay rare', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'CDP network throttling is Chromium only');
   test.setTimeout(240_000);
   let cdp: CDPSession | null = null;

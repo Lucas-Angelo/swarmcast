@@ -3,10 +3,8 @@ import { adminApi, expect, join, ladderUpdate as update, reconnectObs, test, uid
 
 type Hls = { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; targetLatency: number; url: string | null; loadSource(url: string): void };
 
-test.describe.configure({ mode: 'serial' });
-
 // The server goes back to one quality and the default feed at the next test's gate.
-test('with the quality ladder on, the viewer menu lists the renditions; switching quality and profile keeps playing', async ({ browser, browserName }) => {
+test('with the quality ladder on, the viewer menu lists the renditions; switching quality and profile keeps playing', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');
   const q0 = await adminApi<QualityState>('GET', '/api/quality');
   test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');

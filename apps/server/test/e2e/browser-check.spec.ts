@@ -2,8 +2,6 @@ import type { Page } from '@playwright/test';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
 import { admin, adminState, expect, forcePowLevel, liveLink, test, uid, viewerByNick } from './fixtures.js';
 
-test.describe.configure({ mode: 'serial' });
-
 /**
  * Open a link in `page` and join; returns whether the page had to solve the browser check.
  * Everyone is disconnected first, so a session cookie from an earlier join does not skip /join.
@@ -22,7 +20,7 @@ async function joinOn(page: Page, link: string, nickname: string): Promise<{ req
   return { required, sentProof: body.pow !== undefined };
 }
 
-test('the browser check is on by default and asked once per browser', async ({ browser }) => {
+test('the browser check is on by default and asked once per browser', { tag: '@ui' }, async ({ browser }) => {
   expect((await adminState()).security).toMatchObject({ browserCheck: 1, settings: { requireBrowserCheck: true } });
   const ctx = await browser.newContext();
 
