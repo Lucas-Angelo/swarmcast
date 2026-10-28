@@ -64,12 +64,15 @@ test('the browser check is on by default and asked once per browser', { tag: '@u
   // A kicked device stays blocked, verified or not.
   const v = await viewerByNick(uid('bc6'));
   await admin(`/api/viewers/${v!.sessionId}/kick`);
+  // The device (its cookie) is what is blocked, so the earlier tabs can go. Once a goto here never
+  // reached "load" in 150 s on WebKit (PR #14, Ubuntu) with five players still open in the same
+  // session. The check is the server's answer, which "commit" already has.
+  for (const p of ctx.pages()) await p.close();
   const banned = await ctx.newPage();
-  const res = await banned.goto(await liveLink());
+  const res = await banned.goto(await liveLink(), { waitUntil: 'commit' });
   expect(res?.status()).toBe(403);
   await expect(banned).not.toHaveURL(/\/watch$/);
 
   await ctx.close();
   await other.close();
-  await admin('/api/viewers/disconnect-all');
 });
