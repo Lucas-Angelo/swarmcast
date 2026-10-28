@@ -119,7 +119,9 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     process.kill(pid, 'SIGKILL');
     await waitFor(async () => {
       const pl = await (await jar.fetch('/hls/v720.m3u8')).text();
-      return pl.includes('#EXT-X-DISCONTINUITY') && app.live.quality.transcoder.status === 'running';
+      // The tag itself, not EXT-X-DISCONTINUITY-SEQUENCE (the ladder's first run already has a
+      // number above 0: the original OBS run before it is run 0).
+      return /^#EXT-X-DISCONTINUITY$/m.test(pl) && app.live.quality.transcoder.status === 'running';
     }, 40_000, 'ladder restart', state);
     const after = await (await jar.fetch('/hls/v720.m3u8')).text();
     expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
@@ -149,7 +151,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     const after = await (await jar.fetch('/hls/v480.m3u8')).text();
     expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
     // If segments of the previous session are still listed, the restart is marked.
-    if (mediaSegments(after).some((s) => s.startsWith(oldRun))) expect(after).toContain('#EXT-X-DISCONTINUITY');
+    if (mediaSegments(after).some((s) => s.startsWith(oldRun))) expect(after).toMatch(/^#EXT-X-DISCONTINUITY$/m);
     const multi = await (await jar.fetch('/hls/index.m3u8')).text();
     expect([...multi.matchAll(/RESOLUTION=\d+x(\d+)/g)].map((m) => Number(m[1]))).toEqual([1080, 720, 480]);
   });
