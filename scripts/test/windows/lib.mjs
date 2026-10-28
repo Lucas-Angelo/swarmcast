@@ -791,7 +791,7 @@ export async function gotoRetry(page, url) {
   // A brand-new trycloudflare name may still be negatively cached by the OS resolver.
   for (let i = 0; ; i++) {
     try {
-      await page.goto(url, { timeout: 60_000, waitUntil: 'commit' });
+      await page.goto(url, { timeout: 60_000, waitUntil: 'domcontentloaded' });
       return;
     } catch (e) {
       if (!/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ERR_CONNECTION|NS_ERROR_NET|NS_ERROR_CONNECTION/.test(String(e)) || i >= 18) throw e;
@@ -800,11 +800,16 @@ export async function gotoRetry(page, url) {
   }
 }
 
-/** Opens the join link, picks a nickname and waits for the watch page (no playback wait). */
+/**
+ * Opens the join link, picks a nickname and waits for the watch page (no playback wait).
+ * The join page is ready at DOMContentLoaded (its module script has run and handles the
+ * button); "load" would also wait for every image and font through the tunnel (F11), and
+ * "commit" clicked before the script ran, so the viewer never left /join.
+ */
 export async function join(browser, link, nickname, ctxOpts = {}) {
   const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
   await gotoRetry(v.page, link);
-  await v.page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'commit' });
+  await v.page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'domcontentloaded' });
   await v.page.fill('#nickname', nickname);
   await v.page.click('#join');
   return v;
