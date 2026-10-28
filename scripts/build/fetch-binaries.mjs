@@ -131,6 +131,8 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
       const resumed = got.resumedAt.length ? ` (after resuming at byte ${got.resumedAt.join(', ')}: the parts may come from different files)` : '';
       throw new Error(`Checksum mismatch for ${url}: expected ${sha256}, got ${actual}${resumed}`);
     }
+    // Only reached when sha256(bytes) equals the pin from versions.json: these are exactly the
+    // bytes reviewed when the pin was set, not data chosen by the server.
     fs.writeFileSync(`${dest}.part`, bytes);
     fs.renameSync(`${dest}.part`, dest);
     return;
