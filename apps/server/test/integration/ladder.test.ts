@@ -1,12 +1,9 @@
 import crypto from 'node:crypto';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { createApp, type App } from '../../src/app.js';
+import type { App } from '../../src/app.js';
 import { isAlive } from '../../src/process/children.js';
 import { variantInfoHashHex } from '../../src/tracker/tracker.js';
-import { FEEDS, FFMPEG_BIN, hasFfmpeg, joinAs, startFeed, stopTracked, tmpDir, until, type Feed, type Jar } from './helpers.js';
-
-const PORTS = { rtmp: 29450, public: 28180, admin: 28181, mediamtxHls: 28988 };
-const BASE = `http://127.0.0.1:${PORTS.public}`;
+import { bootApp, FEEDS, FFMPEG_BIN, hasFfmpeg, joinAs, startFeed, stopTracked, until, type Feed, type Jar, type Ports } from './helpers.js';
 
 function mediaSegments(playlist: string): string[] {
   return playlist.split('\n').filter((l) => l && !l.startsWith('#'));
@@ -18,6 +15,7 @@ const runOf = (seg: string): string => seg.split('_')[0]!;
 
 describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multivariant playlist', () => {
   let app: App;
+  let ports: Ports;
   let feed: Feed | null = null;
   let jar: Jar;
   const ladder = () => app.live.quality.transcoder;
@@ -60,7 +58,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
         [app.live.origin, 'updated'],
       ],
     });
-  const push = (): Feed => (feed = startFeed(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, FEEDS.hd));
+  const push = (): Feed => (feed = startFeed(`rtmp://127.0.0.1:${ports.rtmp}/live/${app.live.snapshot().streamKey}`, FEEDS.hd));
   /** A media playlist by name ("v480" or "v480.m3u8"); '' while it is not served. */
   const playlist = async (name: string): Promise<string> => {
     const res = await jar.fetch(`/hls/${name.replace(/\.m3u8$/, '')}.m3u8`);
@@ -68,20 +66,15 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   };
 
   beforeAll(async () => {
-    app = await createApp({
-      dataDir: tmpDir(),
-      noTunnel: true,
-      noReaper: true,
-      logToStdout: false,
+    // The ladder probes the encoders itself when OBS connects.
+    ({ app, ports } = await bootApp({
       // These tests are about the ladder itself (renditions, crash recovery, reconnects). On a
       // 3-vCPU CI runner, x264 720p + 480p keeps the machine ≥ 90 % busy, so the load guard
       // rightly drops 720p after 10 s and the 720p playlist disappears mid-test. The guard has
       // its own unit tests (quality-decisions.test.ts): never shed here.
       loadGuard: { cpuSaturatedPercent: 101, behindSpeed: 0 },
       configOverrides: {
-        ports: PORTS,
-        speedTest: { enabled: false, intervalMinutes: 15 },
-        // The system ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
+        // The test ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
         // on machines without a GPU encoder and with fewer than 6 CPU threads (CI runners), where
         // `encoder: 'auto'` keeps only the original quality to protect OBS.
         ffmpegPath: FFMPEG_BIN,
@@ -91,12 +84,10 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
           obsWebsocket: { enabled: false, url: 'ws://127.0.0.1:4455' },
         },
       },
-    });
-    await app.live.quality.probe();
-    await app.live.start();
+    }));
     push();
     await waitUntil(() => app.live.phase === 'live' && app.live.origin.sourceKind === 'ladder' && app.live.quality.transcoder.status === 'running', 60_000, 'ladder to become live');
-    jar = await joinAs(BASE, app.live.snapshot().liveLink!, 'Ladder');
+    jar = await joinAs(`http://127.0.0.1:${app.live.publicPort}`, app.live.snapshot().liveLink!, 'Ladder');
   });
 
   afterEach(() => {

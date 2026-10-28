@@ -8,7 +8,7 @@ import { ADMIN_COOKIE } from '@swarmcast/shared';
 import { isListening } from '../../src/core/ports.js';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage, type DesktopStateMessage, type ShellMessage } from '../../src/desktop/protocol.js';
 import { isAlive } from '../../src/process/children.js';
-import { spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
+import { allocAppPorts, spawnTracked, stopTracked, tmpDir, until, type Ports, type Tracked } from './helpers.js';
 
 // The real server from source, started like the desktop shell does (`--desktop`), driven over
 // stdio by this test acting as the shell. Temporary data folder, HOME and ports (never the
@@ -17,13 +17,6 @@ import { spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helper
 const ROOT = path.resolve(__dirname, '../../../..');
 const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const posix = process.platform !== 'win32';
-
-interface Ports {
-  rtmp: number;
-  public: number;
-  admin: number;
-  mediamtxHls: number;
-}
 
 function writeConfig(dir: string, ports: Ports, extra: Record<string, unknown> = {}): void {
   fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ ports, speedTest: { enabled: false, intervalMinutes: 15 }, tunnel: { provider: 'none' }, ...extra }));
@@ -142,7 +135,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
   it('ready, panel login, state on every change, clicks, update status, autostart, first-run check, quit', async () => {
     const dir = tmpDir();
     const home = tmpDir('sc-home-');
-    const ports = { rtmp: 29750, public: 28480, admin: 28481, mediamtxHls: 29188 + 100 };
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const exe = process.platform === 'darwin' ? '/Applications/Swarm Cast Test.app/Contents/MacOS/SwarmCast' : '/opt/Swarm Cast Test/swarmcast-desktop';
     const shell = new FakeShell(dir, home, [], { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_DESKTOP_EXE: exe });
@@ -225,7 +218,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
 
   it('stdin closing (the shell is gone) stops everything and exits 0', async () => {
     const dir = tmpDir();
-    const ports = { rtmp: 29760, public: 28490, admin: 28491, mediamtxHls: 29298 };
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const shell = new FakeShell(dir, tmpDir('sc-home-'), [], { SWARMCAST_WEB_DIR: webDir() });
     await shell.next(isReady);
@@ -247,7 +240,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     await new Promise<void>((r) => hang.listen(0, '127.0.0.1', () => r()));
     const hangUrl = `http://127.0.0.1:${(hang.address() as net.AddressInfo).port}`;
     const dir = tmpDir();
-    const ports = { rtmp: 29765, public: 28495, admin: 28496, mediamtxHls: 29303 };
+    const ports = await allocAppPorts();
     writeConfig(dir, ports, { speedTest: { enabled: true, intervalMinutes: 15 }, tunnel: { provider: 'external', externalUrl: hangUrl } });
     const shell = new FakeShell(dir, tmpDir('sc-home-'), [], { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_SPEEDTEST_URL: hangUrl }, { tunnel: true });
     await shell.next(isReady);
@@ -270,7 +263,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
 
   it('{"type":"quit"} exits 0; autostart is unsupported without SWARMCAST_DESKTOP_EXE', async () => {
     const dir = tmpDir();
-    writeConfig(dir, { rtmp: 29770, public: 28500, admin: 28501, mediamtxHls: 29308 });
+    writeConfig(dir, await allocAppPorts());
     const shell = new FakeShell(dir, tmpDir('sc-home-'), ['--no-autostart'], { SWARMCAST_WEB_DIR: webDir() });
     const ready = await shell.next(isReady);
     expect(await shell.phaseIs('off')).toMatchObject({ canStart: true });
@@ -283,7 +276,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
 
   it('fatal "ports-busy" when the OBS port is used by another program', async () => {
     const dir = tmpDir();
-    const ports = { rtmp: 29780, public: 28510, admin: 28511, mediamtxHls: 29318 };
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const other = net.createServer();
     servers.push(other);
@@ -297,7 +290,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
   });
 
   it('fatal "already-running" when another SwarmCast answers on the panel port', async () => {
-    const ports = { rtmp: 29790, public: 28520, admin: 28521, mediamtxHls: 29328 };
+    const ports = await allocAppPorts();
     const firstDir = tmpDir();
     writeConfig(firstDir, ports);
     const first = new FakeShell(firstDir, tmpDir('sc-home-'), ['--no-autostart'], { SWARMCAST_WEB_DIR: webDir() });

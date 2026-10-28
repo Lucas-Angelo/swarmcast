@@ -4,7 +4,7 @@ import { strFromU8, unzipSync } from 'fflate';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LogExportResult } from '@swarmcast/shared';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage } from '../../src/desktop/protocol.js';
-import { Jar, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
+import { allocAppPorts, Jar, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 // The real server from source, with a temporary data folder, HOME and Downloads folder
 // (SWARMCAST_DOWNLOADS_DIR): never the user's own SwarmCast data or ~/Downloads.
@@ -92,7 +92,7 @@ function checkZip(file: string, s: Started, token?: string): Record<string, stri
 
 describe('log export (real server)', () => {
   it('script mode: the panel API writes an anonymised ZIP to the Downloads folder', async () => {
-    const ports = { rtmp: 29481, public: 28280, admin: 28281, mediamtxHls: 28998 };
+    const ports = await allocAppPorts();
     const s = start(ports, ['--no-tray', '--no-open']);
     await waitOn(s, () => s.stdout.some((l) => l.includes('/auth/')), 'panel login URL');
     const login = /(http:\/\/127\.0\.0\.1:\d+)\/auth\/(\S+)/.exec(s.stdout.find((l) => l.includes('/auth/'))!)!;
@@ -124,7 +124,7 @@ describe('log export (real server)', () => {
   });
 
   it('desktop mode: {"type":"export-logs"} on stdin answers with the ZIP path', async () => {
-    const ports = { rtmp: 29482, public: 28290, admin: 28291, mediamtxHls: 28999 };
+    const ports = await allocAppPorts();
     const s = start(ports, ['--desktop']);
     await waitOn(s, () => s.messages.some((m) => m.type === 'ready'), 'ready');
     const ready = s.messages.find((m) => m.type === 'ready') as { adminUrl: string };

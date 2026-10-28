@@ -1,12 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app.js';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
-import { spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
+import { allocAppPorts, bootApp, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 const ROOT = path.resolve(__dirname, '../../../..');
 const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
@@ -43,27 +41,6 @@ function processName(pid: number): string {
   }
 }
 
-/**
- * Ports no other test file (or a copy of the suite in another checkout) has hard-coded: the
- * fixed ports used to be shared with ladder.test.ts, so a SwarmCast still running elsewhere
- * made "something listens on the RTMP port" true before this test's own MediaMTX existed.
- */
-async function freePorts(): Promise<{ rtmp: number; public: number; admin: number; mediamtxHls: number }> {
-  const servers = await Promise.all(
-    [0, 1, 2, 3].map(
-      () =>
-        new Promise<net.Server>((resolve, reject) => {
-          const s = net.createServer();
-          s.once('error', reject);
-          s.listen(0, '127.0.0.1', () => resolve(s));
-        }),
-    ),
-  );
-  const [rtmp, pub, admin, hls] = servers.map((s) => (s.address() as net.AddressInfo).port) as [number, number, number, number];
-  await Promise.all(servers.map((s) => new Promise<void>((r) => s.close(() => r()))));
-  return { rtmp, public: pub, admin, mediamtxHls: hls };
-}
-
 /** MediaMTX started by this SwarmCast (its own child, by pid) and listening: not just "the port answers". */
 async function ownMediaMtx(main: Tracked, rtmpPort: number): Promise<number> {
   let pid: number | undefined;
@@ -82,7 +59,9 @@ afterEach(stopTracked);
 describe.skipIf(!posix)('process lifecycle', () => {
   it('killing SwarmCast with SIGKILL takes MediaMTX down with it (reaper)', async () => {
     const dir = tmpDir();
-    const ports = await freePorts();
+    // Ports of this worker's block, free right now: not ports another SwarmCast may hold (one
+    // made "something listens on the RTMP port" true before this test's own MediaMTX existed).
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
     const mediamtx = await ownMediaMtx(main, ports.rtmp);
@@ -96,7 +75,7 @@ describe.skipIf(!posix)('process lifecycle', () => {
 
   it('Ctrl+C (SIGINT) stops everything and exits cleanly', async () => {
     const dir = tmpDir();
-    const ports = await freePorts();
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
     const mediamtx = await ownMediaMtx(main, ports.rtmp);
@@ -109,21 +88,8 @@ describe.skipIf(!posix)('process lifecycle', () => {
   });
 
   it('turns everything off automatically when OBS sends no video', async () => {
-    const ports = await freePorts();
-    const app = await createApp({
-      dataDir: tmpDir(),
-      noTunnel: true,
-      noReaper: true,
-      logToStdout: false,
-      configOverrides: {
-        // The panel and the public server listen on a port the OS picks (no probe needed).
-        ports: { ...ports, public: 0, admin: 0 },
-        speedTest: { enabled: false, intervalMinutes: 15 },
-        autoStopMinutes: 0.08,
-      },
-    });
+    const { app, ports } = await bootApp({ configOverrides: { autoStopMinutes: 0.08 } });
     try {
-      await app.live.start();
       expect(app.live.phase).toBe('waiting-obs');
       expect(app.live.snapshot().autoStopAt).toBeGreaterThan(Date.now());
       await until(() => app.live.phase === 'off', { timeoutMs: 40_000, what: 'automatic stop', detail: () => `phase ${app.live.phase}`, on: [[app.live, 'state']] });

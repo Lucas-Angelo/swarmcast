@@ -5,10 +5,13 @@ import path from 'node:path';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import { clipFeedArgs, ensureClipSync, ffmpegBin, hasFfmpeg as ffmpegRuns, liveFeedArgs, type FeedOptions } from '../../../../scripts/test/lib/ffmpeg.mjs';
+import { allocPortMap, isBindError } from '../../../../scripts/test/lib/ports.mjs';
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
+import { createApp, type App, type AppOptions } from '../../src/app.js';
 
 export { until, waitForLine, WaitError } from '../../../../scripts/test/lib/wait.mjs';
 export { isAlive, spawnTracked, stopTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
+export { allocPortMap, allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 
 /** The ffmpeg every test uses, by absolute path ($FFMPEG_BIN in CI, else the first on PATH). */
 export const FFMPEG_BIN = ffmpegBin();
@@ -16,6 +19,48 @@ export const hasFfmpeg = ffmpegRuns();
 
 export function tmpDir(prefix = 'sc-it-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+}
+
+export type Ports = {
+  rtmp: number;
+  public: number;
+  admin: number;
+  mediamtxHls: number;
+};
+
+/** All four SwarmCast ports from this worker's block: for a SwarmCast started with a config file. */
+export function allocAppPorts(): Promise<Ports> {
+  return allocPortMap(['rtmp', 'public', 'admin', 'mediamtxHls']);
+}
+
+/**
+ * createApp() for a test, then `live.start()` (unless `start: false`). The panel and the
+ * public server listen on ports the OS picks (`app.adminUrl`, `app.live.publicPort`); MediaMTX
+ * gets RTMP and HLS ports from this worker's block. A port taken between the probe and
+ * MediaMTX's own listen gets one retry on new ports, logged, so a soak can count it.
+ */
+export async function bootApp(o: AppOptions & { start?: boolean } = {}): Promise<{ app: App; ports: Ports }> {
+  for (let attempt = 1; ; attempt++) {
+    const { rtmp, mediamtxHls } = await allocPortMap(['rtmp', 'mediamtxHls']);
+    const ports = { rtmp, mediamtxHls, public: 0, admin: 0 };
+    const app = await createApp({
+      dataDir: tmpDir(),
+      noTunnel: true,
+      noReaper: true,
+      logToStdout: false,
+      ...o,
+      configOverrides: { speedTest: { enabled: false, intervalMinutes: 15 }, ...o.configOverrides, ports },
+    });
+    if (o.start === false) return { app, ports };
+    try {
+      await app.live.start();
+      return { app, ports };
+    } catch (err) {
+      await app.close();
+      if (attempt > 1 || !isBindError(err)) throw err;
+      console.warn(`bootApp: a port was taken after the probe (${(err as Error).message}); retrying once on new ports`);
+    }
+  }
 }
 
 /** Masks the stream key in RTMP URLs (`rtmp://host/app/<key>` becomes `rtmp://host/app/[key]`). */

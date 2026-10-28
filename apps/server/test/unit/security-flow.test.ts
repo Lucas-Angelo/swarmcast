@@ -9,7 +9,12 @@ import { makeController } from './live-helpers.js';
 
 const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
 
-function setup(ports = { rtmp: 39361, public: 39362, admin: 39363, mediamtxHls: 39364 }) {
+/**
+ * Port 0 by default: the OS picks the public server's port when the live starts
+ * (live.publicPort). A test that only round-trips settings through the config schema (ports
+ * >= 1) and never starts the live passes `defaultConfig().ports`.
+ */
+function setup(ports: AppConfig['ports'] = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 }) {
   let now = 1_800_000_000_000;
   const saved: AppConfig[] = [];
   const config = defaultConfig();
@@ -19,7 +24,7 @@ function setup(ports = { rtmp: 39361, public: 39362, admin: 39363, mediamtxHls: 
     now += ms;
     live.shield.tick();
   };
-  return { live, saved, advance, base: `http://127.0.0.1:${ports.public}` };
+  return { live, saved, advance };
 }
 
 const lives: LiveController[] = [];
@@ -29,7 +34,7 @@ afterEach(async () => {
 
 describe('settings round-trip: admission limits and protection switches', () => {
   it('max viewers / sessions per browser are validated, persisted and applied to new joins only', () => {
-    const { live, saved } = setup();
+    const { live, saved } = setup(defaultConfig().ports);
     live.access.begin();
     for (const n of ['a', 'b', 'c']) live.access.createSession({ nickname: n, deviceId: `dev-${n}`, device: 'desktop', ip: '1.1.1.1' });
     const body = settingsSchema.parse({ ...live.snapshot().settings, maxViewers: 2, maxSessionsPerDevice: 1 });
@@ -49,7 +54,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
   });
 
   it('protection switches have safe defaults and round-trip through config', () => {
-    const { live, saved } = setup();
+    const { live, saved } = setup(defaultConfig().ports);
     expect(live.snapshot().security.browserCheck).toBe(1);
     expect(live.snapshot().security.settings).toEqual({
       blockKnownBadIps: true,
@@ -75,9 +80,10 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
 describe('attack flow through the real public server', () => {
   it('a flood of invalid /join links → warning, tighter limits and proof-of-work; a real viewer still joins', async () => {
-    const { live, advance, base } = setup();
+    const { live, advance } = setup();
     lives.push(live);
     await live.start();
+    const base = `http://127.0.0.1:${live.publicPort}`;
     // Drive the detector with the fake clock only.
     clearInterval((live.shield as unknown as { timer: NodeJS.Timeout }).timer);
 
@@ -134,12 +140,10 @@ describe('attack flow through the real public server', () => {
     bl.enabled = true;
     // Loopback is never blocked, so simulate a listed public client.
     vi.spyOn(bl, 'isBlocked').mockImplementation((ip) => ip === '127.0.0.1');
-    const config = defaultConfig();
-    config.ports = { rtmp: 39371, public: 39372, admin: 39373, mediamtxHls: 39374 };
-    const { live } = makeController(direct, { config, blocklists: bl });
+    const { live } = makeController(direct, { blocklists: bl });
     lives.push(live);
     await live.start();
-    const base = 'http://127.0.0.1:39372';
+    const base = `http://127.0.0.1:${live.publicPort}`;
     const page = await fetch(`${base}/join/${live.access.currentSecret}`, { redirect: 'manual' });
     expect(page.status).toBe(403);
     expect(page.headers.get('x-swarmcast-refused')).toBe('blocklist');
@@ -147,7 +151,7 @@ describe('attack flow through the real public server', () => {
     expect(((await api.json()) as { code: string }).code).toBe('viewer.err.blocked');
     const { default: WebSocket } = await import('ws');
     const wsStatus = await new Promise<number>((resolve) => {
-      const ws = new WebSocket(`ws://127.0.0.1:39372/control`, { origin: base });
+      const ws = new WebSocket(`ws://127.0.0.1:${live.publicPort}/control`, { origin: base });
       ws.on('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
       ws.on('error', () => resolve(-1));
     });
@@ -192,8 +196,8 @@ describe('controller reactions in Direct mode', () => {
     // The live is never really started here, so "Stop everything" checks ports nothing of ours
     // listens on. With fixed ports, any other program listening on one of them looks like a
     // leftover, the stop verification fails and retries for 15 s (past this test's 10 s wait).
-    // Port 0 cannot be listened on by anything.
-    const { live, advance } = setup({ rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 });
+    // setup() uses port 0, which nothing can listen on.
+    const { live, advance } = setup();
     live.access.begin();
     live.phase = 'live';
     live.mode = 'direct';
