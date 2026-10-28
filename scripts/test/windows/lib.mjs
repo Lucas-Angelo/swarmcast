@@ -134,7 +134,14 @@ export async function section(name, fn) {
       }
     }
     openPages.clear();
-    closeStrayBrowsers();
+    let list = null;
+    try {
+      list = isWin ? processes() : null;
+    } catch {
+      /* best effort */
+    }
+    closeStrayBrowsers(list);
+    sweepStrays(list);
     log(`===== ${name} done in ${Math.round((Date.now() - t0) / 1000)} s`);
   }
 }
@@ -143,10 +150,10 @@ export async function section(name, fn) {
  * SwarmCast opens the panel in the default browser at every start (`cmd /c start <url>`).
  * Close those windows between sections; Playwright's own browsers are left alone.
  */
-export function closeStrayBrowsers() {
+export function closeStrayBrowsers(list = null) {
   if (!isWin) return;
   try {
-    for (const p of processes()) {
+    for (const p of list ?? processes()) {
       if (!/^(msedge|chrome|firefox|iexplore)\.exe$/i.test(p.name)) continue;
       if (/remote-debugging-pipe|juggler|playwright/i.test(p.cmd)) continue;
       spawnSync('taskkill', ['/F', '/PID', String(p.pid)], { stdio: 'ignore', windowsHide: true });
@@ -154,6 +161,37 @@ export function closeStrayBrowsers() {
   } catch {
     /* best effort */
   }
+}
+
+// Path-based sweep at the end of every section. taskkill /T follows parent pids and misses
+// orphans whose parent already exited, so anything whose executable or command line points into
+// the artifacts folder, the work folder or a folder a suite adds (addSweepPath) is ended: console
+// helpers, cmd /c wrappers, a start script a cleanup missed. Never this harness or its ancestors,
+// nor what a suite keeps across sections (keepAcrossSections) and everything below it.
+const sweepPaths = new Set([ART, path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')))]);
+const keptPids = new Set();
+export const addSweepPath = (p) => sweepPaths.add(path.resolve(p));
+export const keepAcrossSections = (pid) => pid && keptPids.add(pid);
+function sweepStrays(list) {
+  if (!isWin || !list) return;
+  const byPid = new Map(list.map((p) => [p.pid, p]));
+  const exempt = new Set();
+  for (let p = byPid.get(process.pid); p && !exempt.has(p.pid); p = byPid.get(p.ppid)) exempt.add(p.pid);
+  exempt.add(process.pid);
+  for (const k of keptPids) {
+    if (!byPid.has(k)) keptPids.delete(k);
+    else for (const d of descendants(list, k)) exempt.add(d.pid);
+  }
+  const roots = [...sweepPaths].map((r) => r.toLowerCase());
+  const strays = list.filter((p) => {
+    if (exempt.has(p.pid)) return false;
+    const cmd = (p.cmd || '').toLowerCase().replaceAll('/', '\\');
+    const exe = (p.path || '').toLowerCase();
+    return roots.some((r) => cmd.includes(r) || exe.startsWith(r + path.sep));
+  });
+  if (!strays.length) return;
+  for (const p of strays) spawnSync('taskkill', ['/F', '/T', '/PID', String(p.pid)], { stdio: 'ignore', windowsHide: true });
+  info('stray processes ended after the section (path sweep)', strays.map((p) => `${p.name}#${p.pid} (ppid ${p.ppid}): ${(p.cmd || p.path).slice(0, 160)}`).join(' | '));
 }
 
 /**
@@ -493,6 +531,7 @@ export async function startApp(o) {
   // The start script restarts SwarmCast when it exits within 10 s: stop the script itself too,
   // unless the app is meant to outlive this section (o.persist).
   if (!o.persist) onCleanup(() => inst.child.exitCode === null && killTree(inst.child.pid));
+  else keepAcrossSections(inst.child.pid);
   try {
     const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, inst.exited);
     return { inst, ...admin };
@@ -842,23 +881,31 @@ export function ui(lang, key) {
 // Environment facts (recorded as info rows)
 // ---------------------------------------------------------------------------
 
+/**
+ * Facts about the runner, in ONE PowerShell call (each PowerShell 5.1 started costs seconds on a
+ * cold runner; the old nine calls took 96-102 s). Get-WindowsFeature, a cold Server Manager query,
+ * runs only in the app suite, the one that needs Media Foundation for Firefox.
+ */
 export function environmentFacts() {
-  const facts = {};
-  const tryPs = (k, s) => {
-    try {
-      facts[k] = ps(s, { allowFail: true });
-    } catch (e) {
-      facts[k] = `error: ${e.message}`;
-    }
+  const facts = {
+    os: '(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version) build $($_.BuildNumber)" })',
+    powershell: '"Windows PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"',
+    elevated: '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)',
+    uac: '(Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System).EnableLUA',
+    session: '"session $((Get-Process -Id $PID).SessionId); explorer running: $([bool](Get-Process explorer -ErrorAction SilentlyContinue)); interactive: $([Environment]::UserInteractive)"',
+    defaultTerminal: '$d = (Get-ItemProperty "HKCU:\\Console\\%%Startup" -ErrorAction SilentlyContinue).DelegationTerminal; if ($d) { $d } else { "not set (Windows decides)" }',
+    firewall: '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "',
+    gpu: '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "',
+    cpu: '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"',
+    mediaFoundation: SUITE === 'app' ? '(Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState' : '"n/a (checked in the app suite only)"',
   };
-  tryPs('os', '(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version) build $($_.BuildNumber)" })');
-  tryPs('powershell', '"Windows PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"');
-  tryPs('elevated', '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)');
-  tryPs('uac', '(Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System).EnableLUA');
-  tryPs('session', '"session $((Get-Process -Id $PID).SessionId); explorer running: $([bool](Get-Process explorer -ErrorAction SilentlyContinue)); interactive: $([Environment]::UserInteractive)"');
-  tryPs('firewall', '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "');
-  tryPs('gpu', '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "');
-  tryPs('cpu', '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"');
-  tryPs('mediaFoundation', 'try { (Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState } catch { "n/a: $($_.Exception.Message)" }');
-  return facts;
+  const body = Object.entries(facts)
+    .map(([k, s]) => `try { $f['${k}'] = [string](& { ${s} }) } catch { $f['${k}'] = "error: $($_.Exception.Message)" }`)
+    .join('\n');
+  try {
+    return JSON.parse(ps(`$f = [ordered]@{}\n${body}\n$f | ConvertTo-Json -Compress`, { allowFail: true, timeout: 240_000 }));
+  } catch (e) {
+    return { error: `environment facts failed: ${e.message}` };
+  }
 }
+
