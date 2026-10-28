@@ -18,7 +18,8 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 /** Render binaries.json from the parsed versions.json. */
 export function renderBinariesJson(versions) {
   const lines = ['{', '  "schema": 1,', '  "note": "Downloaded by the start scripts from each publisher and verified with SHA-256; SwarmCast does not redistribute these tools.",'];
-  const tools = Object.entries(versions).filter(([, spec]) => spec.bundle === false);
+  // testOnly tools (ffmpeg-test: the GPL build CI's test feeds use) are never offered to users.
+  const tools = Object.entries(versions).filter(([, spec]) => spec.bundle === false && !spec.testOnly);
   tools.forEach(([tool, spec], ti) => {
     lines.push(`  ${JSON.stringify(tool)}: {`);
     lines.push(`    "version": ${JSON.stringify(spec.version)},`);

@@ -3,6 +3,7 @@
 // SHA-256 values pinned in versions.json (copied from the upstream release checksums).
 //
 // Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
+//        node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>   (one tool only)
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -62,12 +63,20 @@ function findFile(dir, name) {
   return null;
 }
 
-export async function fetchBinaries(target, outDir, { withOptional = false } = {}) {
+export async function fetchBinaries(target, outDir, { withOptional = false, only } = {}) {
+  if (only && !versions[only]) throw new Error(`Unknown tool ${only} (versions.json has ${Object.keys(versions).join(', ')})`);
   fs.mkdirSync(outDir, { recursive: true });
   for (const [tool, spec] of Object.entries(versions)) {
-    // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
-    // unless a packager explicitly opts in (and then ships its license + source).
-    if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) continue;
+    if (only) {
+      if (tool !== only) continue;
+    } else if (spec.testOnly) {
+      // ffmpeg-test (the GPL build CI's test feeds use) is fetched only by name (--only).
+      continue;
+    } else if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) {
+      // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
+      // unless a packager explicitly opts in (and then ships its license + source).
+      continue;
+    }
     const a = spec.assets[target];
     if (!a) throw new Error(`No ${tool} build for ${target}`);
     const finalPath = path.join(outDir, path.basename(a.binary));
@@ -110,7 +119,7 @@ export async function fetchBinaries(target, outDir, { withOptional = false } = {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = arg('target', hostTarget());
   const out = path.resolve(arg('out', path.join(root, 'vendor', target)));
-  fetchBinaries(target, out).catch((err) => {
+  fetchBinaries(target, out, { only: arg('only') }).catch((err) => {
     console.error(`✗ ${err.message}`);
     process.exit(1);
   });
