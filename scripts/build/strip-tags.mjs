@@ -2,6 +2,10 @@
  * Removes every `<…>` span (an HTML tag, an e-mail address in "Name <a@b>"), like
  * `s.replace(/<[^>]*>/g, '')` but in one pass over the text with no regex: a `<` with no `>`
  * after it is kept as it is.
+ *
+ * Not an HTML sanitizer: it turns text into a heading slug (which then drops every
+ * punctuation character) and an author name for a plain-text licence file. Nothing it returns
+ * is ever put into HTML unescaped.
  * @param {string} s
  * @returns {string}
  */
