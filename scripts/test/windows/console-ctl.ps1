@@ -158,20 +158,25 @@ public static class ScCon {
 # Screen coordinates in physical pixels for the hit tests, UI Automation and SendInput alike.
 [ScCon]::DpiAware()
 
-# Center of the Close button of window $Hwnd as UI Automation sees it, or $null.
+# Center of the window's own Close button (the X at the right end of its title bar) as UI
+# Automation sees it, or $null. Windows Terminal also has a close button on every tab (seen
+# first in the tree, AutomationId CloseButton too): the rightmost one in the top 60 px is the X.
 function Get-UiaCloseButtonPoint([IntPtr]$Hwnd) {
   try {
     Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
     $A = [System.Windows.Automation.AutomationElement]
     $root = $A::FromHandle($Hwnd)
+    $top = $root.Current.BoundingRectangle.Y
     $isButton = New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+    $best = $null
     foreach ($b in $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $isButton)) {
       $c = $b.Current
-      if ($c.AutomationId -eq 'CloseButton' -or $c.Name -eq 'Close') {
-        $r = $c.BoundingRectangle
-        if ($r.Width -gt 0 -and $r.Height -gt 0) { return @([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2)) }
-      }
+      if ($c.AutomationId -ne 'CloseButton' -and $c.Name -ne 'Close') { continue }
+      $r = $c.BoundingRectangle
+      if ($r.Width -le 0 -or $r.Height -le 0 -or ($r.Y - $top) -gt 60) { continue }
+      if (-not $best -or $r.Right -gt $best.Right) { $best = $r }
     }
+    if ($best) { return @([int]($best.X + $best.Width / 2), [int]($best.Y + $best.Height / 2)) }
   } catch { }
   return $null
 }
