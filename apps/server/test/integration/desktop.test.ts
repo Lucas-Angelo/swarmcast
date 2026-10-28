@@ -1,15 +1,14 @@
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
-import readline from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
 import { ADMIN_COOKIE } from '@swarmcast/shared';
 import { isListening } from '../../src/core/ports.js';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage, type DesktopStateMessage, type ShellMessage } from '../../src/desktop/protocol.js';
 import { isAlive } from '../../src/process/children.js';
-import { tmpDir, waitFor } from './helpers.js';
+import { spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 // The real server from source, started like the desktop shell does (`--desktop`), driven over
 // stdio by this test acting as the shell. Temporary data folder, HOME and ports (never the
@@ -41,10 +40,10 @@ function webDir(): string {
 }
 
 class FakeShell {
+  readonly t: Tracked;
   readonly proc: ChildProcess;
   readonly messages: DesktopOutMessage[] = [];
   readonly logLines: string[] = [];
-  stderr = '';
   readonly exited: Promise<number | null>;
 
   constructor(
@@ -54,7 +53,8 @@ class FakeShell {
     env: Record<string, string> = {},
     o: { tunnel?: boolean } = {},
   ) {
-    this.proc = spawn(process.execPath, ['--import', 'tsx', MAIN, '--desktop', ...(o.tunnel ? [] : ['--no-tunnel']), '--data-dir', dataDir, ...args], {
+    this.t = spawnTracked(process.execPath, ['--import', 'tsx', MAIN, '--desktop', ...(o.tunnel ? [] : ['--no-tunnel']), '--data-dir', dataDir, ...args], {
+      name: 'SwarmCast --desktop',
       cwd: ROOT,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: {
@@ -69,7 +69,9 @@ class FakeShell {
         ...env,
       },
     });
-    readline.createInterface({ input: this.proc.stdout! }).on('line', (line) => {
+    this.proc = this.t.child;
+    this.t.on('line', (line, stream) => {
+      if (stream !== 'stdout') return;
       const msg = decodeDesktopMessage(line);
       if (msg) this.messages.push(msg);
       else {
@@ -78,30 +80,28 @@ class FakeShell {
         this.logLines.push(line);
       }
     });
-    this.proc.stderr!.on('data', (d) => (this.stderr += d));
-    this.exited = new Promise((r) => this.proc.on('exit', (code) => r(code)));
+    this.exited = this.t.exited.then((x) => x.code);
   }
 
   send(msg: ShellMessage | string): void {
     this.proc.stdin!.write(typeof msg === 'string' ? msg : encodeShellMessage(msg));
   }
 
-  async next<T extends DesktopOutMessage>(pred: (m: DesktopOutMessage) => m is T, timeoutMs = 30_000, from = 0): Promise<T> {
+  /** The first message from index `from` on that matches; fails at once if the server exits without it. */
+  async next<T extends DesktopOutMessage>(pred: (m: DesktopOutMessage) => m is T, timeoutMs = 30_000, from = 0, what = 'a desktop message'): Promise<T> {
     let found: T | undefined;
-    await waitFor(
+    await until(
       () => {
         found = this.messages.slice(from).find(pred);
-        return !!found || this.proc.exitCode !== null;
+        return !!found;
       },
-      timeoutMs,
-      'a desktop message',
+      { timeoutMs, what, abortOn: [this.t], on: [[this.t, 'line']], detail: () => `messages ${JSON.stringify(this.messages.slice(from).map((m) => m.type))}; last output: ${this.t.tail(10)}` },
     );
-    if (!found) throw new Error(`server exited (${this.proc.exitCode}) without the expected message. stderr: ${this.stderr}`);
-    return found;
+    return found!;
   }
 
   phaseIs(phase: DesktopStateMessage['phase'], from = 0): Promise<DesktopStateMessage> {
-    return this.next((m): m is DesktopStateMessage => m.type === 'state' && m.phase === phase, 40_000, from);
+    return this.next((m): m is DesktopStateMessage => m.type === 'state' && m.phase === phase, 40_000, from, `phase ${phase}`);
   }
 }
 
@@ -129,10 +129,9 @@ function childPids(pid: number): number[] {
   }
 }
 
-const shells: FakeShell[] = [];
 const servers: net.Server[] = [];
-afterEach(() => {
-  for (const s of shells.splice(0)) if (s.proc.exitCode === null) s.proc.kill('SIGKILL');
+afterEach(async () => {
+  await stopTracked();
   for (const s of servers.splice(0)) {
     if (s instanceof http.Server) s.closeAllConnections();
     s.close();
@@ -147,7 +146,6 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     writeConfig(dir, ports);
     const exe = process.platform === 'darwin' ? '/Applications/Swarm Cast Test.app/Contents/MacOS/SwarmCast' : '/opt/Swarm Cast Test/swarmcast-desktop';
     const shell = new FakeShell(dir, home, [], { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_DESKTOP_EXE: exe });
-    shells.push(shell);
 
     const ready = await shell.next(isReady);
     expect(ready.adminUrl).toMatch(new RegExp(`^http://127\\.0\\.0\\.1:${ports.admin}/auth/[A-Za-z0-9_-]+$`));
@@ -182,7 +180,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     let d = await (await api('/api/desktop')).json();
     expect(d).toMatchObject({ desktop: true, version: '9.9.9-test', autostart: { supported: true, enabled: false }, update: null });
     shell.send({ type: 'update', update: { status: 'available', current: '9.9.9-test', version: '10.0.0', notes: 'Better things' } });
-    await waitFor(async () => (await (await api('/api/desktop')).json()).update?.version === '10.0.0', 5000, 'update status');
+    await until(async () => (await (await api('/api/desktop')).json()).update?.version === '10.0.0', { timeoutMs: 5000, what: 'update status', abortOn: [shell.t] });
     from = shell.messages.length;
     expect((await api('/api/desktop/update/check', { method: 'POST', body: '{}' })).status).toBe(200);
     await shell.next((m): m is { type: 'update-check' } => m.type === 'update-check', 5000, from);
@@ -204,14 +202,14 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
 
     // First desktop start: the system check is written in the scripts' format.
     const checkFile = path.join(dir, 'system-check.json');
-    await waitFor(() => fs.existsSync(checkFile), 40_000, 'system-check.json');
+    await until(() => fs.existsSync(checkFile), { timeoutMs: 40_000, what: 'system-check.json', abortOn: [shell.t] });
     const check = JSON.parse(fs.readFileSync(checkFile, 'utf8'));
     expect(check).toMatchObject({ version: 1, source: 'desktop', appVersion: ready.version });
     expect(check.results.map((r: { id: string }) => r.id)).toEqual(['os', 'ram', 'cpu', 'upload', 'download', 'disk', 'ports', 'obs', 'github', 'release']);
     // Its own ports are not "in use by another program"; speed tests are off in this config.
     expect(check.results.find((r: { id: string }) => r.id === 'ports')).toMatchObject({ status: 'ok', value: 'free' });
     expect(check.results.find((r: { id: string }) => r.id === 'upload')).toMatchObject({ status: 'skipped' });
-    await waitFor(async () => (await (await api('/api/desktop')).json()).systemCheck === 'done', 5000, 'systemCheck done');
+    await until(async () => (await (await api('/api/desktop')).json()).systemCheck === 'done', { timeoutMs: 5000, what: 'systemCheck done', abortOn: [shell.t] });
     expect((await api('/api/system-check')).status).toBe(200);
 
     // Quit from the tray: everything stops, exit 0, no child process left.
@@ -221,7 +219,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     shell.send({ type: 'click', id: 'quit' });
     expect(await shell.exited).toBe(0);
     expect(shell.messages.slice(from).some((m) => m.type === 'state' && m.phase === 'off')).toBe(true);
-    await waitFor(() => children.every((p) => !isAlive(p)), 10_000, 'child processes to exit');
+    await until(() => children.every((p) => !isAlive(p)), { timeoutMs: 10_000, what: 'child processes to exit', detail: () => `alive ${JSON.stringify(children.filter(isAlive))}` });
     for (const p of Object.values(ports)) expect(await isListening(p)).toBe(false);
   });
 
@@ -230,13 +228,12 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     const ports = { rtmp: 29760, public: 28490, admin: 28491, mediamtxHls: 29298 };
     writeConfig(dir, ports);
     const shell = new FakeShell(dir, tmpDir('sc-home-'), [], { SWARMCAST_WEB_DIR: webDir() });
-    shells.push(shell);
     await shell.next(isReady);
     await shell.phaseIs('waiting-obs');
     const children = childPids(shell.proc.pid!);
     shell.proc.stdin!.end();
     expect(await shell.exited).toBe(0);
-    await waitFor(() => children.every((p) => !isAlive(p)), 10_000, 'child processes to exit');
+    await until(() => children.every((p) => !isAlive(p)), { timeoutMs: 10_000, what: 'child processes to exit', detail: () => `alive ${JSON.stringify(children.filter(isAlive))}` });
     expect(await isListening(ports.rtmp)).toBe(false);
   });
 
@@ -253,10 +250,9 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     const ports = { rtmp: 29765, public: 28495, admin: 28496, mediamtxHls: 29303 };
     writeConfig(dir, ports, { speedTest: { enabled: true, intervalMinutes: 15 }, tunnel: { provider: 'external', externalUrl: hangUrl } });
     const shell = new FakeShell(dir, tmpDir('sc-home-'), [], { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_SPEEDTEST_URL: hangUrl }, { tunnel: true });
-    shells.push(shell);
     await shell.next(isReady);
     await shell.phaseIs('starting');
-    await waitFor(() => seen.some((u) => u.startsWith('/__down')) && seen.includes('/healthz'), 20_000, 'the speed test and the tunnel check to hang');
+    await until(() => seen.some((u) => u.startsWith('/__down')) && seen.includes('/healthz'), { timeoutMs: 20_000, what: 'the speed test and the tunnel check to hang', abortOn: [shell.t], detail: () => `requests ${JSON.stringify(seen)}`, on: [[hang, 'request']] });
     const children = childPids(shell.proc.pid!);
     expect(children.length).toBeGreaterThan(0);
 
@@ -265,7 +261,7 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     expect(await shell.exited).toBe(0);
     expect(Date.now() - t0).toBeLessThan(5000);
     expect(shell.messages.at(-1)).toMatchObject({ type: 'state', phase: 'off' });
-    await waitFor(() => children.every((p) => !isAlive(p)), 5000, 'child processes to exit');
+    await until(() => children.every((p) => !isAlive(p)), { timeoutMs: 5000, what: 'child processes to exit', detail: () => `alive ${JSON.stringify(children.filter(isAlive))}` });
     for (const p of Object.values(ports)) expect(await isListening(p)).toBe(false);
     // The aborted first-run check wrote nothing (the next start checks again).
     expect(fs.existsSync(path.join(dir, 'system-check.json'))).toBe(false);
@@ -276,7 +272,6 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     const dir = tmpDir();
     writeConfig(dir, { rtmp: 29770, public: 28500, admin: 28501, mediamtxHls: 29308 });
     const shell = new FakeShell(dir, tmpDir('sc-home-'), ['--no-autostart'], { SWARMCAST_WEB_DIR: webDir() });
-    shells.push(shell);
     const ready = await shell.next(isReady);
     expect(await shell.phaseIs('off')).toMatchObject({ canStart: true });
     const { base, cookie } = await login(ready.adminUrl);
@@ -294,7 +289,6 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     servers.push(other);
     await new Promise<void>((r) => other.listen(ports.rtmp, '127.0.0.1', () => r()));
     const shell = new FakeShell(dir, tmpDir('sc-home-'));
-    shells.push(shell);
     const fatal = await shell.next(isFatal);
     expect(fatal.code).toBe('ports-busy');
     expect(fatal.message).toContain(String(ports.rtmp));
@@ -307,13 +301,11 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     const firstDir = tmpDir();
     writeConfig(firstDir, ports);
     const first = new FakeShell(firstDir, tmpDir('sc-home-'), ['--no-autostart'], { SWARMCAST_WEB_DIR: webDir() });
-    shells.push(first);
     await first.next(isReady);
 
     const secondDir = tmpDir();
     writeConfig(secondDir, ports);
     const second = new FakeShell(secondDir, tmpDir('sc-home-'), ['--no-autostart']);
-    shells.push(second);
     const fatal = await second.next(isFatal);
     expect(fatal.code).toBe('already-running');
     expect(await second.exited).toBe(1);

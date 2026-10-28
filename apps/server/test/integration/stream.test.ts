@@ -1,6 +1,5 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
-import type { ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { encodeTrackerFrame, parseTrackerFrame } from '@swarmcast/shared';
@@ -8,14 +7,14 @@ import { createApp, type App } from '../../src/app.js';
 import { infoHashHexFor } from '../../src/tracker/tracker.js';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
-import { hasFfmpeg, joinAs, pushTestStream, tmpDir, waitFor } from './helpers.js';
+import { hasFfmpeg, joinAs, startFeed, stopTracked, tmpDir, until, type Feed } from './helpers.js';
 
 const PORTS = { rtmp: 29350, public: 28080, admin: 28081, mediamtxHls: 28888 };
 const BASE = `http://127.0.0.1:${PORTS.public}`;
 
 describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
   let app: App;
-  let ffmpeg: ChildProcess | null = null;
+  let feed: Feed | null = null;
   let mediamtxPid: number | undefined;
 
   beforeAll(async () => {
@@ -28,18 +27,20 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     });
     await app.live.start();
     mediamtxPid = (app.live as unknown as { d: { mediamtx: { pid?: number } } }).d.mediamtx.pid;
-    ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`);
-    await waitFor(() => app.live.phase === 'live', 40_000, 'stream to become live');
+    feed = startFeed(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`);
+    await until(() => app.live.phase === 'live', { timeoutMs: 40_000, what: 'stream to become live', detail: () => `phase ${app.live.phase}`, abortOn: [feed], on: [[app.live, 'state']] });
   });
 
   afterAll(async () => {
-    ffmpeg?.kill('SIGKILL');
+    await feed?.stop();
     await app?.close();
+    await stopTracked();
   });
 
   it('rejects publishing with a wrong stream key', async () => {
-    const bad = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/sc_wrongwrongwrongwrongwr`);
-    const code = await new Promise<number | null>((r) => bad.on('exit', r));
+    const bad = startFeed(`rtmp://127.0.0.1:${PORTS.rtmp}/live/sc_wrongwrongwrongwrongwr`);
+    const { code } = await bad.exited;
+    await bad.stop();
     expect(code).not.toBe(0);
   });
 
@@ -98,7 +99,7 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     const infoHash = Buffer.from(infoHashHexFor(app.live.access.liveId, 'main'), 'hex').toString('latin1');
     ws.send(encodeTrackerFrame({ op: 'open', id: 1 }));
     ws.send(encodeTrackerFrame({ op: 'data', id: 1, payload: JSON.stringify({ action: 'announce', info_hash: infoHash, peer_id: peer, numwant: 0, offers: [], event: 'started' }) }));
-    await waitFor(() => frames.some((f) => f.startsWith('~d1 ')), 5000, 'tracker answer on the control socket');
+    await until(() => frames.some((f) => f.startsWith('~d1 ')), { timeoutMs: 5000, what: 'tracker answer on the control socket', detail: () => `frames ${JSON.stringify(frames)}`, on: [[ws, 'message']] });
     const frame = parseTrackerFrame(frames.find((f) => f.startsWith('~d1 '))!);
     const answer = JSON.parse(frame?.op === 'data' ? frame.payload : '{}') as Record<string, unknown>;
     expect(answer['failure reason']).toBeUndefined();
@@ -111,7 +112,7 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     const closed = new Promise((r) => ws.on('close', r));
     ws.close();
     await closed;
-    await waitFor(() => app.live.tracker.socketCount === 0, 5000, 'channel closed with the control socket');
+    await until(() => app.live.tracker.socketCount === 0, { timeoutMs: 5000, what: 'channel closed with the control socket', detail: () => `sockets ${app.live.tracker.socketCount}` });
   });
 
   it('rejects cross-origin WebSocket upgrades even with a session', async () => {
@@ -162,7 +163,7 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
   });
 
   it('"Stop everything" leaves no process, port or cached video behind', async () => {
-    ffmpeg?.kill('SIGKILL');
+    await feed?.stop();
     const verified = await app.live.stop();
     expect(verified).toBe(true);
     expect(app.live.steps.map((s) => s.status)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok']);

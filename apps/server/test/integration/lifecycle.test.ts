@@ -1,4 +1,4 @@
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
-import { tmpDir, waitFor } from './helpers.js';
+import { spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 const ROOT = path.resolve(__dirname, '../../../..');
 const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
@@ -19,10 +19,10 @@ function writeConfig(dir: string, ports: Record<string, number>, extra: Record<s
   );
 }
 
-function startMain(dir: string): ChildProcess {
-  return spawn(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir], {
+function startMain(dir: string): Tracked {
+  return spawnTracked(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir], {
+    name: 'SwarmCast',
     cwd: ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, SWARMCAST_LOG_LEVEL: 'warn' },
   });
 }
@@ -65,25 +65,19 @@ async function freePorts(): Promise<{ rtmp: number; public: number; admin: numbe
 }
 
 /** MediaMTX started by this SwarmCast (its own child, by pid) and listening: not just "the port answers". */
-async function ownMediaMtx(main: ChildProcess, rtmpPort: number, out: () => string): Promise<number> {
+async function ownMediaMtx(main: Tracked, rtmpPort: number): Promise<number> {
   let pid: number | undefined;
-  await waitFor(
+  await until(
     async () => {
-      if (main.exitCode !== null) throw new Error(`SwarmCast exited early (code ${main.exitCode}): ${out()}`);
       pid = childPids(main.pid!).find((p) => processName(p).includes('mediamtx'));
       return pid !== undefined && (await isListening(rtmpPort));
     },
-    30_000,
-    'MediaMTX started by this SwarmCast',
-    out,
+    { timeoutMs: 30_000, what: 'MediaMTX started by this SwarmCast', abortOn: [main], detail: () => `children ${JSON.stringify(childPids(main.pid!))}; last output: ${main.tail(10)}` },
   );
   return pid!;
 }
 
-const procs: ChildProcess[] = [];
-afterEach(() => {
-  for (const p of procs.splice(0)) if (p.exitCode === null) p.kill('SIGKILL');
-});
+afterEach(stopTracked);
 
 describe.skipIf(!posix)('process lifecycle', () => {
   it('killing SwarmCast with SIGKILL takes MediaMTX down with it (reaper)', async () => {
@@ -91,15 +85,12 @@ describe.skipIf(!posix)('process lifecycle', () => {
     const ports = await freePorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
-    procs.push(main);
-    let out = '';
-    main.stdout!.on('data', (d) => (out += d));
-    main.stderr!.on('data', (d) => (out += d));
-    const mediamtx = await ownMediaMtx(main, ports.rtmp, () => out.slice(-2000));
+    const mediamtx = await ownMediaMtx(main, ports.rtmp);
 
-    main.kill('SIGKILL');
-    await waitFor(() => !isAlive(mediamtx), 10_000, 'MediaMTX to die');
-    await waitFor(async () => !(await isListening(ports.rtmp)), 5_000, 'RTMP port to close');
+    // A crash: SwarmCast alone dies at once; its reaper must take MediaMTX down.
+    main.child.kill('SIGKILL');
+    await until(() => !isAlive(mediamtx), { timeoutMs: 10_000, what: 'MediaMTX to die' });
+    await until(async () => !(await isListening(ports.rtmp)), { timeoutMs: 5_000, what: 'RTMP port to close' });
     expect(await isListening(ports.mediamtxHls)).toBe(false);
   });
 
@@ -108,14 +99,11 @@ describe.skipIf(!posix)('process lifecycle', () => {
     const ports = await freePorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
-    procs.push(main);
-    let out = '';
-    main.stdout!.on('data', (d) => (out += d));
-    const mediamtx = await ownMediaMtx(main, ports.rtmp, () => out.slice(-2000));
-    main.kill('SIGINT');
-    const code = await new Promise<number | null>((r) => main.on('exit', r));
+    const mediamtx = await ownMediaMtx(main, ports.rtmp);
+    main.child.kill('SIGINT');
+    const { code } = await main.exited;
     expect(code).toBe(0);
-    expect(out).toContain('Off: nothing on your computer is reachable');
+    expect(main.lines.join('\n')).toContain('Off: nothing on your computer is reachable');
     expect(isAlive(mediamtx)).toBe(false);
     for (const p of Object.values(ports)) expect(await isListening(p)).toBe(false);
   });
@@ -138,7 +126,7 @@ describe.skipIf(!posix)('process lifecycle', () => {
       await app.live.start();
       expect(app.live.phase).toBe('waiting-obs');
       expect(app.live.snapshot().autoStopAt).toBeGreaterThan(Date.now());
-      await waitFor(() => app.live.phase === 'off', 40_000, 'automatic stop');
+      await until(() => app.live.phase === 'off', { timeoutMs: 40_000, what: 'automatic stop', detail: () => `phase ${app.live.phase}`, on: [[app.live, 'state']] });
       expect(await isListening(ports.rtmp)).toBe(false);
     } finally {
       await app.close();
