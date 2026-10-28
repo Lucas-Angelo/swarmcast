@@ -264,6 +264,19 @@ export async function waitPlaying(page: Page, seconds = 1.5): Promise<void> {
   }, seconds, { timeout: 60_000 });
 }
 
+/**
+ * Turn the sound on, as a viewer does with the Unmute button (the video autoplays muted). For
+ * the scenarios that time playback: Chrome clocks muted, video-only playback by the frames it
+ * gets on screen, and on the 3-vCPU macOS runner, which composites about 15 frames a second,
+ * muted video then plays at about half speed. Measured there (probe in PR #21): 0.55x muted,
+ * 1.02x with sound, its audio output clocking playback; 1.0x both ways on Ubuntu.
+ */
+export async function unmute(page: Page): Promise<void> {
+  const button = page.locator('#unmute');
+  if (await button.isVisible()) await button.click();
+  await expect.poll(() => page.evaluate(() => document.querySelector('video')!.muted)).toBe(false);
+}
+
 export async function currentTime(page: Page): Promise<number> {
   return page.evaluate(() => document.querySelector('video')!.currentTime);
 }
