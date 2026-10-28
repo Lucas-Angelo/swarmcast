@@ -12,6 +12,15 @@ describe('guideUrl', () => {
     expect(guideUrl('pt-BR')).toBe('https://lucas-angelo.github.io/swarmcast/pt-br/');
     expect(guideUrl('pt-BR', '/start/obs/')).toBe('https://lucas-angelo.github.io/swarmcast/pt-br/start/obs/');
     expect(guideUrl('en', 'help/troubleshooting')).toBe(`${GUIDE_URL}help/troubleshooting/`);
+    expect(guideUrl('en', '///')).toBe(GUIDE_URL);
+    expect(guideUrl('en', '//a//b//')).toBe(`${GUIDE_URL}a//b/`);
+  });
+
+  it('stays linear on a long run of slashes inside the page', () => {
+    const page = `a${'/'.repeat(200_000)}b`;
+    const t0 = performance.now();
+    expect(guideUrl('en', page)).toBe(`${GUIDE_URL}${page}/`);
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 
   it('only links to pages that exist in both languages', () => {
