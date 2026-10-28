@@ -18,3 +18,29 @@ export function ffmpegVersion(): string | null;
 
 /** Arguments for a feed encoded live, in real time (x264 ultrafast). */
 export function liveFeedArgs(rtmpUrl: string, o?: FeedOptions): string[];
+
+export interface ClipOptions extends FeedOptions {
+  /** Clip length, a whole number of 2 s keyframe intervals (default CLIP_SECONDS). */
+  seconds?: number;
+}
+
+/** Default clip length (10 s). */
+export const CLIP_SECONDS: number;
+
+/** Where the clips are cached: $SC_TEST_CLIPS_DIR, else <tmp>/swarmcast-test-clips. */
+export function clipsDir(): string;
+
+/** The cache file of a clip, named after the ffmpeg build and the encode arguments. */
+export function clipPath(o?: ClipOptions): string;
+
+/** The clip for these options, encoded now (blocking) if it is not cached yet. */
+export function ensureClipSync(o?: ClipOptions): string;
+
+/** The clip for these options, encoded now if it is not cached yet. */
+export function ensureClip(o?: ClipOptions): Promise<string>;
+
+/** True when this ffmpeg has -readrate_initial_burst (FFmpeg 6.1 and later). */
+export function hasInitialBurst(): boolean;
+
+/** Arguments that send `clip` in a loop, in real time, with `-c copy`. */
+export function clipFeedArgs(clip: string, rtmpUrl: string, o?: { burstSeconds?: number }): string[];

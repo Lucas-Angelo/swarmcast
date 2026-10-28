@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createApp, type App } from '../../src/app.js';
 import { isAlive } from '../../src/process/children.js';
 import { variantInfoHashHex } from '../../src/tracker/tracker.js';
-import { FFMPEG_BIN, hasFfmpeg, joinAs, startFeed, stopTracked, tmpDir, until, type Feed, type Jar } from './helpers.js';
+import { FEEDS, FFMPEG_BIN, hasFfmpeg, joinAs, startFeed, stopTracked, tmpDir, until, type Feed, type Jar } from './helpers.js';
 
 const PORTS = { rtmp: 29450, public: 28180, admin: 28181, mediamtxHls: 28988 };
 const BASE = `http://127.0.0.1:${PORTS.public}`;
@@ -39,6 +39,11 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     if (shed) throw new Error(`the load guard dropped a rendition during the test: ${JSON.stringify(shed)} (${state()})`);
   };
   /**
+   * Crashes the tests caused on purpose. Any other crash fails the test it happened in: the
+   * feed loops a 10 s clip, so a ladder ffmpeg that cannot take the loop's timestamps shows here.
+   */
+  let deliberateCrashes = 0;
+  /**
    * Wait for `pred`, re-checked on every live, quality, ladder and origin change. Fails at once
    * if the feed dies (unless `feed: false`) or a rendition is dropped.
    */
@@ -55,7 +60,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
         [app.live.origin, 'updated'],
       ],
     });
-  const push = (): Feed => (feed = startFeed(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true }));
+  const push = (): Feed => (feed = startFeed(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, FEEDS.hd));
   /** A media playlist by name ("v480" or "v480.m3u8"); '' while it is not served. */
   const playlist = async (name: string): Promise<string> => {
     const res = await jar.fetch(`/hls/${name.replace(/\.m3u8$/, '')}.m3u8`);
@@ -94,7 +99,10 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     jar = await joinAs(BASE, app.live.snapshot().liveLink!, 'Ladder');
   });
 
-  afterEach(noShed);
+  afterEach(() => {
+    noShed();
+    expect(ladder().crashes, `ladder ffmpeg crashes nobody caused (${state()})`).toBe(deliberateCrashes);
+  });
 
   afterAll(async () => {
     await feed?.stop();
@@ -159,6 +167,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     const before = await playlist(name);
     const runsBefore = new Set(mediaSegments(before).map(runOf));
     const { launches, crashes } = ladder();
+    deliberateCrashes += 1;
     process.kill(ladder().pid!, 'SIGKILL');
     // Restarted means: the crash was counted, a new ffmpeg was launched and runs, and the same
     // playlist lists a segment of the new run behind a discontinuity.
