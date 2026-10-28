@@ -38,6 +38,15 @@ export function delaySpeedFromSearch(search: string): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(60, n) : 1;
 }
 
+/**
+ * Test-only: `?delayRate=10` moves playbackRate 10× further from 1 (at most ±0.5, see
+ * scaledTuning), so with the fast clock the delay itself changes 10× faster too (1–10).
+ */
+export function delayRateFromSearch(search: string): number {
+  const n = Number(new URLSearchParams(search).get('delayRate'));
+  return Number.isFinite(n) && n >= 1 ? Math.min(10, n) : 1;
+}
+
 /** One-second latency samples whose median is the delay everyone uses. */
 const LATENCY_SAMPLES = 5;
 
@@ -54,10 +63,10 @@ export function attachAdaptiveDelay(
   hls: HlsLike,
   engine: EngineLike | null,
   video: HTMLVideoElement,
-  o: { profile: DelayProfileId; events: typeof Hls.Events; p2pEnabled: () => boolean; speed?: number },
+  o: { profile: DelayProfileId; events: typeof Hls.Events; p2pEnabled: () => boolean; speed?: number; rateScale?: number },
 ): AdaptiveDelay {
   const clock = (): number => performance.now() / 1000;
-  const ctl = new DelayController({ profile: o.profile, speed: o.speed ?? 1, now: clock() });
+  const ctl = new DelayController({ profile: o.profile, speed: o.speed ?? 1, rateScale: o.rateScale ?? 1, now: clock() });
   let started = false;
   let holding = false;
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
@@ -246,6 +255,7 @@ export function attachAdaptiveDelay(
         state: last.state,
         rateMode: last.rateMode,
         playbackRate: video.playbackRate,
+        rates: ctl.rates,
         holding,
         bounds: ctl.currentBounds,
         signals: ctl.signals,
