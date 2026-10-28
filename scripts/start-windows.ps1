@@ -1213,9 +1213,10 @@ function Invoke-Rollback {
 # window would keep running without a window. This watch checks every 2 s whether the
 # console window still exists; once it is gone, it logs that and ends this script with exit
 # code 0. SwarmCast notices that the program that started it is gone and shuts down cleanly
-# (stops the live, MediaMTX, the tunnel and the tray), and cmd ends too. It only watches a
-# visible window of its own (Console Host): Windows Terminal, hidden and redirected runs
-# have none. SWARMCAST_NO_WINDOW_WATCH=1 turns it off.
+# (stops the live, MediaMTX, the tunnel and the tray), and cmd ends too. It only arms when
+# the console reports a visible window (Console Host's, or the pseudo window some Windows
+# Terminal builds report as visible); hidden and redirected runs have none.
+# SWARMCAST_NO_WINDOW_WATCH=1 turns it off.
 $SC_WindowWatchSource = @'
 using System;
 using System.IO;

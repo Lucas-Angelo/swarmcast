@@ -352,6 +352,11 @@ for (const [action, what] of [
     const before = processesUnder(home);
     const installLog = () => readText(path.join(home, 'logs', 'install.log'));
     const installBefore = installLog().length;
+    if (action === 'close') {
+      // Which window hosts the console (Console Host, or Windows Terminal with a 0 x 0 pseudo window).
+      const host = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', 'probe', '-Title', `SwarmCast ${action}`], { encoding: 'utf8', timeout: 60_000 });
+      info('console close: host before the close', (host.stdout || host.stderr || '').trim());
+    }
     const t0 = Date.now();
     const r = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', action, '-Title', `SwarmCast ${action}`, '-Method', opt('close-method', 'auto')], { encoding: 'utf8', timeout: 90_000 });
     const ev = (r.stdout || r.stderr || '').trim();
@@ -384,7 +389,7 @@ for (const [action, what] of [
       const chain = await until(async () => (windowProcs().length === 0 ? [] : null), 10_000, "the window's programs").catch(() => windowProcs());
       check(`${what}: the window's cmd and PowerShell ended too`, chain.length === 0, chain.length ? `left: ${describeProcs(chain)}` : '');
       if (left.length) {
-        const att = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', 'probe'], { encoding: 'utf8', timeout: 30_000 });
+        const att = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', 'probe', '-Title', `SwarmCast ${action}`], { encoding: 'utf8', timeout: 30_000 });
         info('console close: console of the app afterwards', (att.stdout || att.stderr || '').trim());
       }
     }
