@@ -103,12 +103,18 @@ public static class ScCon {
   public static void DpiAware() { SetProcessDPIAware(); }
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
   // Moves hWnd so its whole title bar is on the primary screen, its X 20 px from the right edge.
+  // A window wider than the screen (Windows Terminal opens 1044 px wide on the runners' 1024 px
+  // screen) is narrowed so its X fits too.
   public static string MoveIntoView(IntPtr hWnd) {
     RECT r; GetWindowRect(hWnd, out r);
-    int x = Math.Max(0, GetSystemMetrics(0) - (r.Right - r.Left) - 20), y = 120;
-    SetWindowPos(hWnd, IntPtr.Zero, x, y, 0, 0, 0x0001 | 0x0004);
-    return String.Format("{0},{1}", x, y);
+    int screen = GetSystemMetrics(0), width = r.Right - r.Left, height = r.Bottom - r.Top;
+    uint flags = 0x0004; // SWP_NOZORDER
+    if (width > screen - 40) width = screen - 40; else flags |= 0x0001; // SWP_NOSIZE
+    int x = Math.Max(0, screen - width - 20), y = 60;
+    SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, flags);
+    return String.Format("{0},{1} ({2} px wide)", x, y, width);
   }
+  static bool OffScreen(RECT r) { return r.Left < 0 || r.Top < 0 || r.Right > GetSystemMetrics(0) || r.Top + 60 > GetSystemMetrics(1); }
 
   // Clicks the close button of hWnd with real mouse input. Returns what it did; "clicked" only
   // when the press and release were both injected on a verified close button.
@@ -128,6 +134,13 @@ public static class ScCon {
     // Find the close button by asking the window itself (WM_NCHITTEST = HTCLOSE) along the top
     // edge of its frame, so the click is on the X whatever the theme, DPI or caption size.
     RECT w; GetWindowRect(hWnd, out w);
+    string moved = "";
+    if (atX < 0 && OffScreen(w)) {
+      // Its title bar must be on the screen to be clicked.
+      moved = "moved to " + MoveIntoView(hWnd) + "; ";
+      Thread.Sleep(300);
+      GetWindowRect(hWnd, out w);
+    }
     POINT p; string where;
     if (atX >= 0 && atY >= 0) {
       p.X = atX; p.Y = atY;
@@ -139,12 +152,12 @@ public static class ScCon {
         if (HitAt(hWnd, x, y) == 20) { if (x < minX) minX = x; if (x > maxX) maxX = x; rowY = y; }
       }
     }
-    if (minX == int.MaxValue) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return String.Format("window {0},{1}-{2},{3}: no close button found (hit test never HTCLOSE), not clicked", w.Left, w.Top, w.Right, w.Bottom); }
+    if (minX == int.MaxValue) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return moved + String.Format("window {0},{1}-{2},{3}: no close button found (hit test never HTCLOSE), not clicked", w.Left, w.Top, w.Right, w.Bottom); }
     int cx = (minX + maxX) / 2, minY = rowY, maxY = rowY;
     while (minY > w.Top && HitAt(hWnd, cx, minY - 1) == 20) minY--;
     while (maxY < w.Top + 80 && HitAt(hWnd, cx, maxY + 1) == 20) maxY++;
     p.X = cx; p.Y = (minY + maxY) / 2;
-    where = String.Format("close button {0},{1}-{2},{3} (WM_NCHITTEST), click at {4},{5}", minX, minY, maxX, maxY, p.X, p.Y);
+    where = moved + String.Format("close button {0},{1}-{2},{3} (WM_NCHITTEST), click at {4},{5}", minX, minY, maxX, maxY, p.X, p.Y);
     long hit = HitAt(hWnd, p.X, p.Y);
     if (hit != 20) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": not the close button (hit test {0}), not clicked", hit); }
     }
