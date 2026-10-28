@@ -1,16 +1,23 @@
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
 import { defaultConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
 import type { DirectMode } from '../../src/direct/direct.js';
 import type { PowLevel } from '../../src/security/pow.js';
+import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { makeController } from './live-helpers.js';
 
 const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
-const PORTS = { rtmp: 39411, public: 39412, admin: 39413, mediamtxHls: 39414 };
-const base = `http://127.0.0.1:${PORTS.public}`;
+// One public port for the whole file: a browser keeps its cookies for the same address across
+// a new live. The fake MediaMTX binds nothing (port 0).
+let PORTS = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
+let base = '';
+beforeAll(async () => {
+  PORTS = { ...PORTS, public: (await allocPorts(1))[0]! };
+  base = `http://127.0.0.1:${PORTS.public}`;
+});
 
 /** One browser: its own cookies. */
 class Browser {

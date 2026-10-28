@@ -7,6 +7,7 @@ import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { CGNAT_MESSAGE, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
 import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
 import { isNonPublicIPv4 } from '../../src/direct/mapper.js';
+import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { MockIgd } from './mock-igd.js';
 import { silentLog } from './helpers.js';
 
@@ -231,7 +232,7 @@ describe('direct mode TLS without SNI (browsers never send SNI for an IP address
     const cert = await new SelfSignedIssuer().issue('127.0.0.1');
     const tls = await import('node:tls');
     const ctx = tls.createSecureContext({ key: cert.keyPem, cert: cert.certPem });
-    const port = 41000 + Math.floor(Math.random() * 2000);
+    const port = (await allocPorts(1))[0]!;
     const handle = await live.startDirectServer(port, '127.0.0.1', (_n, cb) => cb(null, ctx), { key: cert.keyPem, cert: cert.certPem });
     servers.push(handle);
     const body = await new Promise<string>((resolve, reject) => {
