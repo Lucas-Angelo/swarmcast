@@ -132,9 +132,11 @@ jobs:
         run: |
           npx playwright install firefox webkit
           .github/scripts/apt-retry.sh playwright-deps firefox webkit
-      - name: Playwright browsers and their system libraries (macOS)
+      # macOS: the `chromium` project runs Google Chrome, so only Firefox and WebKit (macOS needs
+      # no system libraries for them).
+      - name: Playwright browsers (macOS)
         if: runner.os == 'macOS'
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: npx playwright install firefox webkit
       - run: npm run test:e2e
       # Kept for every run that was not cancelled, so a test that passed on retry (flaky) still
       # leaves its trace: the HTML report, results.json, traces, e2e-server.log, fake-obs.log.

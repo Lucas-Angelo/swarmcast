@@ -87,10 +87,10 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Browser tests (Playwright, Chromium)
-        run: |
-          npx playwright install --with-deps chromium
-          npm run test:e2e
+      # Google Chrome from the runner image (site/playwright.config.ts): no browser download and
+      # no apt (`install --with-deps chromium` made this job's p90 9.9 min).
+      - name: Browser tests (Playwright, Google Chrome)
+        run: npm run test:e2e
 
       - name: Keep the test report
         if: failure()

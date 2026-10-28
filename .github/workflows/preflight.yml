@@ -60,7 +60,9 @@ jobs:
         with:
           go: 'true'
           ffmpeg: 'true'
-      - run: npx playwright install --with-deps chromium
+      # No Playwright browser download: verify.mjs --chrome drives the Google Chrome that the
+      # x64 runner images ship (on Windows, `install --with-deps` also installed Media Foundation:
+      # 204 s of a 6.8 min job, for nothing).
       - run: npm run build
       - name: Build tray helper
         run: node apps/tray/build.mjs --target "${{ matrix.target }}" --vendor
