@@ -42,6 +42,8 @@ process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
 // SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
 export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
+/** The test control port below (fixtures.ts computes it the same way: no URL read from a file). */
+const CONTROL_PORT = 38082 + OFFSET;
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
 // "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
@@ -274,7 +276,8 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
   }
 }
 
-// Test-only control port (127.0.0.1, random port, never part of the app):
+// Test-only control port (127.0.0.1:CONTROL_PORT, never part of the app):
+// - GET /env: the panel's address and login path (fixtures.ts signs in with them);
 // - POST /reset[?hard=1] {test?}: back to the starting state (reset() above);
 // - GET /health?waitMs=&minPlaylistS=&qualities=: the stream's health, waiting up to waitMs for it;
 // - POST /obs {options | null}: the fake OBS reconnects with these push options;
@@ -302,6 +305,9 @@ const control = http.createServer((req, res) => {
       if (r.did.length) app.log.info({ test: currentTest, did: r.did }, 'e2e reset');
       return json(res, 200, r);
     }
+    if (req.method === 'GET' && url.pathname === '/env') {
+      return json(res, 200, { adminUrl: app.adminUrl, adminLoginPath: new URL(app.adminLoginUrl).pathname });
+    }
     if (req.method === 'GET' && url.pathname === '/health') {
       const h = await health(Math.min(120_000, Number(url.searchParams.get('waitMs') ?? 0)), Number(url.searchParams.get('minPlaylistS') ?? 0), Number(url.searchParams.get('qualities') ?? 1));
       if (!h.ok) app.log.warn({ test: currentTest, health: h }, 'e2e stream unhealthy');
@@ -324,7 +330,10 @@ const control = http.createServer((req, res) => {
     res.writeHead(404).end();
   })().catch((err: unknown) => json(res, 500, { error: (err as Error).message }));
 });
-await new Promise<void>((r) => control.listen(0, '127.0.0.1', r));
+await new Promise<void>((resolve, reject) => {
+  control.once('error', reject);
+  control.listen(CONTROL_PORT, '127.0.0.1', resolve);
+});
 const testControlUrl = `http://127.0.0.1:${(control.address() as AddressInfo).port}`;
 
 fs.mkdirSync('test-results', { recursive: true });

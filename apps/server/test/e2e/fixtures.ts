@@ -6,9 +6,26 @@ import { NICKNAME_MAX } from '@swarmcast/shared';
 
 export { expect };
 
-function e2eEnv(): { adminLoginUrl: string; adminUrl: string; dataDir: string; downloadsDir: string; pid: number; testControlUrl: string } {
+function e2eEnv(): { adminLoginUrl: string; dataDir: string; downloadsDir: string } {
   return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as ReturnType<typeof e2eEnv>;
 }
+
+const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
+
+/**
+ * The base of a URL on this machine (http, 127.0.0.1 / localhost / ::1, a numeric port),
+ * rebuilt from those checked parts; anything else throws. Every request the fixtures send goes
+ * to such a base, never to a URL taken as it is from a file or an answer.
+ */
+export function loopbackBase(raw: string): URL {
+  const u = new URL(raw);
+  if (u.protocol !== 'http:' || !LOOPBACK.has(u.hostname) || !/^\d{1,5}$/.test(u.port)) throw new Error(`not a loopback http URL: ${raw}`);
+  return new URL(`http://${u.hostname}:${Number(u.port)}/`);
+}
+
+// The test control port of apps/server/test/e2e/server.ts (keep in sync: 38082 moved by
+// SWARMCAST_E2E_PORT_OFFSET, like the other e2e ports).
+const CONTROL = loopbackBase(`http://127.0.0.1:${38082 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0)}`);
 
 /** What GET /health on the test control port answers (apps/server/test/e2e/server.ts). */
 export interface StreamHealth {
@@ -23,7 +40,7 @@ export interface StreamHealth {
 }
 
 async function control<T>(method: 'GET' | 'POST', pathname: string, body?: unknown): Promise<T> {
-  const res = await fetch(`${e2eEnv().testControlUrl}${pathname}`, {
+  const res = await fetch(new URL(pathname, CONTROL), {
     method,
     ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
   });
@@ -93,28 +110,31 @@ export function uid(prefix: string, info: TestInfo = base.info()): string {
 }
 
 let adminCookie: string | null = null;
-let adminUrl = '';
+let adminBase: URL | null = null;
 
-async function adminAuth(): Promise<string> {
-  if (adminCookie) return adminCookie;
-  const env = e2eEnv();
-  adminUrl = env.adminUrl;
-  const res = await fetch(env.adminLoginUrl, { redirect: 'manual' });
+/** The panel's base URL and a session cookie, from the control port (`GET /env`). */
+async function adminAuth(): Promise<{ cookie: string; base: URL }> {
+  if (adminCookie && adminBase) return { cookie: adminCookie, base: adminBase };
+  const env = await control<{ adminUrl: string; adminLoginPath: string }>('GET', '/env');
+  const base = loopbackBase(env.adminUrl);
+  if (!/^\/auth\/[\w-]+$/.test(env.adminLoginPath)) throw new Error(`unexpected panel login path: ${env.adminLoginPath}`);
+  const res = await fetch(new URL(env.adminLoginPath, base), { redirect: 'manual' });
   adminCookie = res.headers.getSetCookie()[0]!.split(';')[0]!;
-  return adminCookie;
+  adminBase = base;
+  return { cookie: adminCookie, base };
 }
 
 export async function adminState(): Promise<AdminState> {
-  const cookie = await adminAuth();
-  const res = await fetch(`${adminUrl}/api/state`, { headers: { cookie } });
+  const { cookie, base } = await adminAuth();
+  const res = await fetch(new URL('/api/state', base), { headers: { cookie } });
   return (await res.json()) as AdminState;
 }
 
 export async function admin(pathname: string, body: unknown = {}): Promise<unknown> {
-  const cookie = await adminAuth();
-  const res = await fetch(`${adminUrl}${pathname}`, {
+  const { cookie, base } = await adminAuth();
+  const res = await fetch(new URL(pathname, base), {
     method: 'POST',
-    headers: { cookie, origin: adminUrl, 'content-type': 'application/json' },
+    headers: { cookie, origin: base.origin, 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
   return res.json();
@@ -122,10 +142,10 @@ export async function admin(pathname: string, body: unknown = {}): Promise<unkno
 
 /** Any admin API call (GET/PUT/POST) with the panel cookie. */
 export async function adminApi<T = unknown>(method: string, pathname: string, body?: unknown): Promise<T> {
-  const cookie = await adminAuth();
-  const res = await fetch(`${adminUrl}${pathname}`, {
+  const { cookie, base } = await adminAuth();
+  const res = await fetch(new URL(pathname, base), {
     method,
-    headers: { cookie, origin: adminUrl, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    headers: { cookie, origin: base.origin, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   return (await res.json()) as T;
