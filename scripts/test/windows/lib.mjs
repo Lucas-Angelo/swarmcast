@@ -679,10 +679,17 @@ export function appLog(home) {
 
 export function editConfig(home, fn) {
   const file = path.join(home, 'config.json');
-  const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
   fn(cfg);
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  // Written next to it, then renamed: SwarmCast never reads a half-written config.
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(cfg, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
 }
 
 // ---------------------------------------------------------------------------
