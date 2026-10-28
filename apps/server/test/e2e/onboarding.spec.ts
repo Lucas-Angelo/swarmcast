@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
-import { admin, liveLink } from './fixtures.js';
+import type { Page } from '@playwright/test';
+import { admin, expect, liveLink, test } from './fixtures.js';
 
 // First-run setup tutorial in the admin panel (checked on Chromium).
 test.describe.configure({ mode: 'serial' });

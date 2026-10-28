@@ -1,5 +1,5 @@
-import { expect, test, type CDPSession, type Page } from '@playwright/test';
-import { join, viewerByNick, waitPlaying } from './fixtures.js';
+import type { CDPSession, Page } from '@playwright/test';
+import { expect, join, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 // The adaptive playback delay (apps/viewer/src/latency-controller.ts, docs/QUALITY.md).
 // `?delaySpeed=10` runs the controller's own clocks (dwell times, quiet period, target drift)
@@ -42,7 +42,7 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   // A busy CI runner (the test stream is encoded on the same machine) can stall a few times:
   // each stall rightly raises the delay, and lowering it again takes real time (≤ 1.05×).
   test.setTimeout(600_000);
-  const nick = `delay-good-${browserName}`;
+  const nick = uid('delaygood');
   const { context, page } = await watchWithFastClock(browser, nick, async (p) => {
     if (browserName !== 'chromium') return;
     // A good home connection: 30 Mbps, 20 ms.
@@ -104,7 +104,7 @@ test('on a throttled, oscillating network the delay rises and stalls stay rare',
   test.skip(browserName !== 'chromium', 'CDP network throttling is Chromium only');
   test.setTimeout(330_000);
   let cdp: CDPSession | null = null;
-  const { context, page } = await watchWithFastClock(browser, `delay-osc-${browserName}`, async (p) => {
+  const { context, page } = await watchWithFastClock(browser, uid('delayosc'), async (p) => {
     cdp = await p.context().newCDPSession(p);
     await cdp.send('Network.enable');
   });

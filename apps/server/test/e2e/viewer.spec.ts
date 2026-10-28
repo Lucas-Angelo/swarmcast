@@ -1,17 +1,11 @@
-import { expect, test } from '@playwright/test';
-import { admin, adminState, currentTime, join, liveLink, stats, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, adminState, currentTime, expect, join, liveLink, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
 
 test.describe.configure({ mode: 'serial' });
 
-test.afterEach(async () => {
-  await admin('/api/bans/clear');
-});
-
-test('a viewer joins with the live link, picks a nickname and watches', async ({ browser, browserName }, testInfo) => {
-  // One nickname per attempt: on a retry, the previous attempt's session is still listed.
-  const nick = `play-${browserName}-${testInfo.retry}`;
+test('a viewer joins with the live link, picks a nickname and watches', async ({ browser }) => {
+  const nick = uid('play');
   const { context, page } = await join(browser, nick);
   await waitPlaying(page);
   await expect(page.locator('#status')).toHaveText('Live');
@@ -23,8 +17,8 @@ test('a viewer joins with the live link, picks a nickname and watches', async ({
   await context.close();
 });
 
-test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', async ({ browser, browserName }) => {
-  const { context, page } = await join(browser, `optin-${browserName}`);
+test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', async ({ browser }) => {
+  const { context, page } = await join(browser, uid('optin'));
   await waitPlaying(page);
   const p2p = page.locator('#p2p');
   await expect(p2p).not.toBeChecked();
@@ -49,8 +43,8 @@ test('opening the site without the link is refused', async ({ page }) => {
   await expect(page.locator('body')).toContainText(INVALID);
 });
 
-test('kicking stops playback and the viewer cannot come back with the same link', async ({ browser, browserName }) => {
-  const nick = `kick-${browserName}`;
+test('kicking stops playback and the viewer cannot come back with the same link', async ({ browser }) => {
+  const nick = uid('kick');
   const link = await liveLink();
   const { context, page } = await join(browser, nick, link);
   await waitPlaying(page);
@@ -69,7 +63,7 @@ test('kicking stops playback and the viewer cannot come back with the same link'
   await context.close();
 });
 
-test('after "Generate new link" the old link no longer works, the new one does', async ({ browser, browserName }) => {
+test('after "Generate new link" the old link no longer works, the new one does', async ({ browser }) => {
   const old = await liveLink();
   await admin('/api/link/rotate');
   const fresh = (await adminState()).liveLink!;
@@ -79,14 +73,14 @@ test('after "Generate new link" the old link no longer works, the new one does',
   await page.goto(old);
   await expect(page.locator('body')).toContainText(INVALID);
   await ctx.close();
-  const { context, page: p2 } = await join(browser, `fresh-${browserName}`, fresh);
+  const { context, page: p2 } = await join(browser, uid('fresh'), fresh);
   await waitPlaying(p2);
   await context.close();
 });
 
 test('"Go live" appears after pausing and brings the viewer back near the live edge', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');
-  const { context, page } = await join(browser, `golive-${browserName}`);
+  const { context, page } = await join(browser, uid('golive'));
   await waitPlaying(page);
   const goLive = page.getByTestId('go-live');
   await expect(goLive).toHaveText('LIVE');
@@ -110,11 +104,11 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   await context.close();
 });
 
-test('viewers see how many people are watching', async ({ browser, browserName }) => {
+test('viewers see how many people are watching', async ({ browser }) => {
   // Start from an empty audience so the expected number is exact.
   await admin('/api/viewers/disconnect-all');
-  const a = await join(browser, `countA-${browserName}`);
-  const b = await join(browser, `countB-${browserName}`);
+  const a = await join(browser, uid('countA'));
+  const b = await join(browser, uid('countB'));
   for (const p of [a.page, b.page]) {
     await expect(p.getByTestId('viewer-count')).toHaveText('2 watching', { timeout: 20_000 });
   }
