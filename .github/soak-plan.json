@@ -3,22 +3,10 @@
     "What .github/workflows/soak.yml runs: each entry runs `suite` on every runner in `os`, in `jobs` fresh jobs per runner (default 1), each running the suite `repeat` times (default 1; e2e passes it to Playwright as --repeat-each). `args` are added to the suite's command.",
     "Suites: unit, integration, e2e, rust, windows-installer, windows-app, windows-direct, windows-quality, windows-obs, preflight, scripts, desktop-test, desktop-dmg, apt (see scripts/ci/soak-run.mjs for each command).",
     "Edit this file on the branch, push, then add the `soak` label to the pull request (remove and add it again for another soak). Runners: GitHub Free runs 20 jobs at once, 5 of them macOS; the rest queue.",
-    "This plan is the 3-run dry run of every suite type (WP8). The proof counts are in the v0.2.2 plan (MASTER §4.3)."
+    "TEMPORARY (WP7, reverted after the soak): the E2E flake hunt. Every project 10 times on Ubuntu and macOS (2 jobs x 5) with one retry and flaky = failed, and barely-delivers 20 times on Ubuntu without retries (ubuntu-latest, which is 24.04: one entry per suite and runner label)."
   ],
   "suites": [
-    { "suite": "unit", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "integration", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "rust", "os": ["ubuntu-22.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "e2e", "os": ["ubuntu-24.04", "macos-latest"], "repeat": 3, "args": ["--project=chromium"] },
-    { "suite": "windows-installer", "os": ["windows-latest"], "jobs": 3 },
-    { "suite": "windows-app", "os": ["windows-latest"], "jobs": 3 },
-    { "suite": "windows-direct", "os": ["windows-latest"], "jobs": 3 },
-    { "suite": "windows-quality", "os": ["windows-latest"], "jobs": 3 },
-    { "suite": "windows-obs", "os": ["windows-latest"], "jobs": 3 },
-    { "suite": "preflight", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "scripts", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "desktop-test", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
-    { "suite": "desktop-dmg", "os": ["macos-latest"], "repeat": 3 },
-    { "suite": "apt", "os": ["ubuntu-22.04", "ubuntu-24.04"], "jobs": 3 }
+    { "suite": "e2e", "os": ["ubuntu-24.04", "macos-latest"], "jobs": 2, "repeat": 5, "args": ["--retries=1", "--fail-on-flaky-tests"] },
+    { "suite": "e2e", "os": ["ubuntu-latest"], "repeat": 20, "args": ["--project=chromium", "--grep", "barely delivers", "--retries=0"] }
   ]
 }
