@@ -38,20 +38,45 @@ export function hostTarget() {
 // 6 tries, 2 + 4 + 8 + 16 + 32 s apart: a network blip of up to about 2 minutes (with fetch's own
 // 10 s connect timeout per try) is ridden out. Three tries 2-6 s apart were not enough: one
 // release run died of `UND_ERR_CONNECT_TIMEOUT github.com` after about 40 s. A missing file
-// (HTTP 403/404/410) fails at once.
+// (HTTP 403/404/410) fails at once. A try that stops receiving bytes for STALL_MS is aborted
+// and retried: one macOS CI job sat 44 min on a body that never finished, until the job timed out.
 const TRIES = 6;
+const STALL_MS = Number(process.env.SC_DOWNLOAD_STALL_MS ?? 30_000);
 const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter(Boolean).join(': ');
+
+/** One try: the body is streamed to `dest`, and the try is aborted when no bytes arrive for STALL_MS. */
+async function fetchOnce(url, dest) {
+  const ac = new AbortController();
+  let timer;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => ac.abort(new Error(`no data for ${STALL_MS / 1000} s`)), STALL_MS);
+  };
+  arm();
+  try {
+    const res = await fetch(url, { redirect: 'follow', signal: ac.signal });
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.final = [403, 404, 410].includes(res.status);
+      throw err;
+    }
+    const chunks = [];
+    for await (const chunk of res.body) {
+      chunks.push(chunk);
+      arm();
+    }
+    fs.writeFileSync(dest, Buffer.concat(chunks));
+  } catch (err) {
+    throw ac.signal.aborted && ac.signal.reason instanceof Error ? ac.signal.reason : err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export async function download(url, dest) {
   for (let attempt = 1; ; attempt++) {
     try {
-      const res = await fetch(url, { redirect: 'follow' });
-      if (!res.ok) {
-        const err = new Error(`HTTP ${res.status}`);
-        err.final = [403, 404, 410].includes(res.status);
-        throw err;
-      }
-      fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+      await fetchOnce(url, dest);
       return;
     } catch (err) {
       if (err.final || attempt === TRIES) throw new Error(`${why(err)} (${url}, try ${attempt} of ${TRIES})`);
