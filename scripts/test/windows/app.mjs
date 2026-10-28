@@ -14,7 +14,7 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ART, appLog, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
+  ART, appLog, appProcess, check, checkWithRetry, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
   killTree, killUnder, launchBrowser, listening, log, must, onCleanup, openPanel, opt, peSubsystem, pkgVersion, powershellExe, probe, processes, processesUnder,
   ps, pushStream, quitAndVerify, readText, record, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, sleep, socketsOf, startApp, stats, ui, until, waitLiveLink, waitPhase, waitPlaying, bareEnv,
 } from './lib.mjs';
@@ -275,9 +275,11 @@ await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async ()
       const feed = pushStream(s0.rtmpUrl, s0.streamKey);
       await waitPhase(app, 'live');
       for (const b of browsers) {
-        const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}`).catch((err) => err);
-        check(`viewer plays through the tunnel in ${b.__kind}`, !(v instanceof Error), v instanceof Error ? v.message : '');
-        if (!(v instanceof Error)) await v.context.close();
+        // Through Cloudflare's network: one retry on a fresh page, recorded as "passed on retry".
+        await checkWithRetry(`viewer plays through the tunnel in ${b.__kind}`, async (n) => {
+          const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}${n > 1 ? '-retry' : ''}`);
+          await v.context.close();
+        });
       }
       const base = s0.liveLink.replace(/\/join\/.*/, '');
       const stop = await app.api('/api/live/stop', {});
