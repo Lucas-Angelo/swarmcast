@@ -90,6 +90,8 @@ jobs:
           path: test-results/
           if-no-files-found: warn
           retention-days: 14
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}
 
   e2e:
     name: E2E (Playwright, ${{ matrix.os }})

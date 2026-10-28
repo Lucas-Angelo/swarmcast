@@ -4,6 +4,10 @@
 //
 // Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
 //        node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>   (one tool only)
+//
+// SC_DOWNLOAD_CACHE=<dir> keeps the verified archives there (named by SHA-256) and uses them
+// instead of downloading again; CI's setup action caches that folder. Entries no longer pinned
+// in versions.json are deleted.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -31,20 +35,45 @@ export function hostTarget() {
   return `${osName}-${process.arch}`;
 }
 
-async function download(url, dest) {
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
+// 6 tries, 2 + 4 + 8 + 16 + 32 s apart: a network blip of up to about 2 minutes (with fetch's own
+// 10 s connect timeout per try) is ridden out. Three tries 2-6 s apart were not enough: one
+// release run died of `UND_ERR_CONNECT_TIMEOUT github.com` after about 40 s. A missing file
+// (HTTP 403/404/410) fails at once.
+const TRIES = 6;
+const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter(Boolean).join(': ');
+
+export async function download(url, dest) {
+  for (let attempt = 1; ; attempt++) {
     try {
       const res = await fetch(url, { redirect: 'follow' });
-      if (!res.ok) throw new Error(`HTTP ${res.status} for ${url}`);
+      if (!res.ok) {
+        const err = new Error(`HTTP ${res.status}`);
+        err.final = [403, 404, 410].includes(res.status);
+        throw err;
+      }
       fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
       return;
     } catch (err) {
-      lastErr = err;
-      await new Promise((r) => setTimeout(r, attempt * 2000));
+      if (err.final || attempt === TRIES) throw new Error(`${why(err)} (${url}, try ${attempt} of ${TRIES})`);
+      const wait = 2 ** attempt;
+      console.warn(`  try ${attempt} of ${TRIES} failed (${why(err)}); again in ${wait} s`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
     }
   }
-  throw lastErr;
+}
+
+/** The pinned archives, by SHA-256: what SC_DOWNLOAD_CACHE may keep. */
+function pinnedHashes() {
+  return new Set(Object.values(versions).flatMap((spec) => Object.values(spec.assets ?? {}).map((a) => a.sha256)));
+}
+
+/** Drops cache entries that versions.json no longer pins (the cache would grow forever). */
+function pruneCache(dir) {
+  const keep = pinnedHashes();
+  for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) {
+    const m = /^([0-9a-f]{64})-/.exec(f);
+    if (m && !keep.has(m[1])) fs.rmSync(path.join(dir, f), { force: true });
+  }
 }
 
 function sha256(file) {
@@ -66,6 +95,11 @@ function findFile(dir, name) {
 export async function fetchBinaries(target, outDir, { withOptional = false, only } = {}) {
   if (only && !versions[only]) throw new Error(`Unknown tool ${only} (versions.json has ${Object.keys(versions).join(', ')})`);
   fs.mkdirSync(outDir, { recursive: true });
+  const cacheDir = process.env.SC_DOWNLOAD_CACHE ? path.resolve(process.env.SC_DOWNLOAD_CACHE) : null;
+  if (cacheDir) {
+    fs.mkdirSync(cacheDir, { recursive: true });
+    pruneCache(cacheDir);
+  }
   for (const [tool, spec] of Object.entries(versions)) {
     if (only) {
       if (tool !== only) continue;
@@ -86,14 +120,25 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
       continue;
     }
     const work = fs.mkdtempSync(path.join(os.tmpdir(), `sc-${tool}-`));
-    const archive = path.join(work, a.asset);
-    const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
-    console.log(`↓ ${url}`);
-    await download(url, archive);
-    const actual = sha256(archive);
-    if (actual !== a.sha256) {
-      fs.rmSync(work, { recursive: true, force: true });
-      throw new Error(`Checksum mismatch for ${a.asset}: expected ${a.sha256}, got ${actual}`);
+    const cached = cacheDir && path.join(cacheDir, `${a.sha256}-${a.asset}`);
+    let archive = path.join(work, a.asset);
+    if (cached && fs.existsSync(cached) && sha256(cached) === a.sha256) {
+      console.log(`✓ ${tool} ${spec.version}: ${a.asset} from the download cache`);
+      archive = cached;
+    } else {
+      const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
+      console.log(`↓ ${url}`);
+      await download(url, archive);
+      const actual = sha256(archive);
+      if (actual !== a.sha256) {
+        fs.rmSync(work, { recursive: true, force: true });
+        throw new Error(`Checksum mismatch for ${a.asset}: expected ${a.sha256}, got ${actual}`);
+      }
+      if (cached) {
+        // Copy, then rename: a job killed halfway never leaves a partial entry.
+        fs.copyFileSync(archive, `${cached}.part`);
+        fs.renameSync(`${cached}.part`, cached);
+      }
     }
     let binary;
     if (/\.(zip|tar\.gz|tgz|tar\.xz)$/.test(a.asset)) {

@@ -76,3 +76,5 @@ jobs:
           ls -la release
       - name: Clean-machine check (install, stream, watch, P2P, kick, stop, tunnel)
         run: node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}

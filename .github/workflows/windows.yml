@@ -110,6 +110,8 @@ jobs:
           path: ${{ runner.temp }}/sc-artifacts
           if-no-files-found: warn
           retention-days: 14
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}
 
   summary:
     name: Summary table
