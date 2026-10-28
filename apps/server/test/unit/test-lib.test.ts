@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
+import { loopbackBase, panelLogin } from '../../../../scripts/test/lib/loopback.mjs';
 import { isAlive, spawnTracked, stopTracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until, waitForLine, WaitError } from '../../../../scripts/test/lib/wait.mjs';
 
@@ -90,5 +91,23 @@ describe('spawnTracked', () => {
     const t0 = Date.now();
     await p.stop();
     expect(Date.now() - t0).toBeLessThan(2000);
+  });
+});
+
+describe('loopbackBase / panelLogin', () => {
+  it('accepts only http on this machine with a numeric port, rebuilt from those parts', () => {
+    expect(loopbackBase('http://127.0.0.1:38081/anything?x=1').href).toBe('http://127.0.0.1:38081/');
+    expect(loopbackBase('http://localhost:8080').href).toBe('http://localhost:8080/');
+    expect(loopbackBase('http://[::1]:9000/').href).toBe('http://[::1]:9000/');
+    for (const bad of ['https://127.0.0.1:1/', 'http://127.0.0.1/', 'http://example.com:80/', 'http://127.0.0.1.example.com:1/', 'http://user@evil:1/', 'file:///etc/passwd']) {
+      expect(() => loopbackBase(bad), bad).toThrow();
+    }
+  });
+
+  it('builds the panel login URL only from a loopback base and an /auth/<token> path', () => {
+    expect(panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '/auth/abc-DEF_123' }).loginUrl.href).toBe('http://127.0.0.1:38081/auth/abc-DEF_123');
+    expect(() => panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '//evil.example/auth/x' })).toThrow(/login path/);
+    expect(() => panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '/auth/x/../../api' })).toThrow(/login path/);
+    expect(() => panelLogin({ adminUrl: 'http://evil.example:38081', adminLoginPath: '/auth/x' })).toThrow(/loopback/);
   });
 });
