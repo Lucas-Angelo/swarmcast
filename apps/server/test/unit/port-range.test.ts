@@ -7,6 +7,7 @@ import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, type DirectDeps } from '../../src/direct/direct.js';
 import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
+import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { MockIgd } from './mock-igd.js';
 
 // B6: Direct mode's port stays below Windows' dynamic range (49152–65535, where Hyper-V, WSL and
@@ -15,9 +16,17 @@ import { MockIgd } from './mock-igd.js';
 
 let igd: MockIgd;
 const closers: Array<() => Promise<void>> = [];
+/**
+ * Ports Direct mode really listens on come from this worker's block (allocPorts): a fixed
+ * `random` gives the same port in every run and every file, so a test running next to this one
+ * (or another copy of the suite) could hold it. `randomFor(port)` makes pickPort() return `port`.
+ */
+const randomFor = (port: number): number => (port - DIRECT_PORT_MIN + 0.5) / (DIRECT_PORT_MAX - DIRECT_PORT_MIN + 1);
+let directPort: number;
 beforeEach(async () => {
   igd = new MockIgd('203.0.113.7');
   await igd.start();
+  [directPort] = (await allocPorts(1)) as [number];
 });
 afterEach(async () => {
   for (const c of closers.splice(0)) await c();
@@ -51,6 +60,7 @@ function deps(over: Partial<DirectDeps> = {}): DirectDeps {
       return h;
     },
     probe: async () => false,
+    random: () => randomFor(directPort),
     excludedPortRanges: async () => 'Start Port    End Port\n----------    --------\n     49709       49808',
     ...over,
   };
@@ -66,7 +76,7 @@ describe('Direct mode port range', () => {
     expect(at(0.999999999)).toBe(49151);
     // Even a random source returning 1 (out of contract) cannot reach the dynamic range.
     expect(at(1)).toBe(49151);
-    const d = new DirectMode(deps());
+    const d = new DirectMode(deps({ random: Math.random }));
     for (let i = 0; i < 20_000; i++) {
       const p = d.pickPort();
       expect(p).toBeGreaterThanOrEqual(20000);
@@ -78,7 +88,8 @@ describe('Direct mode port range', () => {
 describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the router mapping', () => {
   it('retries after an injected EACCES on the first listen, logs it as "reserved by Windows" with the excluded ranges, then maps the port it holds', async () => {
     const { log, lines } = capture();
-    const seq = [0.1, 0.5];
+    const [refusedPort, freePort] = (await allocPorts(2)) as [number, number];
+    const seq = [randomFor(refusedPort), randomFor(freePort)];
     let i = 0;
     const calls: number[] = [];
     let mappedWhileHeld: number[] | null = null;
@@ -105,8 +116,8 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
     const url = await d.enable();
     const [first, second] = calls;
     expect(calls).toHaveLength(2);
-    expect(first).toBe(22915);
-    expect(second).toBe(34576);
+    expect(first).toBe(refusedPort);
+    expect(second).toBe(freePort);
     expect(url).toBe(`https://203.0.113.7:${second}`);
     // The router mapping was created while the port was still held, then the server took it over.
     expect(mappedWhileHeld).toEqual([second]);
@@ -127,11 +138,12 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
     const busy = (holder.address() as net.AddressInfo).port;
     // A real EADDRINUSE from a real listen on a port this test holds.
     await expect(reservePort(busy, '127.0.0.1')).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    const [inUse, refused, listened] = (await allocPorts(3)) as [number, number, number];
     let n = 0;
     const d = new DirectMode(
       deps({
         log,
-        random: () => [0.2, 0.3, 0.4][n++]!,
+        random: () => randomFor([inUse, refused, listened][n++]!),
         reservePort: async (port) => {
           if (n === 1) throw listenError('EADDRINUSE', port);
           if (n === 2) throw listenError('EACCES', port);
@@ -140,8 +152,8 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
       }),
     );
     await d.enable();
-    expect(lines().find((l) => String(l.msg).includes('used by another program'))?.ports).toEqual([25830]);
-    expect(lines().find((l) => String(l.msg).includes('reserved by Windows'))?.ports).toEqual([28745]);
+    expect(lines().find((l) => String(l.msg).includes('used by another program'))?.ports).toEqual([inUse]);
+    expect(lines().find((l) => String(l.msg).includes('reserved by Windows'))?.ports).toEqual([refused]);
     await d.disable();
   });
 
