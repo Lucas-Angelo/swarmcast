@@ -60,7 +60,11 @@ describe('AccessControl: sessions (JWT)', () => {
     a.begin();
     const s = a.createSession({ nickname: 'c', deviceId: 'd', device: 'desktop', ip: 'ip' });
     const token = await a.issueSessionToken(s);
-    expect(await a.verifySessionToken(token.slice(0, -2) + 'xx')).toBeNull();
+    // Change one character inside the signature. (Not the last two: the last base64url
+    // character of a 32-byte signature carries 2 unused bits, so "...xw" -> "...xx" was the
+    // same signature about once in 1000 runs, and the token still verified.)
+    const i = token.length - 10;
+    expect(await a.verifySessionToken(token.slice(0, i) + (token[i] === 'A' ? 'B' : 'A') + token.slice(i + 1))).toBeNull();
     expect(await a.verifySessionToken(undefined)).toBeNull();
     a.reset();
     expect(await a.verifySessionToken(token)).toBeNull();
