@@ -162,3 +162,5 @@ Everything is pinned so a surprise major release cannot break a build, while bug
 Pushing a tag `vX.Y.Z` runs the release workflow. The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`) and `latest.json`, the script-mode packages, one installer zip per target, the start and uninstall scripts, `binaries.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
 
 **Binaries are not code-signed by default** (signing certificates are paid). Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper blocks the first open (**System Settings → Privacy & Security → Open Anyway**). The website's install pages walk through both. Desktop updates are always signed with the updater key, and code signing of the script-mode binaries switches on when the signing secrets are set (see [RELEASING.md](RELEASING.md)).
+
+<!-- docs-only probe for the pipeline (WP9); this branch is never merged -->
