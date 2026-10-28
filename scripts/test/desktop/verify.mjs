@@ -1,12 +1,10 @@
 #!/usr/bin/env node
 // Clean-machine test of the desktop app installers (docs/DESKTOP.md, "Testing"), run by
-// .github/workflows/desktop.yml on fresh CI machines. It changes the machine (installs the
+// .github/workflows/_clean-machine.yml on fresh CI machines. It changes the machine (installs the
 // app, writes the autostart entry, deletes the SwarmCast data folder): do not run it on yours.
 //
 //   node scripts/test/desktop/verify.mjs --installers release/desktop/<target> \
 //        [--update-from <dir A> --update-to <dir B with latest.json> --update-port 47811]
-//   node scripts/test/desktop/verify.mjs --appimage-only <dir>     (Linux: the AppImage alone,
-//        e.g. on a minimal host in Docker: scripts/test/desktop/appimage-host.sh)
 //
 // 1. Installs the real installer (Windows NSIS /S, macOS .dmg -> ~/Applications, Linux .deb),
 //    starts the app, logs into the panel (admin API), checks /api/desktop, turns "Start with
@@ -254,7 +252,7 @@ async function install(dir) {
   debPackage = spawnSync('dpkg-deb', ['--field', deb, 'Package'], { encoding: 'utf8' }).stdout.trim();
   // No time limit: apt resolving the .deb's dependencies is part of the test, and a slow mirror
   // is not a failure (the workflow downloads them beforehand; the job timeout is the backstop).
-  // TODO(WP2a): with apt-retry.sh `download`, pass its cache: -o Dir::Cache::archives=$APT_DEBS.
+  // The workflow downloads them with apt-retry.sh into $APT_DEBS (the .deb cache).
   const cache = process.env.APT_DEBS ? ['-o', `Dir::Cache::archives=${process.env.APT_DEBS}`] : [];
   run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=3', ...cache, deb], { timeout: undefined });
   step(`the .deb (package ${debPackage}) installs swarmcast-desktop`, fs.existsSync('/usr/bin/swarmcast-desktop'));
@@ -282,7 +280,7 @@ function installAppImage(dir) {
   return dest;
 }
 
-/** The update test's build A: without a .dmg or .deb (desktop.yml builds it with app / appimage / nsis). */
+/** The update test's build A: without a .dmg or .deb (_desktop.yml builds it with app / appimage / nsis). */
 async function installUpdateFrom(dir) {
   if (OS === 'linux') return installAppImage(dir);
   if (OS === 'macos') return installAppTarGz(dir);
@@ -527,10 +525,6 @@ async function windowsGuideShots(dir, out) {
 try {
   if (process.env.SC_DESKTOP_SCREENSHOTS && OS === 'windows' && opt('installers')) {
     await windowsGuideShots(path.resolve(opt('installers')), path.resolve(process.env.SC_DESKTOP_SCREENSHOTS)).catch((err) => console.log(`guide screenshots failed (ignored): ${err.message}`));
-  }
-  if (opt('appimage-only')) {
-    if (OS !== 'linux') throw new Error('--appimage-only is for Linux');
-    await appImageTest(path.resolve(opt('appimage-only')));
   }
   if (opt('installers')) await installerTest(path.resolve(opt('installers')));
   if (opt('update-from')) await updateTest(path.resolve(opt('update-from')), path.resolve(opt('update-to')), Number(opt('update-port') ?? 47811));

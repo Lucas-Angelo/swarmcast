@@ -35,12 +35,10 @@ concurrency:
 env:
   FORCE_COLOR: '1'
   CARGO_TERM_COLOR: always
-  # Tauri v2 build prerequisites on Linux (same list as desktop.yml).
-  LINUX_BUILD_DEPS: build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils
 
 jobs:
   # The script-mode package and the AppImage of this commit, once per architecture, on the
-  # oldest supported Ubuntu like desktop.yml (glibc baseline).
+  # oldest supported Ubuntu like the pipeline's desktop builds (_desktop.yml, glibc baseline).
   build:
     name: Build linux-${{ matrix.arch }}
     strategy:
@@ -60,15 +58,18 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           go: 'true'
-      # The only apt on the runner: the desktop build's own dependencies, through apt-retry.sh
-      # (time limit per try, retries, another mirror after a slow try).
-      - name: Linux build dependencies
+          downloads: 'true'
+          apt-debs: tauri-build
+      # The test-build profile of the pipeline (no LTO, 16 codegen units): only this workflow
+      # tests these builds.
+      - name: Build profile
         run: |
-          .github/scripts/apt-retry.sh update
-          # shellcheck disable=SC2086 # a list of packages
-          .github/scripts/apt-retry.sh install -y --no-install-recommends $LINUX_BUILD_DEPS
-      - name: Rust toolchain
-        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
+          echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
+          echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
+      # The pinned toolchain and the only apt on the runner: the desktop build's own dependencies,
+      # through apt-retry.sh (time limit per try, retries, another mirror after a slow try).
+      # No rust-cache: a weekly build is not worth half a gigabyte of the repository's cache.
+      - uses: ./.github/actions/setup-rust
       - run: npm run build
       - name: Build tray helper
         run: node apps/tray/build.mjs --target "$TARGET" --vendor
@@ -89,6 +90,8 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}
 
   # One job per base image and architecture, all native (no QEMU).
   release:

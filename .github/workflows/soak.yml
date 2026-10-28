@@ -34,8 +34,6 @@ env:
   FORCE_COLOR: '1'
   CARGO_TERM_COLOR: always
   SOAK_PLAN: ${{ inputs.plan || '.github/soak-plan.json' }}
-  # Tauri v2 build prerequisites on Linux (same list as desktop.yml).
-  LINUX_BUILD_DEPS: build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils
 
 jobs:
   plan:
@@ -45,7 +43,7 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: read
-      actions: read # find the desktop.yml run whose installers desktop-test uses
+      actions: read # find the pipeline.yml run whose installers desktop-test uses
     outputs:
       node: ${{ steps.plan.outputs.node }}
       rust: ${{ steps.plan.outputs.rust }}
@@ -64,9 +62,9 @@ jobs:
         id: plan
         run: |
           node scripts/ci/soak-plan.mjs "$SOAK_PLAN" | tee -a "$GITHUB_OUTPUT" | cut -c1-200
-      # desktop-test installs the installers of the newest desktop.yml run for this commit (or of
+      # desktop-test installs the installers of the newest pipeline.yml run for this commit (or of
       # the branch when this commit has none): no build in the soak. Start the soak after that
-      # run's build jobs have finished.
+      # run's desktop builds have finished.
       - name: Find the desktop installers to test
         id: desktop
         if: steps.plan.outputs.desktop_test != '[]'
@@ -75,9 +73,9 @@ jobs:
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
         run: |
-          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow desktop.yml --commit "$SHA" --json databaseId -q '.[0].databaseId')"
-          [ -n "$run" ] || run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow desktop.yml --branch "$BRANCH" --json databaseId -q '.[0].databaseId')"
-          [ -n "$run" ] || { echo "::error::No desktop.yml run for $SHA or $BRANCH: desktop-test has no installers"; exit 1; }
+          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --commit "$SHA" --json databaseId -q '.[0].databaseId')"
+          [ -n "$run" ] || run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --branch "$BRANCH" --json databaseId -q '.[0].databaseId')"
+          [ -n "$run" ] || { echo "::error::No pipeline.yml run for $SHA or $BRANCH: desktop-test has no installers"; exit 1; }
           echo "desktop-test uses the installers of https://github.com/$GITHUB_REPOSITORY/actions/runs/$run"
           echo "run=$run" >> "$GITHUB_OUTPUT"
 
@@ -103,7 +101,8 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           ffmpeg: ${{ matrix.suite != 'unit' }}
-      # The rest is what ci.yml does before the same suite.
+          apt-debs: ${{ matrix.suite == 'e2e' && runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
+      # The rest is what _quick.yml, _node.yml and _e2e.yml do before the same suite.
       - name: Install the website's dependencies (unit)
         if: matrix.suite == 'unit'
         run: npm ci --prefix site --no-audit --no-fund
@@ -116,10 +115,11 @@ jobs:
         if: matrix.suite == 'e2e' && runner.os == 'Linux'
         run: |
           npx playwright install firefox webkit
-          .github/scripts/apt-retry.sh --run npx playwright install-deps firefox webkit
-      - name: Playwright browsers and their system libraries (macOS)
+          .github/scripts/apt-retry.sh playwright-deps firefox webkit
+      # The `chromium` project runs the Google Chrome of the runner image.
+      - name: Playwright browsers (macOS)
         if: matrix.suite == 'e2e' && runner.os == 'macOS'
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: npx playwright install firefox webkit
       - &soak-run
         name: Soak ${{ matrix.suite }} (×${{ matrix.repeat }})
         env:
@@ -157,18 +157,11 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
-      - name: Rust toolchain
-        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+          apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
+      # The pinned toolchain, _node.yml's cache and the Linux build dependencies.
+      - uses: ./.github/actions/setup-rust
         with:
-          workspaces: apps/desktop/src-tauri -> target
-          save-if: false
-      - name: Linux build dependencies
-        if: runner.os == 'Linux'
-        run: |
-          .github/scripts/apt-retry.sh update
-          # shellcheck disable=SC2086 # a list of packages
-          .github/scripts/apt-retry.sh install -y --no-install-recommends $LINUX_BUILD_DEPS
+          cache-key: checks
       # Compile once, so the soaked runs time the tests only.
       - name: Build the tests
         working-directory: apps/desktop/src-tauri
@@ -201,11 +194,13 @@ jobs:
         with:
           go: 'true'
           ffmpeg: 'true'
-      # The rest is what windows.yml does before the same suite.
+      # The rest is what _build.yml and _windows.yml do before the same suite.
+      # Client Windows (windows-11-arm) has Media Foundation and no Get-WindowsFeature.
       - name: Media Foundation for Firefox (app)
         if: matrix.suite == 'windows-app'
         shell: pwsh
         run: |
+          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
           $f = Get-WindowsFeature Server-Media-Foundation
           "Server-Media-Foundation: $($f.InstallState)"
           if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
@@ -251,7 +246,7 @@ jobs:
         with:
           go: 'true'
           ffmpeg: 'true'
-      # What preflight.yml does, without the Playwright browser download: verify.mjs --chrome
+      # What _clean-machine.yml's preflight step does (with the package built here), without the Playwright browser download: verify.mjs --chrome
       # drives the Google Chrome of the runner image. No --tunnel by default: Cloudflare
       # rate-limits quick tunnels, so the soak would measure Cloudflare. To soak the tunnel
       # too, put "--tunnel" in the plan entry's args.
@@ -287,7 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The scripts and their tests need only Node.js (like scripts.yml).
+      # The scripts and their tests need only Node.js (like _clean-machine.yml).
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
@@ -331,14 +326,22 @@ jobs:
           path: release/update-test
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
-      # As in desktop.yml: the .deb's dependencies are downloaded first (apt-retry.sh), so the
-      # test's own `apt-get install ./*.deb` installs them from the local cache.
-      - name: The .deb's dependencies (Linux)
+      # As in _clean-machine.yml: the AppImage's host libraries, and the .deb's dependencies
+      # downloaded first (apt-retry.sh), so the test's own `apt-get install ./*.deb` installs them
+      # from the local cache.
+      - name: The AppImage's host libraries and the .deb's dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
           .github/scripts/apt-retry.sh update
+          .github/scripts/apt-retry.sh install -y --no-install-recommends libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
           deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
-          .github/scripts/apt-retry.sh install -y --no-install-recommends --download-only "./$deb"
+          .github/scripts/apt-retry.sh download -y --no-install-recommends "./$deb"
+      # The update test's target is the real build, served with this latest.json (_desktop.yml).
+      - name: latest.json for the update test
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          node scripts/build/updater-manifest.mjs --version "$version" --base-url http://127.0.0.1:47811 \
+            --out release/desktop/latest.json release/desktop
       - *soak-run
       - *soak-upload
 
@@ -362,14 +365,17 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-      - name: Rust toolchain
-        run: rustup toolchain install stable --profile minimal --no-self-update && rustup default stable
-      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
-          workspaces: apps/desktop/src-tauri -> target
-          key: ${{ matrix.target }}
-          save-if: false
-      # As desktop.yml; every soaked run is then one `tauri build --bundles app,dmg` (the Rust
+          downloads: 'true'
+      # The test-build profile of _desktop.yml (no LTO, 16 codegen units): what pull requests build.
+      - name: Build profile (as the pipeline's test builds)
+        run: |
+          echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
+          echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
+      - uses: ./.github/actions/setup-rust
+        with:
+          cache-key: ${{ matrix.target }}
+      # As _desktop.yml; every soaked run is then one `tauri build --bundles app,dmg` (the Rust
       # build is cached after the first one), which is where hdiutil reports "Resource busy".
       - run: npm run build
       - name: Assemble release/staging/${{ matrix.target }}

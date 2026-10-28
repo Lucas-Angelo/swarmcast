@@ -18,7 +18,7 @@ import { SUITES } from './soak-plan.mjs';
 
 const isWin = process.platform === 'win32';
 
-// Same list as LINUX_BUILD_DEPS in desktop.yml, plus ffmpeg: what CI installs with apt.
+// The Tauri build dependencies (.github/actions/setup-rust), plus ffmpeg: what CI installs with apt.
 const APT_PACKAGES = 'ffmpeg build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils';
 
 /**
@@ -58,7 +58,7 @@ export function commandsFor(row) {
         name: 'verify.mjs',
         cmd:
           `SC_DESKTOP_ARTIFACTS="$RUN_DIR" ${process.platform === 'linux' ? 'xvfb-run -a ' : ''}node scripts/test/desktop/verify.mjs --installers release/desktop ` +
-          `--update-from release/update-test/0.0.0-test.1 --update-to release/update-test/0.0.0-test.2 --update-port 47811 ${A}`,
+          `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 ${A}`,
         parse: lineChecks,
       },
     ],
