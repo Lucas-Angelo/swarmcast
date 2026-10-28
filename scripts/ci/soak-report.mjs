@@ -146,7 +146,8 @@ function aggregate(jobs) {
 
 const pct = (x) => (x === undefined ? '—' : `${(100 * x).toFixed(x === 1 || x === 0 ? 0 : 1)} %`);
 const secs = (x) => (x === undefined ? '—' : x >= 120 ? `${(x / 60).toFixed(1)} min` : `${x.toFixed(x < 10 ? 1 : 0)} s`);
-const cell = (s) => String(s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+// Backslashes first, so a "\|" already in the text cannot end the cell.
+const cell = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
 const durations = (v) => `${secs(percentile(v, 0.5))} / ${secs(percentile(v, 0.9))} / ${secs(v.length ? Math.max(...v) : undefined)}`;
 
 function markdown({ checks, suites }, { full }) {
