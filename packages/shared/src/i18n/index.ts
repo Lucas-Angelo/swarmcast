@@ -42,9 +42,18 @@ export function resolveLang(languages: readonly string[], override?: string | nu
 /** The streamer guide on the website (site/ in this repository). */
 export const GUIDE_URL = 'https://lucas-angelo.github.io/swarmcast/';
 
+/** `page` without leading or trailing slashes, in one pass (a /\/+$/ regex is quadratic on "a////…b"). */
+function trimSlashes(page: string): string {
+  let start = 0;
+  let end = page.length;
+  while (start < end && page[start] === '/') start++;
+  while (end > start && page[end - 1] === '/') end--;
+  return page.slice(start, end);
+}
+
 /** A page of the guide in `lang` (Portuguese pages live under pt-br/), e.g. guideUrl('pt-BR', 'start/obs'). */
 export function guideUrl(lang: Lang, page = ''): string {
-  const p = page.replace(/^\/+|\/+$/g, '');
+  const p = trimSlashes(page);
   return `${GUIDE_URL}${lang === 'pt-BR' ? 'pt-br/' : ''}${p ? `${p}/` : ''}`;
 }
 
