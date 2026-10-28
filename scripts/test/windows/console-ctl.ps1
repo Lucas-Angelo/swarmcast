@@ -81,6 +81,18 @@ public static class ScCon {
     return SendMessage(hWnd, 0x0084, IntPtr.Zero, new IntPtr(((y & 0xFFFF) << 16) | (x & 0xFFFF))).ToInt64(); // WM_NCHITTEST
   }
 
+  // h is hWnd or one of its own windows: a child, or a window it owns. Windows Terminal draws
+  // its title bar in such a window (the drag bar), which is the one that answers HTCLOSE.
+  static bool Ours(IntPtr hWnd, IntPtr h) {
+    return h != IntPtr.Zero && (h == hWnd || GetAncestor(h, 2) == hWnd || GetAncestor(h, 3) == hWnd); // GA_ROOT, GA_ROOTOWNER
+  }
+  // WM_NCHITTEST at x, y, asked of the window of hWnd's that is under the point.
+  static long HitAt(IntPtr hWnd, int x, int y) {
+    POINT pt; pt.X = x; pt.Y = y;
+    IntPtr h = WindowFromPoint(pt);
+    return HitTest(Ours(hWnd, h) ? h : hWnd, x, y);
+  }
+
   public static bool WaitGone(IntPtr hWnd, int ms) {
     DateTime end = DateTime.UtcNow.AddMilliseconds(ms);
     while (IsWindow(hWnd) && DateTime.UtcNow < end) Thread.Sleep(100);
@@ -124,20 +136,20 @@ public static class ScCon {
     int minX = int.MaxValue, maxX = int.MinValue, rowY = 0;
     for (int y = w.Top + 2; y < w.Top + 60 && minX == int.MaxValue; y += 3) {
       for (int x = w.Right - 2; x > w.Right - 220 && x > w.Left; x -= 2) {
-        if (HitTest(hWnd, x, y) == 20) { if (x < minX) minX = x; if (x > maxX) maxX = x; rowY = y; }
+        if (HitAt(hWnd, x, y) == 20) { if (x < minX) minX = x; if (x > maxX) maxX = x; rowY = y; }
       }
     }
     if (minX == int.MaxValue) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return String.Format("window {0},{1}-{2},{3}: no close button found (hit test never HTCLOSE), not clicked", w.Left, w.Top, w.Right, w.Bottom); }
     int cx = (minX + maxX) / 2, minY = rowY, maxY = rowY;
-    while (minY > w.Top && HitTest(hWnd, cx, minY - 1) == 20) minY--;
-    while (maxY < w.Top + 80 && HitTest(hWnd, cx, maxY + 1) == 20) maxY++;
+    while (minY > w.Top && HitAt(hWnd, cx, minY - 1) == 20) minY--;
+    while (maxY < w.Top + 80 && HitAt(hWnd, cx, maxY + 1) == 20) maxY++;
     p.X = cx; p.Y = (minY + maxY) / 2;
     where = String.Format("close button {0},{1}-{2},{3} (WM_NCHITTEST), click at {4},{5}", minX, minY, maxX, maxY, p.X, p.Y);
-    long hit = HitTest(hWnd, p.X, p.Y);
+    long hit = HitAt(hWnd, p.X, p.Y);
     if (hit != 20) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": not the close button (hit test {0}), not clicked", hit); }
     }
     IntPtr under = GetAncestor(WindowFromPoint(p), 2); // GA_ROOT
-    if (under != hWnd) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + ": covered by window " + Describe(under) + ", not clicked"; }
+    if (!Ours(hWnd, WindowFromPoint(p))) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + ": covered by window " + Describe(under) + ", not clicked"; }
     SetCursorPos(p.X, p.Y);
     Thread.Sleep(150);
     POINT now; GetCursorPos(out now);
