@@ -50,6 +50,33 @@ public static class ScCon {
   [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
 
+  public delegate bool EnumProc(IntPtr hWnd, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumWindows(EnumProc cb, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder sb, int n);
+  [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+
+  // A real window has an area. The pseudo console window of Windows Terminal (ConPTY) is 0 x 0,
+  // even where it reports itself visible: closing it closes nothing the user sees.
+  public static bool HasArea(IntPtr hWnd) { RECT r; return GetWindowRect(hWnd, out r) && r.Right > r.Left && r.Bottom > r.Top; }
+  public static string Title(IntPtr hWnd) { System.Text.StringBuilder sb = new System.Text.StringBuilder(512); GetWindowText(hWnd, sb, 512); return sb.ToString(); }
+  public static string Describe(IntPtr hWnd) {
+    RECT r; GetWindowRect(hWnd, out r);
+    uint pid; GetWindowThreadProcessId(hWnd, out pid);
+    string name = "?";
+    try { name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { }
+    return String.Format("0x{0:x} of {1}#{2} '{3}' {4}x{5} visible={6}", hWnd.ToInt64(), name, pid, Title(hWnd), r.Right - r.Left, r.Bottom - r.Top, IsWindowVisible(hWnd));
+  }
+  // The visible top-level window with an area whose title contains `part` (what the user sees).
+  public static IntPtr FindByTitle(string part) {
+    IntPtr found = IntPtr.Zero;
+    if (String.IsNullOrEmpty(part)) return found;
+    EnumWindows(delegate (IntPtr h, IntPtr l) {
+      if (IsWindowVisible(h) && HasArea(h) && Title(h).IndexOf(part, StringComparison.OrdinalIgnoreCase) >= 0) { found = h; return false; }
+      return true;
+    }, IntPtr.Zero);
+    return found;
+  }
+
   static long HitTest(IntPtr hWnd, int x, int y) {
     return SendMessage(hWnd, 0x0084, IntPtr.Zero, new IntPtr(((y & 0xFFFF) << 16) | (x & 0xFFFF))).ToInt64(); // WM_NCHITTEST
   }
@@ -119,14 +146,18 @@ switch ($Action) {
     # Detached first: the close event must not reach this helper.
     [void][ScCon]::FreeConsole()
     $target = $hwnd
-    $how = 'console window (conhost)'
-    if (-not [ScCon]::IsWindowVisible($hwnd)) {
-      # Windows Terminal hosts the console: GetConsoleWindow() is a hidden pseudo window.
-      # Close the visible terminal window that shows our title instead (what the X button does).
-      $w = Get-Process | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero -and $Title -and $_.MainWindowTitle -like "*$Title*" } | Select-Object -First 1
-      if (-not $w) { $w = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Sort-Object StartTime -Descending | Select-Object -First 1 }
-      if ($w) { $target = $w.MainWindowHandle; $how = "window of $($w.ProcessName) '$($w.MainWindowTitle)'" }
-      else { $how = 'hidden pseudo console window (no visible window with the title found)' }
+    $how = "console window $([ScCon]::Describe($hwnd))"
+    if (-not [ScCon]::IsWindowVisible($hwnd) -or -not [ScCon]::HasArea($hwnd)) {
+      # Windows Terminal hosts the console: GetConsoleWindow() is its 0 x 0 pseudo window, which
+      # may even report itself visible. Close the window the user sees, the one showing our title
+      # (what its X button does).
+      $real = [ScCon]::FindByTitle($Title)
+      if ($real -eq [IntPtr]::Zero) {
+        $w = Get-Process WindowsTerminal -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne [IntPtr]::Zero } | Sort-Object StartTime -Descending | Select-Object -First 1
+        if ($w) { $real = $w.MainWindowHandle }
+      }
+      if ($real -ne [IntPtr]::Zero) { $how = "pseudo console window $([ScCon]::Describe($hwnd)); its terminal window $([ScCon]::Describe($real))"; $target = $real }
+      else { $how = "pseudo console window $([ScCon]::Describe($hwnd)) (no visible window titled '$Title' found)" }
     }
     $order = @('click', 'uia', 'post')
     if ($Method -ne 'auto') { $order = @($Method) }
@@ -181,7 +212,7 @@ switch ($Action) {
   }
   'probe' {
     [void][ScCon]::FreeConsole()
-    Write-Output ("attached; console window 0x{0:x} exists={1} visible={2}" -f $hwnd.ToInt64(), [ScCon]::IsWindow($hwnd), [ScCon]::IsWindowVisible($hwnd))
+    Write-Output ("attached; console window {0} exists={1}; window with the title: {2}" -f [ScCon]::Describe($hwnd), [ScCon]::IsWindow($hwnd), $(if (($t = [ScCon]::FindByTitle($Title)) -ne [IntPtr]::Zero) { [ScCon]::Describe($t) } else { "none" }))
   }
   default { Write-Output "unknown action $Action"; exit 2 }
 }
