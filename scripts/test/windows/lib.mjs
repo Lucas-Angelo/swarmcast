@@ -27,6 +27,23 @@ export const opt = (n, d) => {
 };
 export const flag = (n) => args.includes(`--${n}`);
 
+// Section loops for targeted soaks (one install, then the chosen sections N times):
+//   --sections 13          only section 13 (plus section 0 / "environment", which always runs once)
+//   --sections 0,5,X button  numbers match the section number, other words part of its name
+//   --repeat 100           every section that runs (except section 0) runs 100 times
+// Sections a chosen one depends on (an install, a running app) must be listed too.
+const SECTIONS = (opt('sections') ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+export const REPEAT = Math.max(1, Number(opt('repeat', '1')) || 1);
+const sectionNumber = (name) => /^(\d+)\./.exec(name)?.[1] ?? (/^environment/i.test(name) ? '0' : null);
+function sectionWanted(name) {
+  const n = sectionNumber(name);
+  if (!SECTIONS.length || n === '0') return true;
+  return SECTIONS.some((s) => (/^\d+$/.test(s) ? s === n : name.toLowerCase().includes(s.toLowerCase())));
+}
+
 // CI sets SC_ARTIFACTS (the uploaded folder). Otherwise a new private folder (mkdtemp: unique
 // name, mode 0700), never a fixed name in the shared temp dir that another user could create or
 // point elsewhere with a symlink first.
@@ -52,11 +69,15 @@ export function log(...a) {
 // ---------------------------------------------------------------------------
 
 export const results = [];
+/** One entry per section run: { section, rep, ms, failed } (the soak summary's durations). */
+export const sectionRuns = [];
 let currentSection = '';
+let currentRep = 1;
 
 /** status: pass | fail | warn (a finding that does not fail the job) | skip | info */
 export function record(name, status, detail = '') {
   const r = { section: currentSection, name, status, detail: String(detail ?? '').slice(0, 1500) };
+  if (REPEAT > 1) r.rep = currentRep;
   results.push(r);
   const sym = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', skip: 'SKIP', info: 'INFO' }[status] ?? status;
   log(`${sym} [${currentSection}] ${name}${r.detail ? ` -- ${r.detail}` : ''}`);
@@ -113,18 +134,30 @@ export function onCleanup(fn) {
 }
 
 export async function section(name, fn) {
+  if (!sectionWanted(name)) {
+    log(`===== ${name}: skipped (--sections ${SECTIONS.join(',')})`);
+    return;
+  }
+  const reps = sectionNumber(name) === '0' ? 1 : REPEAT;
+  for (let rep = 1; rep <= reps; rep++) await runSection(name, fn, rep, reps);
+}
+
+async function runSection(name, fn, rep, reps) {
   currentSection = name;
-  log(`===== ${name}`);
+  currentRep = rep;
+  log(`===== ${name}${reps > 1 ? ` (run ${rep} of ${reps})` : ''}`);
   const t0 = Date.now();
+  const tag = `${name.slice(0, 40)}${reps > 1 ? `-run${rep}` : ''}`;
   const failsBefore = results.filter((r) => r.status === 'fail').length;
   try {
     await fn();
   } catch (e) {
     record('section aborted', 'fail', e?.stack?.split('\n').slice(0, 3).join(' | ') ?? String(e));
-    await screenshotAll(name.slice(0, 40));
+    await screenshotAll(tag);
   } finally {
     // Before the cleanups, so the dump shows the processes and ports as the failure left them.
-    if (results.filter((r) => r.status === 'fail').length > failsBefore) failureDump(name.slice(0, 40));
+    const failed = results.filter((r) => r.status === 'fail').length > failsBefore;
+    if (failed) failureDump(tag);
     while (cleanups.length) {
       const c = cleanups.pop();
       try {
@@ -142,6 +175,7 @@ export async function section(name, fn) {
     }
     closeStrayBrowsers(list);
     sweepStrays(list);
+    sectionRuns.push({ section: name, rep, ms: Date.now() - t0, failed });
     log(`===== ${name} done in ${Math.round((Date.now() - t0) / 1000)} s`);
   }
 }
@@ -279,7 +313,9 @@ export function finish() {
   const out = opt('out', path.join(ART, `${SUITE}.json`));
   const failed = results.filter((r) => r.status === 'fail');
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, results }, null, 2));
+  const e = process.env;
+  const run = e.GITHUB_RUN_ID ? { url: `${e.GITHUB_SERVER_URL ?? 'https://github.com'}/${e.GITHUB_REPOSITORY}/actions/runs/${e.GITHUB_RUN_ID}`, attempt: Number(e.GITHUB_RUN_ATTEMPT ?? 1), sha: e.GITHUB_SHA } : null;
+  fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, run, repeat: REPEAT, sectionsFilter: SECTIONS, sections: sectionRuns, results }, null, 2));
   const icon = { pass: '✅', fail: '❌', warn: '⚠️', skip: '⏭️', info: 'ℹ️' };
   const md = [
     `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'warn').length} findings`,
