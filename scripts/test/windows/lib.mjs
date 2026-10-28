@@ -856,7 +856,7 @@ export async function installHlsProbe(page) {
             if (h.levels?.[level]?.height === 480) probe.frag480++;
             return;
           }
-          if (probe.events.length < 400) probe.events.push({ t: Math.round(performance.now()), inst, ev: name, level, details: d?.details, fatal: d?.fatal });
+          if (probe.events.length < 400) probe.events.push({ t: Math.round(performance.now()), inst, ev: name, level, details: typeof d?.details === 'string' ? d.details : undefined, fatal: d?.fatal });
         });
       }
     };
