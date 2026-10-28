@@ -54,6 +54,20 @@ describe('E2E stall monitor (stall-monitor.ts)', () => {
     expect(currentStall(st, now)).toBe(0);
   });
 
+  it('works from its source alone, as fixtures.ts injects it into the page (no outer references)', () => {
+    // A constant left outside the function was undefined in the page: nothing ever "played".
+    const tick = new Function(`return ${stallTick.toString()}`)() as typeof stallTick;
+    const stall = new Function(`return ${currentStall.toString()}`)() as typeof currentStall;
+    const st = fresh(10);
+    let now = 0;
+    for (let i = 1; i <= 10; i++) {
+      now = i * 200;
+      tick(st, { now, currentTime: 10 + i * 0.2, paused: false, held: false });
+    }
+    expect(st.played).toBeCloseTo(2, 5);
+    expect(stall(st, now)).toBe(0);
+  });
+
   it('a viewer pause is not a freeze; an adaptive-delay hold is', () => {
     const paused = fresh(10);
     expect(currentStall(paused, run(paused, 200, 20, () => 10, { paused: true }))).toBe(0);

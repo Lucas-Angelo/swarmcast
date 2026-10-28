@@ -26,10 +26,6 @@ export interface StallSample {
   held: boolean;
 }
 
-/** Fastest playback a step can be (the adaptive delay's catch-up is at most 1.1x), plus slack. */
-const MAX_RATE = 1.5;
-const SLACK_S = 0.3;
-
 /**
  * Playing means the playhead advanced like playback since the previous sample: more than a
  * nudge, and no more than the time that passed allows (timers fire late on a loaded runner, so
@@ -41,6 +37,10 @@ const SLACK_S = 0.3;
  * 122719928808: 11.9 s of 20 counted while video and audio segments kept arriving).
  */
 export function stallTick(st: StallState, s: StallSample): void {
+  // Fastest playback a step can be (the adaptive delay's catch-up is at most 1.1x), plus slack.
+  // (Constants inside: the page gets this function's source only.)
+  const MAX_RATE = 1.5;
+  const SLACK_S = 0.3;
   const step = s.currentTime - st.prev;
   const dt = Math.max(0, (s.now - st.prevNow) / 1000);
   st.prev = s.currentTime;
