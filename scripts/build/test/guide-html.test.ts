@@ -31,6 +31,8 @@ describe('markdown subset', () => {
     expect(slugify('O OBS não conecta')).toBe('o-obs-não-conecta');
     expect(slugify('Windows: "Windows protected your PC"')).toBe('windows-windows-protected-your-pc');
     expect(slugify('Option A: the .deb package')).toBe('option-a-the-deb-package');
+    expect(slugify('Press <kbd>Ctrl</kbd> + C')).toBe('press-ctrl--c');
+    expect(slugify('<<a>script>alert(1)</a>')).toBe('scriptalert1');
   });
 
   it('reads frontmatter', () => {

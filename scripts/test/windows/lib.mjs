@@ -14,6 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mdCell } from '../lib/markdown.mjs';
 
 export const isWin = process.platform === 'win32';
 export const here = path.dirname(fileURLToPath(import.meta.url));
@@ -322,7 +323,7 @@ export function finish() {
     '',
     '| | Section | Check | Detail |',
     '|---|---|---|---|',
-    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${r.detail.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').slice(0, 300)} |`),
+    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${mdCell(r.detail.slice(0, 300))} |`),
     '',
   ].join('\n');
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);

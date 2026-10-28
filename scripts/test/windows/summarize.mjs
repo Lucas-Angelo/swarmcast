@@ -7,6 +7,7 @@
 // soak-summary.md and soak-summary.json in that folder.
 import fs from 'node:fs';
 import path from 'node:path';
+import { mdCell } from '../lib/markdown.mjs';
 
 const root = path.resolve(process.argv[2] ?? 'results');
 const files = [];
@@ -52,7 +53,7 @@ for (const suite of suites) {
   }
   out.push(`### ${suite}`, '', `| Section | Check | ${runners.join(' | ')} |`, `|---|---|${runners.map(() => '---').join('|')}|`);
   for (const [key, per] of rows) {
-    const [sec, name] = key.split(' | ').map((x) => x.replace(/\|/g, '\\|'));
+    const [sec, name] = key.split(' | ').map(mdCell);
     out.push(`| ${sec} | ${name} | ${runners.map((rn) => (per[rn] ? `${icon[per[rn].status]}` : '—')).join(' | ')} |`);
   }
   const notes = runs.filter((r) => r.suite === suite).flatMap((run) => run.results.filter((r) => r.status === 'warn' || r.status === 'fail').map((r) => `- ${icon[r.status]} **${run.runner}** [${r.section}] ${r.name}: ${r.detail.replace(/\r?\n/g, ' ')}`));
