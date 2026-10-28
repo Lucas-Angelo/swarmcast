@@ -146,7 +146,9 @@ jobs:
   summary:
     name: Summary table
     needs: e2e
-    if: always()
+    # Also after failed suites, but not for a cancelled run (a superseded pull request run):
+    # there is nothing to sum up then.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -160,7 +162,25 @@ jobs:
         with:
           pattern: win-*
           path: results
-      - run: node scripts/test/windows/summarize.mjs results
+      # results/ does not exist when no suite uploaded anything. A suite that stopped before
+      # writing its result file gets a line instead of a silent gap in the table.
+      - name: Summary table
+        env:
+          RUNNERS: ${{ inputs.runners || '["windows-latest"]' }}
+          SUITES: ${{ inputs.suites || '["installer","app","quality","direct","obs"]' }}
+        run: |
+          mkdir -p results
+          node scripts/test/windows/summarize.mjs results
+          missing=()
+          for suite in $(jq -r '.[]' <<<"$SUITES"); do
+            for os in $(jq -r '.[]' <<<"$RUNNERS"); do
+              [ -f "results/win-$suite-$os/results-$suite-$os.json" ] || missing+=("- ⚠️ **$suite** on $os: no results (the suite failed or stopped before writing them; see its job log)")
+            done
+          done
+          if [ "${#missing[@]}" -gt 0 ]; then
+            printf '\n### Suites without results\n\n%s\n' "$(printf '%s\n' "${missing[@]}")" | tee -a results/summary.md >> "$GITHUB_STEP_SUMMARY"
+            printf '%s\n' "${missing[@]}"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: windows-e2e-summary
