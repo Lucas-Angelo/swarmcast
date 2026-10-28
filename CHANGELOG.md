@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-28
+
+A reliability release: viewers no longer get stuck after OBS reconnects, the macOS app no longer crashes on "Update now", and the Windows uninstaller and "Stop everything" clean up completely.
+
+### Fixed
+
+- **Viewers no longer get stuck after OBS reconnects twice within a few seconds.** A very short OBS connection (common on a shaky upload) made the audio and the video count the stream's restarts differently; from then on the player loaded video but never audio and stayed on "Buffering" for every new viewer until the live ended. All of a stream's playlists now share one numbering. The same fix makes a quality added when OBS reconnects (for example 360p) play instead of buffering forever.
+- **macOS: the desktop app no longer crashes when "Update now" is clicked right after login.** The app asked its window which page it showed before the first page had loaded; it now keeps track of the page itself.
+- **Windows: the desktop app's uninstaller finishes, silently and completely.** Its own clean-up step stopped every program in the install folder, the uninstaller included, so its steps never ran. The uninstall script also starts it like a double-click now, and says why it stopped if it ever does not finish.
+- **Windows: closing the start script's window stops SwarmCast.** On some Windows 11 builds the close never reached SwarmCast, which left the live, its ports and the tray icon running. The start script now watches its window and shuts SwarmCast down cleanly when it is gone (`SWARMCAST_NO_WINDOW_WATCH=1` turns this off).
+- After a long stall, the video no longer jumps back and waits again: the stall watchdog no longer reloads a player that has just started playing again.
+- Viewers using P2P no longer fetch the newest video pieces over HTTPS: every piece is signed before any playlist lists it, so other viewers can share it.
+- "Stop everything" right after OBS leaves, or while the qualities restart (OBS reconnecting, a quality dropped under load), no longer leaves the video converter (ffmpeg) running or its files on disk. On Windows, deleting those files is retried while the antivirus or the indexer still holds one, and never makes "Stop everything" fail; stopping waits until the programs are really gone instead of a fixed time.
+- Direct mode no longer sends your public IP address to a third party (a DNS-over-HTTPS query) when it checks that the stream address still answers, and no longer waits up to 5 s for that query when offline.
+
+### Changed
+
+- Direct mode picks its port between 20000 and 49151, outside the range where Windows (Hyper-V, WSL, Docker) reserves ports, and holds it with a real listen until the server starts. A taken port is skipped, and the log says whether Windows reserved it or another program uses it. If something fails after the router port was opened, it is closed again.
+- Linux: the install guide lists the exact packages the AppImage needs on a minimal system, checked on bare Ubuntu 22.04, Ubuntu 24.04 and Debian 12.
+- The desktop build checks that the SwarmCast server inside the Linux `.deb` and AppImage starts, so a broken package cannot be released.
+
+### For contributors / CI
+
+- Every failure keeps its evidence: Playwright reports and traces, server and fake-OBS logs (stream keys masked), Vitest JSON results and process/port dumps from the Windows suites.
+- Deterministic tests: every test on its own ports (a per-worker port allocator, port 0 where possible), the fake OBS sends clips encoded once, each E2E test starts from a reset server and waits for a healthy stream (`/health`), polls instead of sleeps, and no serial mode (tests are tagged `@media` or `@ui`).
+- One pinned, SHA-256-verified test ffmpeg on every OS, never shipped to streamers.
+- apt that cannot hang a job, downloads retried with back-off and abandoned after 30 s without data, a working npm cache, and Ubuntu runners pinned to 24.04.
+- New workflows: `soak.yml` (repeats suites and reports flaky checks) and `linux-docker.yml` (the Docker suites and the AppImage minimal-host check); the Windows suites take `--sections` and `--repeat`.
+- Desktop builds: the macOS `.dmg` step is retried on its own, update-test builds are lighter, and Rust is pinned.
+- CONTRIBUTING.md, a Code of Conduct, issue forms and a pull request template; the release process (branches, rulesets, hotfixes) is documented.
+<!-- TODO: add the new pipeline (pipeline.yml) here once it is on release/0.2.2. -->
+
 ## [0.2.1] - 2026-10-27
 
 ### Changed
@@ -101,6 +133,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.1...v0.2.2
+[0.2.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Lucas-Angelo/swarmcast/releases/tag/v0.1.0
