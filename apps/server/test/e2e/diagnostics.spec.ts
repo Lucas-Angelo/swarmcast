@@ -5,8 +5,6 @@ import { adminApi, expect, test } from './fixtures.js';
 
 // "Problem report" card: Export logs writes the ZIP on the server side (the e2e server points
 // SWARMCAST_DOWNLOADS_DIR at a temporary folder), so it works without browser downloads.
-test.describe.configure({ mode: 'serial' });
-
 function env(): { adminLoginUrl: string; downloadsDir: string } {
   return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { adminLoginUrl: string; downloadsDir: string };
 }
@@ -24,7 +22,7 @@ async function openPanel(page: Page, lang?: string): Promise<void> {
   await expect(page.getByTestId('status')).toBeVisible();
 }
 
-test('Export logs saves an anonymised ZIP to the Downloads folder and shows where', async ({ page }) => {
+test('Export logs saves an anonymised ZIP to the Downloads folder and shows where', { tag: '@ui' }, async ({ page }) => {
   await openPanel(page);
   const card = page.getByTestId('diagnostics');
   await card.scrollIntoViewIfNeeded();
@@ -49,7 +47,7 @@ test('Export logs saves an anonymised ZIP to the Downloads folder and shows wher
   await expect(card.getByTestId('export-reveal')).toHaveText('Show in folder');
 });
 
-test('the retention setting is saved (3 to 90 days)', async ({ page }) => {
+test('the retention setting is saved (3 to 90 days)', { tag: '@ui' }, async ({ page }) => {
   await openPanel(page);
   const card = page.getByTestId('diagnostics');
   await card.scrollIntoViewIfNeeded();
@@ -62,7 +60,7 @@ test('the retention setting is saved (3 to 90 days)', async ({ page }) => {
   expect(await adminApi('GET', '/api/diagnostics')).toEqual({ logRetentionDays: 30 });
 });
 
-test('the card is translated to pt-BR', async ({ page }) => {
+test('the card is translated to pt-BR', { tag: '@ui' }, async ({ page }) => {
   await openPanel(page, 'pt-BR');
   const card = page.getByTestId('diagnostics');
   await card.scrollIntoViewIfNeeded();

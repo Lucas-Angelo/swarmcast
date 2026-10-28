@@ -2,9 +2,7 @@ import { admin, adminState, currentTime, expect, join, liveLink, stats, test, ui
 
 const INVALID = /no longer valid/;
 
-test.describe.configure({ mode: 'serial' });
-
-test('a viewer joins with the live link, picks a nickname and watches', async ({ browser }) => {
+test('a viewer joins with the live link, picks a nickname and watches', { tag: '@ui' }, async ({ browser }) => {
   const nick = uid('play');
   const { context, page } = await join(browser, nick);
   await waitPlaying(page);
@@ -17,7 +15,7 @@ test('a viewer joins with the live link, picks a nickname and watches', async ({
   await context.close();
 });
 
-test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', async ({ browser }) => {
+test('a fresh viewer starts with P2P off and can turn it on (the choice is remembered)', { tag: '@ui' }, async ({ browser }) => {
   const { context, page } = await join(browser, uid('optin'));
   await waitPlaying(page);
   const p2p = page.locator('#p2p');
@@ -34,7 +32,7 @@ test('a fresh viewer starts with P2P off and can turn it on (the choice is remem
   await context.close();
 });
 
-test('opening the site without the link is refused', async ({ page }) => {
+test('opening the site without the link is refused', { tag: '@ui' }, async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('body')).toContainText(INVALID);
   await page.goto('/watch');
@@ -43,7 +41,7 @@ test('opening the site without the link is refused', async ({ page }) => {
   await expect(page.locator('body')).toContainText(INVALID);
 });
 
-test('kicking stops playback and the viewer cannot come back with the same link', async ({ browser }) => {
+test('kicking stops playback and the viewer cannot come back with the same link', { tag: '@ui' }, async ({ browser }) => {
   const nick = uid('kick');
   const link = await liveLink();
   const { context, page } = await join(browser, nick, link);
@@ -63,7 +61,7 @@ test('kicking stops playback and the viewer cannot come back with the same link'
   await context.close();
 });
 
-test('after "Generate new link" the old link no longer works, the new one does', async ({ browser }) => {
+test('after "Generate new link" the old link no longer works, the new one does', { tag: '@ui' }, async ({ browser }) => {
   const old = await liveLink();
   await admin('/api/link/rotate');
   const fresh = (await adminState()).liveLink!;
@@ -78,7 +76,7 @@ test('after "Generate new link" the old link no longer works, the new one does',
   await context.close();
 });
 
-test('"Go live" appears after pausing and brings the viewer back near the live edge', async ({ browser, browserName }) => {
+test('"Go live" appears after pausing and brings the viewer back near the live edge', { tag: '@ui' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');
   const { context, page } = await join(browser, uid('golive'));
   await waitPlaying(page);
@@ -104,7 +102,7 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   await context.close();
 });
 
-test('viewers see how many people are watching', async ({ browser }) => {
+test('viewers see how many people are watching', { tag: '@ui' }, async ({ browser }) => {
   // Start from an empty audience so the expected number is exact.
   await admin('/api/viewers/disconnect-all');
   const a = await join(browser, uid('countA'));
