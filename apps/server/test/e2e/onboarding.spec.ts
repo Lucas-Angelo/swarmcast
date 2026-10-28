@@ -70,9 +70,13 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   await expect(dialog).toBeHidden();
   await expect.poll(async () => (await page.request.get(new URL('/api/onboarding', page.url()).toString())).json()).toEqual({ done: true });
 
+  // The panel decides from GET /api/onboarding: wait for that answer and the frame after it,
+  // instead of a fixed second, before checking the tutorial stayed closed.
+  const decided = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/onboarding' && r.request().method() === 'GET');
   await page.reload();
+  await decided;
   await expect(page.getByTestId('status')).toBeVisible();
-  await page.waitForTimeout(1000);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await expect(dialog).toBeHidden();
   expect(errors.filter((e) => /Content Security Policy|Refused/.test(e))).toEqual([]);
 });
