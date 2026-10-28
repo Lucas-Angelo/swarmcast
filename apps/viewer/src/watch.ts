@@ -158,6 +158,9 @@ const stats = {
   /** Peers dropped locally because they did not deliver. */
   peersDropped: 0,
   stallRecoveries: 0,
+  /** Source reloads (hls.loadSource after the first), and why the last one happened. */
+  reloads: 0,
+  lastReload: null as string | null,
   p2pEnabled: false,
   p2pAllowed: true,
   /** The streamer's switch for everyone (false = P2P off for this live). */
@@ -393,10 +396,17 @@ async function main(): Promise<void> {
   setInterval(showDelay, 1000);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
+  // Every load of the source after the first goes through here, so the stats count it.
+  const reloadSource = (why: string): void => {
+    stats.reloads += 1;
+    stats.lastReload = why;
+    debugLog(`reloading the source (${why})`);
+    hls.loadSource(cfg.playlistUrl);
+  };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
   // or ffmpeg fell back to the original quality): a media playlist the player knows may be
   // gone for good. Repeated 404s on media playlists re-read the multivariant playlist.
-  const reloader = createManifestReloader(() => hls.loadSource(cfg.playlistUrl));
+  const reloader = createManifestReloader(() => reloadSource('media playlists gone'));
   hls.on(Hls.Events.LEVEL_LOADED, () => reloader.reset());
 
   let networkErrors = 0;
@@ -421,7 +431,7 @@ async function main(): Promise<void> {
         data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
         data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR ||
         data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR;
-      setTimeout(() => (reload ? hls.loadSource(cfg.playlistUrl) : hls.startLoad()), Math.min(10_000, 1000 * networkErrors));
+      setTimeout(() => (reload ? reloadSource(`network error: ${data.details}`) : hls.startLoad()), Math.min(10_000, 1000 * networkErrors));
     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
       hls.recoverMediaError();
     } else {
@@ -531,7 +541,7 @@ async function main(): Promise<void> {
     isEnded: () => ended,
     // The adaptive delay's deliberate hold inside a stall is not a stuck player.
     isHeld: () => adaptive?.holding ?? false,
-    reload: () => hls.loadSource(cfg.playlistUrl),
+    reload: () => reloadSource('stall watchdog'),
     log: (msg) => {
       stats.stallRecoveries += 1;
       debugLog(msg);

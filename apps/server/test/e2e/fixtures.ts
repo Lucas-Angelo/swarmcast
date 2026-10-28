@@ -36,17 +36,20 @@ export function resetServer(o: { hard?: boolean; test?: string } = {}): Promise<
   return control('POST', `/reset${o.hard ? '?hard=1' : ''}`, o.test === undefined ? {} : { test: o.test });
 }
 
-/** Test-only: the stream's health, waiting up to `waitMs` for it (and for `minPlaylistS` of playlist). */
-export function streamHealth(o: { waitMs?: number; minPlaylistS?: number } = {}): Promise<StreamHealth> {
-  return control('GET', `/health?waitMs=${o.waitMs ?? 0}&minPlaylistS=${o.minPlaylistS ?? 0}`);
+/**
+ * Test-only: the stream's health, waiting up to `waitMs` for it: `qualities` variants (default
+ * 1, the ladder off) and every media playlist holding `minPlaylistS`.
+ */
+export function streamHealth(o: { waitMs?: number; minPlaylistS?: number; qualities?: number } = {}): Promise<StreamHealth> {
+  return control('GET', `/health?waitMs=${o.waitMs ?? 0}&minPlaylistS=${o.minPlaylistS ?? 0}&qualities=${o.qualities ?? 1}`);
 }
 
 /**
  * Wait until the live playlist covers `seconds` (viewers normally join a stream that has run
  * for a while: right after OBS starts the playlist is short and players sit at the live edge).
  */
-export async function waitForPlaylist(seconds: number, timeoutMs = 90_000): Promise<void> {
-  const h = await streamHealth({ waitMs: timeoutMs, minPlaylistS: seconds });
+export async function waitForPlaylist(seconds: number, o: { qualities?: number; timeoutMs?: number } = {}): Promise<void> {
+  const h = await streamHealth({ waitMs: o.timeoutMs ?? 90_000, minPlaylistS: seconds, qualities: o.qualities ?? 1 });
   if (!h.ok) throw new Error(`the stream is not ready: ${h.problems.join('; ')} (${JSON.stringify(h)})`);
 }
 
@@ -265,6 +268,9 @@ export interface ViewerStats {
   httpFallbacks: number;
   peersDropped: number;
   stallRecoveries: number;
+  /** Times the player loaded the source again (watch.ts), and why the last time. */
+  reloads: number;
+  lastReload: string | null;
   p2pEnabled: boolean;
   p2pAllowed: boolean;
 }

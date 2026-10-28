@@ -31,7 +31,10 @@ export function maskStreamKeys(text: string): string {
  * between a start and an exit line, so a dead feed leaves its reason behind. CI artifacts of a
  * public repo are downloadable: every line has its stream key masked.
  */
-export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: number; cbr?: boolean; logFile?: string } = {}): ChildProcess {
+export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: number; fps?: number; preset?: string; cbr?: boolean; logFile?: string } = {}): ChildProcess {
+  // fps and preset (default 30, veryfast): a cheaper feed for tests that load the CPU otherwise
+  // (the E2E quality-ladder scenarios); the keyframe interval stays 2 s.
+  const fps = o.fps ?? 30;
   const kbps = o.kbps ?? 1200;
   const logFile = path.resolve(o.logFile ?? path.join('test-results', 'fake-obs.log'));
   const key = rtmpUrl.slice(rtmpUrl.lastIndexOf('/') + 1);
@@ -48,17 +51,17 @@ export function pushTestStream(rtmpUrl: string, o: { size?: string; kbps?: numbe
     'ffmpeg',
     [
       '-hide_banner', '-loglevel', 'error', '-re',
-      '-f', 'lavfi', '-i', `testsrc2=size=${o.size ?? '640x360'}:rate=30`,
+      '-f', 'lavfi', '-i', `testsrc2=size=${o.size ?? '640x360'}:rate=${fps}`,
       '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000',
-      '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
-      '-g', '60', '-keyint_min', '60', '-sc_threshold', '0', '-b:v', `${kbps}k`,
+      '-c:v', 'libx264', '-preset', o.preset ?? 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p',
+      '-g', String(2 * fps), '-keyint_min', String(2 * fps), '-sc_threshold', '0', '-b:v', `${kbps}k`,
       ...(o.cbr ? ['-minrate', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps}k`, '-x264-params', 'nal-hrd=cbr:filler=1'] : []),
       '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', rtmpUrl,
     ],
     { stdio: ['ignore', 'ignore', 'pipe'] },
   );
   const tag = `fake OBS pid ${child.pid ?? '?'}`;
-  write(`--- ${new Date().toISOString()} ${tag}: ${o.size ?? '640x360'} ${kbps} kbps${o.cbr ? ' cbr' : ''} -> ${rtmpUrl}\n`);
+  write(`--- ${new Date().toISOString()} ${tag}: ${o.size ?? '640x360'}@${fps} ${o.preset ?? 'veryfast'} ${kbps} kbps${o.cbr ? ' cbr' : ''} -> ${rtmpUrl}\n`);
   // Whole lines only, so a key split across two chunks is still masked.
   let partial = '';
   child.stderr?.setEncoding('utf8');

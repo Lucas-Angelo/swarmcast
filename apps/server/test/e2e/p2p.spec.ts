@@ -18,6 +18,7 @@ import {
   test,
   uid,
   viewerByNick,
+  waitForPlaylist,
   waitPlaying,
 } from './fixtures.js';
 
@@ -171,23 +172,27 @@ test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; view
 // core that does not fall back to HTTPS by itself, a P2P viewer must keep playing, and must
 // come back by itself after a forced stall (network throttled). The viewer before the fix
 // froze here within seconds.
+// Load: one transcoded rung (480p; the viewers watch it) from a 25 fps ultrafast 720p feed, so
+// a 4-vCPU runner encodes as little as the scenario needs next to Chrome and the throttle.
+const SOAK_BEFORE_S = 40;
+const SOAK_AFTER_S = 20;
 test('a peer that barely delivers never starves playback, even after a forced stall', async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'network throttling needs CDP (Chromium)');
-  test.skip(process.platform === 'win32', 'uses SIGUSR2 to reconnect the fake OBS');
   const q0 = await adminApi<QualityState>('GET', '/api/quality');
   test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');
-  test.setTimeout(480_000);
+  test.setTimeout(360_000);
 
+  // The server goes back to one quality, a 40 s window and the default feed at the next test's gate.
   const contexts: Array<{ close(): Promise<void> }> = [];
   try {
     await setPlaylistWindow(20);
-    await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
-    await reconnectObs({ size: '1280x720', kbps: 2500 });
+    await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480], encoder: 'libx264' }));
+    await reconnectObs({ size: '1280x720', kbps: 2500, fps: 25, preset: 'ultrafast' });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
-      .toEqual([720, 480, 360]);
-    // Let the playlists fill up (the audio one to its 20 s window).
-    await new Promise((r) => setTimeout(r, 25_000));
+      .toEqual([720, 480]);
+    // The playlists fill up (the audio one to its 20 s window).
+    await waitForPlaylist(19, { qualities: 2 });
 
     // The bad peer joins first, so it holds segments the honest viewer will ask it for.
     // Both on 480p: one swarm per quality, so they are peers of each other.
@@ -222,7 +227,14 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await slow.click('#join');
     await waitPlaying(slow);
     await enableP2P(slow);
-    await slow.waitForTimeout(8000);
+    // It holds the segments just ahead of where the honest viewer will play (same delay).
+    await expect
+      .poll(() => slow.evaluate(() => {
+        const v = document.querySelector('video')!;
+        for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime < v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
+        return 0;
+      }), { timeout: 30_000, intervals: [500] })
+      .toBeGreaterThan(6);
 
     // The honest viewer is on a tunnel-like link (300 ms round trip), like real viewers.
     const TUNNEL = { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 };
@@ -246,9 +258,9 @@ test('a peer that barely delivers never starves playback, even after a forced st
     });
     await expect.poll(async () => (await stats(page)).peers.length, { timeout: 90_000 }).toBeGreaterThan(0);
 
-    // 60 s of normal playback next to the trickling peer: no stall longer than a few seconds.
+    // Normal playback next to the trickling peer: no stall longer than a few seconds.
     await startStallMonitor(page);
-    await page.waitForTimeout(60_000);
+    await page.waitForTimeout(SOAK_BEFORE_S * 1000);
     const before = await stallReport(page);
     expect(before.maxStallMs, 'stall next to a slow peer').toBeLessThan(4000);
 
@@ -259,27 +271,25 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
 
     // It comes back by itself...
-    await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [1000] }).toBe(0);
+    await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [500] }).toBe(0);
     // ...and keeps playing smoothly.
+    const recovered = await stats(page);
     await startStallMonitor(page);
-    await page.waitForTimeout(30_000);
+    await page.waitForTimeout(SOAK_AFTER_S * 1000);
     const after = await stallReport(page);
     const s = await stats(page);
     const delay = await page.evaluate(() => (window as unknown as { __swarmcast: { delay: unknown } }).__swarmcast.delay);
-    console.log(`steady viewer: ${s.httpFallbacks} HTTPS fallbacks, ${s.peersDropped} peers dropped, ${s.stallRecoveries} stall recoveries, ${Math.round(s.p2pDownBytes / 1024)} kB over P2P; played ${after.playedS.toFixed(1)} s, longest stall ${Math.round(after.maxStallMs)} ms; delay ${JSON.stringify(delay)}`);
+    console.log(`steady viewer: ${s.httpFallbacks} HTTPS fallbacks, ${s.peersDropped} peers dropped, ${s.stallRecoveries} stall recoveries, ${s.reloads} source reloads (last: ${s.lastReload ?? 'none'}; ${s.reloads - recovered.reloads} after recovering), ${Math.round(s.p2pDownBytes / 1024)} kB over P2P; played ${after.playedS.toFixed(1)} s, longest stall ${Math.round(after.maxStallMs)} ms; delay ${JSON.stringify(delay)}`);
     // Media played, not currentTime − t0: the stall watchdog may reload the source, which
     // restarts the timeline (currentTime jumps back) without any loss of playback. This link
     // (300 ms RTT, a trickling peer, the CPU ladder) has many short stalls by design: measured
-    // locally, the player plays 25–27 s of these 30 s with or without the adaptive delay, so
-    // the bar is two thirds; starvation itself is the longest stall, checked just below.
-    expect(after.playedS, 'media played after the forced stall').toBeGreaterThan(20);
+    // locally, the player plays 25–27 s of 30 s with or without the adaptive delay, so the bar
+    // is two thirds; starvation itself is the longest stall, checked just below.
+    expect(after.playedS, 'media played after the forced stall').toBeGreaterThan((SOAK_AFTER_S * 2) / 3);
     expect(after.maxStallMs, 'stall after recovering').toBeLessThan(4000);
+    // Recovered for real: playing on, not starting over (a source reload restarts the timeline).
+    expect(s.reloads - recovered.reloads, `source reloads after recovering (last: ${s.lastReload})`).toBe(0);
   } finally {
     for (const c of contexts) await c.close().catch(() => {});
-    await setPlaylistWindow(40);
-    const q = await adminApi<QualityState>('GET', '/api/quality');
-    await adminApi('PUT', '/api/quality', ladderUpdate(q, { mode: 'manual', enabled: false }));
-    await reconnectObs(null);
-    await expect.poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.length, { timeout: 90_000, intervals: [1000] }).toBeLessThanOrEqual(1);
   }
 });

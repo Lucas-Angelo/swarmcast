@@ -183,13 +183,21 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
 
 // ---- stream health (GET /health) ----
 
-/** Seconds the playlist of the first variant covers right now. */
+/** Seconds the shortest media playlist (video or audio) viewers get covers right now. */
 function playlistSeconds(): number {
-  const name = app.live.origin.variants()[0]?.name;
-  const text = name ? app.live.origin.getPlaylist(name) : undefined;
-  let s = 0;
-  for (const m of (text ?? '').matchAll(/#EXTINF:([\d.]+)/g)) s += Number(m[1]);
-  return Math.round(s * 10) / 10;
+  const multivariant = app.live.origin.getPlaylist('index.m3u8') ?? '';
+  const names = new Set<string>();
+  for (const line of multivariant.split('\n')) {
+    const uri = line.startsWith('#') ? /URI="([^"]+)"/.exec(line)?.[1] : line.trim();
+    if (uri) names.add(uri.split('?')[0]!.split('/').pop()!);
+  }
+  let shortest: number | null = null;
+  for (const name of names) {
+    let s = 0;
+    for (const m of (app.live.origin.getPlaylist(name) ?? '').matchAll(/#EXTINF:([\d.]+)/g)) s += Number(m[1]);
+    shortest = shortest === null ? s : Math.min(shortest, s);
+  }
+  return Math.round((shortest ?? 0) * 10) / 10;
 }
 
 interface Health {
@@ -207,8 +215,11 @@ interface Health {
   previousTest: string;
 }
 
-/** Healthy: live, one quality, a new segment within 2.5 segment durations, `minPlaylistS` of playlist. */
-function healthNow(minPlaylistS: number): Health {
+/**
+ * Healthy: live, `qualities` variants (1: the ladder is off), a new segment within 2.5 segment
+ * durations, and every media playlist holding at least `minPlaylistS`.
+ */
+function healthNow(minPlaylistS: number, qualities: number): Health {
   const L = app.live;
   const variants = L.origin.variants().map((v) => v.height);
   const since = L.origin.lastSegmentAt ? Date.now() - L.origin.lastSegmentAt : null;
@@ -216,7 +227,7 @@ function healthNow(minPlaylistS: number): Health {
   const problems: string[] = [];
   if (L.phase !== 'live') problems.push(`phase is ${L.phase}`);
   if (!L.origin.available) problems.push('the origin serves no playlist');
-  if (variants.length !== 1) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected 1`);
+  if (variants.length !== qualities) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected ${qualities}`);
   if (since === null) problems.push('no segment yet');
   else if (since > 2.5 * SEGMENT_DURATION_S * 1000) problems.push(`no new segment for ${since} ms`);
   if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s, ${minPlaylistS} s wanted`);
@@ -237,10 +248,10 @@ function healthNow(minPlaylistS: number): Health {
 }
 
 /** Waits up to `waitMs` for a healthy stream; answers with the last state seen. */
-async function health(waitMs: number, minPlaylistS: number): Promise<Health> {
+async function health(waitMs: number, minPlaylistS: number, qualities: number): Promise<Health> {
   const end = Date.now() + waitMs;
   for (;;) {
-    const h = healthNow(minPlaylistS);
+    const h = healthNow(minPlaylistS, qualities);
     if (h.ok || Date.now() >= end) return h;
     await new Promise((r) => setTimeout(r, 200));
   }
@@ -248,7 +259,7 @@ async function health(waitMs: number, minPlaylistS: number): Promise<Health> {
 
 // Test-only control port (127.0.0.1, random port, never part of the app):
 // - POST /reset[?hard=1] {test?}: back to the starting state (reset() above);
-// - GET /health?waitMs=&minPlaylistS=: the stream's health, waiting up to waitMs for it;
+// - GET /health?waitMs=&minPlaylistS=&qualities=: the stream's health, waiting up to waitMs for it;
 // - POST /obs {options | null}: the fake OBS reconnects with these push options;
 // - POST /pow-level/<0|1|2>: the level the attack shield would choose by itself, without
 //   flooding the server;
@@ -275,7 +286,7 @@ const control = http.createServer((req, res) => {
       return json(res, 200, r);
     }
     if (req.method === 'GET' && url.pathname === '/health') {
-      const h = await health(Math.min(120_000, Number(url.searchParams.get('waitMs') ?? 0)), Number(url.searchParams.get('minPlaylistS') ?? 0));
+      const h = await health(Math.min(120_000, Number(url.searchParams.get('waitMs') ?? 0)), Number(url.searchParams.get('minPlaylistS') ?? 0), Number(url.searchParams.get('qualities') ?? 1));
       if (!h.ok) app.log.warn({ test: currentTest, health: h }, 'e2e stream unhealthy');
       return json(res, 200, h);
     }
