@@ -3,6 +3,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   test: {
     include: ['apps/server/test/integration/**/*.test.ts'],
+    globalSetup: ['apps/server/test/integration/global-setup.ts'],
     environment: 'node',
     // A machine-readable result per run (CI uploads it with test-results/), plus annotations on
     // GitHub, which Vitest adds by itself only when no reporters are configured.
