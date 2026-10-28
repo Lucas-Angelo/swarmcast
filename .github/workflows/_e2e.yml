@@ -2,8 +2,14 @@ name: e2e
 
 # The Playwright suite (pipeline.yml test stage) on Ubuntu and macOS, split by tag rather than by
 # --shard (sharding balances by file, which would put the heavy media files together):
-# - media: the tests tagged @media (live video, P2P, the quality ladder, adaptive delay, attack);
-# - ui: everything else (--grep-invert @media, so an untagged test still runs somewhere).
+# - media: the tests tagged @media (live video, P2P, the quality ladder, attack) except the files
+#   in MEDIA_WITH_UI;
+# - ui: everything else: the untagged and @ui tests (so an untagged test still runs somewhere)
+#   and the @media files in MEDIA_WITH_UI.
+# The two greps are exact complements. MEDIA_WITH_UI balances the jobs: on Ubuntu the @media
+# tests took 503 s (p2p 301, adaptive-delay 152, quality 42, attack 8) and the rest 121 s, so
+# adaptive-delay moves over (about 350 s and 270 s). Playwright matches --grep against
+# "<project> <file> <describe> <title> <tags>", so a file name can be part of the pattern.
 # Each group runs every project (Google Chrome, Firefox, WebKit) with workers: 1
 # (playwright.config.ts). Windows browsers are covered by the Windows suites (_windows.yml).
 on:
@@ -14,6 +20,7 @@ permissions:
 
 env:
   FORCE_COLOR: '1'
+  MEDIA_WITH_UI: 'adaptive-delay\.spec'
 
 jobs:
   e2e:
@@ -74,7 +81,11 @@ jobs:
         env:
           GROUP: ${{ matrix.group }}
         run: |
-          if [ "$GROUP" = media ]; then grep=(--grep @media); else grep=(--grep-invert @media); fi
+          if [ "$GROUP" = media ]; then
+            grep=(--grep @media --grep-invert "$MEDIA_WITH_UI")
+          else
+            grep=(--grep "^(?!.*@media)|$MEDIA_WITH_UI")
+          fi
           npx playwright test "${grep[@]}"
       # Kept for every run that was not cancelled, so a test that passed on retry (flaky) still
       # leaves its trace: the HTML report, results.json, traces, e2e-server.log, fake-obs.log.

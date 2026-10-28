@@ -35,7 +35,7 @@ changes ─┬─ quick ──────────────────�
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64` |
 | desktop | `_desktop.yml` | 5 (one per target, 2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
-| e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is `--grep @media`, `ui` is `--grep-invert @media` |
+| e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs (best effort) |
 | clean-machine | `_clean-machine.yml` | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | install scripts (when they changed; 3 images), preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
@@ -99,7 +99,12 @@ schedules and releases are never cancelled.
   (deployment rule: tags `v*`), whose secrets no other job can read. Pull request runs sign their
   test builds with a throwaway key.
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
-  instead of filling the 10 GB repository limit.
+  instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
+  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because
+  some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
+  request pays one slow download, its later runs restore it. A pull request cannot poison it:
+  each entry is a pinned file, and `fetch-binaries.mjs` uses it only when its SHA-256 matches
+  `scripts/build/versions.json`.
 - **Releases are never edited after publishing:** `release.yml` uploads to a draft, checks every
   asset, attests them (`actions/attest`, verify with `gh attestation verify <file> -R
   Lucas-Angelo/swarmcast`) and then publishes the draft.
