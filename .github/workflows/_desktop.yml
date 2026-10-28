@@ -44,8 +44,11 @@ jobs:
         include:
           - { target: windows-x64, os: windows-latest }
           - { target: macos-arm64, os: macos-latest }
-          # The last Intel macOS image GitHub offers (until August 2027).
-          - { target: macos-x64, os: macos-15-intel }
+          # Cross-built on Apple silicon (Rust, the cgo tray helper, pkg and the .dmg all target
+          # x86_64 from there): the Intel image took 14-25 min for these builds, Apple silicon about
+          # a third. The Intel Mac runs these exact bytes in _clean-machine.yml (macos-15-intel)
+          # and release.yml's smoke test.
+          - { target: macos-x64, os: macos-latest, rust-target: x86_64-apple-darwin }
           # The oldest supported Ubuntu (glibc): the .deb/.AppImage then run on newer ones too.
           - { target: linux-x64, os: ubuntu-22.04 }
           - { target: linux-arm64, os: ubuntu-22.04-arm }
@@ -54,7 +57,8 @@ jobs:
     # environment can read it once the key is an environment secret (docs/RELEASING.md, section 3).
     # An empty name means no environment: pull request runs never ask for it.
     environment: ${{ inputs.release && 'release' || '' }}
-    timeout-minutes: ${{ inputs.release && 45 || 25 }}
+    # A cold Rust cache (a Cargo.lock or toolchain change) costs about twice a warm one.
+    timeout-minutes: ${{ inputs.release && 45 || 30 }}
     defaults:
       run:
         shell: bash
@@ -81,6 +85,7 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: ${{ matrix.target }}
+          targets: ${{ matrix.rust-target || '' }}
       - uses: ./.github/actions/get-build
         with:
           names: ${{ matrix.target == 'windows-x64' && 'pkg-windows-x64' || 'web-dist' }}

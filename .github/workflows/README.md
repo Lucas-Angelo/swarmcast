@@ -33,7 +33,7 @@ changes ─┬─ quick ──────────────────�
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts` |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64` |
-| desktop | `_desktop.yml` | 5 (one per target, 2 macOS) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
+| desktop | `_desktop.yml` | 5 (one per target, 2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
 | e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is `--grep @media`, `ui` is `--grep-invert @media` |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs (best effort) |

@@ -9,6 +9,9 @@ inputs:
   components:
     description: Extra rustup components (comma-separated), e.g. `rustfmt,clippy`.
     default: ''
+  targets:
+    description: Extra rustup targets (comma-separated), for a cross build such as x86_64-apple-darwin on an Apple silicon runner.
+    default: ''
   cache-key:
     description: rust-cache key (one per target and build flavour); empty for no rust-cache.
     default: ''
@@ -23,12 +26,14 @@ runs:
       shell: bash
       env:
         COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
       run: |
         file="$GITHUB_WORKSPACE/apps/desktop/src-tauri/rust-toolchain.toml"
         channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' "$file")"
         [ -n "$channel" ] || { echo "::error file=$file::no channel in rust-toolchain.toml"; exit 1; }
         args=(--profile minimal --no-self-update)
         [ -z "$COMPONENTS" ] || args+=(--component "$COMPONENTS")
+        [ -z "$TARGETS" ] || args+=(--target "$TARGETS")
         rustup toolchain install "$channel" "${args[@]}"
         # Also the default: rust-cache computes its key with the default rustc, and the scripts run
         # cargo outside apps/desktop/src-tauri too.

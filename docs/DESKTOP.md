@@ -292,8 +292,8 @@ mode the server does it on first start (no `system-check.json`, or a different a
 
 CI ([.github/workflows/README.md](../.github/workflows/README.md)): `cargo fmt --check` runs in `quick`,
 `cargo clippy -D warnings` and `cargo test` in the `node` stage on each OS. `_desktop.yml` builds the
-installers for every target (windows-x64, macos-arm64, macos-x64 on the Intel image, linux-x64 and
-linux-arm64 on Ubuntu 22.04 for an older glibc), two `tauri build`s per target: test build A (0.0.0-test.1,
+installers for every target (windows-x64, macos-arm64 and macos-x64, both on Apple silicon, linux-x64 and
+linux-arm64 on Ubuntu 22.04 for an older glibc; the Intel Mac image tests the macos-x64 build), two `tauri build`s per target: test build A (0.0.0-test.1,
 `--fast --insecure-updates --updater-pubkey`) and the real installers, signed with a key pair generated in
 the job. `_clean-machine.yml` then runs `scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`,
 `.dmg` → `~/Applications`, `.deb` and the AppImage), launch, panel login (admin API), autostart on/off,
