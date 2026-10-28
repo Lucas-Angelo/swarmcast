@@ -1,11 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
-import { expect, test } from "@playwright/test";
 import {
   admin,
   adminApi,
   adminState,
+  expect,
   liveLink,
+  test,
+  uid,
   waitPlaying,
 } from "./fixtures.js";
 
@@ -95,7 +97,7 @@ test("a flood of invalid join links is detected, turns on the browser check, and
     );
 
     // Viewer A loaded the page before the check was on: the server asks for it, the page solves and retries.
-    await pageA.fill("#nickname", "BeforeAttack");
+    await pageA.fill("#nickname", uid("before"));
     const joinA = pageA.waitForResponse(
       (r) => r.url().endsWith("/api/join") && r.status() === 403,
     );
@@ -112,7 +114,7 @@ test("a flood of invalid join links is detected, turns on the browser check, and
     );
     await pageB.reload();
     expect(await (await challenge).json()).toMatchObject({ required: true });
-    await pageB.fill("#nickname", "DuringAttack");
+    await pageB.fill("#nickname", uid("during"));
     const request = pageB.waitForRequest(
       (r) => r.url().endsWith("/api/join") && r.method() === "POST",
     );

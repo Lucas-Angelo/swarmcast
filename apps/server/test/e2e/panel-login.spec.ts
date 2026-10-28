@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.js';
 
 // Panel login through /auth/<token> (the cookie is SameSite=Strict). Chromium and WebKit
 // (WebKit is the desktop app's webview on macOS).

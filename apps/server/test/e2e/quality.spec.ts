@@ -1,6 +1,5 @@
-import { expect, test } from '@playwright/test';
 import type { QualityState } from '@swarmcast/shared';
-import { adminApi, join, ladderUpdate as update, reconnectObs, waitPlaying } from './fixtures.js';
+import { adminApi, expect, join, ladderUpdate as update, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
 
 type Hls = { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; targetLatency: number };
 
@@ -17,12 +16,12 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
     // Turn on 480p + 360p (manual, x264 forced: `auto` keeps only the original on a PC without a
     // GPU encoder and with fewer than 6 CPU threads, like the CI runners), then OBS reconnects at 720p.
     await adminApi('PUT', '/api/quality', update(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
-    reconnectObs({ size: '1280x720', kbps: 2500 });
+    await reconnectObs({ size: '1280x720', kbps: 2500 });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
       .toEqual([720, 480, 360]);
 
-    const { context, page } = await join(browser, 'quality-chromium');
+    const { context, page } = await join(browser, uid('quality'));
     await waitPlaying(page);
     const menu = page.locator('.quality-menu');
     await expect(menu).toBeVisible();
@@ -59,7 +58,7 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
     // Back to one quality from the small test picture, for the other specs.
     const q = await adminApi<QualityState>('GET', '/api/quality');
     await adminApi('PUT', '/api/quality', update(q, { mode: 'manual', enabled: false }));
-    reconnectObs(null);
+    await reconnectObs(null);
     await expect.poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.length, { timeout: 90_000, intervals: [1000] }).toBeLessThanOrEqual(1);
   }
 });
