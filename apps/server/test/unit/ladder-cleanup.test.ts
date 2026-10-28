@@ -1,17 +1,22 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import readline from 'node:readline';
 import pino from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { REMOVE_RETRIES, removeDir } from '../../src/core/fs-cleanup.js';
+import { REMOVE_RETRIES, REMOVE_RETRY_BUDGET_MS, removeDir } from '../../src/core/fs-cleanup.js';
 import { Transcoder } from '../../src/quality/transcoder.js';
 import { silentLog } from './helpers.js';
 
 // B5: deleting the ladder folder right after ffmpeg stops can fail with EPERM/EBUSY on Windows
 // (Defender or the indexer still holds a segment). The delete is retried, and a folder that stays
 // locked is logged and left: it never fails "Stop everything".
+
+/** removeDir's first tries fail while the file is held; the release comes this long after. */
+const RELEASE_AFTER_MS = 300;
+/** Windows PowerShell 5.1 starts in 2–4 s on a CI runner, much slower under load. */
+const LOCKER_START_BUDGET_MS = 60_000;
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -44,6 +49,7 @@ describe('removeDir', () => {
     expect(fs.existsSync(dir)).toBe(false);
     expect(rm).toHaveBeenCalledWith(dir, { recursive: true, force: true, ...REMOVE_RETRIES });
     expect(REMOVE_RETRIES).toEqual({ maxRetries: 10, retryDelay: 100 });
+    expect(REMOVE_RETRY_BUDGET_MS).toBe(5500);
     // A folder that is already gone is fine too.
     expect(await removeDir(dir, silentLog, 'test')).toBe(true);
   });
@@ -70,29 +76,106 @@ describe('removeDir', () => {
   });
 
   // The Windows case itself: another process holds a segment open without FILE_SHARE_DELETE (as
-  // a virus scanner does) and lets go 600 ms later. A plain rmSync fails; removeDir waits it out.
-  it.runIf(process.platform === 'win32')('waits out a file locked by another process (Windows)', async () => {
-    const dir = tree();
-    const file = path.join(dir, 'a', 'b', 'seg.m4s');
-    const ps = spawn(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-Command', `$f = [System.IO.File]::Open('${file}', 'Open', 'Read', 'None'); 'locked'; Start-Sleep -Milliseconds 600; $f.Close()`],
-      { stdio: ['ignore', 'pipe', 'inherit'], windowsHide: true },
-    );
-    const exited = new Promise<void>((r) => ps.once('exit', () => r()));
-    await new Promise<void>((resolve) => readline.createInterface({ input: ps.stdout! }).on('line', (l) => l.trim() === 'locked' && resolve()));
-    let code: string | undefined;
-    try {
-      fs.rmSync(dir, { recursive: true, force: true });
-    } catch (err) {
-      code = (err as NodeJS.ErrnoException).code;
-    }
-    expect(['EPERM', 'EBUSY']).toContain(code);
-    expect(await removeDir(dir, silentLog, 'test')).toBe(true);
-    expect(fs.existsSync(dir)).toBe(false);
-    await exited;
-  }, 20_000);
+  // a virus scanner does) and lets go while removeDir is retrying. Every step is an explicit
+  // signal, never a timer racing the test: the locker says "locked" once it holds the file, and
+  // closes it only when the test writes "release". The bounds: the locker's start (Windows
+  // PowerShell takes seconds on a busy runner; it is reported, and gets its own budget) plus
+  // removeDir's documented retry budget.
+  it.runIf(process.platform === 'win32')(
+    'waits out a file locked by another process (Windows)',
+    async () => {
+      const dir = tree();
+      const file = path.join(dir, 'a', 'b', 'seg.m4s');
+      const locker = new FileLocker(file);
+      try {
+        const startMs = await locker.locked;
+        let code: string | undefined;
+        try {
+          fs.rmSync(dir, { recursive: true, force: true });
+        } catch (err) {
+          code = (err as NodeJS.ErrnoException).code;
+        }
+        // Locked for real until the test says otherwise.
+        expect(['EPERM', 'EBUSY'], `plain rmSync while locked (locker started in ${startMs} ms)`).toContain(code);
+        const t0 = Date.now();
+        const removing = removeDir(dir, silentLog, 'test');
+        // Let removeDir fail and retry at least once, then let go of the file.
+        await new Promise((r) => setTimeout(r, RELEASE_AFTER_MS));
+        await locker.release();
+        expect(await removing).toBe(true);
+        const took = Date.now() - t0;
+        expect(fs.existsSync(dir)).toBe(false);
+        expect(took).toBeGreaterThanOrEqual(RELEASE_AFTER_MS);
+        expect(took, 'removeDir finished within its retry budget').toBeLessThan(REMOVE_RETRY_BUDGET_MS + 2000);
+      } finally {
+        locker.kill();
+      }
+    },
+    LOCKER_START_BUDGET_MS + RELEASE_AFTER_MS + REMOVE_RETRY_BUDGET_MS + 5000,
+  );
 });
+
+/**
+ * Holds `file` open with FileShare None (no delete, no read by others) in a PowerShell process.
+ * The path reaches it as data ($env:SC_LOCK_FILE), never as code.
+ */
+class FileLocker {
+  private readonly ps: ChildProcess;
+  private readonly lines: string[] = [];
+  private readonly waiters: Array<() => void> = [];
+  /** Resolves with the locker's start time (ms) once it holds the file. */
+  readonly locked: Promise<number>;
+
+  constructor(file: string) {
+    const script = [
+      "$f = [System.IO.File]::Open($env:SC_LOCK_FILE, 'Open', 'Read', 'None')",
+      "[Console]::Out.WriteLine('locked'); [Console]::Out.Flush()",
+      '[void][Console]::In.ReadLine()',
+      '$f.Close()',
+      "[Console]::Out.WriteLine('released'); [Console]::Out.Flush()",
+    ].join('; ');
+    const started = Date.now();
+    this.ps = spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: { ...process.env, SC_LOCK_FILE: file },
+    });
+    const errors: string[] = [];
+    this.ps.stderr!.on('data', (d: Buffer) => errors.push(d.toString()));
+    readline.createInterface({ input: this.ps.stdout! }).on('line', (l) => {
+      this.lines.push(l.trim());
+      for (const w of this.waiters.splice(0)) w();
+    });
+    this.locked = this.waitFor('locked', LOCKER_START_BUDGET_MS, () => errors.join('')).then(() => Date.now() - started);
+  }
+
+  private waitFor(line: string, timeoutMs: number, detail: () => string): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(`locker: no "${line}" within ${timeoutMs} ms; output ${JSON.stringify(this.lines)}; stderr ${detail()}`)), timeoutMs);
+      const check = (): void => {
+        if (this.lines.includes(line)) {
+          clearTimeout(timer);
+          resolve();
+        } else if (this.ps.exitCode !== null) {
+          clearTimeout(timer);
+          reject(new Error(`locker exited with ${this.ps.exitCode} before "${line}": ${detail()}`));
+        } else this.waiters.push(check);
+      };
+      this.ps.once('exit', () => check());
+      check();
+    });
+  }
+
+  /** Close the file and wait until the locker confirms it. */
+  async release(): Promise<void> {
+    this.ps.stdin!.end('release\n');
+    await this.waitFor('released', 10_000, () => '');
+  }
+
+  kill(): void {
+    if (this.ps.exitCode === null) this.ps.kill();
+  }
+}
 
 describe('Transcoder.stop', () => {
   it('stops cleanly and lets the next start use a fresh folder even when the old one cannot be deleted', async () => {
