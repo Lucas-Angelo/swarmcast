@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it } from 'vitest';
 import { loopbackBase, panelLogin } from '../../../../scripts/test/lib/loopback.mjs';
+import { mdCell } from '../../../../scripts/test/lib/markdown.mjs';
 import { isAlive, spawnTracked, stopTracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until, waitForLine, WaitError } from '../../../../scripts/test/lib/wait.mjs';
 
@@ -109,5 +110,16 @@ describe('loopbackBase / panelLogin', () => {
     expect(() => panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '//evil.example/auth/x' })).toThrow(/login path/);
     expect(() => panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '/auth/x/../../api' })).toThrow(/login path/);
     expect(() => panelLogin({ adminUrl: 'http://evil.example:38081', adminLoginPath: '/auth/x' })).toThrow(/loopback/);
+  });
+});
+
+describe('mdCell', () => {
+  const bs = '\\';
+  it('keeps any text inside its Markdown table cell', () => {
+    expect(mdCell('a | b')).toBe(`a ${bs}| b`);
+    // A trailing backslash is escaped, so it can no longer escape the cell's closing pipe.
+    expect(mdCell(`C:${bs}dir${bs}`)).toBe(`C:${bs}${bs}dir${bs}${bs}`);
+    expect(mdCell(`x${bs}|y`)).toBe(`x${bs}${bs}${bs}|y`);
+    expect(mdCell('one\r\ntwo\nthree')).toBe('one two three');
   });
 });

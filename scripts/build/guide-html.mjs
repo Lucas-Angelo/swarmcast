@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readTokens } from '../../site/src/tokens.mjs';
+import { stripTags } from './strip-tags.mjs';
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const SITE_DIR = path.join(REPO_ROOT, 'site');
@@ -28,9 +29,7 @@ const escapeHtml = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace
 
 /** Heading id like Starlight's (github-slugger): lowercase, punctuation dropped, spaces to "-". */
 export function slugify(text) {
-  return text
-    .toLowerCase()
-    .replace(/<[^>]*>/g, '')
+  return stripTags(text.toLowerCase())
     .replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '')
     .trim()
     .replace(/\s/g, '-');
