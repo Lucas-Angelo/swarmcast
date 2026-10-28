@@ -6,7 +6,7 @@ import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import { debug as p2pDebug } from 'p2p-media-loader-core';
 import type { ServerMessage, ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
-import { attachAdaptiveDelay, delaySpeedFromSearch, type AdaptiveDelay } from './adaptive-delay.js';
+import { attachAdaptiveDelay, delayRateFromSearch, delaySpeedFromSearch, type AdaptiveDelay } from './adaptive-delay.js';
 import { createLatencyToggle } from './latency-toggle.js';
 import { CoreActivity, PeerStrikes, withHttpFallback } from './p2p-fallback.js';
 import { asciiToHex, peerGuard } from './peer-guard.js';
@@ -387,7 +387,7 @@ async function main(): Promise<void> {
   });
 
   // Each viewer's delay adapts to their connection (latency-controller.ts, docs/QUALITY.md).
-  adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, speed: delaySpeedFromSearch(location.search) });
+  adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, speed: delaySpeedFromSearch(location.search), rateScale: delayRateFromSearch(location.search) });
   fitLatency();
   mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id));
   setInterval(showDelay, 1000);

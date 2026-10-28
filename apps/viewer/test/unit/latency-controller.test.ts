@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { ADAPTIVE_DELAY, ADAPTIVE_DELAY_HEADROOM_S, MAX_PLAYER_DELAY_S, PLAYER_LIVE_DELAYS, PLAYER_STALL_INCREASE_S, PLAYLIST_WINDOW_S } from '@swarmcast/shared';
 import { latencyFor } from '../../src/player-config.js';
-import { DelayController, TUNING, coefficientOfVariation, quantile, scaledTuning, slope, type DelayProfileId } from '../../src/latency-controller.js';
+import { delayRateFromSearch, delaySpeedFromSearch } from '../../src/adaptive-delay.js';
+import { DelayController, MAX_SCALED_RATE_STEP, TUNING, coefficientOfVariation, quantile, scaledTuning, slope, type DelayProfileId } from '../../src/latency-controller.js';
 
 /** What the network does at second t of the simulation. */
 interface Net {
@@ -43,10 +44,11 @@ function simulate(o: {
   start?: number;
   latency?: number;
   speed?: number;
+  rateScale?: number;
   lag?: number;
 }): SimResult {
   const profile = o.profile ?? 'stable';
-  const ctl = o.ctl ?? new DelayController({ profile, now: o.start ?? 0, speed: o.speed });
+  const ctl = o.ctl ?? new DelayController({ profile, now: o.start ?? 0, speed: o.speed, rateScale: o.rateScale });
   let latency = o.latency ?? ADAPTIVE_DELAY[profile].initial;
   const lag = o.lag ?? 2;
   const res: SimResult = { ctl, latency, maxRate: 1, minRate: 1, targets: [], latencies: [], holds: [], states: [] };
@@ -103,7 +105,26 @@ describe('helpers', () => {
     expect(t.decayPerS).toBeCloseTo(0.4);
     expect(t.windowS).toBe(TUNING.stable.windowS);
     expect(t.maxRate).toBe(TUNING.stable.maxRate);
+    expect(t.slowRate).toBe(TUNING.stable.slowRate);
     expect(scaledTuning(TUNING.stable, 1)).toBe(TUNING.stable);
+  });
+
+  it('the test-only rate scale moves playbackRate further from 1, at most by MAX_SCALED_RATE_STEP', () => {
+    const t = scaledTuning(TUNING.stable, 10, 10);
+    expect(t.maxRate).toBe(1.5);
+    expect(t.slowRate).toBe(0.5);
+    expect(t.decayPerS).toBeCloseTo(0.4);
+    expect(scaledTuning(TUNING.stable, 1, 2).maxRate).toBe(1.1);
+    expect(scaledTuning(TUNING['low-delay'], 10, 10).maxRate).toBe(1 + MAX_SCALED_RATE_STEP);
+    expect(scaledTuning(TUNING.stable, 10, 1).maxRate).toBe(TUNING.stable.maxRate);
+  });
+
+  it('reads the test-only URL flags, within their bounds', () => {
+    expect(delaySpeedFromSearch('?delaySpeed=10&delayRate=10')).toBe(10);
+    expect(delayRateFromSearch('?delaySpeed=10&delayRate=10')).toBe(10);
+    expect(delayRateFromSearch('?delayRate=99')).toBe(10);
+    expect(delayRateFromSearch('?delayRate=0.5')).toBe(1);
+    expect(delayRateFromSearch('')).toBe(1);
   });
 });
 
@@ -297,6 +318,15 @@ describe('oscillating 4G', () => {
     expect(r.minRate).toBe(0.95);
   });
 
+  it('with the E2E fast clock and rate scale: the same rise within a minute, never speeds up', () => {
+    const r = simulate({ seconds: 60, net: osc, speed: 10, rateScale: 10 });
+    expect(r.ctl.networkState).toBe('unstable');
+    expect(r.ctl.target).toBe(30);
+    expect(r.latency).toBeGreaterThan(26);
+    expect(r.maxRate).toBe(1);
+    expect(r.minRate).toBe(0.5);
+  });
+
   it('after the network settles, it waits before lowering again (hysteresis), then drifts down', () => {
     const r = simulate({ seconds: 300, net: osc });
     const r2 = simulate({ ctl: r.ctl, start: 300, latency: r.latency, seconds: 40, net: () => fast });
@@ -427,5 +457,13 @@ describe('buffer trend and user actions', () => {
     expect(r.latency).toBeLessThan(11);
     expect(r.maxRate).toBeLessThanOrEqual(1.05);
     r.targets.forEach((t, i) => expect(r.latencies[i]! - t).toBeLessThan(TUNING.stable.catchUp.lead + 0.5));
+  });
+
+  it('with the rate scale too (the E2E flags), below 15 s in well under a minute, same shape', () => {
+    const r = simulate({ seconds: 120, net: () => fast, speed: 10, rateScale: 10 });
+    expect(r.latencies.findIndex((l) => l < 15)).toBeLessThan(40);
+    expect(r.maxRate).toBe(1.5);
+    expect(r.latency).toBeLessThan(11);
+    r.targets.forEach((t, i) => expect(r.latencies[i]! - t).toBeLessThan(TUNING.stable.catchUp.lead + 1));
   });
 });
