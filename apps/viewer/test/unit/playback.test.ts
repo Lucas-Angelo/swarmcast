@@ -113,6 +113,47 @@ describe('installStallRecovery', () => {
     }
   });
 
+  it('a stall that is ending (the playhead moves again) is not reloaded, even when the reload was due', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      // Stuck (nothing buffered, playhead still): the four attempts come at 8, 13, 18 and 23 s, the reload is due at 28 s.
+      vi.advanceTimersByTime(24_000);
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      // The network is back: frames play at the edge of a thin buffer (readyState stays 2).
+      for (let i = 0; i < 10; i++) {
+        video.currentTime += 1;
+        vi.advanceTimersByTime(1000);
+      }
+      expect(reload).not.toHaveBeenCalled();
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still stuck: hls.js nudging the playhead (0.1-0.3 s) does not hide the stall, and the reload comes', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      for (let i = 0; i < 30; i++) {
+        video.currentTime += 0.1 * ((i % 3) + 1);
+        vi.advanceTimersByTime(1000);
+      }
+      expect(reload).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('a viewer pause is not a stall', () => {
     vi.useFakeTimers();
     try {

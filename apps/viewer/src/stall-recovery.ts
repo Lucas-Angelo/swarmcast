@@ -6,8 +6,9 @@
  * nothing (e.g. before the oldest audio segment): the playhead then sits past the buffered range
  * and jumps forward again every liveMaxLatency − liveSyncDuration seconds, forever.
  *
- * Every second while playback is stalled (not paused, readyState < HAVE_FUTURE_DATA) and the
- * buffered ranges stop changing (a slow network that still delivers is left alone):
+ * Every second while playback is stalled (not paused, readyState < HAVE_FUTURE_DATA, the playhead
+ * not advancing) and the buffered ranges stop changing (a slow network that still delivers is
+ * left alone):
  * - after 4 s, seek into buffered data just ahead if there is some, else restart loading at the
  *   playhead (or at the live sync position if the playhead is outside the playlists' window);
  * - every 5 s after that, restart loading at the live sync position;
@@ -34,6 +35,12 @@ export const FIRST_ATTEMPT_MS = 4000;
 export const FIRST_ATTEMPT_AT_START_MS = 8000;
 export const ATTEMPT_EVERY_MS = 5000;
 export const MAX_ATTEMPTS = 4;
+/**
+ * Playhead progress between two one-second ticks that counts as playing: more than hls.js'
+ * own nudges past a stuck frame (0.1-0.3 s), less than a jump (a seek, the live catch-up).
+ */
+export const PROGRESS_MIN_S = 0.4;
+export const PROGRESS_MAX_S = 2.5;
 
 export function planStallRecovery(s: StallSnapshot): StallAction {
   const first = s.buffered.length === 0 ? FIRST_ATTEMPT_AT_START_MS : FIRST_ATTEMPT_MS;
@@ -81,9 +88,19 @@ export function installStallRecovery(o: StallRecoveryOptions): () => void {
   let since = 0;
   let attempts = 0;
   let lastRanges = '';
+  let lastTime = video.currentTime;
+  let acted = false;
   const tick = (): void => {
+    // The playhead moved like playback since the last tick (not a jump, not hls.js nudging it,
+    // not our own seek): the player is playing, however thin its buffer (readyState stays 2 at
+    // the edge of it). Without this, the reload planned for 24 s into a stall fired as playback
+    // resumed and started the timeline over (barely-delivers on CI, 9 of 20 runs).
+    const step = video.currentTime - lastTime;
+    lastTime = video.currentTime;
+    const moving = !acted && step > PROGRESS_MIN_S && step < PROGRESS_MAX_S;
+    acted = false;
     // Not paused = playback was asked for (autoplay or the viewer), so this covers the start too.
-    const stalled = !o.isEnded?.() && (!video.paused || !!o.isHeld?.()) && !video.ended && video.readyState < 3;
+    const stalled = !o.isEnded?.() && (!video.paused || !!o.isHeld?.()) && !video.ended && video.readyState < 3 && !moving;
     if (!stalled) {
       since = 0;
       attempts = 0;
@@ -105,6 +122,7 @@ export function installStallRecovery(o: StallRecoveryOptions): () => void {
     });
     if (plan.action === 'wait') return;
     attempts += 1;
+    acted = true;
     o.log?.(`stall recovery #${attempts}: ${plan.action}${'to' in plan ? ` to ${plan.to.toFixed(1)}` : ''} (t=${video.currentTime.toFixed(1)})`);
     if (plan.action === 'seek') {
       video.currentTime = plan.to;

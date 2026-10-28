@@ -1,4 +1,4 @@
-import { expect, test, type Page } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import type { AdminState, QualityState } from '@swarmcast/shared';
 import {
   admin,
@@ -6,6 +6,7 @@ import {
   adminState,
   currentTime,
   enableP2P,
+  expect,
   join,
   ladderUpdate,
   liveLink,
@@ -14,11 +15,12 @@ import {
   stallReport,
   startStallMonitor,
   stats,
+  test,
+  uid,
   viewerByNick,
+  waitForPlaylist,
   waitPlaying,
 } from './fixtures.js';
-
-test.describe.configure({ mode: 'serial' });
 
 // Playwright's WebKit build gathers neither STUN (srflx) candidates nor resolvable mDNS
 // host candidates, so two WebKit contexts cannot connect over WebRTC. Real Safari can.
@@ -26,15 +28,20 @@ test.skip(({ browserName }) => browserName === 'webkit', 'Playwright WebKit has 
 
 // Viewers normally join a stream that has been running for a while. Right after OBS starts
 // the playlist is short, players sit at the live edge and every segment is "urgent"
-// (fetched over HTTPS), so give the playlist time to fill up first.
-test.beforeAll(async () => {
-  const { liveLink } = await import('./fixtures.js');
-  await liveLink();
-  const since = (globalThis as { __scLiveSince?: number }).__scLiveSince ?? Date.now();
-  (globalThis as { __scLiveSince?: number }).__scLiveSince = since;
-  const wait = 32_000 - (Date.now() - since);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+// (fetched over HTTPS), so wait until the server's playlist holds 32 s (at once when it does:
+// this used to sleep 32 s again in every worker, so after every retry).
+test.beforeEach(async () => {
+  await waitForPlaylist(32);
 });
+
+/** Seconds of video buffered ahead of the playhead (what a peer can share right now). */
+function bufferAhead(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const v = document.querySelector('video')!;
+    for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime < v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
+    return 0;
+  });
+}
 
 async function connectedPair(browser: import('@playwright/test').Browser, a: string, b: string): Promise<{ pa: Page; pb: Page; close: () => Promise<void> }> {
   const A = await join(browser, a);
@@ -55,8 +62,8 @@ async function connectedPair(browser: import('@playwright/test').Browser, a: str
   };
 }
 
-test('viewers who opt in exchange video over P2P (verified by hash)', async ({ browser, browserName }) => {
-  const { pa, pb, close } = await connectedPair(browser, `p2pA-${browserName}`, `p2pB-${browserName}`);
+test('viewers who opt in exchange video over P2P (verified by hash)', { tag: '@media' }, async ({ browser }) => {
+  const { pa, pb, close } = await connectedPair(browser, uid('p2pA'), uid('p2pB'));
   await expect
     .poll(async () => (await stats(pa)).p2pDownBytes + (await stats(pb)).p2pDownBytes, { timeout: 90_000, intervals: [2000] })
     .toBeGreaterThan(0);
@@ -65,10 +72,9 @@ test('viewers who opt in exchange video over P2P (verified by hash)', async ({ b
   await close();
 });
 
-test('"Remove from P2P" disconnects the peer from others while it keeps watching', async ({ browser, browserName }, testInfo) => {
-  // One nickname per attempt: on a retry, the previous attempt's session is still listed.
-  const nickB = `revokeB-${browserName}-${testInfo.retry}`;
-  const { pa, pb, close } = await connectedPair(browser, `revokeA-${browserName}-${testInfo.retry}`, nickB);
+test('"Remove from P2P" disconnects the peer from others while it keeps watching', { tag: '@media' }, async ({ browser }) => {
+  const nickB = uid('revokeB');
+  const { pa, pb, close } = await connectedPair(browser, uid('revokeA'), nickB);
   const b = await viewerByNick(nickB);
   await admin(`/api/viewers/${b!.sessionId}/p2p`, { allowed: false });
   // A drops every connection to B…
@@ -80,16 +86,17 @@ test('"Remove from P2P" disconnects the peer from others while it keeps watching
   // (polled, so a brief stall on a busy machine doesn't fail the check)
   const t = await currentTime(pb);
   await expect.poll(async () => (await currentTime(pb)) - t, { timeout: 20_000 }).toBeGreaterThan(2);
-  // Over the next tracker announce B does not come back.
+  // Over the next tracker announce (clients re-announce every 12 s) B does not come back: a
+  // negative check, so it has to wait that long.
   await pa.waitForTimeout(15_000);
   expect((await stats(pa)).peers.length).toBe(0);
   expect((await stats(pb)).peers.length).toBe(0);
   await close();
 });
 
-test('a malicious peer sending altered data is rejected and removed from P2P', async ({ browser, browserName }) => {
+test('a malicious peer sending altered data is rejected and removed from P2P', { tag: '@media' }, async ({ browser }) => {
   test.slow();
-  const evilNick = `evil-${browserName}`;
+  const evilNick = uid('evil');
   // The malicious viewer joins first so it holds segments the honest one will ask for.
   const evilCtx = await browser.newContext();
   await evilCtx.addInitScript(() => {
@@ -110,15 +117,14 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
     } as typeof RTCDataChannel.prototype.send;
   });
   const evil = await evilCtx.newPage();
-  const { liveLink } = await import('./fixtures.js');
   await evil.goto(await liveLink());
   await evil.fill('#nickname', evilNick);
   await evil.click('#join');
   await waitPlaying(evil);
   await enableP2P(evil);
-  await evil.waitForTimeout(6000);
+  await expect.poll(() => bufferAhead(evil), { timeout: 30_000, intervals: [500] }).toBeGreaterThan(6);
 
-  const honest = await join(browser, `honest-${browserName}`);
+  const honest = await join(browser, uid('honest'));
   await waitPlaying(honest.page);
   await enableP2P(honest.page);
 
@@ -128,15 +134,14 @@ test('a malicious peer sending altered data is rejected and removed from P2P', a
     .toBe(true);
   // The honest viewer never played bad data and keeps watching.
   const t = await currentTime(honest.page);
-  await honest.page.waitForTimeout(3000);
-  expect(await currentTime(honest.page)).toBeGreaterThan(t + 1.5);
+  await expect.poll(async () => (await currentTime(honest.page)) - t, { timeout: 15_000 }).toBeGreaterThan(1.5);
   expect((await adminState()).warnings.join(' ')).toMatch(/removed from P2P automatically/);
   await honest.context.close();
   await evilCtx.close();
 });
 
-test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', async ({ browser, browserName }) => {
-  const { context, page } = await join(browser, `allp2p-${browserName}`);
+test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; viewers keep watching', { tag: '@media' }, async ({ browser }) => {
+  const { context, page } = await join(browser, uid('allp2p'));
   await waitPlaying(page);
   await enableP2P(page);
   const settings = (await adminState()).settings;
@@ -169,23 +174,27 @@ test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; view
 // core that does not fall back to HTTPS by itself, a P2P viewer must keep playing, and must
 // come back by itself after a forced stall (network throttled). The viewer before the fix
 // froze here within seconds.
-test('a peer that barely delivers never starves playback, even after a forced stall', async ({ browser, browserName }) => {
+// Load: one transcoded rung (480p; the viewers watch it) from a pre-encoded 720p feed, so
+// a 4-vCPU runner encodes as little as the scenario needs next to Chrome and the throttle.
+const SOAK_BEFORE_S = 40;
+const SOAK_AFTER_S = 20;
+test('a peer that barely delivers never starves playback, even after a forced stall', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'network throttling needs CDP (Chromium)');
-  test.skip(process.platform === 'win32', 'uses SIGUSR2 to reconnect the fake OBS');
   const q0 = await adminApi<QualityState>('GET', '/api/quality');
   test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');
-  test.setTimeout(480_000);
+  test.setTimeout(360_000);
 
+  // The server goes back to one quality, a 40 s window and the default feed at the next test's gate.
   const contexts: Array<{ close(): Promise<void> }> = [];
   try {
     await setPlaylistWindow(20);
-    await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480, 360], encoder: 'libx264' }));
-    reconnectObs({ size: '1280x720', kbps: 2500 });
+    await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480], encoder: 'libx264' }));
+    await reconnectObs({ size: '1280x720', kbps: 2500 });
     await expect
       .poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height), { timeout: 120_000, intervals: [1000] })
-      .toEqual([720, 480, 360]);
-    // Let the playlists fill up (the audio one to its 20 s window).
-    await new Promise((r) => setTimeout(r, 25_000));
+      .toEqual([720, 480]);
+    // The playlists fill up (the audio one to its 20 s window).
+    await waitForPlaylist(19, { qualities: 2 });
 
     // The bad peer joins first, so it holds segments the honest viewer will ask it for.
     // Both on 480p: one swarm per quality, so they are peers of each other.
@@ -216,11 +225,12 @@ test('a peer that barely delivers never starves playback, even after a forced st
     });
     const slow = await slowCtx.newPage();
     await slow.goto(await liveLink());
-    await slow.fill('#nickname', `trickle-${browserName}`);
+    await slow.fill('#nickname', uid('trickle'));
     await slow.click('#join');
     await waitPlaying(slow);
     await enableP2P(slow);
-    await slow.waitForTimeout(8000);
+    // It holds the segments just ahead of where the honest viewer will play (same delay).
+    await expect.poll(() => bufferAhead(slow), { timeout: 30_000, intervals: [500] }).toBeGreaterThan(6);
 
     // The honest viewer is on a tunnel-like link (300 ms round trip), like real viewers.
     const TUNNEL = { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 };
@@ -231,7 +241,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     const cdp = await ctx.newCDPSession(page);
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
     await page.goto(await liveLink());
-    await page.fill('#nickname', `steady-${browserName}`);
+    await page.fill('#nickname', uid('steady'));
     await page.click('#join');
     await waitPlaying(page);
     await enableP2P(page);
@@ -244,9 +254,9 @@ test('a peer that barely delivers never starves playback, even after a forced st
     });
     await expect.poll(async () => (await stats(page)).peers.length, { timeout: 90_000 }).toBeGreaterThan(0);
 
-    // 60 s of normal playback next to the trickling peer: no stall longer than a few seconds.
+    // Normal playback next to the trickling peer: no stall longer than a few seconds.
     await startStallMonitor(page);
-    await page.waitForTimeout(60_000);
+    await page.waitForTimeout(SOAK_BEFORE_S * 1000);
     const before = await stallReport(page);
     expect(before.maxStallMs, 'stall next to a slow peer').toBeLessThan(4000);
 
@@ -257,27 +267,25 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
 
     // It comes back by itself...
-    await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [1000] }).toBe(0);
+    await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [500] }).toBe(0);
     // ...and keeps playing smoothly.
+    const recovered = await stats(page);
     await startStallMonitor(page);
-    await page.waitForTimeout(30_000);
+    await page.waitForTimeout(SOAK_AFTER_S * 1000);
     const after = await stallReport(page);
     const s = await stats(page);
     const delay = await page.evaluate(() => (window as unknown as { __swarmcast: { delay: unknown } }).__swarmcast.delay);
-    console.log(`steady viewer: ${s.httpFallbacks} HTTPS fallbacks, ${s.peersDropped} peers dropped, ${s.stallRecoveries} stall recoveries, ${Math.round(s.p2pDownBytes / 1024)} kB over P2P; played ${after.playedS.toFixed(1)} s, longest stall ${Math.round(after.maxStallMs)} ms; delay ${JSON.stringify(delay)}`);
+    console.log(`steady viewer: ${s.httpFallbacks} HTTPS fallbacks, ${s.peersDropped} peers dropped, ${s.stallRecoveries} stall recoveries, ${s.reloads} source reloads (last: ${s.lastReload ?? 'none'}; ${s.reloads - recovered.reloads} after recovering), ${Math.round(s.p2pDownBytes / 1024)} kB over P2P; played ${after.playedS.toFixed(1)} s, longest stall ${Math.round(after.maxStallMs)} ms; delay ${JSON.stringify(delay)}`);
     // Media played, not currentTime − t0: the stall watchdog may reload the source, which
     // restarts the timeline (currentTime jumps back) without any loss of playback. This link
     // (300 ms RTT, a trickling peer, the CPU ladder) has many short stalls by design: measured
-    // locally, the player plays 25–27 s of these 30 s with or without the adaptive delay, so
-    // the bar is two thirds; starvation itself is the longest stall, checked just below.
-    expect(after.playedS, 'media played after the forced stall').toBeGreaterThan(20);
+    // locally, the player plays 25–27 s of 30 s with or without the adaptive delay, so the bar
+    // is two thirds; starvation itself is the longest stall, checked just below.
+    expect(after.playedS, 'media played after the forced stall').toBeGreaterThan((SOAK_AFTER_S * 2) / 3);
     expect(after.maxStallMs, 'stall after recovering').toBeLessThan(4000);
+    // Recovered for real: playing on, not starting over (a source reload restarts the timeline).
+    expect(s.reloads - recovered.reloads, `source reloads after recovering (last: ${s.lastReload})`).toBe(0);
   } finally {
     for (const c of contexts) await c.close().catch(() => {});
-    await setPlaylistWindow(40);
-    const q = await adminApi<QualityState>('GET', '/api/quality');
-    await adminApi('PUT', '/api/quality', ladderUpdate(q, { mode: 'manual', enabled: false }));
-    reconnectObs(null);
-    await expect.poll(async () => (await adminApi<QualityState>('GET', '/api/quality')).variants.length, { timeout: 90_000, intervals: [1000] }).toBeLessThanOrEqual(1);
   }
 });

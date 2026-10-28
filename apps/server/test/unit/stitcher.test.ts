@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PlaylistStitcher, cleanMultivariant, parseMediaPlaylist, parseMultivariant } from '../../src/hls/playlist.js';
+import { DiscontinuityClock, PlaylistStitcher, cleanMultivariant, parseMediaPlaylist, parseMultivariant, runKey } from '../../src/hls/playlist.js';
 
 function media(prefix: string, from: number, count: number, seq = from): string {
   const lines = ['#EXTM3U', '#EXT-X-VERSION:7', '#EXT-X-TARGETDURATION:2', `#EXT-X-MEDIA-SEQUENCE:${seq}`, '#EXT-X-INDEPENDENT-SEGMENTS', `#EXT-X-MAP:URI="${prefix}_init.mp4"`];
@@ -10,6 +10,17 @@ function media(prefix: string, from: number, count: number, seq = from): string 
 function feed(st: PlaylistStitcher, text: string): void {
   const p = parseMediaPlaylist(text);
   st.update(p, p.entries);
+}
+
+/** The discontinuity number a player gives each segment (hls.js `cc`: the sequence plus the tags before it). */
+function ccs(text: string): Record<string, number> {
+  let cc = Number(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/.exec(text)?.[1] ?? 0);
+  const out: Record<string, number> = {};
+  for (const line of text.split('\n')) {
+    if (line === '#EXT-X-DISCONTINUITY') cc += 1;
+    else if (line && !line.startsWith('#')) out[line] = cc;
+  }
+  return out;
 }
 
 describe('PlaylistStitcher', () => {
@@ -37,19 +48,95 @@ describe('PlaylistStitcher', () => {
     expect(disc).toBeGreaterThan(0);
     expect(lines[disc + 1]).toBe('#EXT-X-MAP:URI="r2_init.mp4"');
     expect(lines.filter((l) => l.startsWith('#EXT-X-MAP'))).toHaveLength(2);
-    // The old run leaves; the tag stays with the first new segment until that one leaves too,
-    // and only then does the discontinuity sequence count it.
+    expect(ccs(out)).toMatchObject({ 'r1_13.m4s': 0, 'r2_0.m4s': 1 });
+    // Once the old run has left, the discontinuity sequence says where the new one starts.
     feed(st, media('r2', 0, 6, 0));
     const later = st.render();
     expect(later).not.toContain('r1_');
     expect(later).toContain('#EXT-X-MEDIA-SEQUENCE:4');
-    expect(later).toContain('#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="r2_init.mp4"');
-    expect(later).not.toContain('DISCONTINUITY-SEQUENCE');
-    feed(st, media('r2', 2, 6, 2));
-    const latest = st.render();
-    expect(latest).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
-    expect(latest).not.toContain('#EXT-X-DISCONTINUITY\n');
-    expect(latest).toContain('#EXT-X-MAP:URI="r2_init.mp4"');
+    expect(later).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
+    expect(later).not.toContain('#EXT-X-DISCONTINUITY\n');
+    expect(later).toContain('#EXT-X-MAP:URI="r2_init.mp4"');
+    expect(ccs(later)['r2_0.m4s']).toBe(1);
+  });
+
+  it('numbers each upstream run the same in every playlist of an origin, even a run one playlist missed', () => {
+    // OBS reconnected twice within seconds: run r2 reached the audio playlist (one segment) but
+    // was gone before its first video segment was cached. Counted per playlist, audio was one
+    // ahead of video from then on, and hls.js never found audio for what it played.
+    const clock = new DiscontinuityClock();
+    const video = new PlaylistStitcher(10, 0, clock);
+    const audio = new PlaylistStitcher(10, 0, clock);
+    feed(video, media('r1_video', 0, 3));
+    feed(audio, media('r1_audio', 0, 3));
+    feed(audio, media('r2_audio', 0, 1, 0));
+    feed(video, media('r3_video', 0, 2, 0));
+    feed(audio, media('r3_audio', 0, 2, 0));
+    const v = ccs(video.render());
+    const a = ccs(audio.render());
+    expect(a['r3_audio_0.m4s']).toBe(v['r3_video_0.m4s']);
+    expect(v).toMatchObject({ 'r1_video_0.m4s': 0, 'r3_video_0.m4s': 2 });
+    expect(a).toMatchObject({ 'r1_audio_0.m4s': 0, 'r2_audio_0.m4s': 1, 'r3_audio_0.m4s': 2 });
+    // The run video never saw is skipped with two tags, and stays right once r1 has left.
+    expect(video.render()).toContain('#EXT-X-DISCONTINUITY\n#EXT-X-DISCONTINUITY\n#EXT-X-MAP:URI="r3_video_init.mp4"');
+    feed(video, media('r3_video', 0, 12, 0));
+    feed(audio, media('r3_audio', 0, 12, 0));
+    expect(video.render()).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:2');
+    expect(audio.render()).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:2');
+  });
+
+  it('a playlist that appears later (a quality added on reconnect) gets the current run number', () => {
+    // The ladder ran 720 + 480, OBS reconnected with 480 + 360 on: 360 is new, the others carry
+    // the old run first. Started at 0, 360 matched the old run of the others, so hls.js placed
+    // its segments a minute back and a viewer switching to it never played again.
+    const clock = new DiscontinuityClock();
+    const v480 = new PlaylistStitcher(10, 0, clock);
+    feed(v480, media('ra_v480', 0, 4));
+    feed(v480, media('rb_v480', 0, 2, 0));
+    const v360 = new PlaylistStitcher(10, 0, clock);
+    feed(v360, media('rb_v360', 0, 2, 0));
+    expect(ccs(v360.render())['rb_v360_0.m4s']).toBe(ccs(v480.render())['rb_v480_0.m4s']);
+    expect(v360.render()).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
+  });
+
+  it('a ladder ffmpeg crash and restart (new run id, same playlist names) is one discontinuity in every rendition', () => {
+    // As in the ladder integration test: the original OBS run (MediaMTX) is run 0, so the ladder's
+    // first run starts at 1 (EXT-X-DISCONTINUITY-SEQUENCE:1, no tag); after the crash its new run
+    // id becomes run 2, after one tag, in 720p and 480p alike.
+    const clock = new DiscontinuityClock();
+    const source = new PlaylistStitcher(10, 0, clock);
+    feed(source, media('m1_video1', 0, 3));
+    const v720 = new PlaylistStitcher(10, 0, clock);
+    const v480 = new PlaylistStitcher(10, 0, clock);
+    feed(v720, media('r1_v720', 0, 3));
+    feed(v480, media('r1_v480', 0, 3));
+    const before = v720.render();
+    expect(before).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
+    expect(before).not.toMatch(/^#EXT-X-DISCONTINUITY$/m);
+    feed(v720, media('r2_v720', 0, 2, 0));
+    feed(v480, media('r2_v480', 0, 2, 0));
+    for (const st of [v720, v480]) {
+      const out = st.render();
+      expect(out.match(/^#EXT-X-DISCONTINUITY$/gm)).toHaveLength(1);
+      expect(out).toContain('#EXT-X-MEDIA-SEQUENCE:0');
+    }
+    expect(ccs(v720.render())['r2_v720_0.m4s']).toBe(2);
+    expect(ccs(v480.render())['r2_v480_0.m4s']).toBe(2);
+  });
+
+  it('the run of a segment is the prefix of its init segment name', () => {
+    expect(runKey('c450dcd44098_audio2_init.mp4')).toBe('c450dcd44098');
+    expect(runKey('r50c24b_v360_init.mp4')).toBe('r50c24b');
+    expect(runKey('init.mp4')).toBeUndefined();
+    expect(runKey(undefined)).toBeUndefined();
+  });
+
+  it('without run names (MPEG-TS, no init segment), a restart still counts as one discontinuity', () => {
+    const st = new PlaylistStitcher(10);
+    const head = ['#EXTM3U', '#EXT-X-TARGETDURATION:2'];
+    feed(st, [...head, '#EXTINF:2.0,', 'seg0.ts', '#EXTINF:2.0,', 'seg1.ts'].join('\n'));
+    feed(st, [...head, '#EXTINF:2.0,', 'seg1.ts', '#EXT-X-DISCONTINUITY', '#EXTINF:2.0,', 'seg100.ts', '#EXTINF:2.0,', 'seg101.ts'].join('\n'));
+    expect(ccs(st.render())).toEqual({ 'seg0.ts': 0, 'seg1.ts': 0, 'seg100.ts': 1, 'seg101.ts': 1 });
   });
 
   it('drops evicted segments from the old end and lists referenced files', () => {

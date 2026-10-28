@@ -11,8 +11,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import {
-  ART, adminLogin, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
-  launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
+  ART, addSweepPath, adminLogin, appLog, check, copyAppLogs, descendants, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
+  launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
   runInstaller, section, serve, sha256File, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
 } from './lib.mjs';
 
@@ -193,8 +193,15 @@ await section('8. one-liner: irm <local>/start-windows.ps1 | iex', async () => {
   child.stdout.on('data', (d) => (o += d));
   child.stderr.on('data', (d) => (o += d));
   onCleanup(() => killTree(child.pid));
-  const gone = await until(() => child.exitCode !== null, 90_000, 'piped setup error').then(() => true, () => false);
+  // Wait for the error itself (or an early exit), then 5 s more: a host that survives that long
+  // after the error has kept the window open. Waiting the full 90 s for an exit that never comes
+  // proved nothing more.
+  const tErr = Date.now();
+  await until(() => child.exitCode !== null || has(o, 'Could not download SwarmCast'), 90_000, 'piped setup error').catch(() => {});
+  if (child.exitCode === null) await sleep(5000);
+  const gone = child.exitCode !== null;
   const errShown = has(o, 'Could not download SwarmCast');
+  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s (shown: ${errShown}; host ${gone ? `exited ${child.exitCode}` : 'alive 5 s later'})`);
   if (gone) {
     record('piped run: an error keeps the PowerShell window open', 'warn', `BUG: after "${errShown ? 'Could not download SwarmCast…' : 'error'}" the script calls "exit ${child.exitCode}", which closes the interactive PowerShell window of a user who pasted the one-liner, so the message disappears. (start-windows.ps1 Stop-Setup/exit)`);
   } else {
@@ -327,6 +334,7 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   const home = path.join(local, 'SC basic user');
   fs.rmSync(home, { recursive: true, force: true });
   const dir = 'C:\\sc-basic';
+  addSweepPath(dir);
   fs.rmSync(dir, { recursive: true, force: true });
   fs.mkdirSync(dir, { recursive: true });
   const outLog = path.join(dir, 'out.log');
@@ -366,27 +374,47 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
   check('installed for the user only', ver(home) === V);
   const tLogin = Date.now();
   await waitLiveLink(app);
-  info('Basic User run: live link after login', `${Math.round((Date.now() - tLogin) / 1000)} s`);
+  // A normal session before the quit: the tray helper is up too (a quit within 0.5 s of "ready",
+  // while the tray and the blocklists still start, is a separate case, B11).
+  const tray = await until(() => /tray icon ready/.test(appLog(home)), 60_000, 'tray icon ready').then(() => true, () => false);
+  info('Basic User run: live link and tray after login', `${Math.round((Date.now() - tLogin) / 1000)} s (tray icon ready logged: ${tray})`);
+  // The wrapper's cmd.exe (cmd /d /c ...\w.cmd): its exit is the third exit signal.
+  const wrapperProc = processes().find((p) => /^cmd\.exe$/i.test(p.name) && p.cmd.toLowerCase().includes(wrapper.toLowerCase()));
+  info('Basic User run: wrapper', wrapperProc ? `cmd.exe pid ${wrapperProc.pid}` : 'wrapper cmd.exe not found');
+  const wrapperAlive = () => !!wrapperProc && processes().some((p) => p.pid === wrapperProc.pid && p.cmd === wrapperProc.cmd);
   const tQuit = Date.now();
   const quit = await app.api('/api/app/quit', {}).then((j) => `HTTP ${j.__status}`, (e) => `failed: ${e.message}`);
   // Exit signals, within 60 s of the quit request like quitAndVerify: the start script's own
-  // install.log line (primary), or the wrapper's EXIT line.
+  // install.log line (primary, it carries the code), the wrapper's EXIT line, the wrapper's exit.
   const installLog = () => readText(path.join(home, 'logs', 'install.log'));
-  const exited = await until(() => {
+  const signals = () => {
     const a = /SwarmCast exited with code (-?\d+)/.exec(installLog());
-    const b = /EXIT (\d+)/.exec(text());
-    return a || b ? { code: Number((a ?? b)[1]), via: [a && 'install.log', b && 'EXIT line'].filter(Boolean).join(' + ') } : null;
-  }, 60_000, 'exit').catch(() => ({ code: 'timeout', via: 'none' }));
-  info('Basic User run: exit after quit', `${Math.round((Date.now() - tQuit) / 1000)} s (quit request ${quit}; signals: ${exited.via})`);
-  const code = exited.code;
-  check('Basic User run: quits cleanly', code === 0, `exit ${code}`);
-  if (code !== 0) {
+    const b = /EXIT (-?\d+)/.exec(text());
+    return { a, b, gone: !!wrapperProc && !wrapperAlive() };
+  };
+  const exited = await until(() => {
+    const s = signals();
+    return s.a || s.b ? s : null;
+  }, 60_000, 'exit').catch(() => signals());
+  // The code comes from install.log or the EXIT line; give the others a moment to follow.
+  const final = exited.a || exited.b ? await until(() => {
+    const s = signals();
+    return s.a && s.b && (s.gone || !wrapperProc) ? s : null;
+  }, 10_000, 'all exit signals').catch(() => signals()) : exited;
+  const via = [final.a && 'install.log', final.b && 'EXIT line', final.gone && 'wrapper exited'].filter(Boolean).join(' + ') || 'none';
+  const code = final.a || final.b ? Number((final.a ?? final.b)[1]) : 'timeout';
+  info('Basic User run: exit after quit', `${Math.round((Date.now() - tQuit) / 1000)} s (quit request ${quit}; signals: ${via})`);
+  check('Basic User run: quits cleanly', code === 0, `exit ${code} (signals: ${via})`);
+  if (code !== 0 || !final.b || (wrapperProc && !final.gone)) {
     info('Basic User run: installer output (end)', text().slice(-1500));
+    // Who is still holding on: everything below the wrapper's cmd.exe (name, pid, ppid, command).
+    if (wrapperProc) info('Basic User run: processes under the wrapper', descendants(processes(), wrapperProc.pid).map((p) => `${p.name}#${p.pid} (ppid ${p.ppid}): ${p.cmd.slice(0, 200)}`).join(' | ') || 'none');
     // Everything the wrapper wrote (out.log, groups.txt, w.cmd) for the artifacts.
     const dest = path.join(ART, 'installer-basic-user');
     fs.mkdirSync(dest, { recursive: true });
     for (const f of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, f), path.join(dest, f));
   }
+  if (wrapperProc && wrapperAlive()) killTree(wrapperProc.pid);
   await sleep(1500);
   const left = processesUnder(home);
   check('Basic User run: no process left', left.length === 0, describeProcs(left));

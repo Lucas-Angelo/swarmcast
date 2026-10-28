@@ -1207,6 +1207,73 @@ function Invoke-Rollback {
   return $true
 }
 
+# Closing this window must stop SwarmCast. Windows normally tells every program in it
+# (CTRL_CLOSE_EVENT) and SwarmCast stops everything by itself. On some Windows builds the
+# window can disappear while that never arrives, and SwarmCast, this script and its cmd
+# window would keep running without a window. This watch checks every 2 s whether the
+# console window still exists; once it is gone, it logs that and ends this script with exit
+# code 0. SwarmCast notices that the program that started it is gone and shuts down cleanly
+# (stops the live, MediaMTX, the tunnel and the tray), and cmd ends too. It only arms when
+# the console reports a visible window (Console Host's, or the pseudo window some Windows
+# Terminal builds report as visible); hidden and redirected runs have none.
+# SWARMCAST_NO_WINDOW_WATCH=1 turns it off.
+$SC_WindowWatchSource = @'
+using System;
+using System.IO;
+using System.Runtime.InteropServices;
+using System.Text;
+using System.Threading;
+public static class SwarmCastWindowWatch {
+  [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+  [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process, uint code);
+  static Thread watch;
+  public static string Start(string logFile, int everyMs) {
+    if (watch != null) return "already watching";
+    IntPtr window = GetConsoleWindow();
+    if (window == IntPtr.Zero) return "no console window";
+    if (!IsWindowVisible(window)) return "console window not visible (Windows Terminal, hidden or redirected)";
+    watch = new Thread(delegate () {
+      while (true) {
+        Thread.Sleep(everyMs);
+        IntPtr now = GetConsoleWindow();
+        if (now != IntPtr.Zero && IsWindow(window)) continue;
+        try {
+          if (!String.IsNullOrEmpty(logFile)) {
+            string line = String.Format("[{0:yyyy-MM-dd HH:mm:ss}] The SwarmCast window was closed but Windows did not stop SwarmCast (window watch): ending the start script so SwarmCast shuts down by itself\r\n", DateTime.Now);
+            File.AppendAllText(logFile, line, new UTF8Encoding(false));
+          }
+        } catch { }
+        TerminateProcess(GetCurrentProcess(), 0);
+      }
+    });
+    watch.IsBackground = true;
+    watch.Start();
+    return String.Format("watching console window 0x{0:x}", window.ToInt64());
+  }
+}
+'@
+
+function Start-WindowWatch {
+  if ($env:SWARMCAST_NO_WINDOW_WATCH -eq '1' -or $env:OS -ne 'Windows_NT') { return }
+  try {
+    # Started by another program with neither keyboard nor screen (tests, services): no window
+    # anyone could close, and no reason to spend a second compiling the watch.
+    if ([Console]::IsInputRedirected -and [Console]::IsOutputRedirected) {
+      Write-Log 'Window watch: not needed (input and output redirected)'
+      return
+    }
+    if (-not ('SwarmCastWindowWatch' -as [type])) { Add-Type -TypeDefinition $SC_WindowWatchSource }
+    $state = [SwarmCastWindowWatch]::Start([string]$script:LogFile, 2000)
+    Write-Log "Window watch: $state"
+  } catch {
+    # Never a reason not to start: closing the window still works where Windows tells SwarmCast.
+    Write-Log "Window watch not started: $($_.Exception.Message)"
+  }
+}
+
 # Runs SwarmCast in the foreground of this window (Ctrl+C or closing the window reaches it
 # directly, and it stops everything by itself). Sets $script:AppCode and $script:AppSeconds.
 # Called as a plain statement (never captured) so the app's output reaches the window.
@@ -1233,6 +1300,7 @@ function Start-App {
   Say $SC_ObsHint
   Say ''
   Invoke-Cleanup
+  Start-WindowWatch
   # A start that fails within 10 s is retried (2 s, 5 s, 10 s); a freshly updated version
   # that fails is replaced by the previous one first.
   $script:AppCode = 0
