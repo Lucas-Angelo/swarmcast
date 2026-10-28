@@ -283,9 +283,12 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     this.outDir = null;
     this.window.clear();
     const previous = this.stopped;
+    // The folder's deletion is part of the chain: a stop that finds nothing of its own to stop
+    // ("Stop everything" right after OBS left) still returns only once every folder is gone.
     const done = (async () => {
       await previous;
       await child?.stop(2000);
+      if (dir) await removeDir(dir, this.o.log, 'quality ladder');
     })();
     this.stopped = done;
     await done;
@@ -293,6 +296,5 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
       this.plan = null;
       this.set('off');
     }
-    if (dir) await removeDir(dir, this.o.log, 'quality ladder');
   }
 }
