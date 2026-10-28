@@ -13,16 +13,64 @@ inputs:
   npm-ci:
     description: Run `npm ci`.
     default: 'true'
+  apt-debs:
+    description: >-
+      Linux: a name for a .deb cache (for example `playwright-<hash>`). Sets APT_DEBS, which
+      .github/scripts/apt-retry.sh downloads into; save it with ./.github/actions/setup/save.
+    default: ''
 
 runs:
   using: composite
   steps:
-    # A stalled download from the Ubuntu mirror is retried instead of waiting for minutes
-    # (this also covers `playwright install --with-deps` and the desktop build dependencies).
-    - name: apt retries and timeouts (Linux)
+    # apt settings for every apt call of the job (apt-retry.sh adds a time limit per try). The
+    # file must sort after the image's own /etc/apt/apt.conf.d/zz-retries (Retries 1, Timeout 15),
+    # which overrode our earlier 99-ci-retries: apt reads the folder in order, the last value wins.
+    # Timeout stays at the image's 15 s (it only fires when no data arrives; a trickling mirror is
+    # apt-retry.sh's job); 3 retries instead of 1. The step fails if apt does not see our values.
+    - name: apt settings (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null
+      run: |
+        sudo=(); [ "$(id -u)" = 0 ] || sudo=(sudo)
+        printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' 'Dpkg::Lock::Timeout "60";' |
+          "${sudo[@]}" tee /etc/apt/apt.conf.d/zzz-ci-retries >/dev/null
+        apt-config dump | grep -E '^(Acquire::Retries|Acquire::https?::Timeout|Dpkg::Lock::Timeout) '
+        eval "$(apt-config shell R Acquire::Retries T Acquire::https::Timeout L Dpkg::Lock::Timeout)"
+        if [ "$R $T $L" != "3 15 60" ]; then
+          echo "::error::apt does not use our settings (Retries=$R https::Timeout=$T Dpkg::Lock::Timeout=$L): a file sorting after zzz-ci-retries overrides them"
+          exit 1
+        fi
+        if [ -f /etc/apt/apt-mirrors.txt ]; then echo "Mirrors:"; cat /etc/apt/apt-mirrors.txt; fi
+
+    # Downloaded .debs (apt-retry.sh install/download put them in $APT_DEBS), for jobs whose apt
+    # packages are part of what they test. The key has the runner image version: a new image
+    # brings new package versions, and the first job on main refills the cache. Saved on main only
+    # (./.github/actions/setup/save at the end of the job): pull requests restore main's.
+    - name: .deb cache key (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      id: apt-debs
+      shell: bash
+      env:
+        NAME: ${{ inputs.apt-debs }}
+      run: |
+        echo "APT_DEBS=$RUNNER_TEMP/apt-debs" >> "$GITHUB_ENV"
+        echo "key=apt-debs-$NAME-$ImageOS-$ImageVersion-$RUNNER_ARCH" >> "$GITHUB_OUTPUT"
+    - name: Restore the .deb cache (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      id: apt-debs-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-debs/*.deb
+        key: ${{ steps.apt-debs.outputs.key }}
+    - name: Remember the .deb cache for the save step (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      shell: bash
+      env:
+        KEY: ${{ steps.apt-debs.outputs.key }}
+        HIT: ${{ steps.apt-debs-cache.outputs.cache-hit }}
+      run: |
+        echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
+        echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
 
     # One npm cache for the root workspace and the website (site/ has its own lockfile).
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0

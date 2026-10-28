@@ -1,0 +1,15 @@
+name: Save the SwarmCast setup caches
+description: >-
+  Last step of a job that used ./.github/actions/setup: saves the caches it restored and the job
+  filled (downloaded .debs), on main only and only when they were missing. Pull requests restore
+  main's caches instead of each storing its own copy (the repository's 10 GB cache limit).
+
+runs:
+  using: composite
+  steps:
+    - name: Save the .deb cache
+      if: github.ref == 'refs/heads/main' && env.SC_APT_DEBS_KEY != '' && env.SC_APT_DEBS_HIT != 'true'
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-debs/*.deb
+        key: ${{ env.SC_APT_DEBS_KEY }}

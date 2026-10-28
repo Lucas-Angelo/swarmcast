@@ -104,9 +104,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Linux: the browsers' system libraries come from apt, cached as .debs per runner image and
+      # Playwright version (package-lock.json).
       - uses: ./.github/actions/setup
         with:
           ffmpeg: 'true'
+          apt-debs: ${{ runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
       - run: npm run fetch-bins
       - run: npm run build
       # The Playwright version comes from package-lock.json. The `chromium` project runs
@@ -114,9 +117,10 @@ jobs:
       - name: Playwright version
         id: playwright
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      # Ubuntu: Firefox and WebKit come from Playwright's CDN (cached per version), and their
-      # system libraries through apt with a time limit per try, retries and a fallback mirror
-      # (GitHub's Ubuntu mirror has stalled `playwright install --with-deps` for 20+ minutes).
+      # Ubuntu: Firefox and WebKit come from Playwright's CDN (cached per version). Their system
+      # libraries come through apt-retry.sh (time-limited downloads, retries, mirror failover,
+      # then an offline install), not `install-deps`, whose own apt calls have no limit (GitHub's
+      # Ubuntu mirror has stalled `playwright install --with-deps` for 20+ minutes).
       - name: Cache the Playwright browsers (Linux)
         if: runner.os == 'Linux'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -127,7 +131,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           npx playwright install firefox webkit
-          .github/scripts/apt-retry.sh --run npx playwright install-deps firefox webkit
+          .github/scripts/apt-retry.sh playwright-deps firefox webkit
       - name: Playwright browsers and their system libraries (macOS)
         if: runner.os == 'macOS'
         run: npx playwright install --with-deps chromium firefox webkit
@@ -144,6 +148,8 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 14
+      - uses: ./.github/actions/setup/save
+        if: ${{ !cancelled() }}
 
   audit:
     name: npm audit (production dependencies)
