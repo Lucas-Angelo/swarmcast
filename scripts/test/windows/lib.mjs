@@ -292,6 +292,21 @@ export function processesUnder(dir) {
   const d = path.resolve(dir).toLowerCase() + path.sep;
   return processes().filter((p) => p.path && p.path.toLowerCase().startsWith(d));
 }
+/** `root` and every process below it in `list` (by parent pid), root first. */
+export function descendants(list, root) {
+  const out = [];
+  const want = new Set([root]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const p of list) {
+      if (want.has(p.pid) || !want.has(p.ppid) || p.pid === p.ppid) continue;
+      want.add(p.pid);
+      grew = true;
+    }
+  }
+  for (const p of list) if (want.has(p.pid)) out.push(p);
+  return out.sort((a, b) => (a.pid === root ? -1 : b.pid === root ? 1 : 0));
+}
 export const describeProcs = (list) => list.map((p) => `${p.name}#${p.pid}${/--reaper/.test(p.cmd) ? '(reaper)' : ''}`).join(', ');
 /** The main SwarmCast process (not its --reaper twin) installed under `home`. */
 export function appProcess(home) {
