@@ -6,16 +6,17 @@
 //    "Stop everything" (API and panel button), Quit from the panel, tray helper, loopback-only sockets
 //  - pt-BR UI, session cap (maxViewers=2 -> "full"), auto-stop
 //  - real Cloudflare quick tunnel with the three browsers
-//  - taskkill /F of the app (reaper), console window close, Ctrl+C, Ctrl+Break
+//  - taskkill /F of the app (reaper), console window close (a real click on its X), Ctrl+C, Ctrl+Break
 //
 // Usage: node scripts/test/windows/app.mjs --work <dir from make-release.mjs> [--out results.json]
+//        [--close-method auto|click|uia|post] (how section 5 closes the console window; default auto)
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
   ART, appLog, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
   killTree, killUnder, launchBrowser, listening, log, must, onCleanup, openPanel, opt, peSubsystem, pkgVersion, powershellExe, probe, processes, processesUnder,
-  ps, pushStream, quitAndVerify, record, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, sleep, socketsOf, startApp, stats, ui, until, waitLiveLink, waitPhase, waitPlaying, bareEnv,
+  ps, pushStream, quitAndVerify, readText, record, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, sleep, socketsOf, startApp, stats, ui, until, waitLiveLink, waitPhase, waitPlaying, bareEnv,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -328,6 +329,8 @@ async function startInConsole(label) {
   info('console launcher', (r.stdout || r.stderr || '').trim());
   await until(async () => (await listening(1935)) && appProcess(home), 180_000, 'app live in its console window');
   await sleep(3000);
+  const watch = readText(path.join(home, 'logs', 'install.log')).match(/Window watch.*$/gm)?.pop();
+  info('start script window watch', watch ?? 'no "Window watch" line in install.log');
   return { pid: appProcess(home).pid, launcher };
 }
 
@@ -345,30 +348,44 @@ for (const [action, what] of [
       for (const p of processes().filter((x) => x.cmd.includes(launcher))) killTree(p.pid);
     });
     const before = processesUnder(home);
-    const r = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', action, '-Title', `SwarmCast ${action}`], { encoding: 'utf8', timeout: 60_000 });
+    const installLog = () => readText(path.join(home, 'logs', 'install.log'));
+    const installBefore = installLog().length;
+    const t0 = Date.now();
+    const r = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', action, '-Title', `SwarmCast ${action}`, '-Method', opt('close-method', 'auto')], { encoding: 'utf8', timeout: 90_000 });
     const ev = (r.stdout || r.stderr || '').trim();
     info('console event', ev);
-    if (action === 'close' && /closed=False/.test(ev)) {
-      record(`${what}: simulated`, 'warn', `could not simulate on this runner: the console window did not close after WM_SYSCOMMAND SC_CLOSE / WM_CLOSE (${ev}); Ctrl+C and Ctrl+Break cover the same shutdown path`);
-      return;
+    // close: how the window went (console-ctl.ps1 -Method): a real click on its X (SendInput),
+    // UI Automation's WindowPattern.Close(), or the posted SC_CLOSE / WM_CLOSE.
+    const method = /method=(\w+)/.exec(ev)?.[1] ?? 'unknown';
+    if (action === 'close') {
+      info('console close: method', method);
+      must(`${what}: the console window closed`, /closed=True/.test(ev), ev);
     }
     const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 30_000, 'shutdown').catch(() => processesUnder(home));
-    if (action === 'close' && left.length) {
-      // Seen on Windows Server 2025 (build 26100) only: the window closes, yet SwarmCast keeps
-      // running and never logs a shutdown. Record what is still there for a manual check.
-      const lp = launcher;
-      const chain = processes().filter((x) => x.cmd.includes(lp) || /powershell|cmd|conhost/i.test(x.name)).filter((x) => x.cmd.includes(lp) || x.cmd.includes('start-windows')).map((x) => `${x.name}#${x.pid}`);
-      const att = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', 'probe'], { encoding: 'utf8', timeout: 30_000 });
-      const build = Number(ps('[Environment]::OSVersion.Version.Build', { allowFail: true })) || 0;
-      record(`${what}: no SwarmCast/MediaMTX/tray process left`, build >= 26100 ? 'warn' : 'fail', `still running 30 s after the window closed: ${describeProcs(left)}; start-script processes: ${chain.join(', ') || 'none'}; console of the app: ${(att.stdout || att.stderr || '').trim()}; OS build ${build}${build >= 26100 ? ' (Server 2025 / Windows 11 24H2 console host: verify by hand on Windows 11 before relying on it)' : ''}`);
-    } else {
-      check(`${what}: no SwarmCast/MediaMTX/tray process left`, left.length === 0, left.length ? describeProcs(left) : `stopped: ${describeProcs(before)}`);
-    }
-    if (!(action === 'close' && left.length)) check(`${what}: port 1935 free`, !(await listening(1935)));
+    const secs = Math.round((Date.now() - t0) / 1000);
+    check(`${what}: no SwarmCast/MediaMTX/tray process left`, left.length === 0, left.length ? `still running ${secs} s later: ${describeProcs(left)}` : `stopped in ${secs} s: ${describeProcs(before)}`);
+    check(`${what}: port 1935 free`, !(await listening(1935)));
     const lines = appLog(home).slice(logBefore);
     const graceful = /shutting down: stopping the live/.test(lines);
     const complete = /shutdown complete/.test(lines);
-    record(`${what}: graceful shutdown path ran`, graceful ? 'pass' : action === 'close' ? 'warn' : 'fail', `"shutting down" logged: ${graceful}; "shutdown complete" logged: ${complete}`);
+    check(`${what}: graceful shutdown path ran`, graceful, `"shutting down" logged: ${graceful}; "shutdown complete" logged: ${complete}`);
+    if (action === 'close') {
+      // B2: on some builds the window goes away and no CTRL_CLOSE_EVENT reaches its programs. The
+      // start script's window watch then ends the script, and SwarmCast stops because the program
+      // that started it is gone. Which path ran is the outcome the soak counts.
+      const watch = /\(window watch\)/.test(installLog().slice(installBefore));
+      const parentGone = /the window that started SwarmCast was closed/.test(lines);
+      const build = Number(ps('[Environment]::OSVersion.Version.Build', { allowFail: true })) || 0;
+      info('console close: shutdown path', watch ? `window watch of the start script: no CTRL_CLOSE_EVENT reached the window's programs (SwarmCast saw its parent end: ${parentGone})` : `close event (CTRL_CLOSE_EVENT)${parentGone ? '; SwarmCast also saw its parent end' : ''}`);
+      info('console close: outcome', `method=${method} path=${watch ? 'window-watch' : 'close-event'} stopped=${left.length === 0} seconds=${secs} build=${build}`);
+      const windowProcs = () => processes().filter((x) => x.cmd.includes(launcher) || (x.cmd.includes('start-windows.ps1') && x.cmd.includes(relDir)));
+      const chain = await until(async () => (windowProcs().length === 0 ? [] : null), 10_000, "the window's programs").catch(() => windowProcs());
+      check(`${what}: the window's cmd and PowerShell ended too`, chain.length === 0, chain.length ? `left: ${describeProcs(chain)}` : '');
+      if (left.length) {
+        const att = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'console-ctl.ps1'), '-TargetPid', String(pid), '-Action', 'probe'], { encoding: 'utf8', timeout: 30_000 });
+        info('console close: console of the app afterwards', (att.stdout || att.stderr || '').trim());
+      }
+    }
     if (action === 'ctrlc') {
       const cmdLeft = processes().filter((x) => x.cmd.includes(launcher));
       info('cmd.exe after Ctrl+C', cmdLeft.length ? 'cmd.exe still open (it asks "Terminate batch job (Y/N)?", standard cmd behavior)' : 'console closed');
