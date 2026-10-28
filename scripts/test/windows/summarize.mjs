@@ -145,7 +145,8 @@ function soakTable(list) {
 
 function soakSummary(t) {
   const pct = (x) => `${(x * 100).toFixed(x < 0.1 ? 1 : 0)} %`;
-  const esc = (s) => String(s).replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  // Markdown table cell: backslashes first (Windows paths), then the cell separator.
+  const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   const out = ['## SwarmCast Windows soak', '', `${t.jobs} result files, ${t.checks.reduce((a, c) => a + c.runs, 0)} check runs.`, ''];
   const bad = t.checks.filter((c) => c.fail || c.warn || c.retry);
   out.push('### Checks that failed, warned or passed only on retry', '');
