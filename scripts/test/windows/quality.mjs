@@ -116,6 +116,8 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
   must('a software encoder works', !!enc);
   const q0 = await putQuality(app, (b) => (b.ladder = { ...b.ladder, mode: 'manual', enabled: true, heights: [480], encoder: enc }));
   info('manual plan before OBS', `${q0.plan.rungs.map((r) => `${r.height}p`).join('+')} encoder=${q0.plan.encoder}; ${why(q0.plan)}`);
+  // The end of this section stops the live; a repeated run (--repeat) starts it again.
+  if ((await app.state()).phase === 'off') await app.api('/api/live/start', {});
   const s0 = await waitLiveLink(app);
   const feed = pushStream(s0.rtmpUrl, s0.streamKey, { size: '1280x720', kbps: 2500 });
   await waitPhase(app, 'live', 120_000);
