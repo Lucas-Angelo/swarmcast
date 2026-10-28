@@ -17,6 +17,39 @@ export { allocPortMap, allocPorts } from '../../../../scripts/test/lib/ports.mjs
 export const FFMPEG_BIN = ffmpegBin();
 export const hasFfmpeg = ffmpegRuns();
 
+/** The repository root (the working directory of every SwarmCast a test starts). */
+export const ROOT = path.resolve(import.meta.dirname, '../../../..');
+const SOURCES = [path.join(ROOT, 'apps/server/src'), path.join(ROOT, 'packages/shared/src')];
+const BUNDLE = path.join(ROOT, 'apps/server/dist/swarmcast.cjs');
+
+function newestSource(dir: string): number {
+  let newest = 0;
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    newest = Math.max(newest, e.isDirectory() ? newestSource(p) : fs.statSync(p).mtimeMs);
+  }
+  return newest;
+}
+
+let bundleFresh: boolean | undefined;
+
+/**
+ * Node arguments that run the server with `args`: the bundle `npm run build` made
+ * (apps/server/dist/swarmcast.cjs) when it is newer than every source file, as in CI; else the
+ * sources through tsx, which transpiles on every start (about a second each on a CI runner).
+ */
+export function serverArgs(args: string[]): string[] {
+  bundleFresh ??= (() => {
+    try {
+      const built = fs.statSync(BUNDLE).mtimeMs;
+      return SOURCES.every((d) => newestSource(d) <= built);
+    } catch {
+      return false;
+    }
+  })();
+  return bundleFresh ? [BUNDLE, ...args] : ['--import', 'tsx', path.join(ROOT, 'apps/server/src/main.ts'), ...args];
+}
+
 export function tmpDir(prefix = 'sc-it-'): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
 }

@@ -1,6 +1,7 @@
+import crypto from 'node:crypto';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
 import { defaultConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
@@ -61,8 +62,15 @@ class Browser {
 
 const forceLevel = (live: LiveController, level: PowLevel): void => (live.shield as unknown as { setAutoPow(l: PowLevel): void }).setAutoPow(level);
 
+// The server draws the lowest proof-of-work counter of each level: every solve is the same
+// bounded work (pow.test.ts solves a random one).
+beforeEach(() => {
+  vi.spyOn(crypto, 'randomInt').mockImplementation(((a: number, b?: number) => (b === undefined ? 0 : a)) as typeof crypto.randomInt);
+});
+
 const lives: LiveController[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const l of lives.splice(0)) await l.stop().catch(() => {});
 });
 

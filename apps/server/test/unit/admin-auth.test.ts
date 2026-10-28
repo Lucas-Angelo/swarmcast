@@ -68,7 +68,10 @@ describe('panel login: GET /auth/<token>', () => {
     expect(res.body).not.toContain('refresh');
   });
 
-  it('debug log: one line per request, never the token', () => {
+  it('debug log: one line per request, never the token', async () => {
+    // Its own requests: the test must not depend on which tests ran before it (shuffled runs).
+    expect((await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host } })).statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/', headers: { host } })).statusCode).toBe(401);
     expect(logged.some((l) => l.includes('"path":"/auth/…"') && l.includes('"status":200'))).toBe(true);
     expect(logged.some((l) => l.includes('"path":"/"') && l.includes('"status":401'))).toBe(true);
     expect(logged.join('\n')).not.toContain(TOKEN);

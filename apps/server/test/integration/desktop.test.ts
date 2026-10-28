@@ -8,14 +8,12 @@ import { ADMIN_COOKIE } from '@swarmcast/shared';
 import { isListening } from '../../src/core/ports.js';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage, type DesktopStateMessage, type ShellMessage } from '../../src/desktop/protocol.js';
 import { isAlive } from '../../src/process/children.js';
-import { allocAppPorts, spawnTracked, stopTracked, tmpDir, until, type Ports, type Tracked } from './helpers.js';
+import { allocAppPorts, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until, type Ports, type Tracked } from './helpers.js';
 
 // The real server from source, started like the desktop shell does (`--desktop`), driven over
 // stdio by this test acting as the shell. Temporary data folder, HOME and ports (never the
 // user's own SwarmCast data, LaunchAgents or a SwarmCast already running on this computer).
 
-const ROOT = path.resolve(__dirname, '../../../..');
-const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const posix = process.platform !== 'win32';
 
 function writeConfig(dir: string, ports: Ports, extra: Record<string, unknown> = {}): void {
@@ -46,7 +44,7 @@ class FakeShell {
     env: Record<string, string> = {},
     o: { tunnel?: boolean } = {},
   ) {
-    this.t = spawnTracked(process.execPath, ['--import', 'tsx', MAIN, '--desktop', ...(o.tunnel ? [] : ['--no-tunnel']), '--data-dir', dataDir, ...args], {
+    this.t = spawnTracked(process.execPath, serverArgs(['--desktop', ...(o.tunnel ? [] : ['--no-tunnel']), '--data-dir', dataDir, ...args]), {
       name: 'SwarmCast --desktop',
       cwd: ROOT,
       stdio: ['pipe', 'pipe', 'pipe'],

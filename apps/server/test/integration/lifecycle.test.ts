@@ -4,10 +4,8 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
-import { allocAppPorts, bootApp, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
+import { allocAppPorts, bootApp, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
-const ROOT = path.resolve(__dirname, '../../../..');
-const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const posix = process.platform !== 'win32';
 
 function writeConfig(dir: string, ports: Record<string, number>, extra: Record<string, unknown> = {}): void {
@@ -18,7 +16,7 @@ function writeConfig(dir: string, ports: Record<string, number>, extra: Record<s
 }
 
 function startMain(dir: string): Tracked {
-  return spawnTracked(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir], {
+  return spawnTracked(process.execPath, serverArgs(['--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir]), {
     name: 'SwarmCast',
     cwd: ROOT,
     env: { ...process.env, SWARMCAST_LOG_LEVEL: 'warn' },

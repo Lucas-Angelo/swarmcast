@@ -1,7 +1,19 @@
+import crypto from 'node:crypto';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JoinPow, POW_COUNTER_RANGE, POW_TTL_MS } from '../../src/security/pow.js';
+
+// Solving is real work (SHA-256 up to the secret counter), and the counter is random within the
+// level's range, so the time each solve takes varies by a factor of 3. Except in the first test,
+// which solves a real random challenge, the server draws the lowest counter of the range: the
+// same bounded work every run.
+beforeEach(() => {
+  vi.spyOn(crypto, 'randomInt').mockImplementation(((a: number, b?: number) => (b === undefined ? 0 : a)) as typeof crypto.randomInt);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 async function solve(challenge: Challenge) {
   const solution = await solveChallenge({ challenge, deriveKey });
@@ -10,6 +22,7 @@ async function solve(challenge: Challenge) {
 
 describe('join proof-of-work (ALTCHA)', () => {
   it('issues signed SHA-256 challenges within the level range and verifies a real solution', async () => {
+    vi.restoreAllMocks(); // a random counter, as in production
     const pow = new JoinPow();
     const ch = await pow.issue(1);
     expect(ch.parameters.algorithm).toBe('SHA-256');
