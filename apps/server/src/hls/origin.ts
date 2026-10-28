@@ -6,6 +6,7 @@ import { PLAYLIST_WINDOW_S, type SourceInfo } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
 import {
   SAFE_NAME,
+  DiscontinuityClock,
   PlaylistStitcher,
   cleanMultivariant,
   fileName,
@@ -132,6 +133,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   private files = new Map<string, CachedFile>();
   private playlists = new Map<string, string>();
   private stitchers = new Map<string, PlaylistStitcher>();
+  /** One numbering of upstream runs for every playlist (see DiscontinuityClock). */
+  private discontinuities = new DiscontinuityClock();
   private kbpsByPlaylist = new Map<string, number>();
   private multivariant: string | null = null;
   private multivariantRaw = '';
@@ -231,6 +234,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     this.files.clear();
     this.playlists.clear();
     this.stitchers.clear();
+    this.discontinuities = new DiscontinuityClock();
     this.kbpsByPlaylist.clear();
     this.multivariant = null;
     this.multivariantRaw = '';
@@ -362,7 +366,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
         if (!audio.has(name)) maxSegment = Math.max(maxSegment, maxRecentDuration(ready));
         if (src !== this.source) return;
         let st = this.stitchers.get(name);
-        if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(0, this.windowSeconds)));
+        if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(0, this.windowSeconds, this.discontinuities)));
         changed = st.update(parsed, ready) || changed;
         let bytes = 0;
         let seconds = 0;

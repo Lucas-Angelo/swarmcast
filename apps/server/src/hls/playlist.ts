@@ -201,8 +201,61 @@ interface WindowEntry {
   tags: string[];
   duration: number;
   map?: string;
-  discontinuity: boolean;
+  /** Discontinuity sequence number of this segment (hls.js `cc`). */
+  cc: number;
   seq: number;
+}
+
+/**
+ * The upstream run (OBS session) a segment belongs to, from its init segment's name: MediaMTX
+ * (`<muxer id>_video1_init.mp4`) and the ladder (`<run id>_v480_init.mp4`) prefix every file of
+ * one run with the same id, for every track. Undefined when the name has no such prefix.
+ */
+export function runKey(map: string | undefined): string | undefined {
+  const cut = map?.indexOf('_') ?? -1;
+  return cut > 0 ? map!.slice(0, cut) : undefined;
+}
+
+/**
+ * Discontinuity sequence numbers shared by every playlist of one origin. A player matches the
+ * audio segment to the video one, and a new quality's segments to the one playing, by this
+ * number (hls.js `cc`), so it must be the same for the same upstream run in every playlist.
+ * Counting per playlist drifted: a run so short that it reached the audio playlist but not the
+ * video one (OBS reconnecting twice within seconds) left audio one ahead of video for good,
+ * and a quality added later started at 0 while the others were at N. hls.js then never found
+ * the audio (or the new quality) for what it played: the stream stalled for every new viewer.
+ */
+export class DiscontinuityClock {
+  private readonly byRun = new Map<string, number>();
+  private max = -1;
+
+  /** The number of upstream run `key` (a new run gets the next one). */
+  ccOf(key: string): number {
+    let cc = this.byRun.get(key);
+    if (cc === undefined) {
+      cc = this.next();
+      this.byRun.set(key, cc);
+      // Runs are only ever looked up while they are in some playlist window.
+      if (this.byRun.size > 200) this.byRun.delete(this.byRun.keys().next().value as string);
+    }
+    return cc;
+  }
+
+  /** A new number not tied to a run name (upstreams whose files carry no run id). */
+  next(): number {
+    this.max += 1;
+    return this.max;
+  }
+
+  /** Highest number given so far (0 before any). */
+  get current(): number {
+    return Math.max(0, this.max);
+  }
+
+  /** A number a playlist used: later runs get higher ones. */
+  note(cc: number): void {
+    this.max = Math.max(this.max, cc);
+  }
 }
 
 /** Header tags the stitcher writes itself (or drops: a live playlist never ends). */
@@ -221,7 +274,8 @@ export class PlaylistStitcher {
   private seen = new Set<string>();
   private seenOrder: string[] = [];
   private nextSeq = 0;
-  private discontinuitySeq = 0;
+  /** cc after the last entry that left the window (the playlist's discontinuity sequence when empty). */
+  private droppedCc: number | null = null;
   private lastMap?: string;
   private targetDuration = 1;
   private version = '#EXT-X-VERSION:7';
@@ -233,11 +287,32 @@ export class PlaylistStitcher {
    *   audio is cut every second, video every 2 s) keeps more entries, so every playlist offers
    *   the same time window. Otherwise the audio window is half the video one and a player
    *   that falls behind after a stall has video but no audio to play.
+   * @param clock Discontinuity numbers shared with the origin's other playlists (HlsOrigin
+   *   passes one per origin; a stitcher on its own numbers its runs by itself).
    */
   constructor(
     private readonly maxEntries = 20,
     public minWindowS = 0,
+    private readonly clock = new DiscontinuityClock(),
   ) {}
+
+  /** cc of a new entry: its run's number, or the previous entry's (+1 at an unnamed restart). */
+  private ccFor(map: string | undefined, upstreamDisc: boolean): number {
+    const prev = this.window.at(-1)?.cc ?? this.droppedCc;
+    const key = runKey(map);
+    const restart = prev !== null && (map !== this.lastMap || upstreamDisc);
+    let cc: number;
+    if (key !== undefined) {
+      cc = this.clock.ccOf(key);
+      // The same run name restarted (upstream discontinuity inside one run): a number of its own.
+      if (prev !== null && restart && cc <= prev) cc = this.clock.next();
+    } else if (prev === null) cc = this.clock.current;
+    else cc = restart ? Math.max(prev + 1, this.clock.current) : prev;
+    // Never backwards inside one playlist.
+    if (prev !== null && cc < prev) cc = prev;
+    this.clock.note(cc);
+    return cc;
+  }
 
   /** Feed the upstream playlist and the prefix of its entries that is cached. Returns true if anything was added. */
   update(p: MediaPlaylist, ready: MediaEntry[]): boolean {
@@ -256,7 +331,7 @@ export class PlaylistStitcher {
         tags: e.tags.filter((t) => !DISCONTINUITY_TAG.test(t) && !OWN_HEADER.test(t)),
         duration: e.duration,
         map,
-        discontinuity: this.lastMap !== undefined && (map !== this.lastMap || upstreamDisc),
+        cc: this.ccFor(map, upstreamDisc),
         seq: this.nextSeq++,
       });
       this.targetDuration = Math.max(this.targetDuration, Math.round(e.duration));
@@ -277,8 +352,7 @@ export class PlaylistStitcher {
 
   private dropFirst(): void {
     const e = this.window.shift();
-    // EXT-X-DISCONTINUITY-SEQUENCE counts the discontinuity tags that left the playlist.
-    if (e?.discontinuity) this.discontinuitySeq += 1;
+    if (e) this.droppedCc = e.cc;
   }
 
   /** Drop entries whose files are no longer cached (only ever from the old end). */
@@ -315,11 +389,16 @@ export class PlaylistStitcher {
   render(): string {
     const lines = ['#EXTM3U', this.version, `#EXT-X-TARGETDURATION:${this.targetDuration}`];
     lines.push(`#EXT-X-MEDIA-SEQUENCE:${this.window[0]?.seq ?? this.nextSeq}`);
-    if (this.discontinuitySeq > 0) lines.push(`#EXT-X-DISCONTINUITY-SEQUENCE:${this.discontinuitySeq}`);
+    // EXT-X-DISCONTINUITY-SEQUENCE is the first segment's number, and every tag adds one
+    // (RFC 8216 4.3.3.3), so each segment gets its run's number: a run this playlist never saw
+    // (too short to reach it) is skipped with one tag per missing number.
+    const startCc = this.window[0]?.cc ?? this.droppedCc ?? 0;
+    if (startCc > 0) lines.push(`#EXT-X-DISCONTINUITY-SEQUENCE:${startCc}`);
     lines.push(...this.header);
     let map: string | undefined;
+    let cc = startCc;
     for (const e of this.window) {
-      if (e.discontinuity) lines.push('#EXT-X-DISCONTINUITY');
+      for (; cc < e.cc; cc++) lines.push('#EXT-X-DISCONTINUITY');
       if (e.map && e.map !== map) {
         lines.push(`#EXT-X-MAP:URI="${e.map}"`);
         map = e.map;
