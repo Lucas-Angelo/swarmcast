@@ -34,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -64,7 +64,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Pinned Ubuntu, so an image switch never lands in the middle of a change (ubuntu-latest
+        # moves to 26.04 from 2026-10-19). The monthly run adds ubuntu-latest as a canary.
+        os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -99,7 +101,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        # Monthly canary on ubuntu-latest, as for the integration tests.
+        os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     steps:
@@ -157,7 +160,7 @@ jobs:
 
   audit:
     name: npm audit (production dependencies)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -174,7 +177,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        os: [ubuntu-24.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
@@ -196,7 +199,7 @@ jobs:
     # SwarmCast ships pinned, verified versions on purpose, so a newer release is only a warning
     # on pull requests, main and releases; the monthly scheduled run fails (the rot alarm). It
     # never opens PRs: run `node scripts/build/update-binaries.mjs` locally to apply the update.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

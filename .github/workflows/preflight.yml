@@ -44,7 +44,7 @@ jobs:
           - { target: macos-arm64, os: macos-latest }
           # The last Intel macOS image GitHub offers.
           - { target: macos-x64, os: macos-15-intel }
-          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-x64, os: ubuntu-24.04 }
           - { target: linux-x64, os: ubuntu-22.04 }
     runs-on: ${{ matrix.os }}
     # Ubuntu's apt and `playwright install --with-deps` alone have taken 13–22 min on runners.
