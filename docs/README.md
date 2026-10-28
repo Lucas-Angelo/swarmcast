@@ -2,7 +2,7 @@
 
 **Streamers and viewers:** everything is on the website, <https://lucas-angelo.github.io/swarmcast/> (English) and <https://lucas-angelo.github.io/swarmcast/pt-br/> (Português). Its pages live in [`site/src/content/docs/`](../site/src/content/docs/), and the offline guide inside the installer zips is generated from them.
 
-Developer and maintainer documents:
+Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING.md)):
 
 | Document | For | Language |
 |----------|-----|----------|
@@ -12,7 +12,7 @@ Developer and maintainer documents:
 | [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md) | Attack detection and protections, with sources | English |
 | [QUALITY.md](QUALITY.md) | Renditions, ffmpeg, player settings, upload budget | English |
 | [DESKTOP.md](DESKTOP.md) | Desktop app: installers, shell ↔ server contract, updates | English |
-| [RELEASING.md](RELEASING.md) | Maintainer: repository settings, branch protection, releases, updater key, GitHub Pages, signing | English |
+| [RELEASING.md](RELEASING.md) | Maintainer: repository settings, branches and protection, releases and hotfixes, updater key, GitHub Pages, signing | English |
 | [assets/brand/README.md](../assets/brand/README.md) | Brand: Forest & Cream palette, tokens, symbol, icons, mascot, fonts | English |
 | [site/DESIGN.md](../site/DESIGN.md) | Website design spec: principles, tokens, components | English |
 

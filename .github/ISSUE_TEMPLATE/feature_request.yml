@@ -1,0 +1,54 @@
+name: Feature request
+description: Ask for something new in SwarmCast, or a change to how it works.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. If the idea is still rough, or you would like to talk it through first, start in [Discussions → Ideas](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/ideas).
+
+        SwarmCast stays free, needs no accounts and sends no telemetry, so ideas that need a paid service or a sign-up cannot be added.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: What are you trying to do, and what gets in the way today?
+      placeholder: "When I go live, I cannot tell whether my viewers hear the sound."
+    validations:
+      required: true
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like SwarmCast to do?
+      description: Describe the idea in your own words. A sketch or a screenshot of a similar app helps.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Other ways you have tried or thought of (optional)
+    validations:
+      required: false
+
+  - type: dropdown
+    id: who
+    attributes:
+      label: Who would it help?
+      multiple: true
+      options:
+        - Streamers (the person who goes live)
+        - Viewers (the people who watch)
+        - Developers or people who run SwarmCast on a server
+    validations:
+      required: true
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else? (optional)
+      description: Cover any live link or stream key in screenshots before you add them.
+    validations:
+      required: false
