@@ -139,9 +139,42 @@ describe('download', () => {
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 
+  it('a server that sends a few KB per connection and then stalls still finishes, after more than 6 tries', async () => {
+    const step = 4 * 1024; // 64 KB in 16 connections
+    const { url, seen } = await serve((_n, req, res) => {
+      const start = rangeStart(req) ?? 0;
+      const last = start + step >= FILE.length;
+      send(res, FILE, { start, partial: start > 0, ...(last ? {} : { stallAfter: step }) });
+    });
+    const dest = path.join(tmp(), 'a.zip');
+    await download(url, dest, SHA, fast);
+    expect(fs.readFileSync(dest)).toEqual(FILE);
+    expect(seen).toHaveLength(FILE.length / step);
+  });
+
+  it('gives up after 6 tries in a row without new bytes, whatever came before', async () => {
+    const { url, seen } = await serve((n, req, res) => {
+      const start = rangeStart(req) ?? 0;
+      // Progress on the first two connections, then nothing.
+      send(res, FILE, { start, partial: start > 0, stallAfter: n < 2 ? 1024 : 0 });
+    });
+    await expect(download(url, path.join(tmp(), 'a.zip'), SHA, fast)).rejects.toThrow(/no data for .*try 8, 6 of 6 in a row without progress/);
+    expect(seen).toHaveLength(8);
+  });
+
+  it('stops at the overall time cap even while bytes still trickle in', async () => {
+    const { url } = await serve((_n, req, res) => {
+      const start = rangeStart(req) ?? 0;
+      send(res, FILE, { start, partial: start > 0, stallAfter: 16 });
+    });
+    const dir = tmp();
+    await expect(download(url, path.join(dir, 'a.zip'), SHA, { ...fast, maxMs: 1500 })).rejects.toThrow(/gave up after 0\.025 min, \d+ bytes received; SC_DOWNLOAD_MAX_MIN/);
+    expect(fs.readdirSync(dir)).toEqual([]);
+  });
+
   it('does not retry a missing file', async () => {
     const { url, seen } = await serve((_n, _req, res) => void res.writeHead(404).end());
-    await expect(download(url, path.join(tmp(), 'a.zip'), SHA, fast)).rejects.toThrow(/HTTP 404 .*try 1 of 6/);
+    await expect(download(url, path.join(tmp(), 'a.zip'), SHA, fast)).rejects.toThrow(/HTTP 404 .*try 1, 1 of 6 in a row without progress/);
     expect(seen).toHaveLength(1);
   });
 

@@ -41,8 +41,12 @@ export function hostTarget() {
 // (HTTP 403/404/410) fails at once. A try that stops receiving bytes for STALL_MS is aborted
 // and retried: one macOS CI job sat 44 min on a body that never finished, until the job timed out.
 // A retry resumes where the stalled try stopped (HTTP Range) when the server allows it: a
-// pre-release job failed 6 tries of the 28 MB macOS ffmpeg, each restarting from byte 0.
+// pre-release job failed 6 tries of the 28 MB macOS ffmpeg, each restarting from byte 0. A try
+// that brought new bytes starts the count of 6 over: only 6 tries in a row without progress fail
+// (from GitHub's macOS runners the same host trickles 10-30 kB/s with stalls; on PR #19 it sent
+// 17.7 of 28 MB in 6 tries). SC_DOWNLOAD_MAX_MIN (default 20) caps the whole download.
 const TRIES = 6;
+const MAX_MS = Number(process.env.SC_DOWNLOAD_MAX_MIN ?? 20) * 60_000;
 const STALL_MS = Number(process.env.SC_DOWNLOAD_STALL_MS ?? 30_000);
 const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter(Boolean).join(': ');
 
@@ -109,19 +113,25 @@ async function fetchInto(url, got, stallMs) {
  * where it stopped (see fetchInto). The bytes are checked in memory and only bytes that match
  * reach the disk (written to `dest.part`, then renamed). A mismatch is final: the pin or the
  * upstream file is wrong (or, after a resume, the server sent a different file), and downloading
- * again would not change that. `waitMs` and `stallMs` are for tests.
+ * again would not change that. `waitMs`, `stallMs` and `maxMs` are for tests.
  */
-export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS } = {}) {
+export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS } = {}) {
   if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) throw new Error(`no pinned SHA-256 for ${url}`);
   const got = { chunks: [], bytes: 0, resumedAt: [] };
-  for (let attempt = 1; ; attempt++) {
+  const deadline = Date.now() + maxMs;
+  // `failed`: tries in a row that brought no new bytes (they fail it at TRIES and set the back-off).
+  for (let attempt = 1, failed = 0; ; attempt++) {
+    const before = got.bytes;
     try {
       await fetchInto(url, got, stallMs);
     } catch (err) {
-      if (err.final || attempt === TRIES) throw new Error(`${why(err)} (${url}, try ${attempt} of ${TRIES})`);
-      const wait = waitMs(attempt);
+      failed = got.bytes > before ? 0 : failed + 1;
+      const where = `${url}, try ${attempt}, ${failed} of ${TRIES} in a row without progress`;
+      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`);
+      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`);
+      const wait = waitMs(Math.max(1, failed));
       const kept = got.bytes ? `, ${got.bytes} bytes kept` : '';
-      console.warn(`  try ${attempt} of ${TRIES} failed (${why(err)}${kept}); again in ${wait / 1000} s`);
+      console.warn(`  try ${attempt} failed (${why(err)}${kept}; ${failed} of ${TRIES} in a row without progress); again in ${wait / 1000} s`);
       await new Promise((r) => setTimeout(r, wait));
       continue;
     }
