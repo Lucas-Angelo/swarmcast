@@ -70,7 +70,10 @@ async function outputHeldAfterExit(
 describe("a process SwarmCast starts does not hold SwarmCast's redirected output", () => {
   it('toast-like launch (stdio ignore, hidden window): the output closes when the app exits', async () => {
     const { heldMs, grandchild } = await outputHeldAfterExit('ignore', { windowsHide: true });
-    expect(isAlive(grandchild)).toBe(true);
+    // Windows: libuv puts children that are not detached in a job object that is closed (and
+    // its processes killed) when the parent exits, so this child cannot outlive the app at all.
+    // POSIX: it outlives the app, without holding its output.
+    expect(isAlive(grandchild)).toBe(process.platform !== 'win32');
     expect(heldMs).toBeLessThan(2000);
   }, 30_000);
 
@@ -82,7 +85,8 @@ describe("a process SwarmCast starts does not hold SwarmCast's redirected output
 
   it('positive control: a child given the output (stdio inherit) does hold it', async () => {
     // The grandchild owns the output: the close waits for it (killed after 3 s to stay short).
-    const { heldMs } = await outputHeldAfterExit('inherit', { windowsHide: true }, 3000);
+    // Detached, so that on Windows it is not killed with the app (see above).
+    const { heldMs } = await outputHeldAfterExit('inherit', { detached: true, windowsHide: true }, 3000);
     expect(heldMs).toBeGreaterThanOrEqual(2000);
   }, 30_000);
 });
