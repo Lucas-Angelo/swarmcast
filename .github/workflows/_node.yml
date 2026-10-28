@@ -39,6 +39,10 @@ jobs:
       - uses: ./.github/actions/get-build
         with:
           names: web-dist
+      # MediaMTX and cloudflared for the host into vendor/<target>/, verified against the SHA-256
+      # values pinned in scripts/build/versions.json (the integration tests run them). Before the
+      # unit tests, so a unit failure does not leave the integration tests without them.
+      - run: npm run fetch-bins
 
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
       - name: Unit tests (macOS, Windows)
@@ -55,9 +59,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Downloads MediaMTX and cloudflared for the host into vendor/<target>/ and verifies them
-      # against the SHA-256 values pinned in scripts/build/versions.json.
-      - run: npm run fetch-bins
       # Lifecycle tests that rely on POSIX signals skip themselves on Windows.
       - name: Integration tests
         if: ${{ !cancelled() }}
