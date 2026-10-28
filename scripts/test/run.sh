@@ -134,6 +134,10 @@ echo "Fake release server: $URL  (platform $OS-$ARCH, script $(basename "$SCRIPT
 
 COMMON=(--yes --no-tunnel --skip-speedtest)
 
+# No back-off sleeps between retries (the scripts honour this only for a release on 127.0.0.1).
+# Cases 6 and 11a keep the real delays and check them.
+export SWARMCAST_TEST_RETRY_DELAYS="0 0 0"
+
 # --- 1. clean install ------------------------------------------------------
 begin "1. clean install + smoke test"
 make_release --version 0.0.1
@@ -251,12 +255,15 @@ assert_tmp_empty
 end
 
 # --- 6. offline with nothing installed -------------------------------------
-begin "6. offline with nothing installed fails clearly"
+begin "6. offline with nothing installed fails clearly (real back-off: the test hook is for 127.0.0.1 only)"
 DATA_SAVED="$DATA"
 DATA="$WORK/empty home"
-run_script "$CLOSED_URL" "${COMMON[@]}" --smoke-test
+# localhost, not 127.0.0.1: SWARMCAST_TEST_RETRY_DELAYS must be ignored, so the real delays run.
+run_script "${CLOSED_URL/127.0.0.1/localhost}" "${COMMON[@]}" --smoke-test
 assert_ne "$RC" 0 "non-zero exit code"
 assert_contains "$OUT" "release server is unreachable"
+for d in 2 4 8; do assert_contains "$OUT" "failed, retrying in ${d}s" "back-off of ${d} s"; done
+assert_not_contains "$DATA/logs/install.log" "test hook: retry delays" "test hook not used"
 assert_no_file "$DATA/app/current"
 assert_tmp_empty
 DATA="$DATA_SAVED"
@@ -322,7 +329,7 @@ DATA="$DATA_SAVED"
 begin "11a. a transient unpacking failure recovers on retry"
 DATA="$WORK/retry home"
 make_release --version 0.0.4
-env SWARMCAST_HOME="$DATA" SWARMCAST_RELEASE_URL="$URL" SWARMCAST_TEST_FAIL_ONCE=extract TMPDIR="$SCRIPT_TMP" NO_COLOR=1 \
+env -u SWARMCAST_TEST_RETRY_DELAYS SWARMCAST_HOME="$DATA" SWARMCAST_RELEASE_URL="$URL" SWARMCAST_TEST_FAIL_ONCE=extract TMPDIR="$SCRIPT_TMP" NO_COLOR=1 \
   "$SCRIPT" --no-tunnel --skip-speedtest --no-ffmpeg --install-only >"$OUT" 2>&1 </dev/null
 RC=$?
 echo "  (exit code $RC)"

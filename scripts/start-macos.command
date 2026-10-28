@@ -313,6 +313,19 @@ retry_step() {
   return 1
 }
 
+# Installer tests only: SWARMCAST_TEST_RETRY_DELAYS (for example "0 0 0") replaces the back-off
+# of every retry, so the tests do not sleep through 14-18 s per case. Honoured only when the
+# release comes from a local test server (http://127.0.0.1), never for a real install.
+test_retry_delays() {
+  local d="${SWARMCAST_TEST_RETRY_DELAYS:-}"
+  [ -n "$d" ] || return 0
+  case "$RELEASE_URL" in http://127.0.0.1 | http://127.0.0.1:* | http://127.0.0.1/*) ;; *) return 0 ;; esac
+  case "$d" in *[!0-9\ ]*) return 0 ;; esac
+  SC_RETRY_DELAYS="$d"
+  SC_STEP_DELAYS="$d"
+  log_to_file "test hook: retry delays $d"
+}
+
 # Installer tests only: SWARMCAST_TEST_FAIL_ONCE=<step> makes that step fail on its first try.
 test_fail_once() {
   [ "${SWARMCAST_TEST_FAIL_ONCE:-}" = "$1" ] || return 1
@@ -1290,6 +1303,7 @@ main() {
   refuse_root
   SCRIPT_DIR="$(find_script_dir)"
   setup_paths
+  test_retry_delays
   trap cleanup EXIT
   trap on_signal INT TERM HUP
 
