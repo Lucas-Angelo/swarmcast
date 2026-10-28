@@ -26,6 +26,15 @@ afterEach(() => {
   }
 });
 
+/** The "app": starts a 20 s grandchild with the spawn options in SC_GRANDCHILD_OPTS, prints its pid, exits. */
+const APP_SCRIPT = [
+  "const { spawn } = require('node:child_process');",
+  'const opts = JSON.parse(process.env.SC_GRANDCHILD_OPTS);',
+  "const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], opts);",
+  'c.unref();',
+  "process.stdout.write(c.pid + '\\n');",
+].join('\n');
+
 /**
  * Runs an "app" whose stdout and stderr are pipes held by this test (as a redirect to a log
  * file would be). The app starts a grandchild that lives 20 s with `childStdio` and spawn
@@ -37,14 +46,13 @@ async function outputHeldAfterExit(
   extra: { detached?: boolean; windowsHide?: boolean },
   killGrandchildAfterMs?: number,
 ): Promise<{ heldMs: number; grandchild: number }> {
-  const opts = JSON.stringify({ stdio: childStdio, ...extra });
-  const script = [
-    "const { spawn } = require('node:child_process');",
-    `const c = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], ${opts});`,
-    'c.unref();',
-    "process.stdout.write(c.pid + '\\n');",
-  ].join('\n');
-  const app = spawn(process.execPath, ['-e', script], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  // A fixed script: the spawn options travel as data (JSON in an environment variable), never
+  // as code.
+  const app = spawn(process.execPath, ['-e', APP_SCRIPT], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    env: { ...process.env, SC_GRANDCHILD_OPTS: JSON.stringify({ stdio: childStdio, ...extra }) },
+  });
   leftovers.push(app.pid!);
   app.stderr!.resume();
   const grandchild = await new Promise<number>((resolve) => readline.createInterface({ input: app.stdout! }).once('line', (l) => resolve(Number(l.trim()))));
