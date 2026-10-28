@@ -136,6 +136,26 @@ describe('installStallRecovery', () => {
     }
   });
 
+  it("its own seeks are not playback: a player that stays frozen after them is reloaded on time (job 122719989311)", () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      // Every restart moves the playhead to the live position, as hls.startLoad(to) does.
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn((to?: number) => void (to !== undefined && (video.currentTime = to))) };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      for (let i = 0; i < 30; i++) {
+        hls.liveSyncPosition += 1;
+        vi.advanceTimersByTime(1000);
+      }
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      expect(reload).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('still stuck: hls.js nudging the playhead (0.1-0.3 s) does not hide the stall, and the reload comes', () => {
     vi.useFakeTimers();
     try {
