@@ -144,7 +144,10 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
     if (/\.(zip|tar\.gz|tgz|tar\.xz)$/.test(a.asset)) {
       const ex = path.join(work, 'x');
       fs.mkdirSync(ex);
-      execFileSync(tarBin(), ['-xf', archive, '-C', ex]);
+      // GNU tar (Linux) reads no .zip: the Windows assets, when the Windows package is built on
+      // Linux (CI's build job), go through unzip, which the Ubuntu images have.
+      if (a.asset.endsWith('.zip') && process.platform === 'linux') execFileSync('unzip', ['-q', archive, '-d', ex]);
+      else execFileSync(tarBin(), ['-xf', archive, '-C', ex]);
       binary = findFile(ex, path.basename(a.binary));
       if (!binary) throw new Error(`${a.binary} not found inside ${a.asset}`);
     } else {

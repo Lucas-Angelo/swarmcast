@@ -36,7 +36,7 @@ runs:
         dir="$RUNNER_TEMP/build-artifacts" ws="$GITHUB_WORKSPACE"
         # Git Bash's GNU tar reads "D:\..." as host:path; give it /d/... paths.
         if [ "$RUNNER_OS" = Windows ]; then dir="$(cygpath -u "$dir")" ws="$(cygpath -u "$ws")"; fi
-        cd "$dir"
+        cd "$dir" || exit 1
         shopt -s nullglob
         tars=(*.tar)
         if [ "${#tars[@]}" -ne "$WANT" ]; then

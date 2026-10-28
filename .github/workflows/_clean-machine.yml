@@ -97,6 +97,8 @@ jobs:
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
         if: ${{ !cancelled() && matrix.preflight }}
         run: |
+          # pkg-windows-x64 also holds the installer suite's "newer" package: only this version here.
+          find release -maxdepth 1 -name 'SwarmCast-v*' ! -name "SwarmCast-v$VERSION-*" -print -delete
           cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
           cp scripts/start-macos.command release/start-macos.sh
           node scripts/build/checksums.mjs release
