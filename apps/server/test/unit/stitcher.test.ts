@@ -99,6 +99,31 @@ describe('PlaylistStitcher', () => {
     expect(v360.render()).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
   });
 
+  it('a ladder ffmpeg crash and restart (new run id, same playlist names) is one discontinuity in every rendition', () => {
+    // As in the ladder integration test: the original OBS run (MediaMTX) is run 0, so the ladder's
+    // first run starts at 1 (EXT-X-DISCONTINUITY-SEQUENCE:1, no tag); after the crash its new run
+    // id becomes run 2, after one tag, in 720p and 480p alike.
+    const clock = new DiscontinuityClock();
+    const source = new PlaylistStitcher(10, 0, clock);
+    feed(source, media('m1_video1', 0, 3));
+    const v720 = new PlaylistStitcher(10, 0, clock);
+    const v480 = new PlaylistStitcher(10, 0, clock);
+    feed(v720, media('r1_v720', 0, 3));
+    feed(v480, media('r1_v480', 0, 3));
+    const before = v720.render();
+    expect(before).toContain('#EXT-X-DISCONTINUITY-SEQUENCE:1');
+    expect(before).not.toMatch(/^#EXT-X-DISCONTINUITY$/m);
+    feed(v720, media('r2_v720', 0, 2, 0));
+    feed(v480, media('r2_v480', 0, 2, 0));
+    for (const st of [v720, v480]) {
+      const out = st.render();
+      expect(out.match(/^#EXT-X-DISCONTINUITY$/gm)).toHaveLength(1);
+      expect(out).toContain('#EXT-X-MEDIA-SEQUENCE:0');
+    }
+    expect(ccs(v720.render())['r2_v720_0.m4s']).toBe(2);
+    expect(ccs(v480.render())['r2_v480_0.m4s']).toBe(2);
+  });
+
   it('the run of a segment is the prefix of its init segment name', () => {
     expect(runKey('c450dcd44098_audio2_init.mp4')).toBe('c450dcd44098');
     expect(runKey('r50c24b_v360_init.mp4')).toBe('r50c24b');
