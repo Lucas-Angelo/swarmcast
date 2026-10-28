@@ -38,6 +38,20 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
     }, null, { timeout: 30_000 });
   await menu.selectOption({ label: '360p' });
   await playing360();
+
+  // B9: the stall watchdog's last resort (and the player's answer to vanished playlists) loads
+  // the source again, and hls.js starts that on automatic quality. The viewer's pick survives:
+  // the menu puts it back when the playlists are parsed (from the remembered height).
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        const h = (window as unknown as { __hls: Hls & { once(e: string, f: () => void): void } }).__hls;
+        h.once('hlsManifestParsed', () => resolve());
+        h.loadSource(h.url!);
+      }),
+  );
+  await playing360();
+  await expect(menu.locator('option:checked')).toHaveText('360p');
   const t1 = await page.evaluate(() => document.querySelector('video')!.currentTime);
 
   // Lower delay, then back to Stable: never stops playing.
