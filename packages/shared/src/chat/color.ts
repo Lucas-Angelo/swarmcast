@@ -86,6 +86,38 @@ function oklch(L: number, C: number, h: number): RGB {
   return [unlin(best[0]), unlin(best[1]), unlin(best[2])];
 }
 
+/**
+ * The colour with `hex`'s hue (chroma shrunk only to stay in gamut) at the OKLCH lightness
+ * closest to its own that satisfies `ok`, searching toward black ('down') or white ('up').
+ * Returns `hex` itself when it already satisfies `ok`, and null when even the end of the search
+ * (black or white) does not. Shared by name colours and the branding theme.
+ */
+export function searchLightness(hex: string, dir: 'down' | 'up', ok: (candidate: string) => boolean): string | null {
+  const rgb = parseHex(hex);
+  if (!rgb) return null;
+  if (ok(toHex(rgb))) return toHex(rgb);
+  const [L0, a, b] = toOklab(rgb);
+  const C = Math.hypot(a, b);
+  const h = Math.atan2(b, a);
+  const end = dir === 'down' ? 0 : 1;
+  if (!ok(toHex(oklch(end, C, h)))) return null;
+  let near = L0;
+  let far = end;
+  for (let i = 0; i < 24; i++) {
+    const mid = (near + far) / 2;
+    if (ok(toHex(oklch(mid, C, h)))) far = mid;
+    else near = mid;
+  }
+  return toHex(oklch(far, C, h));
+}
+
+/** `a` over `b` at opacity `t` (0..1), in sRGB. */
+export function mixHex(a: string, b: string, t: number): string {
+  const x = parseHex(a) ?? [0, 0, 0];
+  const y = parseHex(b) ?? [0, 0, 0];
+  return toHex([0, 1, 2].map((i) => Math.round(x[i]! * t + y[i]! * (1 - t))) as RGB);
+}
+
 const adjusted = new Map<string, string>();
 
 /**

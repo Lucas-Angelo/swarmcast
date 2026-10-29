@@ -272,6 +272,15 @@ export function fromCodePoints(cps: readonly number[]): string {
   return out;
 }
 
+/**
+ * Steps 3–6 only (folding, removal set, NFC, the grapheme pass), with no size, emptiness or cap
+ * decision: one line of canonical text plus the marks dropped. For other text profiles
+ * (branding fields); the caller checks well-formedness and size first.
+ */
+export function canonicalizeLine(input: string): { text: string; dropped: number } {
+  return canonicalText(input);
+}
+
 /** Steps 1–6: canonical text plus the number of marks dropped. */
 function canonicalText(input: string): { text: string; dropped: number } {
   let s = fromCodePoints(foldAndRemove(codePoints(input))).normalize('NFC');
@@ -342,10 +351,11 @@ export function canonicalizeChatText(input: string, opts: ChatTextOptions = {}):
  * of the server's output, not equality with this build's pipeline (browsers ship other Unicode
  * versions). Steps that need a missing feature are skipped; the server is authoritative.
  */
-export function checkChatInvariants(text: string, opts: { maxGraphemes?: number; maxEmoji?: number } = {}): boolean {
-  if (typeof text !== 'string' || text.length > CHAT_TEXT_MAX_UNITS) return false;
+export function checkChatInvariants(text: string, opts: { maxGraphemes?: number; maxEmoji?: number; maxBytes?: number } = {}): boolean {
+  const maxBytes = opts.maxBytes ?? CHAT_TEXT_MAX_BYTES;
+  if (typeof text !== 'string' || text.length > Math.max(CHAT_TEXT_MAX_UNITS, maxBytes)) return false;
   if (!isWellFormedString(text)) return false;
-  if (utf8Length(text) > CHAT_TEXT_MAX_BYTES) return false;
+  if (utf8Length(text) > maxBytes) return false;
   let run = 0;
   let prevMark = -1;
   let bidi = 0;

@@ -10,6 +10,7 @@
     "./chat/ucd": "./src/chat/ucd.generated.ts",
     "./chat/skeleton": "./src/chat/skeleton.ts",
     "./chat/nickname": "./src/chat/nickname.ts",
+    "./branding": "./src/branding/index.ts",
     "./i18n": "./src/i18n/index.ts",
     "./i18n/browser": "./src/i18n/browser.ts",
     "./web/brand.css": "./web/brand.css",

@@ -6,10 +6,11 @@ import { describe, expect, it } from 'vitest';
 /**
  * P13 (plan §6.5): no regex in the chat code can backtrack badly. Every regex literal under
  * packages/shared/src/chat and apps/server/src/chat must be linear by construction: no
- * quantified group and at most one quantifier. User input is never turned into a regex.
+ * quantified group and at most one variable quantifier (exact counts like {8} are fine). User input
+ * is never turned into a regex.
  */
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
-const DIRS = ['packages/shared/src/chat', 'apps/server/src/chat'];
+const DIRS = ['packages/shared/src/chat', 'packages/shared/src/branding', 'apps/server/src/chat', 'apps/server/src/branding'];
 
 function regexLiterals(src: string): string[] {
   const out: string[] = [];
@@ -24,8 +25,7 @@ function regexLiterals(src: string): string[] {
 
 describe('chat regexes are ReDoS-safe', () => {
   const files = DIRS.flatMap((d) =>
-    fs
-      .readdirSync(path.join(root, d))
+    (fs.existsSync(path.join(root, d)) ? fs.readdirSync(path.join(root, d)) : [])
       .filter((f) => f.endsWith('.ts') && !f.endsWith('.generated.ts'))
       .map((f) => path.join(root, d, f)),
   );
@@ -42,7 +42,7 @@ describe('chat regexes are ReDoS-safe', () => {
       for (const lit of regexLiterals(fs.readFileSync(file, 'utf8'))) {
         const body = lit.slice(1, lit.lastIndexOf('/')).replace(/\\./g, 'x').replace(/\[[^\]]*\]/g, 'C');
         expect(/\)[*+?{]/.test(body), `${lit}: quantified group`).toBe(false);
-        expect((body.match(/[*+?]|\{\d/g) ?? []).length, `${lit}: more than one quantifier`).toBeLessThanOrEqual(1);
+        expect((body.match(/[*+?]|\{\d+,/g) ?? []).length, `${lit}: more than one variable quantifier`).toBeLessThanOrEqual(1);
       }
     });
   }
