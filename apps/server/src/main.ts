@@ -10,6 +10,7 @@ import { createProtocolWriter, DesktopBridge, type ProtocolWriter } from './desk
 import { startDesktop } from './desktop/desktop.js';
 import { runDesktopFirstRun } from './desktop/first-run.js';
 import { fatalCodeOf } from './desktop/protocol.js';
+import { probeIntl } from './chat/probe.js';
 
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -36,6 +37,12 @@ async function main(): Promise<void> {
   if (flag('version')) {
     console.log(appVersion());
     return;
+  }
+  // Hidden: proves the packaged binary has the ICU data the chat pipeline needs (package build).
+  if (flag('probe-intl')) {
+    const r = probeIntl();
+    console.log(JSON.stringify(r));
+    process.exit(r.ok ? 0 : 1);
   }
   if (flag('help')) {
     console.log(`SwarmCast ${appVersion()}
