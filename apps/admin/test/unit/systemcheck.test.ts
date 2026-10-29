@@ -24,7 +24,7 @@ describe('installer system check rows', () => {
     expect(up.icon).toBe('✗');
     expect(up.target).toBe('minimum 5 Mbps');
     expect(up.advice).toMatch(/P2P/);
-    expect(checkRow({ id: 'obs', status: 'fail', value: 'not found' }).advice).toMatch(/obsproject\.com/);
+    expect(checkRow({ id: 'obs', status: 'fail', value: 'not found' }).advice).toContain('from obsproject.com');
     expect(checkRow({ id: 'ports', status: 'warn', value: '1935 busy' }).advice).toMatch(/Close it/);
     expect(checkRow({ id: 'cpu', status: 'warn' }).advice).toMatch(/Close other programs/);
     expect(checkRow({ id: 'ram', status: 'warn' }).icon).toBe('⚠');

@@ -17,14 +17,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, devices } from '@playwright/test';
+import { loopbackBase, panelLogin } from '../test/lib/loopback.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT_DIR = path.join(ROOT, 'docs', 'img');
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 1500);
 // Keep in sync with apps/server/test/e2e/server.ts.
-const PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
+const PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, control: 38082 + OFFSET, mediamtxHls: 38888 + OFFSET };
 const BASE = `http://127.0.0.1:${PORTS.public}`;
-const ENV_FILE = path.join(ROOT, 'test-results', 'e2e-env.json');
+// The e2e server's test control port: GET /env gives the panel's address and login path.
+const CONTROL = loopbackBase(`http://127.0.0.1:${PORTS.control}`);
 const PUSH_FILE = path.join(ROOT, 'test-results', 'e2e-push.json');
 const LOCALES = ['en', 'pt-BR'];
 // What the screenshots show instead of the real values.
@@ -60,7 +62,6 @@ function portFree(port) {
 // ---- e2e server -------------------------------------------------------------------------
 
 function startServer() {
-  fs.rmSync(ENV_FILE, { force: true });
   fs.rmSync(PUSH_FILE, { force: true });
   const child = spawn(process.execPath, ['--import', 'tsx', 'apps/server/test/e2e/server.ts'], {
     cwd: ROOT,
@@ -95,19 +96,22 @@ async function stopServer(child) {
 
 // ---- admin API (same cookie login as apps/server/test/e2e/fixtures.ts) -------------------
 
-let env = null;
+/** The panel's checked loopback base and login URL (from the control port, not from a file). */
+let admin = null;
 let cookie = '';
 
 async function adminLogin() {
-  env = JSON.parse(fs.readFileSync(ENV_FILE, 'utf8'));
-  const res = await fetch(env.adminLoginUrl, { redirect: 'manual' });
-  cookie = res.headers.getSetCookie()[0].split(';')[0];
+  const res = await fetch(new URL('/env', CONTROL));
+  if (!res.ok) throw new Error(`test control /env: HTTP ${res.status}`);
+  admin = panelLogin(await res.json());
+  const login = await fetch(admin.loginUrl, { redirect: 'manual' });
+  cookie = login.headers.getSetCookie()[0].split(';')[0];
 }
 
 async function adminApi(method, pathname, body) {
-  const res = await fetch(`${env.adminUrl}${pathname}`, {
+  const res = await fetch(new URL(pathname, admin.base), {
     method,
-    headers: { cookie, origin: env.adminUrl, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    headers: { cookie, origin: admin.base.origin, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!res.ok) throw new Error(`${method} ${pathname}: HTTP ${res.status}`);
@@ -129,7 +133,7 @@ async function enableQualityLadder() {
     obsWebsocket: { enabled: q.settings.obsWebsocket.enabled, url: q.settings.obsWebsocket.url },
   });
   fs.writeFileSync(PUSH_FILE, JSON.stringify({ size: '1280x720', kbps: 2500 }));
-  process.kill(env.pid, 'SIGUSR2');
+  server.kill('SIGUSR2');
   try {
     await poll('the 720p/480p/360p renditions', async () => (await adminApi('GET', '/api/quality')).variants.length >= 3, 120_000, 1000);
   } catch {
@@ -254,7 +258,7 @@ async function captureLocale(browser, lang) {
   // Panel.
   const adminCtx = await browser.newContext({ ...DESKTOP, locale: lang });
   const panel = await adminCtx.newPage();
-  await panel.goto(env.adminLoginUrl);
+  await panel.goto(admin.loginUrl.href);
   await panel.waitForSelector('[data-testid="live-link"]');
   await panel.waitForSelector('[data-testid="viewers"] tbody tr:nth-child(3)');
   await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});

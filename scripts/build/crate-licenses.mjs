@@ -16,6 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { stripTags } from './strip-tags.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -230,7 +231,7 @@ export function collectCrates(packages, { readFiles = (p) => readLicenseFiles(pa
       version: p.version,
       license: p.license ?? null,
       repository: p.repository ?? null,
-      authors: (p.authors ?? []).map((a) => a.replace(/\s*<[^>]*>/, '').trim()).filter(Boolean),
+      authors: (p.authors ?? []).map((a) => stripTags(a).replace(/\s+/g, ' ').trim()).filter(Boolean),
       cratesIo: p.source === CRATES_IO,
       files: readFiles(p).map((f) => ({ name: f.name, text: tidy(f.text) })).filter((f) => f.text),
       chosen: [],

@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
+import { download } from '../../build/fetch-binaries.mjs';
 import {
   ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, onCleanup, openPanel, opt, ps,
   quitAndVerify, readText, uninstallAndVerify, uploadCapCheck, repoRoot, section, serve, sha256File, sleep, startApp, until, waitLiveLink, waitPhase,
@@ -96,10 +97,20 @@ await section('0. environment', async () => {
 
 await section('1. OBS 33.0.0 portable: download (pinned SHA-256), configure, generate media', async () => {
   const zip = path.join(process.env.RUNNER_TEMP ?? 'C:\\Temp', 'obs.zip');
-  if (!fs.existsSync(zip)) {
-    const res = await fetch(OBS.url);
-    must('downloaded OBS', res.ok, `HTTP ${res.status}`);
-    fs.writeFileSync(zip, Buffer.from(await res.arrayBuffer()));
+  // A zip kept from an earlier run is used only when it still matches the pin; otherwise it is
+  // downloaded again, checked in memory, and only then written (download() in fetch-binaries).
+  let cached = '';
+  try {
+    cached = sha256File(zip);
+  } catch {
+    /* not there yet */
+  }
+  if (cached !== OBS.sha256) {
+    try {
+      await download(OBS.url, zip, OBS.sha256);
+    } catch (err) {
+      must('downloaded OBS (pinned SHA-256)', false, err.message);
+    }
   }
   must('OBS zip SHA-256 matches the pin', sha256File(zip) === OBS.sha256, sha256File(zip));
   fs.rmSync(obsRoot, { recursive: true, force: true });

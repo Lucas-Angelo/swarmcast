@@ -14,6 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mdCell } from '../lib/markdown.mjs';
 
 export const isWin = process.platform === 'win32';
 export const here = path.dirname(fileURLToPath(import.meta.url));
@@ -322,7 +323,7 @@ export function finish() {
     '',
     '| | Section | Check | Detail |',
     '|---|---|---|---|',
-    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${r.detail.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').slice(0, 300)} |`),
+    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${mdCell(r.detail.slice(0, 300))} |`),
     '',
   ].join('\n');
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
@@ -679,10 +680,17 @@ export function appLog(home) {
 
 export function editConfig(home, fn) {
   const file = path.join(home, 'config.json');
-  const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
   fn(cfg);
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  // Written next to it, then renamed: SwarmCast never reads a half-written config.
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(cfg, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
 }
 
 // ---------------------------------------------------------------------------

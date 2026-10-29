@@ -10,6 +10,9 @@ import type { Logger } from './logger.js';
  */
 export const REMOVE_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
 
+/** The longest removeDir waits between its tries in all: 100 + 200 + … + 1000 ms = 5.5 s. */
+export const REMOVE_RETRY_BUDGET_MS = (REMOVE_RETRIES.retryDelay * REMOVE_RETRIES.maxRetries * (REMOVE_RETRIES.maxRetries + 1)) / 2;
+
 /**
  * Delete a folder and everything in it, retrying while files are briefly locked. Never throws:
  * cleanup must not fail "Stop everything" or an install. Returns false (and logs why) when the
