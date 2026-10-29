@@ -125,6 +125,8 @@ function apiError(code: MessageKey): ApiErrorBody {
 export async function createPublicServer(deps: PublicDeps, opts: PublicServerOptions): Promise<FastifyInstance> {
   const { access, origin, signer, log } = deps;
   const direct = opts.mode === 'direct';
+  // The watch page's test-only URL flags work only for a server started with this (E2E harness).
+  const testHooks = process.env.SWARMCAST_TEST_HOOKS === '1';
 
   const app = Fastify({
     logger: false,
@@ -337,6 +339,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       swarmId: deps.swarmId(),
       p2pAllowed: access.p2pAllowed(s),
       segmentDurationS: SEGMENT_DURATION_S,
+      ...(testHooks ? { testHooks: true as const } : {}),
     };
   });
 

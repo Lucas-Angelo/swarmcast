@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ADAPTIVE_DELAY, ADAPTIVE_DELAY_HEADROOM_S, MAX_PLAYER_DELAY_S, PLAYER_LIVE_DELAYS, PLAYER_STALL_INCREASE_S, PLAYLIST_WINDOW_S } from '@swarmcast/shared';
 import { latencyFor } from '../../src/player-config.js';
-import { delayRateFromSearch, delaySpeedFromSearch } from '../../src/adaptive-delay.js';
+import { delayRateFromSearch, delaySpeedFromSearch, delayTestFlags } from '../../src/adaptive-delay.js';
 import { DelayController, MAX_SCALED_RATE_STEP, TUNING, coefficientOfVariation, quantile, scaledTuning, slope, type DelayProfileId } from '../../src/latency-controller.js';
 
 /** What the network does at second t of the simulation. */
@@ -125,6 +125,12 @@ describe('helpers', () => {
     expect(delayRateFromSearch('?delayRate=99')).toBe(10);
     expect(delayRateFromSearch('?delayRate=0.5')).toBe(1);
     expect(delayRateFromSearch('')).toBe(1);
+  });
+
+  it('ignores the test-only URL flags unless the server allows them', () => {
+    expect(delayTestFlags('?delaySpeed=60&delayRate=10', false)).toEqual({ speed: 1, rateScale: 1 });
+    expect(delayTestFlags('?delaySpeed=10&delayRate=10', true)).toEqual({ speed: 10, rateScale: 10 });
+    expect(delayTestFlags('', true)).toEqual({ speed: 1, rateScale: 1 });
   });
 });
 

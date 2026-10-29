@@ -61,7 +61,9 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
 
     const jws = await (await jar.fetch('/hls/manifest.json')).text();
     const [h, p, s] = jws.split('.') as [string, string, string];
-    const cfg = (await (await jar.fetch('/api/config')).json()) as { manifestPublicKey: string };
+    const cfg = (await (await jar.fetch('/api/config')).json()) as { manifestPublicKey: string; testHooks?: boolean };
+    // The watch page's test-only URL flags stay off for a server started without SWARMCAST_TEST_HOOKS.
+    expect(cfg.testHooks).toBeUndefined();
     const pub = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: cfg.manifestPublicKey }, format: 'jwk' });
     expect(crypto.verify(null, Buffer.from(`${h}.${p}`), pub, Buffer.from(s, 'base64url'))).toBe(true);
     const manifest = JSON.parse(Buffer.from(p, 'base64url').toString()) as { segments: Record<string, string> };

@@ -117,6 +117,12 @@ export interface ViewerConfig {
   swarmId: string;
   p2pAllowed: boolean;
   segmentDurationS: number;
+  /**
+   * Present (true) only when the server runs with SWARMCAST_TEST_HOOKS=1 (the E2E harness):
+   * the watch page then honours its test-only URL flags (`?delaySpeed=`, `?delayRate=`).
+   * Never set for real viewers, so a crafted link cannot change anyone's playback.
+   */
+  testHooks?: true;
 }
 
 /** Payload of the signed integrity manifest. */

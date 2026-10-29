@@ -15,7 +15,7 @@ import { Transcoder } from '../../src/quality/transcoder.js';
 import { silentLog } from './helpers.js';
 import { makeController } from './live-helpers.js';
 
-// Hooks the integration and E2E harnesses build on (MASTER plan WP3.1): free ports chosen by
+// Hooks the integration and E2E harnesses build on: free ports chosen by
 // the OS at listen time, a rate-limit reset, an injectable load guard, monotonic counters.
 
 const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
