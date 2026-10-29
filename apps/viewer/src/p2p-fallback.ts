@@ -76,7 +76,8 @@ export function playheadBuffered(media: Pick<HTMLMediaElement, 'buffered' | 'cur
 
 /**
  * Should the core request be dropped and the fragment fetched over HTTP right now?
- * - needed soon (or already late) and the core has had `graceMs` but is not on HTTP: yes;
+ * - needed soon (or already late) and the core is not fetching it at all: yes, at once;
+ * - needed soon and a peer is sending it: after `graceMs` (the peer may still make it);
  * - pending longer than `maxPendingMs` no matter what (a core HTTP fetch included): yes.
  */
 export function fallbackReason(s: FallbackState): FallbackReason | null {
@@ -84,6 +85,8 @@ export function fallbackReason(s: FallbackState): FallbackReason | null {
   if (s.secondsUntilNeeded === null) return null;
   if (s.secondsUntilNeeded >= s.urgentS) return null;
   if (s.attempt?.source === 'http') return null;
+  // The core is not fetching it at all: waiting for it helps nobody.
+  if (!s.attempt) return 'urgent';
   return s.pendingMs >= s.graceMs ? 'urgent' : null;
 }
 
