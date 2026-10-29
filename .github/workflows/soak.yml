@@ -62,9 +62,10 @@ jobs:
         id: plan
         run: |
           node scripts/ci/soak-plan.mjs "$SOAK_PLAN" | tee -a "$GITHUB_OUTPUT" | cut -c1-200
-      # desktop-test installs the installers of the newest pipeline.yml run for this commit (or of
-      # the branch when this commit has none): no build in the soak. Start the soak after that
-      # run's desktop builds have finished.
+      # desktop-test installs the installers of the newest pipeline.yml run for this commit, or of
+      # the branch, that has them for every planned target: no build in the soak. A commit that
+      # changes only the plan gets a pipeline run with every app stage skipped (no installers),
+      # so that one is passed over. Start the soak after the desktop builds of a run have finished.
       - name: Find the desktop installers to test
         id: desktop
         if: steps.plan.outputs.desktop_test != '[]'
@@ -72,12 +73,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           BRANCH: ${{ github.head_ref || github.ref_name }}
+          ROWS: ${{ steps.plan.outputs.desktop_test }}
         run: |
-          run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --commit "$SHA" --json databaseId -q '.[0].databaseId')"
-          [ -n "$run" ] || run="$(gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --branch "$BRANCH" --json databaseId -q '.[0].databaseId')"
-          [ -n "$run" ] || { echo "::error::No pipeline.yml run for $SHA or $BRANCH: desktop-test has no installers"; exit 1; }
-          echo "desktop-test uses the installers of https://github.com/$GITHUB_REPOSITORY/actions/runs/$run"
-          echo "run=$run" >> "$GITHUB_OUTPUT"
+          need="$(jq -c '[.[].target | ("desktop-" + .), ("update-test-" + .)] | unique' <<<"$ROWS")"
+          runs="$( { gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --commit "$SHA" --json databaseId -q '.[].databaseId'
+                     gh run list -R "$GITHUB_REPOSITORY" --workflow pipeline.yml --branch "$BRANCH" -L 30 --json databaseId -q '.[].databaseId'; } | awk '!seen[$0]++')"
+          for run in $runs; do
+            have="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/artifacts?per_page=100" -q '[.artifacts[] | select(.expired | not) | .name]')"
+            if jq -e --argjson need "$need" '$need - . | length == 0' <<<"$have" >/dev/null; then
+              echo "desktop-test uses the installers of https://github.com/$GITHUB_REPOSITORY/actions/runs/$run"
+              echo "run=$run" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          done
+          echo "::error::No pipeline.yml run for $SHA or $BRANCH has all of $need"
+          exit 1
 
   # ---------------------------------------------------------------- unit, integration, E2E
   node:

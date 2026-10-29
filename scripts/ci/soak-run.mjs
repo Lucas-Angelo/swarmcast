@@ -57,7 +57,11 @@ export function commandsFor(row) {
       {
         name: 'verify.mjs',
         cmd:
-          `SC_DESKTOP_ARTIFACTS="$RUN_DIR" ${process.platform === 'linux' ? 'xvfb-run -a ' : ''}node scripts/test/desktop/verify.mjs --installers release/desktop ` +
+          // Linux as in _desktop.yml: a virtual display and a session bus, without the
+          // accessibility bridge and the DMA-BUF renderer (no GPU under Xvfb).
+          `SC_DESKTOP_ARTIFACTS="$RUN_DIR" ` +
+          (process.platform === 'linux' ? "NO_AT_BRIDGE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- " : '') +
+          `node scripts/test/desktop/verify.mjs --installers release/desktop ` +
           `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 ${A}`,
         parse: lineChecks,
       },
@@ -239,7 +243,7 @@ async function main() {
   const spec = SUITES[row.suite];
   const commands = commandsFor(row);
   const limitMs = (spec.inner ? row.repeat : 1) * spec.run * 60_000;
-  const result = { id: row.id, suite: row.suite, os: row.os, target: row.target, repeat: row.repeat, expectedRuns: row.runs, runs: [] };
+  const result = { id: row.id, suite: row.suite, label: row.label || undefined, os: row.os, target: row.target, repeat: row.repeat, expectedRuns: row.runs, runs: [] };
   fs.mkdirSync(OUT, { recursive: true });
   const resultFile = path.join(OUT, `${row.id}.json`);
   let failed = false;

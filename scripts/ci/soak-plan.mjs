@@ -4,9 +4,11 @@
 //   node scripts/ci/soak-plan.mjs [PLAN]      PLAN = a file path or inline JSON (default .github/soak-plan.json)
 //
 // Prints one `<job>=<JSON list>` line per job of soak.yml (for $GITHUB_OUTPUT), plus `total=<n>`.
-// A plan entry is { suite, os: [runner labels], jobs, repeat, args }: `jobs` fresh runners per
-// OS, each running the suite `repeat` times (Playwright: --repeat-each), so a suite gets
-// jobs x repeat runs per OS. See .github/soak-plan.json for the suites and their defaults.
+// A plan entry is { suite, os: [runner labels], jobs, repeat, args, label }: `jobs` fresh runners
+// per OS, each running the suite `repeat` times (Playwright: --repeat-each), so a suite gets
+// jobs x repeat runs per OS. `label` (optional) names a variant, so one suite can be listed twice
+// on the same OS with different `args` (the E2E flake hunt and one test with --retries=0); the
+// report counts each label apart. See .github/soak-plan.json for the suites and their defaults.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -53,7 +55,7 @@ const count = (v, what) => {
   return n;
 };
 
-/** Every job of the plan: { id, name, suite, os, target, job, repeat, runs, args, timeout }. */
+/** Every job of the plan: { id, name, suite, label, os, target, job, repeat, runs, args, timeout }. */
 export function expand(plan) {
   if (!Array.isArray(plan?.suites)) throw new Error('the plan needs a "suites" list');
   const out = [];
@@ -66,19 +68,22 @@ export function expand(plan) {
     const repeat = count(entry.repeat, `${entry.suite}.repeat`);
     const args = entry.args ?? [];
     if (!Array.isArray(args) || args.some((a) => typeof a !== 'string')) throw new Error(`${entry.suite}: "args" must be a list of strings`);
+    const label = entry.label ?? '';
+    if (typeof label !== 'string' || !/^[\w.-]*$/.test(label)) throw new Error(`${entry.suite}: "label" must be letters, digits, ".", "_" or "-"`);
+    const kind = label ? `${entry.suite}-${label}` : entry.suite;
     const timeout = Math.min(MAX_MINUTES, spec.setup + repeat * spec.run);
     for (const os of oses) {
       for (let j = 1; j <= jobs; j++) {
-        const id = `${entry.suite}-${os}-${j}`;
+        const id = `${kind}-${os}-${j}`;
         // runs: how many runs the job makes (and the report expects from it).
         const runs = spec.inner ? 1 : repeat;
-        out.push({ id, name: `${entry.suite} · ${os} · ${j}/${jobs} (×${repeat})`, suite: entry.suite, os, target: targetOf(os), job: spec.job, repeat, runs, args: JSON.stringify(args), timeout });
+        out.push({ id, name: `${kind} · ${os} · ${j}/${jobs} (×${repeat})`, suite: entry.suite, label, os, target: targetOf(os), job: spec.job, repeat, runs, args: JSON.stringify(args), timeout });
       }
     }
   }
   const ids = new Set();
   for (const m of out) {
-    if (ids.has(m.id)) throw new Error(`${m.id} is listed twice (one entry per suite and OS)`);
+    if (ids.has(m.id)) throw new Error(`${m.id} is listed twice (one entry per suite and OS, or give each its own "label")`);
     ids.add(m.id);
   }
   return out;

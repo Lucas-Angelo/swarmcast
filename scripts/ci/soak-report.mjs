@@ -6,7 +6,7 @@
 // Per suite and OS, and per check: runs, failures, flaky runs (failed, then passed on Playwright's
 // retry), the pass rate on the first attempt, and a 95 % upper bound on the failure rate: the
 // rule of three (3/n) when nothing failed, the Wilson score bound otherwise. Plus duration
-// p50/p90/max, the failure signatures and the infra problems the harnesses recovered from.
+// p50/p90/p99/max, the failure signatures and the infra problems the harnesses recovered from.
 // With --plan, runs the plan expected but no job reported count as failed ("(run finished)").
 // The Markdown also goes to $GITHUB_STEP_SUMMARY. Exit code 1 when anything failed or was flaky.
 import fs from 'node:fs';
@@ -81,7 +81,7 @@ function addMissing(jobs, plan) {
   for (const row of expand(plan)) {
     let job = byId.get(row.id);
     if (!job) {
-      job = { id: row.id, suite: row.suite, os: row.os, repeat: row.repeat, expectedRuns: row.runs, runs: [] };
+      job = { id: row.id, suite: row.suite, label: row.label || undefined, os: row.os, repeat: row.repeat, expectedRuns: row.runs, runs: [] };
       jobs.push(job);
     }
     job.expectedRuns = row.runs;
@@ -106,8 +106,10 @@ function aggregate(jobs) {
   const checks = new Map(); // suite|os|name -> stats
   const suites = new Map(); // suite|os -> stats
   for (const job of jobs) {
-    const sk = `${job.suite}|${job.os}`;
-    if (!suites.has(sk)) suites.set(sk, { suite: job.suite, os: job.os, jobs: 0, runs: 0, expected: 0, badRuns: 0, seconds: [], recoveries: {} });
+    // A labelled plan entry (the same suite with other arguments) is reported as its own suite.
+    const suite = job.label ? `${job.suite} (${job.label})` : job.suite;
+    const sk = `${suite}|${job.os}`;
+    if (!suites.has(sk)) suites.set(sk, { suite, os: job.os, jobs: 0, runs: 0, expected: 0, badRuns: 0, seconds: [], recoveries: {} });
     const s = suites.get(sk);
     s.jobs += 1;
     s.expected += job.expectedRuns ?? job.runs.length;
@@ -120,7 +122,7 @@ function aggregate(jobs) {
       for (const [kind, k] of Object.entries(r.recoveries ?? {})) s.recoveries[kind] = (s.recoveries[kind] ?? 0) + k;
       for (const c of r.checks) {
         const key = `${sk}|${c.name}`;
-        if (!checks.has(key)) checks.set(key, { suite: job.suite, os: job.os, name: c.name, pass: 0, fail: 0, flaky: 0, warn: 0, skip: 0, seconds: [], signatures: {}, where: [] });
+        if (!checks.has(key)) checks.set(key, { suite, os: job.os, name: c.name, pass: 0, fail: 0, flaky: 0, warn: 0, skip: 0, seconds: [], signatures: {}, where: [] });
         const a = checks.get(key);
         a[c.status] = (a[c.status] ?? 0) + 1;
         if (c.seconds !== undefined && c.status !== 'skip') a.seconds.push(c.seconds);
@@ -148,7 +150,7 @@ const pct = (x) => (x === undefined ? '—' : `${(100 * x).toFixed(x === 1 || x 
 const secs = (x) => (x === undefined ? '—' : x >= 120 ? `${(x / 60).toFixed(1)} min` : `${x.toFixed(x < 10 ? 1 : 0)} s`);
 // Backslashes first, so a "\|" already in the text cannot end the cell.
 const cell = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
-const durations = (v) => `${secs(percentile(v, 0.5))} / ${secs(percentile(v, 0.9))} / ${secs(v.length ? Math.max(...v) : undefined)}`;
+const durations = (v) => `${secs(percentile(v, 0.5))} / ${secs(percentile(v, 0.9))} / ${secs(percentile(v, 0.99))} / ${secs(v.length ? Math.max(...v) : undefined)}`;
 
 function markdown({ checks, suites }, { full }) {
   const bad = checks.filter((c) => c.bad > 0);
@@ -163,7 +165,7 @@ function markdown({ checks, suites }, { full }) {
     'Bound = 95 % upper bound on the failure rate per run (rule of three, 3/n, when nothing failed; Wilson score otherwise). A flaky run (failed, then passed on retry) counts as a failure.',
     '',
   );
-  out.push('### Suites', '', '| Suite | OS | Runs | Runs with a failure | Bound | Run p50 / p90 / max | Recovered infra |', '|---|---|---|---|---|---|---|');
+  out.push('### Suites', '', '| Suite | OS | Runs | Runs with a failure | Bound | Run p50 / p90 / p99 / max | Recovered infra |', '|---|---|---|---|---|---|---|');
   for (const s of suites.sort((a, b) => a.suite.localeCompare(b.suite) || a.os.localeCompare(b.os))) {
     const rec =
       Object.entries(s.recoveries)
@@ -195,7 +197,7 @@ function markdown({ checks, suites }, { full }) {
     for (const c of warned) out.push(`| ${c.suite} | ${c.os} | ${cell(c.name)} | ${c.warn} / ${c.n} | ${cell(Object.keys(c.signatures)[0] ?? '')} |`);
   }
   if (full) {
-    out.push('', '### Every check', '', '| Suite | OS | Check | Runs | Fail | Flaky | Skip | Bound | p50 / p90 / max |', '|---|---|---|---|---|---|---|---|---|');
+    out.push('', '### Every check', '', '| Suite | OS | Check | Runs | Fail | Flaky | Skip | Bound | p50 / p90 / p99 / max |', '|---|---|---|---|---|---|---|---|---|');
     for (const c of checks) out.push(`| ${c.suite} | ${c.os} | ${cell(c.name)} | ${c.n} | ${c.fail} | ${c.flaky} | ${c.skip} | ${pct(c.bound)} | ${durations(c.seconds)} |`);
   }
   return out.join('\n') + '\n';
