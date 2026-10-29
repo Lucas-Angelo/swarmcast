@@ -67,6 +67,13 @@ export interface FallbackState {
 
 export type FallbackReason = 'urgent' | 'max-wait';
 
+/** The playhead is inside a buffered range (with half a second of tolerance before it). */
+export function playheadBuffered(media: Pick<HTMLMediaElement, 'buffered' | 'currentTime'>): boolean {
+  const b = media.buffered;
+  for (let i = 0; i < b.length; i++) if (b.start(i) <= media.currentTime + 0.5 && media.currentTime < b.end(i)) return true;
+  return false;
+}
+
 /**
  * Should the core request be dropped and the fragment fetched over HTTP right now?
  * - needed soon (or already late) and the core has had `graceMs` but is not on HTTP: yes;
@@ -157,8 +164,11 @@ export function withHttpFallback(P2PLoader: LoaderCtor, policy: FallbackPolicy):
       this.timer = setInterval(() => {
         if (this.done || this.switched) return this.stopWatch();
         const media = policy.media();
-        // Nothing buffered yet (start, after a seek or a reload): whatever hls.js asks for is needed now.
-        const secondsUntilNeeded = !media ? null : media.buffered.length === 0 ? 0 : frag.start - media.currentTime;
+        // Nothing buffered at the playhead (start, after a seek or a reload, a stall): whatever
+        // hls.js asks for is needed now. After a source reload the old buffers stay and the
+        // playhead sits at 0 until the new start position has data, so "how far ahead" read the
+        // new live fragments as 27 s away and left them to the P2P core.
+        const secondsUntilNeeded = !media ? null : !playheadBuffered(media) ? 0 : frag.start - media.currentTime;
         const attempt = policy.activity.get(context.url);
         const waitedMs = performance.now() - startedAt;
         const reason = fallbackReason({ pendingMs: waitedMs, secondsUntilNeeded, attempt, urgentS: policy.urgentS(), graceMs, maxPendingMs });

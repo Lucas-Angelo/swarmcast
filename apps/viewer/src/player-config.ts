@@ -200,6 +200,14 @@ interface LiveDetails {
  * 20 one-second audio segments next to 40 s of video). Playlists that are merely short
  * because the stream just started grow by themselves, and hls.js already handles them.
  */
+/**
+ * Whether every playlist in use is loaded: the video one, and the audio one when the stream
+ * has separate audio. Until then, a missing playlist is not a short one.
+ */
+export function playlistsKnown(hasAudioTracks: boolean, d: { video?: LiveDetails; audio?: LiveDetails }): boolean {
+  return !!d.video && (!hasAudioTracks || !!d.audio);
+}
+
 export function mismatchWindow(video: LiveDetails | undefined, audio: LiveDetails | undefined): PlaylistWindow | null {
   if (!video || !audio) return null;
   // The two playlists refresh at different moments, so while they grow (stream start) one is
