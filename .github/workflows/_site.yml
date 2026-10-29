@@ -63,6 +63,17 @@ jobs:
             echo "No stats branch yet: the site hides the numbers."
           fi
 
+      # The desktop app's beta channel reads https://lucas-angelo.github.io/swarmcast/updates/beta.json:
+      # a copy of the latest.json of the highest release, pre-release or stable, checked against its
+      # tag. Immutable releases cannot carry a rolling asset, so the site publishes it; the chain
+      # Release -> Usage stats -> Website rebuilds it after every release. A failure stops the
+      # deploy, so the previous feed stays online.
+      - name: The beta update feed (updates/beta.json)
+        working-directory: .
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/releases/beta-manifest.mjs --repo "$GITHUB_REPOSITORY" --out site/public/updates/beta.json
+
       - name: Type check
         run: npm run check
 

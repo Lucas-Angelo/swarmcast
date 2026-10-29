@@ -55,7 +55,7 @@ if [ "$diff_ok" = true ]; then
   #   the soak (soak.yml, its plan, scripts/ci), the Docker suites (linux-docker.yml,
   #   scripts/test/docker), CodeQL, the usage numbers, Dependabot, issue forms, release notes.
   not_app='^(docs/|site/)|\.md$|^\.github/(workflows/(soak|linux-docker|codeql|stats)\.yml|soak-plan\.json|dependabot\.yml|release\.yml|ISSUE_TEMPLATE/)|^scripts/(ci|test/docker)/'
-  site_re='^(site/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
+  site_re='^(site/|scripts/releases/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
   scripts_re='^(scripts/|\.github/actions/|\.github/workflows/(_node|pipeline)\.yml)'
   has() { grep -qE "$1" <<<"$files" && echo true || echo false; }
   app="$(grep -vE "$not_app" <<<"$files" | grep -q . && echo true || echo false)"
