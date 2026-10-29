@@ -6,3 +6,9 @@
 export * from './limits.js';
 export * from './schemas.js';
 export * from './protocol.js';
+export * from './text.js';
+export * from './nickname.js';
+export { countGraphemes, graphemes, isWellFormedString, utf8Length } from './ucd.js';
+export * from './tokens.js';
+export * from './color.js';
+export { AhoCorasick } from './ahocorasick.js';

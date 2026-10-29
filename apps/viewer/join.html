@@ -25,7 +25,7 @@
             ></span
           >
         </div>
-        <input id="nickname" name="nickname" maxlength="24" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
+        <input id="nickname" name="nickname" maxlength="64" aria-describedby="error" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
         <p id="check" class="muted check" role="status" hidden>
           <span data-i18n="join.checking">Checking your browser…</span>
           <progress id="check-progress" max="1" value="0" aria-label="Browser check progress" data-i18n-aria-label="join.checking.progress"></progress>
