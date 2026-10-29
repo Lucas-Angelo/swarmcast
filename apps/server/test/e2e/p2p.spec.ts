@@ -17,9 +17,9 @@ import {
   stats,
   test,
   uid,
+  unmute,
   viewerByNick,
   waitForPlaylist,
-  unmute,
   waitPlaying,
 } from './fixtures.js';
 
