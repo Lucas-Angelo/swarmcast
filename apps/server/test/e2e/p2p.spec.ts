@@ -187,6 +187,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
 
   // The server goes back to one quality, a 40 s window and the default feed at the next test's gate.
   const contexts: Array<{ close(): Promise<void> }> = [];
+  const probeLog: string[] = [];
   try {
     await setPlaylistWindow(20);
     await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480], encoder: 'libx264' }));
@@ -238,7 +239,15 @@ test('a peer that barely delivers never starves playback, even after a forced st
     const ctx = await browser.newContext();
     contexts.push(ctx);
     await same480(ctx);
+    // TEMPORARY probe (WP7d): the steady viewer's hls.js and watchdog log, printed at the end.
+    await ctx.addInitScript(() => localStorage.setItem('sc.debug', '1'));
     const page = await ctx.newPage();
+    const t0 = Date.now();
+    page.on('console', (m) => {
+      const tx = m.text();
+      if (/p2pml|same PDT|WAITING_TRACK|WAITING_INIT_PTS|Loading level|Loading audio-track|REFRESHED|reload live playlist|playlist [0-9]* loaded|live playlist/.test(tx)) return;
+      if (/startPosition|lastCurrentTime|stall recovery|reloading the source|jump|seek|Seek|stall|Stall|catch|Live|live sync|nudg|hole|gap|buffer:|Buffered main|Loading main|Loading audio|FRAG_LOADING|HTTP fallback|latency|Latency|playbackRate|error|Error/.test(tx)) probeLog.push(`${((Date.now() - t0) / 1000).toFixed(1)} ${tx.slice(0, 260)}`);
+    });
     const cdp = await ctx.newCDPSession(page);
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
     await page.goto(await liveLink());
@@ -289,6 +298,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     // Recovered for real: playing on, not starting over (a source reload restarts the timeline).
     expect(s.reloads - recovered.reloads, `source reloads after recovering (last: ${s.lastReload})`).toBe(0);
   } finally {
+    console.log(`PROBELOG ${probeLog.length} lines\n${probeLog.slice(-400).join('\n')}`);
     for (const c of contexts) await c.close().catch(() => {});
   }
 });
