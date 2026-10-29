@@ -4,7 +4,8 @@
 #
 #   scripts/test/docker/e2e.sh [--platform linux/amd64] [PROJECT...]   (default: firefox chromium)
 #
-# Reports are copied to ./test-results/docker-e2e/<project>/ in the repo.
+# Reports, with the e2e server log and the fake OBS log, are copied to
+# ./test-results/docker-e2e/<project>/ in the repo.
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"

@@ -13,12 +13,15 @@ emulated and are slower). Nothing here changes the release folder.
 
 ## In CI
 
-`.github/workflows/linux-docker.yml` runs all four natively on `ubuntu-24.04` (x64) and
-`ubuntu-24.04-arm` (arm64), no emulation: weekly, manually, and on pull requests that touch
-this folder, `start-linux.sh` or `uninstall-linux.sh`. A build job makes the package and the
+`.github/workflows/_docker.yml` runs all four natively on `ubuntu-24.04` (x64) and
+`ubuntu-24.04-arm` (arm64), no emulation. It is the `docker` stage of `pipeline.yml`, so the
+required `ci-ok` check fails with it, on pull requests and `main` that touch this folder,
+`start-linux.sh`, `uninstall-linux.sh`, the Docker workflows, `pipeline.yml`, the e2e specs and
+server (`apps/server/test/e2e/`) or `playwright.config.ts`; `linux-docker.yml` runs it weekly
+and by hand (`gh workflow run linux-docker.yml --ref <branch>`). A build job makes the package and the
 AppImage of the commit for each architecture (on Ubuntu 22.04, like the release); then one job
 per base image and architecture runs `run.sh --serial <base>` and `appimage.sh`. The tunnel
-check (d) runs on the weekly schedule only (Ubuntu 24.04), because Cloudflare rate-limits quick
+check (d) runs on the weekly schedule only (Ubuntu 24.04, the `tunnel-test` input), because Cloudflare rate-limits quick
 tunnels. The images are built in each job (no layer cache: a weekly job outlives GitHub's 7-day
 cache eviction, and the repository's cache is full); their `apt-get` uses retries and a 30 s
 time limit per connection.
@@ -93,7 +96,8 @@ Copies the repo into the container (without `node_modules`, build output, `vendo
 ffmpeg, runs `npm ci`, `fetch-binaries.mjs` (detects linux-arm64), `npm run build`, prints the
 H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each project with
 `playwright.linux.config.ts`: the main config, but the chromium project has no `channel`
-(Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/`.
+(Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/<project>/`,
+with that project's `e2e-server.log` and `fake-obs.log` (CI uploads them when a project fails).
 
 ## Section 4: `appimage.sh`
 
