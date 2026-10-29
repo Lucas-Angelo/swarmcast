@@ -34,8 +34,8 @@ changes ─┬─ quick ──────────────────�
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64` |
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
-| desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | install scripts (when they changed; 3 images), preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
+| desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
+| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
 | e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs (best effort) |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
@@ -64,7 +64,7 @@ made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the 
 - `site` is `site/`, the screenshots, the brand assets, the shared translations, the actions and
   these workflow files.
 - `scripts` is `scripts/` (not `scripts/ci` or `scripts/test/docker`), the actions and the
-  desktop workflow (where the clean-machine jobs are): the install-script tests run only then, as before.
+  node workflow (where those tests run): the install-script tests run only then, as before.
 - Monthly, by hand and on a release, everything runs. When git cannot tell (a new branch, a force
   push), everything runs too.
 

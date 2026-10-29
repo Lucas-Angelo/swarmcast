@@ -100,7 +100,6 @@ jobs:
     with:
       target: windows-x64
       release: ${{ inputs.release == true }}
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: &tauri-key
       TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
@@ -113,7 +112,6 @@ jobs:
     with:
       target: macos-arm64
       release: ${{ inputs.release == true }}
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -124,7 +122,6 @@ jobs:
     with:
       target: macos-x64
       release: ${{ inputs.release == true }}
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -135,7 +132,6 @@ jobs:
     with:
       target: linux-x64
       release: ${{ inputs.release == true }}
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -146,15 +142,16 @@ jobs:
     with:
       target: linux-arm64
       release: ${{ inputs.release == true }}
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
   # ---------------------------------------------------------------- test stage
   node:
     name: node
-    needs: [quick, build]
+    needs: [changes, quick, build]
     uses: ./.github/workflows/_node.yml
+    with:
+      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
 
   e2e:
     name: e2e

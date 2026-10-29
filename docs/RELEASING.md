@@ -137,10 +137,10 @@ everywhere, and what each change runs are in [.github/workflows/README.md](../.g
 |-------|------|---------|
 | `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, tray helper, `cargo fmt` | Ubuntu |
 | `build`, `desktop` | the web build, the script-mode packages, the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
-| `node` | unit and integration tests, `cargo clippy`/`test` | Windows, macOS, Ubuntu |
+| `node` | unit and integration tests, `cargo clippy`/`test`, the start and uninstall scripts (when they changed) | Windows, macOS, Ubuntu |
 | `e2e` | Playwright (Chrome, Firefox, WebKit), split into the `ui` and `media` tests | macOS, Ubuntu |
 | `windows` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
-| `clean-machine` | per runner image: the start and uninstall scripts (when they changed), the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
+| `clean-machine` | per runner image: the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
 | `site` | the website's tests, when it changed | Ubuntu |
 | `ci-ok` | the one required check: green only when every stage the change needs passed | Ubuntu |
 

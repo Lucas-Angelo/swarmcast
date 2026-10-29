@@ -17,9 +17,8 @@ name: desktop
 # pkg-windows-x64 (_build.yml).
 #
 # clean-machine: one job per runner image of the target, each a fresh machine that gets, as
-# separate steps, whatever applies to it:
-# - install scripts: the start and uninstall scripts against a fake release on 127.0.0.1
-#   (scripts/test/run.sh, run.ps1 on Windows PowerShell 5.1), when they changed (input scripts);
+# separate steps, whatever applies to it (the install-script tests run in _node.yml, off this
+# path):
 # - preflight: the real script-mode package installed by the real start script into an empty data
 #   folder, a synthetic OBS feed, Google Chrome watching, P2P, kick, link rotation, "Stop
 #   everything", quit, nothing left behind, and playback through a real Cloudflare quick tunnel
@@ -42,10 +41,6 @@ on:
         description: Release build (fat LTO, updater artifacts signed with TAURI_SIGNING_PRIVATE_KEY).
         type: boolean
         default: false
-      scripts:
-        description: Also run the install-script tests (on the three images that have them).
-        type: boolean
-        default: true
       screenshots:
         description: Also capture the Windows installer pages and app window for the website guide (artifact only).
         type: boolean
@@ -217,11 +212,11 @@ jobs:
       matrix:
         include: >-
           ${{ fromJSON('{
-          "windows-x64": [{"os": "windows-latest", "target": "windows-x64", "preflight": true, "scripts": true}],
-          "macos-arm64": [{"os": "macos-latest", "target": "macos-arm64", "preflight": true, "scripts": true}],
+          "windows-x64": [{"os": "windows-latest", "target": "windows-x64", "preflight": true}],
+          "macos-arm64": [{"os": "macos-latest", "target": "macos-arm64", "preflight": true}],
           "macos-x64": [{"os": "macos-15-intel", "target": "macos-x64", "preflight": true}],
           "linux-x64": [{"os": "ubuntu-22.04", "target": "linux-x64", "preflight": true, "appimage": true},
-          {"os": "ubuntu-24.04", "target": "linux-x64", "preflight": true, "scripts": true}],
+          {"os": "ubuntu-24.04", "target": "linux-x64", "preflight": true}],
           "linux-arm64": [{"os": "ubuntu-24.04-arm", "target": "linux-arm64", "appimage": true}]
           }')[inputs.target] }}
     runs-on: ${{ matrix.os }}
@@ -246,19 +241,6 @@ jobs:
           apt-debs: ${{ runner.os == 'Linux' && format('desktop-test-{0}', matrix.target) || '' }}
       - name: Version
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
-
-      # ---------------------------------------------------------------- install scripts
-      - name: Install scripts (macOS / Linux)
-        if: inputs.scripts && matrix.scripts && runner.os != 'Windows'
-        run: |
-          bash scripts/test/run.sh
-          bash scripts/test/uninstall.sh
-      - name: Install scripts (Windows PowerShell 5.1)
-        if: inputs.scripts && matrix.scripts && runner.os == 'Windows'
-        shell: cmd
-        run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\run.ps1 || exit /b 1
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\uninstall.ps1
 
       # ---------------------------------------------------------------- preflight
       - uses: ./.github/actions/get-build

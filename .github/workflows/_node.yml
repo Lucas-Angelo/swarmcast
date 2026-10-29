@@ -4,8 +4,16 @@ name: node
 # `quick`), the integration tests (the parallel `integration` project, then the serial
 # `integration-media` one: vitest.integration.config.ts), and the desktop shell's Rust checks
 # (clippy, cargo test, crate licences, the glib advisory guard). Uses web-dist from _build.yml.
+# When they changed (input scripts): the start and uninstall scripts against a fake release on
+# 127.0.0.1 (scripts/test/run.sh; run.ps1 on Windows PowerShell 5.1). They need only Node.js and
+# run here rather than in the clean-machine jobs, which are on the pipeline's critical path.
 on:
   workflow_call:
+    inputs:
+      scripts:
+        description: Also run the install-script tests.
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -16,7 +24,7 @@ env:
 
 jobs:
   node:
-    name: unit, integration, rust (${{ matrix.os }})
+    name: unit, integration, rust${{ inputs.scripts && ', install scripts' || '' }} (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -100,5 +108,18 @@ jobs:
       - name: Crate licences
         if: ${{ !cancelled() }}
         run: node scripts/build/crate-licenses.mjs --check
+
+      # ---- start and uninstall scripts ----
+      - name: Install scripts (macOS / Linux)
+        if: ${{ !cancelled() && inputs.scripts && runner.os != 'Windows' }}
+        run: |
+          bash scripts/test/run.sh
+          bash scripts/test/uninstall.sh
+      - name: Install scripts (Windows PowerShell 5.1)
+        if: ${{ !cancelled() && inputs.scripts && runner.os == 'Windows' }}
+        shell: cmd
+        run: |
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\run.ps1 || exit /b 1
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\uninstall.ps1
       - uses: ./.github/actions/setup/save
         if: ${{ !cancelled() }}

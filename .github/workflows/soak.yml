@@ -282,7 +282,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # The scripts and their tests need only Node.js (like _desktop.yml's clean-machine job).
+      # The scripts and their tests need only Node.js (like _node.yml).
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
