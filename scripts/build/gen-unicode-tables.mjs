@@ -4,7 +4,8 @@
 //
 // Usage: node scripts/build/gen-unicode-tables.mjs            (download, verify, write)
 //        node scripts/build/gen-unicode-tables.mjs --check    (fail if the files on disk differ)
-//        node scripts/build/gen-unicode-tables.mjs --pin      (record the SHA-256 of a NEW version)
+//        node scripts/build/gen-unicode-tables.mjs --pin      (record the SHA-256 values after a version bump:
+//                                                             change UNICODE_VERSION and BASE below first)
 //
 // The generated files are committed: building or testing never needs the network. Run this only
 // when bumping the Unicode version, which must match the Node runtime's `process.versions.unicode`
@@ -28,8 +29,23 @@ const outDir = path.join(root, 'packages', 'shared', 'src', 'chat');
 const pin = JSON.parse(fs.readFileSync(pinFile, 'utf8'));
 const mode = process.argv.includes('--check') ? 'check' : process.argv.includes('--pin') ? 'pin' : 'write';
 
+/**
+ * Where each file comes from. Hard-coded here, never read from unicode-data.json (that file only
+ * pins the SHA-256 values), so no data from disk ever decides where a request goes.
+ */
+const UNICODE_VERSION = '17.0';
+const BASE = 'https://www.unicode.org/Public/17.0.0/';
+const SOURCES = {
+  'UnicodeData.txt': `${BASE}ucd/UnicodeData.txt`,
+  'DerivedJoiningType.txt': `${BASE}ucd/extracted/DerivedJoiningType.txt`,
+  'IdentifierStatus.txt': `${BASE}security/IdentifierStatus.txt`,
+  'confusables.txt': `${BASE}security/confusables.txt`,
+};
+if (pin.version !== UNICODE_VERSION) throw new Error(`unicode-data.json pins Unicode ${pin.version}, this script fetches ${UNICODE_VERSION}`);
+
 async function fetchText(name) {
-  const url = pin.files[name].url;
+  const url = SOURCES[name];
+  if (!url) throw new Error(`unknown Unicode data file ${name}`);
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
   const buf = Buffer.from(await res.arrayBuffer());
