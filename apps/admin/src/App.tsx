@@ -11,6 +11,7 @@ import { loadDesktop, setDesktop } from './desktop.js';
 import { Info } from './Info.js';
 // ---- chat: panel ----
 import { ChatCard } from './chat/ChatCard.js';
+import { ChatViewerMute, ChatViewerName } from './chat/ChatViewerCells.js';
 // ---- branding: panel ----
 import { BrandingCard } from './branding/BrandingCard.js';
 // ---- end ----
@@ -472,6 +473,9 @@ function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act })
   return (
     <tr data-testid={`viewer-${v.nickname}`}>
       <td>
+        {/* ---- chat: panel ---- */}
+        <ChatViewerName sessionId={v.sessionId} />
+        {/* ---- end ---- */}
         {v.nickname} {!v.connected && <span class="muted small">{t('admin.viewer.away')}</span>}
       </td>
       <td>{v.device === 'mobile' ? t('admin.viewer.phone') : t('admin.viewer.pc')}</td>
@@ -490,6 +494,9 @@ function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act })
             {t('admin.viewer.allowP2P')}
           </button>
         )}
+        {/* ---- chat: panel ---- */}
+        <ChatViewerMute sessionId={v.sessionId} busy={busy} />
+        {/* ---- end ---- */}
         <button class="small danger" title={t('admin.viewer.kick.tip')} disabled={busy} onClick={() => act('kick', () => post(`/api/viewers/${v.sessionId}/kick`))}>
           {t('admin.viewer.kick')}
         </button>

@@ -1,0 +1,224 @@
+/*
+ * The panel's "Chat" card. Brand tokens only (assets/brand/tokens.css, Forest & Cream). Each
+ * message is its own clipped box (plan chat-0.4.0 §2.4): whatever a viewer types cannot spill
+ * over the rows around it or over the panel.
+ */
+.chat-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px var(--sp-2);
+}
+.chat-head h2 {
+  margin: 0;
+}
+.chat-card .switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: var(--sc-weight-semibold);
+  cursor: pointer;
+}
+.chat-card .switch input {
+  accent-color: var(--sc-accent);
+  width: 1.1em;
+  height: 1.1em;
+}
+.chat-protect {
+  margin-top: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface-2);
+  display: grid;
+  gap: 2px;
+}
+.chat-body {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: var(--sp-4);
+  margin-top: var(--sp-3);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .chat-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.chat-card h3 {
+  margin: 0 0 var(--sp-2);
+}
+.chat-feed {
+  position: relative;
+  min-width: 0;
+}
+.chat-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--sp-2);
+  height: 420px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface);
+  overscroll-behavior: contain;
+}
+.chat-msg,
+.chat-sys,
+.chat-empty {
+  padding: 3px var(--sp-1);
+  border-radius: var(--sc-radius-sm);
+  /* One message cannot paint outside its own box (zalgo, huge emoji, long words). */
+  contain: content;
+  overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.chat-msg:hover,
+.chat-msg:focus-within {
+  background: var(--sc-surface-2);
+}
+.chat-msg-streamer {
+  background: var(--sc-accent-soft);
+}
+.chat-line {
+  display: block;
+  max-height: 7.5em;
+  overflow: clip;
+}
+.chat-time {
+  margin-right: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.chat-badge {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 6px;
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-accent);
+  color: var(--sc-on-accent);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  vertical-align: 1px;
+}
+.chat-nick {
+  font-weight: var(--sc-weight-semibold);
+  color: var(--sc-ink);
+}
+.chat-tag {
+  margin-left: 2px;
+}
+.chat-text {
+  color: var(--sc-text);
+  white-space: pre-wrap;
+}
+.chat-emote,
+.chat-gif {
+  display: inline-block;
+  padding: 0 4px;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  font-size: var(--fs-sm);
+  color: var(--sc-muted);
+}
+.chat-more {
+  float: right;
+  margin-left: 4px;
+  padding: 0 8px;
+  line-height: 1.4;
+  opacity: 0.55;
+}
+.chat-msg:hover .chat-more,
+.chat-more:focus-visible,
+.chat-more[aria-expanded='true'] {
+  opacity: 1;
+}
+.chat-menu {
+  margin: var(--sp-1) 0 var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface);
+  contain: none;
+}
+.chat-menu-group {
+  margin-top: var(--sp-2);
+}
+.chat-menu input[type='color'] {
+  width: 2.4em;
+  height: 1.8em;
+  padding: 0;
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  background: none;
+}
+.chat-below {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 5.2em;
+}
+.chat-send {
+  margin-top: var(--sp-2);
+}
+.chat-input {
+  flex: 1;
+  min-width: 12em;
+}
+.chat-settings {
+  min-width: 0;
+}
+.chat-group {
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  min-width: 0;
+}
+.chat-group legend {
+  padding: 0 4px;
+  font-weight: var(--sc-weight-semibold);
+  font-size: var(--fs-sm);
+}
+.chat-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: var(--sp-2);
+}
+.chat-check {
+  margin-right: var(--sp-2);
+}
+.chat-block {
+  display: grid;
+  gap: 4px;
+}
+.chat-block textarea {
+  width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  resize: vertical;
+}
+.chat-settings input[type='number'] {
+  width: 5.5em;
+}
+.chat-privacy {
+  padding: var(--sp-2);
+  border-left: 3px solid var(--sc-warning);
+  background: var(--sc-surface-2);
+  border-radius: var(--sc-radius-sm);
+}
+/* Viewers table: name colour and mute state. */
+.chat-swatch {
+  display: inline-block;
+  width: 0.8em;
+  height: 0.8em;
+  margin-right: 4px;
+  border-radius: 50%;
+  border: 1px solid var(--sc-border-strong);
+  vertical-align: -1px;
+}
+.chat-muted-badge {
+  margin-left: 4px;
+}
