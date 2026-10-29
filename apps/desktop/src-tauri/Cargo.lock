@@ -3573,6 +3573,7 @@ name = "swarmcast-desktop"
 version = "0.2.1"
 dependencies = [
  "libc",
+ "semver",
  "serde",
  "serde_json",
  "signal-hook",
