@@ -15,6 +15,7 @@ To pass video to each other, two viewers' browsers connect directly. **Viewers w
 - It does **not** reveal a name, a home address, or anything on the device.
 - Online games and video calls work the same way.
 - **Your own IP stays hidden** in the normal Secure mode: viewers get your video through an encrypted tunnel, never straight from your computer.
+- **Watching from your own internet connection** (you on your phone, or someone at your place on the same Wi-Fi): there, a viewer's IP *is* your IP, so SwarmCast turns P2P off for them by itself. They keep watching normally and see "P2P is off on the streamer's own connection, to keep their IP private".
 
 ## Nobody can send altered video
 
