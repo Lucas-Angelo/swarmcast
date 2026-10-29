@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+The beta channel: try the next version of SwarmCast before everyone else.
+
+### Added
+
+- **"Get beta versions"** on the panel's Desktop app card (off by default). When it is on, the desktop app also gets beta versions of the next update (for example 0.3.0-beta.1) as updates, always the newest version, beta or stable. Betas can have bugs; your settings are kept. Turn it off at any time: you stay on the beta until the next stable version is newer (SwarmCast never installs an older version over a newer one). A copy of the app installed from a beta follows the betas by itself until you turn it off. A **Beta** badge next to the version shows when you are on one. Tell us what you find in [Discussions → Beta feedback](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback).
+- The bug report form asks which update channel you are on (stable or beta).
+
+### Changed
+
+- The start scripts (script mode) install beta versions from a beta installer zip or release, and never replace an installed version with an older one, also when the latest release online is older than what you have.
+
+### Fixed
+
+- The Linux `.deb` of a beta now sorts before its stable version for apt and dpkg (`0.3.0~beta.1` < `0.3.0`), so the update from the beta to the stable version is not refused as a downgrade.
+
 ## [0.2.2] - 2026-10-29
 
 A reliability and privacy release: viewers no longer get stuck after OBS reconnects and recover faster from a stall, P2P no longer exposes the streamer's home IP address, the macOS app no longer crashes on "Update now", and the Windows uninstaller and "Stop everything" clean up completely.
