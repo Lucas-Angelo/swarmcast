@@ -189,8 +189,6 @@ export class ChatInput {
       isError = true;
     } else if (block) {
       line = t(block.key, block.params);
-    } else if (s && s.slowS > 0) {
-      line = t(s.autoSlow ? 'chat.viewer.slowAuto' : 'chat.viewer.slow', { seconds: seconds(s.slowS * 1000) });
     }
     this.status.textContent = line ?? '';
     this.status.classList.toggle('error', isError);

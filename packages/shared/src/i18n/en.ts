@@ -1043,6 +1043,8 @@ export const en = {
   'chat.viewer.off': 'The chat is off.',
   'chat.viewer.gifsOnly': 'Only GIFs right now.',
   'chat.viewer.slow': 'Slow mode: one message every {seconds}.',
+  'chat.viewer.mode.slow': 'Slow mode · {seconds}',
+  'chat.viewer.mode.slowAuto': 'Slow mode (auto) · {seconds}',
   'chat.viewer.slowAuto': 'Slow mode (automatic): one message every {seconds}. The chat is busy.',
   'chat.viewer.wait': 'You can send again in {seconds}.',
   'chat.viewer.mutedUntil': 'You are muted until {time}.',

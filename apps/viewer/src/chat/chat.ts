@@ -70,6 +70,8 @@ export function mountChat(opts: MountOptions): ChatController {
   const body = document.createElement('div');
   body.className = 'chat-body';
 
+  // Assigned below; the parts built before it only read it from callbacks (or see null).
+  let session: ChatSession | null = null;
   let prefs: ChatPrefs = loadPrefs();
   let emotes: Map<string, Emote> = emoteTable(true);
   const colors: NameColors = new NameColors(() => list.list);
@@ -83,12 +85,12 @@ export function mountChat(opts: MountOptions): ChatController {
 
   let connected = false;
   const input = new ChatInput({
-    settings: () => session.settings,
-    you: () => session.you,
+    settings: () => session?.settings ?? null,
+    you: () => session?.you ?? null,
     connected: () => connected,
     send: (text) => {
-      const you = session.you;
-      if (!you) return null;
+      const you = session?.you;
+      if (!session || !you) return null;
       const n = nonce();
       if (!session.send({ t: 'chat.send', n, text })) return null;
       const me: ChatAuthor = session.roster.get(you.a) ?? { a: you.a, n: opts.nickname, c: you.color, r: 'viewer' };
@@ -99,8 +101,8 @@ export function mountChat(opts: MountOptions): ChatController {
 
   const pickerButton = document.createElement('button');
   const picker = createPicker(pickerButton, {
-    emotes: () => (session.settings?.content.includes('emotes') ? [...emotes.values()] : []),
-    emojiAllowed: () => !!session.settings?.content.includes('emotes'),
+    emotes: () => (session?.settings?.content.includes('emotes') ? [...emotes.values()] : []),
+    emojiAllowed: () => !!session?.settings?.content.includes('emotes'),
     load: opts.loadEmoji ?? loadEmojiData,
     onPick: (text) => input.insert(text),
   });
@@ -108,7 +110,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   const settingsPop = createSettingsPopover(gear, {
     onColor: (color) => {
-      session.send({ t: 'chat.color', color });
+      session?.send({ t: 'chat.color', color });
     },
     onPrefs: (p) => {
       prefs = p;
@@ -123,8 +125,9 @@ export function mountChat(opts: MountOptions): ChatController {
     root.classList.toggle('times', prefs.times);
     const hidden = prefs.hidden;
     document.body.classList.toggle('chat-hidden', hidden);
-    root.hidden = hidden || !session.active;
-    showButton.hidden = !hidden || !session.active;
+    const active = session?.active ?? false;
+    root.hidden = hidden || !active;
+    showButton.hidden = !hidden || !active;
     if (!hidden) list.resume();
   };
 
@@ -132,22 +135,24 @@ export function mountChat(opts: MountOptions): ChatController {
     emotes = emoteTable(s?.builtinEmotes !== false);
     pickerButton.hidden = !s?.content.includes('emotes');
     if (pickerButton.hidden) picker.popover.close();
-    mode.textContent = s?.enabled && s.slowS > 0 ? t(s.autoSlow ? 'chat.viewer.slowAuto' : 'chat.viewer.slow', { seconds: t('time.secondsShort', { count: s.slowS }) }) : '';
+    const secs = s ? t('time.secondsShort', { count: s.slowS }) : '';
+    mode.textContent = s?.enabled && s.slowS > 0 ? t(s.autoSlow ? 'chat.viewer.mode.slowAuto' : 'chat.viewer.mode.slow', { seconds: secs }) : '';
+    mode.title = s?.enabled && s.slowS > 0 ? t(s.autoSlow ? 'chat.viewer.slowAuto' : 'chat.viewer.slow', { seconds: secs }) : '';
     mode.hidden = mode.textContent === '';
     document.body.classList.toggle('has-chat', s !== null);
-    applyYou(session.you);
+    applyYou(session?.you ?? null);
     applyPrefs();
     input.update();
   };
 
   const applyYou = (you: ChatYou | null): void => {
-    const s = session.settings;
+    const s = session?.settings;
     if (!you || !s || s.colors !== 'choose') settingsPop.setColor(null);
-    else settingsPop.setColor({ color: you.color, nick: session.roster.get(you.a)?.n ?? opts.nickname, locked: you.colorLocked });
+    else settingsPop.setColor({ color: you.color, nick: session?.roster.get(you.a)?.n ?? opts.nickname, locked: you.colorLocked });
     input.update();
   };
 
-  const session = new ChatSession(
+  const chatSession: ChatSession = new ChatSession(
     {
       reset: (entries) => list.reset(entries),
       append: (entries) => list.append(entries),
@@ -155,7 +160,7 @@ export function mountChat(opts: MountOptions): ChatController {
       clearUpTo: (s) => list.clearUpTo(s),
       author: (a) => {
         list.recolor(a);
-        if (a.a === session.you?.a) applyYou(session.you);
+        if (a.a === chatSession.you?.a) applyYou(chatSession.you);
       },
       settings: (s) => applySettings(s),
       you: (y) => applyYou(y),
@@ -168,7 +173,7 @@ export function mountChat(opts: MountOptions): ChatController {
         input.rejected(n, code, params, retryMs);
       },
       unsupported: () => {
-        session.settings = null;
+        chatSession.settings = null;
         root.hidden = false;
         input.form.hidden = true;
         list.reset([]);
@@ -184,6 +189,7 @@ export function mountChat(opts: MountOptions): ChatController {
     },
     opts.sendFrame,
   );
+  session = chatSession;
 
   hide.addEventListener('click', () => {
     prefs = savePrefs({ hidden: true });
@@ -211,6 +217,7 @@ export function mountChat(opts: MountOptions): ChatController {
       showButton.append(' ', badge);
     }
   };
+  updateShowLabel();
   document.addEventListener('visibilitychange', () => list.resume());
   onThemeChange(() => {
     colors.invalidate();
@@ -219,20 +226,20 @@ export function mountChat(opts: MountOptions): ChatController {
 
   (window as unknown as { __swarmcastChat: unknown }).__swarmcastChat = {
     get stats() {
-      return { ...list.stats, lastSeq: session.lastSeq };
+      return { ...list.stats, lastSeq: chatSession.lastSeq };
     },
   };
 
   return {
-    hello: (snapshot) => session.hello(snapshot),
+    hello: (snapshot) => chatSession.hello(snapshot),
     frame: (msg) => {
       if (msg.t === 'chat.batch' && prefs.hidden) {
         unseen += msg.items.filter((i) => i.k === 'm').length;
         updateShowLabel();
       }
-      session.frame(msg);
+      chatSession.frame(msg);
     },
-    connection: (open) => session.connection(open),
+    connection: (open) => chatSession.connection(open),
   };
 }
 

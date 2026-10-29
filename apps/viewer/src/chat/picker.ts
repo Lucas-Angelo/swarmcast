@@ -245,6 +245,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
 
   const popover = createPopover(button, panel, {
     onOpen: () => {
+      search.value = '';
       renderTones();
       render();
       void ensureData();

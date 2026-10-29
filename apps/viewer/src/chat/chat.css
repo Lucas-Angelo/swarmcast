@@ -229,7 +229,11 @@ button.chat-pill {
   display: flex;
 }
 .chat-input button[type='submit'] {
+  flex: none;
+  width: auto;
   min-height: 40px;
+  margin-top: 0;
+  font-size: var(--fs-md);
 }
 .chat-input .counter {
   display: block;

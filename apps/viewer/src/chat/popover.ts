@@ -37,7 +37,7 @@ export function createPopover(button: HTMLButtonElement, panel: HTMLElement, hoo
       panel.hidden = false;
       button.setAttribute('aria-expanded', 'true');
       document.addEventListener('pointerdown', outside, true);
-      panel.addEventListener('keydown', onKey);
+      document.addEventListener('keydown', onKey);
       hooks.onOpen?.();
     },
     close() {
@@ -46,7 +46,7 @@ export function createPopover(button: HTMLButtonElement, panel: HTMLElement, hoo
       panel.hidden = true;
       button.setAttribute('aria-expanded', 'false');
       document.removeEventListener('pointerdown', outside, true);
-      panel.removeEventListener('keydown', onKey);
+      document.removeEventListener('keydown', onKey);
     },
   };
   button.addEventListener('click', () => (open ? api.close() : api.open()));

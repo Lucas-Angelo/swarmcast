@@ -1039,6 +1039,8 @@ export const ptBR: Messages = {
   'chat.viewer.off': 'O chat está desligado.',
   'chat.viewer.gifsOnly': 'Só GIFs agora.',
   'chat.viewer.slow': 'Modo lento: uma mensagem a cada {seconds}.',
+  'chat.viewer.mode.slow': 'Modo lento · {seconds}',
+  'chat.viewer.mode.slowAuto': 'Modo lento (auto) · {seconds}',
   'chat.viewer.slowAuto': 'Modo lento (automático): uma mensagem a cada {seconds}. O chat está movimentado.',
   'chat.viewer.wait': 'Você pode enviar de novo em {seconds}.',
   'chat.viewer.mutedUntil': 'Você está silenciado até {time}.',
