@@ -98,12 +98,14 @@ export class ControlChannel {
         if (set.size === 0) this.onPresence(session, false);
       });
       s.on('message', (data, isBinary) => this.onMessage(s, data.toString(), isBinary));
+      const block = this.access.p2pBlock(session);
       this.sendTo(s, {
         t: 'hello',
         sessionId: session.id,
         nickname: session.nickname,
         p2pAllowed: this.access.p2pAllowed(session),
         p2pForAll: this.access.p2pForAll,
+        ...(block ? { p2pBlock: block } : {}),
         blockedPeers: [...this.blockedPeers],
         viewerCount: this.viewerCount(),
       });

@@ -4,7 +4,7 @@ import { formatNumber, t, type MessageKey } from './i18n.js';
 import Hls, { type ErrorData, type LevelDetails } from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import { debug as p2pDebug } from 'p2p-media-loader-core';
-import type { ServerMessage, ViewerConfig } from '@swarmcast/shared';
+import type { P2PBlockReason, ServerMessage, ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
 import { attachAdaptiveDelay, delayTestFlags, type AdaptiveDelay } from './adaptive-delay.js';
 import { createLatencyToggle } from './latency-toggle.js';
@@ -166,6 +166,8 @@ const stats = {
   p2pAllowed: true,
   /** The streamer's switch for everyone (false = P2P off for this live). */
   p2pForAll: true,
+  /** Why P2P is off although the streamer allows it (the streamer's own connection, or a check in progress). */
+  p2pBlock: null as P2PBlockReason | null,
   playing: false,
 };
 (window as unknown as { __swarmcast: unknown }).__swarmcast = {
@@ -234,6 +236,7 @@ async function main(): Promise<void> {
   }
   $('nick').textContent = cfg.nickname;
   stats.p2pAllowed = cfg.p2pAllowed;
+  stats.p2pBlock = cfg.p2pBlock ?? null;
   // p2p-media-loader's tracker socket becomes a channel inside /control (tracker-mux.ts).
   trackerMux.trackerUrl = cfg.trackerUrl;
 
@@ -503,7 +506,7 @@ async function main(): Promise<void> {
 
   const renderP2PLine = (): void => {
     if (!stats.p2pAllowed) {
-      showP2PLine(t(stats.p2pForAll ? 'watch.p2pRevoked' : 'watch.p2pOffForAll'));
+      showP2PLine(t(p2pOffKey()));
     } else if (stats.p2pEnabled) {
       const total = stats.httpBytes + stats.p2pDownBytes;
       const share = total > 0 ? Math.round((stats.p2pDownBytes / total) * 100) : 0;
@@ -523,9 +526,10 @@ async function main(): Promise<void> {
   setInterval(renderP2PLine, 2000);
 
   connectControl(cfg, {
-    onP2P: (allowed, forAll) => {
+    onP2P: (allowed, forAll, reason) => {
       stats.p2pAllowed = allowed;
       stats.p2pForAll = forAll ?? true;
+      stats.p2pBlock = reason ?? null;
       if (!allowed) setP2P(false);
       else if (!stats.p2pEnabled && p2pWanted()) setP2P(true);
       updateP2PUi();
@@ -566,7 +570,15 @@ function sendControl(msg: unknown): void {
   if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
 }
 
-function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean, forAll?: boolean) => void } | null): void {
+/** The line under the P2P switch while P2P is not allowed: who turned it off, and why. */
+function p2pOffKey(): MessageKey {
+  if (!stats.p2pForAll) return 'watch.p2pOffForAll';
+  if (stats.p2pBlock === 'own-connection') return 'watch.p2pOwnConnection';
+  if (stats.p2pBlock === 'checking') return 'watch.p2pChecking';
+  return 'watch.p2pRevoked';
+}
+
+function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean, forAll?: boolean, reason?: P2PBlockReason) => void } | null): void {
   let attempts = 0;
   const open = (): void => {
     if (ended) return;
@@ -589,10 +601,10 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
         case 'hello':
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
-          handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll);
+          handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
           break;
         case 'p2p':
-          handlers?.onP2P(msg.allowed, msg.forAll);
+          handlers?.onP2P(msg.allowed, msg.forAll, msg.reason);
           break;
         case 'viewers':
           showViewerCount(msg.count);
