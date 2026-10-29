@@ -21,6 +21,7 @@ The beta channel: try the next version of SwarmCast before everyone else.
 ### Fixed
 
 - The Linux `.deb` of a beta now sorts before its stable version for apt and dpkg (`0.3.0~beta.1` < `0.3.0`), so the update from the beta to the stable version is not refused as a downgrade.
+- Switching between "Stable" and "Lower delay" while the player was briefly pausing to absorb a stall no longer leaves the video paused on "Buffering" for good: it plays again at once.
 
 ## [0.2.2] - 2026-10-29
 
