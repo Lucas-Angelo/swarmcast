@@ -1,4 +1,4 @@
-name: Linux in Docker
+name: docker
 
 # The Docker suites of scripts/test/docker (README there), natively on x64 and arm64 runners:
 # - the start script and the real package on Ubuntu 22.04, 24.04 and Debian 12 (run.sh: missing
@@ -7,30 +7,21 @@ name: Linux in Docker
 #   Linux page lists (appimage.sh);
 # - real OBS Studio streaming to the package (obs.sh), and the Playwright suite in the official
 #   Playwright image (e2e.sh).
-# The real Cloudflare quick tunnel check (run.sh part d) runs on the weekly schedule only.
 #
-# Runs weekly, manually, and on pull requests that touch the Docker suites or the Linux scripts.
+# A stage of pipeline.yml (it gates pull requests through ci-ok whenever `changes` turns it on:
+# the Docker suites, the Linux start scripts, these workflows, the e2e specs and server), and
+# the body of linux-docker.yml (weekly, by hand), which asks for the real Cloudflare quick
+# tunnel check (run.sh part d) on its schedule.
 on:
-  pull_request:
-    paths: &docker-paths
-      - 'scripts/test/docker/**'
-      - 'scripts/start-linux.sh'
-      - 'scripts/uninstall-linux.sh'
-      - '.github/workflows/linux-docker.yml'
-  push:
-    branches: [main]
-    paths: *docker-paths
-  schedule:
-    - cron: '17 5 * * 0'
-  workflow_dispatch:
+  workflow_call:
+    inputs:
+      tunnel-test:
+        description: Also run the real Cloudflare quick tunnel check (run.sh part d) on ubuntu:24.04.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
-
-# Superseded pull request runs are cancelled; runs on main, schedules and manual runs never are.
-concurrency:
-  group: linux-docker-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   FORCE_COLOR: '1'
@@ -106,6 +97,7 @@ jobs:
     timeout-minutes: 30
     env:
       BASE: ${{ matrix.base }}
+      TUNNEL_TEST: ${{ inputs.tunnel-test }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,10 +106,10 @@ jobs:
         with:
           name: linux-docker-${{ matrix.arch }}
           path: linux-release
-      - name: Start script and package (run.sh a-c, tunnel d on the schedule)
+      - name: Start script and package (run.sh a-c, tunnel d when asked)
         run: |
           tunnel=(--no-tunnel-test)
-          if [ "$GITHUB_EVENT_NAME" = schedule ] && [ "$BASE" = ubuntu:24.04 ]; then tunnel=(); fi
+          if [ "$TUNNEL_TEST" = true ] && [ "$BASE" = ubuntu:24.04 ]; then tunnel=(); fi
           scripts/test/docker/run.sh --release linux-release --serial "${tunnel[@]}" "$BASE"
       - name: AppImage on a minimal host (appimage.sh)
         if: ${{ !cancelled() }}

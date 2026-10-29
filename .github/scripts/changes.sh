@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # What a pipeline run has to test (pipeline.yml, job `changes`), from the files the change touches.
 #
-#   changes.sh [--all]        prints app=, site=, scripts=, files= lines (for $GITHUB_OUTPUT)
+#   changes.sh [--all]        prints app=, site=, scripts=, docker=, files= lines (for $GITHUB_OUTPUT)
 #
 # The changed files come from git, per event (GitHub's own event payload, read from env):
 #   pull_request   the PR's merge commit against its first parent (the base branch tip), so only
@@ -18,6 +18,10 @@
 #   site     the website's sources and what it embeds (site.yml / _site.yml)
 #   scripts  the start and uninstall scripts and their tests (the install-scripts step of the
 #            clean-machine stage)
+#   docker   what the Docker suites test or are made of (the docker stage, _docker.yml): the
+#            suites (scripts/test/docker), the Linux start and uninstall scripts, the Docker
+#            workflows and the pipeline itself, the e2e specs and server (apps/server/test/e2e,
+#            playwright.config.ts: e2e.sh runs them in the Playwright image)
 set -uo pipefail
 
 all=false
@@ -52,31 +56,35 @@ fi
 
 if [ "$diff_ok" = true ]; then
   # Files only other workflows read: they do not change what this pipeline tests.
-  #   the soak (soak.yml, its plan, scripts/ci), the Docker suites (linux-docker.yml,
-  #   scripts/test/docker), CodeQL, the usage numbers, Dependabot, issue forms, release notes.
-  not_app='^(docs/|site/)|\.md$|^\.github/(workflows/(soak|linux-docker|codeql|stats)\.yml|soak-plan\.json|dependabot\.yml|release\.yml|ISSUE_TEMPLATE/)|^scripts/(ci|test/docker)/'
+  #   the soak (soak.yml, its plan, scripts/ci), the Docker suites (linux-docker.yml, _docker.yml,
+  #   scripts/test/docker: the docker output below), CodeQL, the usage numbers, Dependabot,
+  #   issue forms, release notes.
+  not_app='^(docs/|site/)|\.md$|^\.github/(workflows/(soak|linux-docker|_docker|codeql|stats)\.yml|soak-plan\.json|dependabot\.yml|release\.yml|ISSUE_TEMPLATE/)|^scripts/(ci|test/docker)/'
   site_re='^(site/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
   scripts_re='^(scripts/|\.github/actions/|\.github/workflows/(_node|pipeline)\.yml)'
+  docker_re='^(scripts/test/docker/|scripts/(start|uninstall)-linux\.sh$|\.github/workflows/(_docker|linux-docker|pipeline)\.yml$|apps/server/test/e2e/|playwright\.config\.ts$)'
   has() { grep -qE "$1" <<<"$files" && echo true || echo false; }
   app="$(grep -vE "$not_app" <<<"$files" | grep -q . && echo true || echo false)"
   site="$(has "$site_re")"
   # scripts/ci and scripts/test/docker are not install scripts.
   scripts="$(grep -E "$scripts_re" <<<"$files" | grep -qvE '^scripts/(ci|test/docker)/' && echo true || echo false)"
+  docker="$(has "$docker_re")"
   count="$(grep -c . <<<"$files")"
 else
-  app=true site=true scripts=true count=all
+  app=true site=true scripts=true docker=true count=all
 fi
 
 echo "app=$app"
 echo "site=$site"
 echo "scripts=$scripts"
+echo "docker=$docker"
 echo "files=$count"
 {
   echo "## Changes"
   echo
-  echo "| app | site | install scripts | files |"
-  echo "|---|---|---|---|"
-  echo "| $app | $site | $scripts | $count |"
+  echo "| app | site | install scripts | docker | files |"
+  echo "|---|---|---|---|---|"
+  echo "| $app | $site | $scripts | $docker | $count |"
   if [ "$diff_ok" = true ] && [ -n "$files" ]; then
     echo
     echo '<details><summary>Changed files</summary>'

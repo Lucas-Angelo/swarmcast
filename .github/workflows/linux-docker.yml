@@ -1,0 +1,21 @@
+name: Linux in Docker
+
+# The Docker suites (_docker.yml) outside the pipeline: weekly, with the real Cloudflare quick
+# tunnel check (run.sh part d), and by hand (`gh workflow run linux-docker.yml --ref <branch>`).
+# Pull requests and main run the same stage inside pipeline.yml, where ci-ok gates on it,
+# whenever they touch the Docker suites, the Linux start scripts, these workflows, or the e2e
+# specs and server.
+on:
+  schedule:
+    - cron: '17 5 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  docker:
+    name: docker
+    uses: ./.github/workflows/_docker.yml
+    with:
+      tunnel-test: ${{ github.event_name == 'schedule' }}
