@@ -20,7 +20,7 @@ tauri-build = { version = "^2.7.4", features = [] }
 # (glib::Variant::array_iter_str), and scripts/test/desktop/glib-advisory.mjs (_node.yml,
 # Rust checks) fails the build if that changes. Not compiled on macOS or Windows at all.
 tauri = { version = "^2.12.5", features = ["tray-icon", "image-png"] }
-tauri-plugin-updater = "^2.14.0"
+tauri-plugin-updater = "^2.14.1"
 tauri-plugin-single-instance = "^2.5.4"
 tauri-plugin-dialog = "^2.8.3"
 tauri-plugin-opener = "^2.7.2"
