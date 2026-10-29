@@ -357,3 +357,47 @@ ones) by itself:
 
 The desktop installers are not code-signed yet even with these secrets: that needs the Tauri bundler's
 signing settings (see [DESKTOP.md](DESKTOP.md), "Installers") and is future work.
+
+## 8. Mirrored CI dependencies (`ci-deps`)
+
+Some publisher hosts are very slow from GitHub's runners: the macOS ffmpeg host
+(`ffmpeg.martin-riedl.de`) has served 10–30 kB/s with stalls there, while a home connection gets the
+same 28 MB in seconds. CI therefore downloads byte-identical copies from the
+[`ci-deps`](https://github.com/Lucas-Angelo/swarmcast/releases/tag/ci-deps) pre-release of this
+repository, which GitHub serves fast to its own runners.
+
+- In `scripts/build/versions.json`, such an asset has `"mirrors": [<ci-deps URL>]` next to its publisher
+  `url`. `fetch-binaries.mjs` tries the mirrors first and the publisher last, each with its own resume,
+  retries and time cap. A missing or unreachable mirror falls back to the publisher; a file whose
+  SHA-256 differs from the pin stops the download (the pin is the only thing trusted, whatever the source).
+- Only CI and packagers use the mirrors. `binaries.json`, the start scripts and the app always download
+  from the publisher's `url` (a test checks that `binaries.json` never contains `ci-deps`).
+- `ci-deps` is a **pre-release, never "latest"**, so `/releases/latest` (the app's updater, the start
+  scripts, the site) never sees it, and its asset names do not count as downloads in the usage numbers.
+  It was created before immutable releases were turned on, so it stays editable: new files can be added.
+  Do not delete it or its tag: with immutable releases on, a deleted release's tag name cannot be reused.
+  If a new mirror release is ever needed, create a new pre-release (for example `ci-deps-2`) and point the
+  new `mirrors` URLs at it.
+
+To add or refresh a mirrored file (for example after pinning a new ffmpeg):
+
+1. Pin the publisher's `url` and `sha256` in `versions.json` first, as for any dependency.
+2. Download the file from the publisher into an empty folder, under a name that says what it is and never
+   repeats an existing one: `<tool>-<version>-<target>.<ext>`, e.g. `ffmpeg-9.0.3-macos-arm64.zip`. Check it:
+   `shasum -a 256 <file>` (Linux: `sha256sum`) must print the pin.
+3. Upload it, without `--clobber` (old branches still pin the old files):
+   `gh release upload ci-deps <file> --repo Lucas-Angelo/swarmcast`.
+4. Check what GitHub stored: `gh release view ci-deps --repo Lucas-Angelo/swarmcast --json assets --jq '.assets[] | [.name, .digest] | @tsv'`
+   shows `sha256:<pin>` for the new file.
+5. Add `https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/<file>` to the asset's
+   `mirrors` in every `versions.json` entry that pins the same file (`ffmpeg` and `ffmpeg-test` on macOS).
+   `npx vitest run scripts/build/test/fetch-binaries.test.ts` checks the URLs and that one mirror file
+   has one pin. `node scripts/build/fetch-binaries.mjs --only ffmpeg-test --target macos-arm64 --out <tmp>`
+   proves the download.
+6. Update the table in the release notes (`gh release edit ci-deps --notes-file <file>`), keeping the
+   license section: for a GPL build, attach the matching FFmpeg source and say where the build script and
+   library versions are.
+7. Make sure it is still not the latest release: `gh api repos/Lucas-Angelo/swarmcast/releases/latest --jq .tag_name`
+   must print the app's last version.
+
+Delete an old file only when no supported branch pins it any more.

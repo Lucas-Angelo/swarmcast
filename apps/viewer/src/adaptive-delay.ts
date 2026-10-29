@@ -47,6 +47,16 @@ export function delayRateFromSearch(search: string): number {
   return Number.isFinite(n) && n >= 1 ? Math.min(10, n) : 1;
 }
 
+/**
+ * The test-only clock and rate flags of the watch page, honoured only when the server allows
+ * them (`ViewerConfig.testHooks`, set by the E2E harness): for real viewers both stay 1, so a
+ * link with `?delaySpeed=` or `?delayRate=` changes nothing.
+ */
+export function delayTestFlags(search: string, allowed: boolean): { speed: number; rateScale: number } {
+  if (!allowed) return { speed: 1, rateScale: 1 };
+  return { speed: delaySpeedFromSearch(search), rateScale: delayRateFromSearch(search) };
+}
+
 /** One-second latency samples whose median is the delay everyone uses. */
 const LATENCY_SAMPLES = 5;
 

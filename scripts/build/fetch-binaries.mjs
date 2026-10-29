@@ -5,6 +5,11 @@
 // Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
 //        node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>   (one tool only)
 //
+// An asset with "mirrors" (versions.json) is downloaded from them first and from its publisher
+// only when they fail: from GitHub's runners the macOS ffmpeg host is very slow, so CI uses a
+// byte-identical copy in this repo's `ci-deps` pre-release (docs/RELEASING.md). The pinned
+// SHA-256 is checked whatever the source.
+//
 // SC_DOWNLOAD_CACHE=<dir> keeps the verified archives there (named by SHA-256) and uses them
 // instead of downloading again; CI's setup action caches that folder. Entries no longer pinned
 // in versions.json are deleted.
@@ -139,7 +144,9 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
     const actual = crypto.createHash('sha256').update(bytes).digest('hex');
     if (actual !== sha256) {
       const resumed = got.resumedAt.length ? ` (after resuming at byte ${got.resumedAt.join(', ')}: the parts may come from different files)` : '';
-      throw new Error(`Checksum mismatch for ${url}: expected ${sha256}, got ${actual}${resumed}`);
+      const err = new Error(`Checksum mismatch for ${url}: expected ${sha256}, got ${actual}${resumed}`);
+      err.checksum = true;
+      throw err;
     }
     // Only reached when sha256(bytes) equals the pin from versions.json: these are exactly the
     // bytes reviewed when the pin was set, not data chosen by the server.
@@ -147,6 +154,39 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
     fs.renameSync(`${dest}.part`, dest);
     return;
   }
+}
+
+/**
+ * `download` from the first of `urls` that works: our mirror first (`mirrors` in versions.json,
+ * the `ci-deps` pre-release of this repo), the publisher's own URL last. Each source gets the
+ * whole `download` treatment (resume, retries, time cap). A source that fails (missing file,
+ * stalls, too slow) passes the turn to the next one; a checksum mismatch stops at once: a
+ * mirror serving other bytes than the pin is a problem to look at, not to route around. The
+ * pinned SHA-256 is the only thing trusted, whichever source the bytes came from.
+ */
+export async function downloadFirst(urls, dest, sha256, opts) {
+  const errors = [];
+  for (const [i, url] of urls.entries()) {
+    console.log(`↓ ${url}`);
+    try {
+      await download(url, dest, sha256, opts);
+      return url;
+    } catch (err) {
+      if (err.checksum || i === urls.length - 1) {
+        if (errors.length === 0) throw err;
+        throw new Error([...errors, err.message].join('; then '));
+      }
+      errors.push(err.message);
+      console.warn(`  ${err.message}; trying the next source`);
+    }
+  }
+  throw new Error('no download URL');
+}
+
+/** Where an asset can be downloaded from, in order: its mirrors, then the publisher. */
+export function assetUrls(spec, a) {
+  const original = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
+  return [...(a.mirrors ?? []), original];
 }
 
 /** The pinned archives, by SHA-256: what SC_DOWNLOAD_CACHE may keep. */
@@ -213,10 +253,8 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
       console.log(`✓ ${tool} ${spec.version}: ${a.asset} from the download cache`);
       archive = cached;
     } else {
-      const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
-      console.log(`↓ ${url}`);
       try {
-        await download(url, archive, a.sha256);
+        await downloadFirst(assetUrls(spec, a), archive, a.sha256);
       } catch (err) {
         fs.rmSync(work, { recursive: true, force: true });
         throw err;

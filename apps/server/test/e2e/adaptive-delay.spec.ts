@@ -6,7 +6,8 @@ import { expect, join, test, uid, viewerByNick, waitForPlaylist, waitPlaying } f
 // controller's own clocks (dwell times, quiet period, target drift) 10× faster, and
 // `?delayRate=10` moves playbackRate 10× further from 1 (catch-up ≤ 1.5× instead of 1.05×,
 // slow-down 0.5× instead of 0.95×), so the delay follows that clock: a 5 s change takes 10 s
-// instead of 100 s. The real-time numbers are covered by latency-controller.test.ts.
+// instead of 100 s. The real-time numbers are covered by latency-controller.test.ts. The page
+// honours both flags only because server.ts starts SwarmCast with SWARMCAST_TEST_HOOKS=1.
 const FAST = '/watch?delaySpeed=10&delayRate=10';
 
 interface Delay {
