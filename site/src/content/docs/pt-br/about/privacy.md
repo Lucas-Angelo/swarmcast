@@ -12,7 +12,7 @@ description: O SwarmCast não tem telemetria. Como os números da página inicia
 
 Com quem o app fala, e por quê:
 
-- **Cloudflare:** o túnel gratuito (modo seguro), o teste de velocidade, uma checagem rápida do atraso da sua conexão durante a live e, no modo direto, descobrir o seu IP público. Os navegadores de quem assiste também usam um servidor da Cloudflare para se encontrarem no P2P.
+- **Cloudflare:** o túnel gratuito (modo seguro), o teste de velocidade, uma checagem rápida do atraso da sua conexão durante a live e descobrir o seu IP público (no modo direto, e durante a live no modo seguro, para o P2P ficar desligado para quem assiste na sua própria conexão; ele nunca vai para os logs). Os navegadores de quem assiste também usam um servidor da Cloudflare para se encontrarem no P2P.
 - **GitHub:** procurar atualizações (um arquivinho público) e baixar as atualizações.
 - **Quem publica o ffmpeg:** baixar o conversor de vídeo, na primeira vez.
 - **Listas públicas de bloqueio** (Spamhaus, FireHOL): baixadas uma vez por dia, sem conta.
