@@ -7,9 +7,6 @@
 #   --simple  keep OBS Simple output mode defaults (no 2 s keyframe setting) instead of
 #             Advanced output with x264 keyint 2 s (what the SwarmCast panel asks for)
 set -u
-# TEMPORARY (reverted in the next commit): shows ci-ok going red when a Docker job fails.
-echo "Deliberate failure to check that ci-ok gates on the docker stage" >&2
-exit 1
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 # shellcheck source-path=SCRIPTDIR source=pull.sh
