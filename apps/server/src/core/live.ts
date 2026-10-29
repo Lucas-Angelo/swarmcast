@@ -17,8 +17,10 @@ import {
   type Step,
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
+import { chatSettingsSchema, countGraphemes, type AdminChatMessage, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl, type Session } from '../access/access.js';
 import { EgressWatch, type EgressWatchOptions } from '../access/own-connection.js';
+import { ChatHub } from '../chat/hub.js';
 import { ControlChannel } from '../control/control.js';
 import { DirectMode, ipChangeNotice } from '../direct/direct.js';
 import { lookupPublicIps } from '../direct/publicip.js';
@@ -94,7 +96,7 @@ export const VIEWER_COUNT_INTERVAL_MS = 3000;
 export const KEYFRAME_WARN_S = 3;
 
 /** Orchestrates one live: start/stop with visible steps, link rotation, viewer control. */
-export class LiveController extends EventEmitter<{ state: []; 'link-changed': [link: string] }> {
+export class LiveController extends EventEmitter<{ state: []; 'link-changed': [link: string]; chat: [msg: AdminChatMessage] }> {
   phase: LivePhase = 'off';
   mode: AccessMode = 'secure';
   steps: Step[] = [];
@@ -102,6 +104,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   readonly origin: HlsOrigin;
   readonly tracker: TrackerService;
   readonly control: ControlChannel;
+  /** The chat of the live (docs/CHAT.md); rides on the control channel. */
+  readonly chat: ChatHub;
   readonly limiter: BandwidthLimiter;
   readonly quality: QualityManager;
   private publicServer: FastifyInstance | null = null;
@@ -204,6 +208,24 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       },
       changed: () => this.changed(),
     });
+
+    this.chat = new ChatHub({
+      access: this.access,
+      host: this.control,
+      settings: () => this.d.config.chat,
+      uploadCapMbps: () => this.d.config.uploadLimitMbps,
+      viewers: () => this.connectedSessions().length,
+      shieldLevel: () => {
+        const st = this.shield.detector.state;
+        return st === 'attack' ? 2 : st === 'suspicious' ? 1 : 0;
+      },
+      activity: this.activity,
+      log: d.log,
+      now: d.now,
+      onAdmin: (m) => this.emit('chat', m),
+      onState: () => this.changed(),
+    });
+    this.control.chat = this.chat;
 
     this.access.on('kicked', (s) => {
       this.activity.action('log.kicked', { nickname: s.nickname });
@@ -434,6 +456,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
             throw new CodedError('err.rtmpBusy', { port: this.d.config.ports.rtmp });
           }
           this.access.begin();
+          this.chat.begin();
           // Look up our own public address while the tunnel opens (P2P privacy).
           this.syncEgress();
           this.shield.start();
@@ -511,6 +534,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       stats: this.httpStats,
       security: this.shield,
       clientSeen: (s, ip) => this.clientSeen(s, ip),
+      reservedNames: () => [this.d.config.chat.streamerName],
     };
     return createPublicServer(deps, {
       mode,
@@ -641,6 +665,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.control.closeAll('ended');
       this.tracker.disconnectAll();
       this.access.reset();
+      // Chat history, mutes and colours are wiped with everything else.
+      this.chat.reset();
       this.syncEgress();
       await this.publicServer?.close();
       this.publicServer = null;
@@ -793,6 +819,32 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.d.saveConfig(this.d.config);
     this.activity.action('log.securitySaved');
     this.changed();
+  }
+
+  // ---- chat ----
+
+  chatSettings(): ChatSettings {
+    return this.d.config.chat;
+  }
+
+  /**
+   * Save the chat settings (panel). Throws a CodedError for values the schema cannot check:
+   * the streamer's chat name follows the nickname rules, blocked words have 1 to 40 characters,
+   * and GIFs need the streamer's own key.
+   */
+  updateChatSettings(input: unknown): ChatSettings {
+    const s = chatSettingsSchema.parse(input);
+    const name = ChatHub.validStreamerName(s.streamerName);
+    if (name === null) throw new CodedError('admin.chat.err.streamerName');
+    s.streamerName = name;
+    if (s.blockedWords.some((w) => countGraphemes(w) > 40)) throw new CodedError('admin.chat.err.blockedWord');
+    if (s.content.gifs && !s.gif.key) throw new CodedError('admin.chat.err.gifKey');
+    this.d.config.chat = s;
+    this.d.saveConfig(this.d.config);
+    this.activity.action('log.chat.settingsSaved');
+    this.chat.refresh();
+    this.changed();
+    return s;
   }
 
   /** "End alert": the streamer says the attack is over (or was a false alarm). */
@@ -1025,6 +1077,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.d.log.debug('live stopped; closing control channel and tracker');
     if (this.speedTimer) clearInterval(this.speedTimer);
     await this.quality.shutdown();
+    this.chat.reset();
     this.control.close();
     this.tracker.close();
     this.limiter.close();

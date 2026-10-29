@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
-import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
+import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, chatSettingsSchema, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
 import { writePrivateFile } from './paths.js';
 
 export const tunnelProviderSchema = z.enum(['cloudflare-quick', 'none', 'external']);
@@ -14,8 +14,9 @@ export type TunnelProviderName = z.infer<typeof tunnelProviderSchema>;
  * 3: `maxViewers` defaults to QUICK_TUNNEL_MAX_VIEWERS (120) instead of 500, the audience a
  *    free quick tunnel really holds (docs/ARCHITECTURE.md). A 500 saved before version 3 is the
  *    old default and becomes 120 once; other values are the streamer's choice and stay.
+ * 4: `chat` (v0.4.0): only adds the defaults (chat on, GIFs off, slow mode 2 s).
  */
-export const CONFIG_VERSION = 3;
+export const CONFIG_VERSION = 4;
 
 /** `maxViewers` default before config version 3. */
 const OLD_DEFAULT_MAX_VIEWERS = 500;
@@ -86,6 +87,8 @@ export const configSchema = z.object({
   ffmpegPath: z.string().min(1).optional(),
   /** The admin panel's first-run setup tutorial was finished or skipped (it opens until then). */
   onboardingDone: z.boolean().default(false),
+  /** Chat settings (docs/CHAT.md; panel: Chat card). */
+  chat: chatSettingsSchema.prefault({}),
   /** Log files and old log exports are deleted after this many days (panel: Diagnostics). */
   diagnostics: z
     .object({ logRetentionDays: z.number().int().min(3).max(90).default(14) })

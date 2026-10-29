@@ -85,6 +85,8 @@ export interface PublicDeps {
    * goes on, so a /tracker or /control upgrade already sees the outcome.
    */
   clientSeen?: (session: Session, ip: string) => void;
+  /** Names nobody may join with besides the built-in reserved ones (the streamer's chat name). */
+  reservedNames?: () => string[];
 }
 
 export interface PublicServerOptions {
@@ -295,6 +297,14 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     if (!parsed.success) {
       const e = nicknameError(parsed.error.issues[0]?.message);
       return reply.code(400).send({ error: e.text, code: e.code, ...(e.params ? { params: e.params } : {}) } satisfies ApiErrorBody);
+    }
+    // Nicknames are visible to everyone in the chat: no look-alikes of "Streamer" or of
+    // someone watching (confusable skeletons, docs/CHAT.md).
+    const nameProblem = access.nicknameProblem(parsed.data.nickname, deviceId, deps.reservedNames?.() ?? []);
+    if (nameProblem === 'reserved') return reply.code(400).send(apiError('nickname.reserved'));
+    if (nameProblem === 'taken') {
+      const params = { suggestion: access.suggestNickname(parsed.data.nickname, deviceId) };
+      return reply.code(400).send({ error: translate('en', 'nickname.taken', params), code: 'nickname.taken', params } satisfies ApiErrorBody);
     }
     // The link/ticket and ban checks above always run first; the verified cookie only skips the proof-of-work.
     if (sec.powLevel() > 0 && !verified(req)) {
