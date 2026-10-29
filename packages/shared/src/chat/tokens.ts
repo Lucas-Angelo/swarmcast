@@ -8,30 +8,31 @@ import { P_EXTPICT, P_RI, P_VISIBLE, codePoints, graphemes, props } from './ucd.
 export type ChatToken = { k: 't'; v: string } | { k: 'e'; code: string } | { k: 'j'; v: string };
 
 /**
- * Codes of the built-in SwarmCast emotes (assets/brand/emotes, WP-C6 owns the art and may change
- * this list). Clients map each code to its image; the server only needs the codes.
+ * Codes of the built-in SwarmCast emote pack (assets/brand/emotes/emotes.json, made from the mascot
+ * art by build_emotes.py; WP-C6). Clients map each code to its image; the server only needs the
+ * codes. apps/viewer/test/unit/chat-emotes.test.ts checks this list against emotes.json.
  */
 export const BUILTIN_EMOTE_CODES: readonly string[] = [
-  'hello',
-  'bye',
+  'hi',
+  'live',
   'sleep',
+  'bee',
   'love',
-  'laugh',
-  'lol',
-  'clap',
+  'hearts',
   'gg',
+  'lol',
   'wow',
-  'sad',
-  'cry',
+  'what',
   'fire',
-  'cool',
   'hype',
-  'think',
-  'party',
-  'yes',
-  'no',
-  'ok',
-  'heart',
+  'sad',
+  'zzz',
+  'brb',
+  'rec',
+  'clip',
+  'plus1',
+  'cozy',
+  'swarm',
 ];
 
 const isCodeChar = (c: number): boolean => (c >= 0x61 && c <= 0x7a) || (c >= 0x30 && c <= 0x39) || c === 0x5f;

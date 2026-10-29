@@ -2,19 +2,16 @@
 // against the chat's actual background, read from the computed style (once per theme change),
 // and the viewer's colour chooser with a live preview of the name in both themes.
 import { t } from '@swarmcast/shared/i18n';
-import { adjustNameColor, CHAT_DEFAULT_PALETTE, isHexColor, parseCssColor, rgbToHex } from './core/index.js';
+import { adjustNameColor, CHAT_BG_DARK, CHAT_BG_LIGHT, CHAT_DEFAULT_PALETTE, cssColorToHex, isHexColor } from './core/index.js';
 
 /** The chat surface of the Forest & Cream palette (assets/brand/tokens.css --sc-surface), for the preview. */
-export const PREVIEW_BG = { light: '#fffdf8', dark: '#13221f' } as const;
+export const PREVIEW_BG = { light: CHAT_BG_LIGHT, dark: CHAT_BG_DARK } as const;
 
 /** The first opaque background colour of `el` or its ancestors, as "#rrggbb". */
 export function backgroundOf(el: Element | null): string {
   for (let e = el; e; e = e.parentElement) {
-    const css = getComputedStyle(e).backgroundColor;
-    const alpha = /rgba\([^)]*,\s*([\d.]+)\s*\)$/.exec(css);
-    if (css === 'transparent' || (alpha && Number(alpha[1]) < 0.5)) continue;
-    const rgb = parseCssColor(css);
-    if (rgb) return rgbToHex(rgb);
+    const hex = cssColorToHex(getComputedStyle(e).backgroundColor);
+    if (hex) return hex;
   }
   return PREVIEW_BG.light;
 }

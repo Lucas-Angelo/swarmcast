@@ -24,10 +24,17 @@ async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; q
     }
     if (url.pathname === '/api/session/refresh') return route.fulfill({ status: 204 });
     const file = url.pathname === '/watch' ? 'watch.html' : url.pathname.slice(1);
-    const full = path.join(DIST, file);
-    if (!full.startsWith(DIST) || !fs.existsSync(full) || fs.statSync(full).isDirectory()) return route.fulfill({ status: 404, body: 'not found' });
+    const full = path.resolve(DIST, file);
+    if (!full.startsWith(DIST + path.sep)) return route.fulfill({ status: 404, body: 'not found' });
+    // One read, no check first: a missing file or a folder simply fails here.
+    let body: Buffer;
+    try {
+      body = fs.readFileSync(full);
+    } catch {
+      return route.fulfill({ status: 404, body: 'not found' });
+    }
     return route.fulfill({
-      body: fs.readFileSync(full),
+      body,
       headers: { 'content-type': TYPES[path.extname(full)] ?? 'application/octet-stream', 'content-security-policy': viewerCsp('chat.test', false), 'referrer-policy': 'no-referrer' },
     });
   });

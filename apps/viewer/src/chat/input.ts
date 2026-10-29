@@ -2,7 +2,7 @@
 // send, and disabled states that say why (chat off, muted, slow mode, only emotes…). Typed text
 // is never lost: on a reject the text comes back into an empty box.
 import { getLang, t, tc } from '@swarmcast/shared/i18n';
-import { CHAT_MAX_EMOJI_DEFAULT, CHAT_MAX_GRAPHEMES_DEFAULT, CHAT_TEXT_MAX_UNITS, countEmoji, countGraphemes, type ChatPublicSettings, type ChatYou } from './core/index.js';
+import { CHAT_MAX_EMOJI_DEFAULT, CHAT_MAX_GRAPHEMES_DEFAULT, CHAT_TEXT_MAX_UNITS, measureChatText, type ChatPublicSettings, type ChatYou } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 import { counterText } from './render.js';
 
@@ -45,8 +45,7 @@ export interface LengthState {
 export function lengthState(text: string, s: ChatPublicSettings | null): LengthState {
   const max = s?.maxGraphemes ?? CHAT_MAX_GRAPHEMES_DEFAULT;
   const maxEmoji = s?.maxEmoji ?? CHAT_MAX_EMOJI_DEFAULT;
-  const graphemes = countGraphemes(text);
-  const emoji = countEmoji(text);
+  const { graphemes, emoji } = measureChatText(text);
   return { graphemes, emoji, max, maxEmoji, over: graphemes > max || emoji > maxEmoji || text.length > CHAT_TEXT_MAX_UNITS };
 }
 

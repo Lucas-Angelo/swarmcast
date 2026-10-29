@@ -328,8 +328,8 @@ export class ChatList {
       this.stats.rendered++;
       return li;
     }
-    const nickOk = checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX }).ok;
-    const textOk = e.text === undefined || checkChatInvariants(e.text).ok;
+    const nickOk = checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
+    const textOk = e.text === undefined || checkChatInvariants(e.text);
     if (!nickOk || !textOk) {
       li.classList.add('hidden-msg');
       const text = el('span', 'text muted');
@@ -391,6 +391,7 @@ export class ChatList {
         }
         target.append(document.createTextNode(`:${tok.code}:`));
       } else {
+        // Text and emoji runs alike: a text node (emoji are drawn by the system font).
         target.append(document.createTextNode(tok.v));
       }
     }
