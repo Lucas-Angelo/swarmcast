@@ -275,9 +275,10 @@ describe('direct mode TLS without SNI (browsers never send SNI for an IP address
     const handle = await live.startDirectServer(port, '127.0.0.1', (_n, cb) => cb(null, ctx), { key: cert.keyPem, cert: cert.certPem });
     servers.push(handle);
     const body = await new Promise<string>((resolve, reject) => {
-      // An IP host: Node (like browsers) sends no SNI.
+      // An IP host: Node (like browsers) sends no SNI. The certificate is verified, pinned to
+      // the one issued above (it names 127.0.0.1).
       https
-        .get({ host: '127.0.0.1', port, path: '/healthz', rejectUnauthorized: false }, (res) => {
+        .get({ host: '127.0.0.1', port, path: '/healthz', ca: cert.certPem }, (res) => {
           let b = '';
           res.on('data', (c) => (b += c));
           res.on('end', () => resolve(`${res.statusCode} ${b}`));

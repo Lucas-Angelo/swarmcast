@@ -40,32 +40,67 @@ export function hostTarget() {
 // release run died of `UND_ERR_CONNECT_TIMEOUT github.com` after about 40 s. A missing file
 // (HTTP 403/404/410) fails at once. A try that stops receiving bytes for STALL_MS is aborted
 // and retried: one macOS CI job sat 44 min on a body that never finished, until the job timed out.
+// A retry resumes where the stalled try stopped (HTTP Range) when the server allows it: a
+// pre-release job failed 6 tries of the 28 MB macOS ffmpeg, each restarting from byte 0. A try
+// that brought new bytes starts the count of 6 over: only 6 tries in a row without progress fail
+// (from GitHub's macOS runners the same host trickles 10-30 kB/s with stalls; on PR #19 it sent
+// 17.7 of 28 MB in 6 tries). SC_DOWNLOAD_MAX_MIN (default 20) caps the whole download.
 const TRIES = 6;
+const MAX_MS = Number(process.env.SC_DOWNLOAD_MAX_MIN ?? 20) * 60_000;
 const STALL_MS = Number(process.env.SC_DOWNLOAD_STALL_MS ?? 30_000);
 const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter(Boolean).join(': ');
 
-/** One try: the body is streamed to `dest`, and the try is aborted when no bytes arrive for STALL_MS. */
-async function fetchOnce(url, dest) {
+/**
+ * One try, appending to `got` (the bytes kept from earlier tries, in memory). With bytes already
+ * there it asks for the rest (`Range: bytes=<n>-`): a 206 that starts at n is appended, a 200
+ * (the server ignores ranges) starts over, a 416 means the earlier try already had the whole file
+ * when its Content-Range says so, else it starts over. The try is aborted when no bytes arrive for
+ * `stallMs`; what arrived until then stays in `got` for the next try. Nothing is written here.
+ */
+async function fetchInto(url, got, stallMs) {
   const ac = new AbortController();
   let timer;
   const arm = () => {
     clearTimeout(timer);
-    timer = setTimeout(() => ac.abort(new Error(`no data for ${STALL_MS / 1000} s`)), STALL_MS);
+    timer = setTimeout(() => ac.abort(new Error(`no data for ${stallMs / 1000} s`)), stallMs);
+  };
+  const restart = () => {
+    got.chunks = [];
+    got.bytes = 0;
   };
   arm();
   try {
-    const res = await fetch(url, { redirect: 'follow', signal: ac.signal });
+    const from = got.bytes;
+    const res = await fetch(url, { redirect: 'follow', signal: ac.signal, ...(from > 0 ? { headers: { range: `bytes=${from}-` } } : {}) });
+    if (from > 0 && res.status === 416) {
+      await res.body?.cancel();
+      const total = /^bytes \*\/(\d+)$/.exec(res.headers.get('content-range') ?? '')?.[1];
+      if (Number(total) === from) return;
+      restart();
+      throw new Error(`HTTP 416 for bytes ${from}- (starting over)`);
+    }
     if (!res.ok) {
       const err = new Error(`HTTP ${res.status}`);
       err.final = [403, 404, 410].includes(res.status);
       throw err;
     }
-    const chunks = [];
+    if (res.status === 206) {
+      const start = /^bytes (\d+)-/.exec(res.headers.get('content-range') ?? '')?.[1];
+      if (Number(start) !== from) {
+        await res.body?.cancel();
+        restart();
+        throw new Error(`HTTP 206 from byte ${start ?? '?'} instead of ${from} (starting over)`);
+      }
+      got.resumedAt.push(from);
+    } else if (from > 0) {
+      // 200: the whole file again.
+      restart();
+    }
     for await (const chunk of res.body) {
-      chunks.push(chunk);
+      got.chunks.push(chunk);
+      got.bytes += chunk.length;
       arm();
     }
-    fs.writeFileSync(dest, Buffer.concat(chunks));
   } catch (err) {
     throw ac.signal.aborted && ac.signal.reason instanceof Error ? ac.signal.reason : err;
   } finally {
@@ -73,17 +108,44 @@ async function fetchOnce(url, dest) {
   }
 }
 
-export async function download(url, dest) {
-  for (let attempt = 1; ; attempt++) {
+/**
+ * Download `url` to `dest` when its SHA-256 is `sha256`. A try that stalls or breaks is resumed
+ * where it stopped (see fetchInto). The bytes are checked in memory and only bytes that match
+ * reach the disk (written to `dest.part`, then renamed). A mismatch is final: the pin or the
+ * upstream file is wrong (or, after a resume, the server sent a different file), and downloading
+ * again would not change that. `waitMs`, `stallMs` and `maxMs` are for tests.
+ */
+export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS } = {}) {
+  if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) throw new Error(`no pinned SHA-256 for ${url}`);
+  const got = { chunks: [], bytes: 0, resumedAt: [] };
+  const deadline = Date.now() + maxMs;
+  // `failed`: tries in a row that brought no new bytes (they fail it at TRIES and set the back-off).
+  for (let attempt = 1, failed = 0; ; attempt++) {
+    const before = got.bytes;
     try {
-      await fetchOnce(url, dest);
-      return;
+      await fetchInto(url, got, stallMs);
     } catch (err) {
-      if (err.final || attempt === TRIES) throw new Error(`${why(err)} (${url}, try ${attempt} of ${TRIES})`);
-      const wait = 2 ** attempt;
-      console.warn(`  try ${attempt} of ${TRIES} failed (${why(err)}); again in ${wait} s`);
-      await new Promise((r) => setTimeout(r, wait * 1000));
+      failed = got.bytes > before ? 0 : failed + 1;
+      const where = `${url}, try ${attempt}, ${failed} of ${TRIES} in a row without progress`;
+      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`);
+      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`);
+      const wait = waitMs(Math.max(1, failed));
+      const kept = got.bytes ? `, ${got.bytes} bytes kept` : '';
+      console.warn(`  try ${attempt} failed (${why(err)}${kept}; ${failed} of ${TRIES} in a row without progress); again in ${wait / 1000} s`);
+      await new Promise((r) => setTimeout(r, wait));
+      continue;
     }
+    const bytes = Buffer.concat(got.chunks);
+    const actual = crypto.createHash('sha256').update(bytes).digest('hex');
+    if (actual !== sha256) {
+      const resumed = got.resumedAt.length ? ` (after resuming at byte ${got.resumedAt.join(', ')}: the parts may come from different files)` : '';
+      throw new Error(`Checksum mismatch for ${url}: expected ${sha256}, got ${actual}${resumed}`);
+    }
+    // Only reached when sha256(bytes) equals the pin from versions.json: these are exactly the
+    // bytes reviewed when the pin was set, not data chosen by the server.
+    fs.writeFileSync(`${dest}.part`, bytes);
+    fs.renameSync(`${dest}.part`, dest);
+    return;
   }
 }
 
@@ -153,11 +215,11 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
     } else {
       const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
       console.log(`↓ ${url}`);
-      await download(url, archive);
-      const actual = sha256(archive);
-      if (actual !== a.sha256) {
+      try {
+        await download(url, archive, a.sha256);
+      } catch (err) {
         fs.rmSync(work, { recursive: true, force: true });
-        throw new Error(`Checksum mismatch for ${a.asset}: expected ${a.sha256}, got ${actual}`);
+        throw err;
       }
       if (cached) {
         // Copy, then rename: a job killed halfway never leaves a partial entry.

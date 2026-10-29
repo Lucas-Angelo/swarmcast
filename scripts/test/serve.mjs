@@ -27,9 +27,15 @@ if (process.argv[2] === '--free-port') {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const file = path.resolve(base, '.' + decodeURIComponent(url.pathname));
     let status = 404;
-    if (file.startsWith(base + path.sep) && fs.existsSync(file) && fs.statSync(file).isFile()) {
+    let data = null;
+    try {
+      // Read directly (no exists/stat check first): a folder or a missing file throws.
+      if (file.startsWith(base + path.sep)) data = fs.readFileSync(file);
+    } catch {
+      data = null;
+    }
+    if (data) {
       status = 200;
-      const data = fs.readFileSync(file);
       res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': data.length });
       res.end(req.method === 'HEAD' ? undefined : data);
     } else {

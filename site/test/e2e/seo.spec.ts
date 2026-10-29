@@ -234,7 +234,8 @@ test.describe('every page in dist', () => {
       titles.set(t[0], p.url);
       descriptions.set(d[0], p.url);
       expect(head, `${p.url}: canonical`).toContain(`<link rel="canonical" href="${abs(p.url)}"`);
-      expect(head, `${p.url}: og:image`).toMatch(new RegExp(`<meta property="og:image" content="${ORIGIN}${BASE}/og/og-(en|pt-br)\\.png"`));
+      const ogImage = /<meta property="og:image" content="([^"]*)"/.exec(head)?.[1];
+      expect([abs(`${BASE}/og/og-en.png`), abs(`${BASE}/og/og-pt-br.png`)], `${p.url}: og:image`).toContain(ogImage);
       expect(head, `${p.url}: x-default`).toContain('hreflang="x-default"');
     }
   });

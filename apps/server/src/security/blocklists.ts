@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Logger } from '../core/logger.js';
 import { ensurePrivateDir, writePrivateFile } from '../core/paths.js';
-import { CidrSet, isNonPublicIp, parseCidr, parseIp, type CidrRange } from './cidr.js';
+import { CidrSet, formatCidr, isNonPublicIp, parseCidr, parseIp, prefixLength, type CidrRange } from './cidr.js';
 
 /**
  * Free public IP blocklists that need no account. Only a plain GET is ever sent to them.
@@ -68,16 +68,38 @@ export function parseBlocklist(text: string): CidrRange[] {
     if (!token) continue;
     const r = parseCidr(token);
     if (!r) continue;
-    const bits = prefixBits(r);
-    if (bits < MIN_PREFIX[r.v]) continue;
+    if (prefixLength(r) < MIN_PREFIX[r.v]) continue;
     out.push(r);
   }
   return out;
 }
 
-function prefixBits(r: CidrRange): number {
-  const size = r.end - r.start + 1n;
-  return (r.v === 4 ? 32 : 128) - (size.toString(2).length - 1);
+/**
+ * The body as text, at most `max` bytes: the download stops (and throws) as soon as more
+ * arrive, whatever Content-Length said or when there is none (a chunked answer).
+ */
+export async function readBodyCapped(res: Response, max: number): Promise<string> {
+  if (Number(res.headers.get('content-length') ?? 0) > max) throw new Error('list too large');
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error('list too large');
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/** The cache file: one canonical network per line, only the entries parseBlocklist accepted. */
+export function blocklistCacheText(ranges: readonly CidrRange[]): string {
+  return ranges.map(formatCidr).join('\n') + '\n';
 }
 
 interface CacheMeta {
@@ -193,15 +215,12 @@ export class PublicBlocklists {
       // A plain GET: no cookies, no identifiers, nothing about the stream or its viewers.
       const res = await (this.d.fetch ?? fetch)(s.url, { redirect: 'follow', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const len = Number(res.headers.get('content-length') ?? 0);
-      if (len > MAX_BYTES) throw new Error('list too large');
-      const text = await res.text();
-      if (text.length > MAX_BYTES) throw new Error('list too large');
-      const ranges = parseBlocklist(text);
+      const ranges = parseBlocklist(await readBodyCapped(res, MAX_BYTES));
       if (ranges.length === 0) throw new Error('no entries');
       const fetchedAt = this.now();
       ensurePrivateDir(this.d.dir);
-      writePrivateFile(this.file(s.id, 'txt'), text);
+      // Only the parsed networks are kept, never the downloaded bytes as they came.
+      writePrivateFile(this.file(s.id, 'txt'), blocklistCacheText(ranges));
       writePrivateFile(this.file(s.id, 'json'), JSON.stringify({ url: s.url, fetchedAt, entries: ranges.length } satisfies CacheMeta) + '\n');
       this.lists.set(s.id, { ranges, fetchedAt });
       this.d.log.info({ list: s.id, entries: ranges.length }, 'blocklist updated');

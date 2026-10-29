@@ -4,6 +4,7 @@
 // check ({"name","ok","detail"}) for scripts/test/windows/direct.mjs.
 //
 // Run: node --import tsx scripts/test/windows/direct-igd.ts
+import crypto from 'node:crypto';
 import https from 'node:https';
 import net from 'node:net';
 import os from 'node:os';
@@ -19,9 +20,17 @@ const lan = Object.values(os.networkInterfaces())
   .flat()
   .find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
 
+/** The certificate the server under test presents (set by startServer below). */
+let pinned: { pem: string; der: Buffer } | null = null;
+
 function get(host: string, port: number): Promise<number> {
   return new Promise((resolve) => {
-    const req = https.get({ host, port, path: '/', rejectUnauthorized: false, timeout: 5000 }, (res) => {
+    // Certificate checks stay on, pinned to the server's own self-signed certificate. It names
+    // the public IP (203.0.113.7), not localhost / 127.0.0.1 / the LAN address, so the host name
+    // check is replaced by comparing the exact certificate.
+    const checkServerIdentity = (_host: string, peer: { raw: Buffer }): Error | undefined =>
+      pinned && peer.raw.equals(pinned.der) ? undefined : new Error('not the certificate of the server under test');
+    const req = https.get({ host, port, path: '/', ca: pinned?.pem, checkServerIdentity, timeout: 5000 }, (res) => {
       res.resume();
       resolve(res.statusCode ?? 0);
     });
@@ -54,6 +63,7 @@ const d = new DirectMode({
   localAddresses: () => [],
   issuer: new SelfSignedIssuer(),
   startServer: async (port, host, sni, defaultCert) => {
+    pinned = { pem: defaultCert.cert, der: new crypto.X509Certificate(defaultCert.cert).raw };
     const srv = https.createServer({ SNICallback: sni, key: defaultCert.key, cert: defaultCert.cert }, (_q, r) => r.end('ok'));
     await new Promise<void>((r, j) => {
       srv.once('error', j);

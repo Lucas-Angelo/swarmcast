@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { readSmallFile } from '../core/small-file.js';
 
 type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 
@@ -58,13 +58,8 @@ export function parseSystemCheck(text: string): SystemCheck | null {
 
 /** Read `<data>/system-check.json`; null when missing, too big or invalid. */
 export function readSystemCheck(file: string): SystemCheck | null {
-  try {
-    const st = fs.statSync(file);
-    if (!st.isFile() || st.size > MAX_BYTES) return null;
-    return parseSystemCheck(fs.readFileSync(file, 'utf8'));
-  } catch {
-    return null;
-  }
+  const text = readSmallFile(file, MAX_BYTES);
+  return text === null ? null : parseSystemCheck(text);
 }
 
 /**

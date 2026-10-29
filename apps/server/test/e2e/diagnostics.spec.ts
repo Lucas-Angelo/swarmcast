@@ -41,9 +41,10 @@ test('Export logs saves an anonymised ZIP to the Downloads folder and shows wher
   const file = text.replace(/^Saved to /, '').trim();
   expect(path.dirname(file)).toBe(env().downloadsDir);
   expect(path.basename(file)).toMatch(/^SwarmCast-logs-.+-\d{8}-\d{4}(-\d+)?\.zip$/);
-  expect(fs.statSync(file).size).toBeGreaterThan(100);
+  const zip = fs.readFileSync(file);
+  expect(zip.length).toBeGreaterThan(100);
   // ZIP magic number.
-  expect(fs.readFileSync(file).subarray(0, 4).toString('hex')).toBe('504b0304');
+  expect(zip.subarray(0, 4).toString('hex')).toBe('504b0304');
   await expect(card.getByTestId('export-reveal')).toHaveText('Show in folder');
 });
 
