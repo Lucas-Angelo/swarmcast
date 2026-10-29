@@ -275,7 +275,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     // Forced stall: 25 s at 40 kbit/s drains the buffer and pushes the delay past the
     // catch-up limit, which is where the old player froze for good.
     await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 300, downloadThroughput: 5000, uploadThroughput: 5000 });
-    await page.waitForTimeout(25_000);
+    await page.waitForTimeout(40_000); // TEMPORARY probe: long enough for the watchdog reload
     await cdp.send('Network.emulateNetworkConditions', TUNNEL);
 
     // It comes back by itself...
