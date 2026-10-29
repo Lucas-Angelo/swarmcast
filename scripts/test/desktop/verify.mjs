@@ -27,6 +27,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { debianVersion, isPrerelease } from '../../releases/semver.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const args = process.argv.slice(2);
@@ -250,6 +251,14 @@ async function install(dir) {
   }
   const deb = file(dir, /\.deb$/);
   debPackage = spawnSync('dpkg-deb', ['--field', deb, 'Package'], { encoding: 'utf8' }).stdout.trim();
+  // A pre-release must sort below its stable version for dpkg (0.3.0~beta.1 < 0.3.0).
+  const debVersion = spawnSync('dpkg-deb', ['--field', deb, 'Version'], { encoding: 'utf8' }).stdout.trim();
+  const v = versionIn(dir);
+  step(`the .deb's Version is ${debianVersion(v)}`, debVersion === debianVersion(v), debVersion);
+  if (isPrerelease(v)) {
+    const stable = v.replace(/-.*$/, '');
+    step(`dpkg sorts ${debVersion} below ${stable}`, spawnSync('dpkg', ['--compare-versions', debVersion, 'lt', stable]).status === 0);
+  }
   // No time limit: apt resolving the .deb's dependencies is part of the test, and a slow mirror
   // is not a failure (the workflow downloads them beforehand; the job timeout is the backstop).
   // The workflow downloads them with apt-retry.sh into $APT_DEBS (the .deb cache).
