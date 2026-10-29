@@ -397,10 +397,7 @@ const feedRequests = [];
 async function channelChecks(panel, manifest) {
   let info = await api(panel, 'GET', '/api/desktop');
   step('the update channel is the saved choice (stable)', info.updateChannel?.choice === 'stable' && info.updateChannel?.effective === 'stable', JSON.stringify(info.updateChannel));
-  info = await until(async () => {
-    const d = await api(panel, 'GET', '/api/desktop');
-    return d.update?.status === 'none' ? d : null;
-  }, 90_000, 'the first automatic check on the stable channel');
+  await until(async () => (await api(panel, 'GET', '/api/desktop')).update?.status === 'none', 90_000, 'the first automatic check on the stable channel');
   step('stable channel: no update (the beta feed is not read)', feedRequests.includes('stable.json') && !feedRequests.includes('beta.json'), feedRequests.join(', '));
   info = await api(panel, 'PUT', '/api/desktop/update/channel', { channel: 'beta' });
   step('"Get beta versions" on: saved, the shell checks again', info.updateChannel?.effective === 'beta', JSON.stringify(info.updateChannel));
