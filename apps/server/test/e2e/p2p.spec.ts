@@ -17,6 +17,7 @@ import {
   stats,
   test,
   uid,
+  unmute,
   viewerByNick,
   waitForPlaylist,
   waitPlaying,
@@ -244,6 +245,8 @@ test('a peer that barely delivers never starves playback, even after a forced st
     await page.fill('#nickname', uid('steady'));
     await page.click('#join');
     await waitPlaying(page);
+    // With sound, so the browser clocks playback in real time (fixtures.ts unmute).
+    await unmute(page);
     await enableP2P(page);
     // Fault injection: the P2P core may no longer fetch anything over HTTPS by itself, only
     // from peers. That is the state seen live, where the core held a soon-needed segment

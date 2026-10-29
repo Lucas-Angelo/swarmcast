@@ -1,5 +1,5 @@
 import type { CDPSession, Page } from '@playwright/test';
-import { expect, join, test, uid, viewerByNick, waitForPlaylist, waitPlaying } from './fixtures.js';
+import { expect, join, test, uid, unmute, viewerByNick, waitForPlaylist, waitPlaying } from './fixtures.js';
 
 // The adaptive playback delay (apps/viewer/src/latency-controller.ts, docs/QUALITY.md), end to
 // end in a real player on a real (emulated) network, on a fast clock: `?delaySpeed=10` runs the
@@ -33,6 +33,8 @@ async function watchWithFastClock(browser: Parameters<typeof join>[0], nick: str
   if (before) await before(page);
   await page.goto(FAST);
   await waitPlaying(page);
+  // With sound, so the browser clocks playback in real time (fixtures.ts unmute).
+  await unmute(page);
   return joined;
 }
 

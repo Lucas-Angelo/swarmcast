@@ -15,6 +15,7 @@ import {
   hlsConfigFor,
   latencyFor,
   mismatchWindow,
+  playlistsKnown,
   type applyProfile,
   loadProfile,
   p2pCoreConfigFor,
@@ -315,15 +316,27 @@ async function main(): Promise<void> {
   // (liveMaxLatencyDuration) would drag a paused viewer to live and "Go live −N s" would read 0.
   // Playing again restores the limit, so a viewer who paused past the window is brought back.
   // A short hold inside a stall (adaptive delay) is not a viewer pause.
+  // While the playlists in use are (re)loading (a source reload: hls.js forgets them and loads
+  // the video one first), the windows measured before still hold: the stream did not change.
+  // Dropping them let a target raised by a long stall (27 s) place the restart before the
+  // oldest audio segment of a 20 s audio playlist; video and audio then started 14 s apart and
+  // the player sat frozen until the stall watchdog moved it again.
+  let lastWindow: PlaylistWindow | null = null;
+  let lastShortest: PlaylistWindow | null = null;
   const fitLatency = (): void => {
-    const w = playlistWindow();
+    const known = playlistsKnown(hls.audioTracks.length > 0, liveDetails());
+    if (known) {
+      lastWindow = playlistWindow();
+      lastShortest = shortestWindow();
+    }
+    const w = lastWindow;
     const fit = latencyFor(loadProfile(), w);
     const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
     // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
     // the target itself; the shortest window only stops the controller building delay past it.
     const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
     adaptive?.setCeiling(room(w));
-    adaptive?.setGrowthLimit(room(shortestWindow()));
+    adaptive?.setGrowthLimit(room(lastShortest));
     if (hls.config.liveMaxLatencyDuration !== max) {
       debugLog(`live delay max ${max}s for window ${JSON.stringify(w)}`);
       hls.config.liveMaxLatencyDuration = max;

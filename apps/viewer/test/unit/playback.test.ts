@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PLAYER_LIVE_DELAYS, PLAYLIST_WINDOW_S, SEGMENT_DURATION_S } from '@swarmcast/shared';
-import { latencyFor, mismatchWindow, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
+import { latencyFor, mismatchWindow, playlistsKnown, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
 import { installStallRecovery, planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
 
 describe('latencyFor', () => {
@@ -31,6 +31,19 @@ describe('latencyFor', () => {
     const fit = latencyFor('stable', { windowS: 4, targetDurationS: 2 });
     expect(fit.liveSyncDuration).toBe(4);
     expect(fit.liveMaxLatencyDuration).toBe(8);
+  });
+});
+
+describe('playlistsKnown', () => {
+  const d = { totalduration: 20, targetduration: 2 };
+  it('a source reload loads the video playlist first: the windows measured before must still hold', () => {
+    // After the stall watchdog's reload hls.js loaded the 40 s video playlist before the 20 s
+    // audio one; read as "no mismatch", the ceiling went and the restart landed 14 s before the
+    // oldest audio segment.
+    expect(playlistsKnown(true, { video: d })).toBe(false);
+    expect(playlistsKnown(true, {})).toBe(false);
+    expect(playlistsKnown(true, { video: d, audio: d })).toBe(true);
+    expect(playlistsKnown(false, { video: d })).toBe(true);
   });
 });
 
