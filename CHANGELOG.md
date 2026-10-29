@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Switching between "Stable" and "Lower delay" while the player was briefly pausing to absorb a stall no longer leaves the video paused on "Buffering" for good: it plays again at once.
+
 ## [0.2.2] - 2026-10-29
 
 A reliability and privacy release: viewers no longer get stuck after OBS reconnects and recover faster from a stall, P2P no longer exposes the streamer's home IP address, the macOS app no longer crashes on "Update now", and the Windows uninstaller and "Stop everything" clean up completely.
