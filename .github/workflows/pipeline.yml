@@ -223,13 +223,15 @@ jobs:
 
       # The Windows suites' table (scripts/test/windows/summarize.mjs), after failed suites too.
       # A suite that stopped before writing its result file gets a line instead of a silent gap.
+      # Reporting only: these steps come after the verdict and cannot change it; a problem here is
+      # a warning on this job, not a failed check. (A full checkout: summarize.mjs imports shared
+      # helpers from scripts/test/lib.)
       - name: Windows suites summary (checkout)
         if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          sparse-checkout: scripts/test/windows
       - name: Windows suites summary (results)
         if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
         continue-on-error: true
@@ -245,7 +247,8 @@ jobs:
           SUITES: ${{ inputs.windows-suites || '["installer","app","quality","direct","obs"]' }}
         run: |
           mkdir -p results
-          node scripts/test/windows/summarize.mjs results
+          node scripts/test/windows/summarize.mjs results ||
+            echo "::warning title=Windows summary::summarize.mjs failed (exit $?); the verdict above does not depend on it"
           missing=()
           for suite in $(jq -r '.[]' <<<"$SUITES"); do
             for os in $(jq -r '.[]' <<<"$RUNNERS"); do
