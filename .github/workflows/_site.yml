@@ -19,7 +19,7 @@ jobs:
   site:
     name: build and test
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: site
@@ -31,6 +31,7 @@ jobs:
       # Node + the root workspace: it provides vitest for the site's unit tests (site/test/unit),
       # which `astro check` also type-checks.
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
 
       - name: Install the site's dependencies
         run: npm ci --no-audit --no-fund

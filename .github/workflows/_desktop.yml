@@ -86,8 +86,9 @@ jobs:
     # environment can read it once the key is an environment secret (docs/RELEASING.md, section 3).
     # An empty name means no environment: pull request runs never ask for it.
     environment: ${{ inputs.release && 'release' || '' }}
-    # A cold Rust cache (a Cargo.lock or toolchain change) costs about twice a warm one.
-    timeout-minutes: ${{ inputs.release && 45 || 30 }}
+    # Warm-cache p99 8.8 min; a cold Rust cache (a Cargo.lock or toolchain change) costs about
+    # twice that, so 2 x 8.8 x 1.5. Release builds (fat LTO) have no measurements yet.
+    timeout-minutes: ${{ inputs.release && 45 || 27 }}
     defaults:
       run:
         shell: bash
@@ -100,6 +101,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           go: ${{ runner.os != 'Windows' }}
           downloads: ${{ runner.os != 'Windows' }}
@@ -112,10 +114,12 @@ jobs:
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
         with:
           cache-key: ${{ matrix.target }}
           targets: ${{ matrix.rust-target || '' }}
       - uses: ./.github/actions/get-build
+        timeout-minutes: 5
         with:
           names: ${{ matrix.target == 'windows-x64' && 'pkg-windows-x64' || 'web-dist' }}
       - name: Version
@@ -220,7 +224,7 @@ jobs:
           "linux-arm64": [{"os": "ubuntu-24.04-arm", "target": "linux-arm64", "appimage": true}]
           }')[inputs.target] }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 21
     defaults:
       run:
         shell: bash
@@ -235,6 +239,7 @@ jobs:
       # Preflight drives Google Chrome through Playwright (npm ci) and streams an ffmpeg feed. The
       # desktop step's apt downloads go into the .deb cache.
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: ${{ matrix.preflight == true }}
           ffmpeg: ${{ matrix.preflight == true }}
@@ -244,6 +249,7 @@ jobs:
 
       # ---------------------------------------------------------------- preflight
       - uses: ./.github/actions/get-build
+        timeout-minutes: 5
         if: ${{ !cancelled() && matrix.preflight }}
         with:
           names: pkg-${{ matrix.target }}
@@ -262,11 +268,13 @@ jobs:
 
       # ---------------------------------------------------------------- desktop app
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        timeout-minutes: 5
         if: ${{ !cancelled() }}
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        timeout-minutes: 5
         if: ${{ !cancelled() }}
         with:
           name: update-test-${{ matrix.target }}
