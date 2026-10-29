@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
-import { adminApi, expect, test } from './fixtures.js';
+import { adminApi, expect, loginPanel, test } from './fixtures.js';
 
 // "Problem report" card: Export logs writes the ZIP on the server side (the e2e server points
 // SWARMCAST_DOWNLOADS_DIR at a temporary folder), so it works without browser downloads.
@@ -12,10 +12,8 @@ function env(): { adminLoginUrl: string; downloadsDir: string } {
 async function openPanel(page: Page, lang?: string): Promise<void> {
   const url = env().adminLoginUrl;
   const origin = new URL(url).origin;
-  // /auth/<token> sets the cookie and then sends the page on to / by itself (a meta refresh,
-  // admin/gate.ts). A second goto before that navigation is done is interrupted by it.
-  await page.goto(url);
-  await expect(page).toHaveURL(`${origin}/`);
+  // Lands on / before the next goto (a goto during the meta refresh would be interrupted by it).
+  await loginPanel(page, url);
   await expect(page.getByTestId('status')).toBeVisible();
   if (!lang) return;
   await page.goto(`${origin}/?lang=${lang}`);

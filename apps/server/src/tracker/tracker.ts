@@ -138,7 +138,9 @@ export class TrackerService {
    * may not use P2P (the refusal /tracker answers with 403).
    */
   openChannel(carrier: WebSocket, id: number, req: IncomingMessage, session: Session): TrackerChannel | null {
-    if (!session.p2pAllowed) return null;
+    // Removed one by one, or on the streamer's own connection (its address would reach every
+    // peer). The global switch alone is left to check(): announces are refused while it is off.
+    if (!session.p2pAllowed || session.ownConnection || this.access.p2pChecking) return null;
     const channel = new TrackerChannel(id, carrier, req);
     this.attach(channel as TrackerSocket, req, session);
     return channel;

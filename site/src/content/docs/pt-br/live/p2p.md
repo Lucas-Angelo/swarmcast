@@ -15,6 +15,7 @@ Para passar vídeo entre si, os navegadores de dois espectadores se conectam dir
 - Ele **não** mostra nome, endereço de casa nem nada do aparelho.
 - Jogos online e chamadas de vídeo funcionam do mesmo jeito.
 - **O seu IP continua escondido** no modo seguro, que é o normal: o vídeo chega aos espectadores por um túnel criptografado, nunca direto do seu computador.
+- **Quem assiste na sua própria conexão de internet** (você pelo celular, ou alguém aí da sua casa no mesmo Wi-Fi): ali o IP de quem assiste *é* o seu IP, então o SwarmCast desliga o P2P para essa pessoa sozinho. Ela continua assistindo normalmente e vê "O P2P fica desligado na própria conexão de quem transmite, para manter o IP dessa pessoa privado".
 
 ## Ninguém consegue mandar vídeo adulterado
 

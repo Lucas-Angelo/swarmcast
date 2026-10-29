@@ -12,7 +12,7 @@ description: SwarmCast has no telemetry. How the numbers on the home page are co
 
 What the app does contact, and why:
 
-- **Cloudflare:** the free tunnel (Secure mode), the speed test, a quick check of your connection's delay while you are live, and, in Direct mode, finding your public IP address. Viewers' browsers also use a Cloudflare server to find each other for P2P.
+- **Cloudflare:** the free tunnel (Secure mode), the speed test, a quick check of your connection's delay while you are live, and finding your public IP address (in Direct mode, and while you are live in Secure mode, so P2P stays off for anyone watching on your own connection; it is never logged). Viewers' browsers also use a Cloudflare server to find each other for P2P.
 - **GitHub:** looking for updates (a small public file) and downloading them.
 - **The ffmpeg publisher:** downloading the video converter, the first time.
 - **Public blocklists** (Spamhaus, FireHOL): downloaded once a day, without an account.

@@ -21,6 +21,8 @@ interface Delay {
   stalls: number;
   stalledS: number;
   holds: number;
+  /** What the controller measured (latency-controller.ts Signals). */
+  signals: unknown;
 }
 
 const delayOf = (page: Page): Promise<Delay> => page.evaluate(() => (window as unknown as { __swarmcast: { delay: Delay } }).__swarmcast.delay);
@@ -60,12 +62,16 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   await expect(page.locator('#delay-wrap .tip-btn')).toHaveCount(1);
   await expect(page.locator('#tip-delay')).toContainText('adjusts itself to your connection');
 
-  // Drifts down with a gentle catch-up (≤ the profile's limit), no stalls.
+  // Drifts down with a gentle catch-up (≤ the profile's limit), no stalls. Every sample of the
+  // controller is kept (attached to the result), so a failure shows how it classified the network.
   let maxRate = 1;
+  const timeline: Array<Pick<Delay, 'delay' | 'target' | 'state' | 'playbackRate'> & { s: number; signals?: unknown }> = [];
+  const since = Date.now();
   await expect
     .poll(
       async () => {
         const d = await delayOf(page);
+        timeline.push({ s: Math.round((Date.now() - since) / 100) / 10, delay: d.delay, target: d.target, state: d.state, playbackRate: d.playbackRate, signals: d.signals });
         maxRate = Math.max(maxRate, d.playbackRate);
         return d.delay ?? 99;
       },
@@ -73,7 +79,14 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
     )
     .toBeLessThan(15);
   const low = await delayOf(page);
-  expect(low.state).toBe('firm');
+  await test.info().attach('adaptive-delay timeline (good network)', { body: JSON.stringify({ low, timeline }, null, 1), contentType: 'application/json' });
+  // The drift is the controller's "firm" verdict: only "firm" lowers the target, and the network
+  // never looked unstable. The state of the very last sample is not checked: on this 10× clock
+  // "firm" ends after two loose ticks (firmExit.afterS 0.5 s; 5 s in real time), so one slow
+  // segment load on a busy CI machine may end it right after the drift (1 of 40 WebKit runs on
+  // macos-latest in the calibration soak), which says nothing about the drift itself.
+  expect(timeline.some((d) => d.state === 'firm'), 'the controller called the network firm').toBe(true);
+  expect(timeline.filter((d) => d.state === 'unstable'), 'samples that called the network unstable').toEqual([]);
   expect(low.target).toBeLessThan(15);
   console.log('good network:', JSON.stringify({ start: start.delay, low: low.delay, target: low.target, stalls: low.stalls, stalledS: low.stalledS, holds: low.holds }));
   expect(low.stalls).toBeLessThanOrEqual(3);

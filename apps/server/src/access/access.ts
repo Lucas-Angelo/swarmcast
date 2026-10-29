@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { SignJWT, jwtVerify } from 'jose';
-import { JOIN_TICKET_TTL_S, SESSION_TTL_S, type DeviceKind } from '@swarmcast/shared';
+import { JOIN_TICKET_TTL_S, SESSION_TTL_S, type DeviceKind, type P2PBlockReason } from '@swarmcast/shared';
 
 export interface Session {
   id: string;
@@ -17,6 +17,12 @@ export interface Session {
   p2pAllowed: boolean;
   /** Viewer opted in to P2P in the player. */
   p2pEnabled: boolean;
+  /**
+   * Seen on the streamer's own internet connection (Secure mode): P2P would show the other P2P
+   * viewers the IP the server runs behind, so it stays off for this session, whatever the
+   * streamer's switches say (access/own-connection.ts).
+   */
+  ownConnection: boolean;
   autoRemovedFromP2P: boolean;
   hashFailures: number;
   peerIds: Set<string>;
@@ -60,14 +66,26 @@ export class AccessControl extends EventEmitter<AccessEvents> {
 
   /** The streamer's switch for everyone ("Allow P2P for viewers"); per-viewer removal comes on top. */
   p2pForAll = true;
+  /**
+   * The server's own public address is not known right now (Secure mode), so nobody can be told
+   * apart from someone at the streamer's home: P2P waits for everyone.
+   */
+  p2pChecking = false;
 
   constructor(private readonly now: () => number = Date.now) {
     super();
   }
 
-  /** May this viewer use P2P right now (global switch and per-viewer removal)? */
-  p2pAllowed(session: Pick<Session, 'p2pAllowed'>): boolean {
-    return this.p2pForAll && session.p2pAllowed;
+  /** May this viewer use P2P right now (global switch, per-viewer removal, the streamer's privacy)? */
+  p2pAllowed(session: Pick<Session, 'p2pAllowed' | 'ownConnection'>): boolean {
+    return this.p2pForAll && session.p2pAllowed && !session.ownConnection && !this.p2pChecking;
+  }
+
+  /** Why P2P is off for this viewer although the streamer did not turn it off (shown on the watch page). */
+  p2pBlock(session: Pick<Session, 'ownConnection'>): P2PBlockReason | undefined {
+    if (session.ownConnection) return 'own-connection';
+    if (this.p2pChecking) return 'checking';
+    return undefined;
   }
 
   /** Begin a new live: fresh id, signing key and link secret. */
@@ -90,6 +108,7 @@ export class AccessControl extends EventEmitter<AccessEvents> {
     this.sessions.clear();
     this.bannedDevices.clear();
     this.linkGeneration = 0;
+    this.p2pChecking = false;
     if (hadSessions) this.emit('reset');
   }
 
@@ -168,6 +187,7 @@ export class AccessControl extends EventEmitter<AccessEvents> {
       linkGeneration: this.linkGeneration,
       p2pAllowed: true,
       p2pEnabled: false,
+      ownConnection: false,
       autoRemovedFromP2P: false,
       hashFailures: 0,
       peerIds: new Set(),

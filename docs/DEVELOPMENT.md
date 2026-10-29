@@ -40,7 +40,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 - Every segment a viewer gets from another viewer is checked against the signed SHA-256 hash before it reaches the player.
 - "Stop everything" disconnects viewers, closes the tunnel, stops MediaMTX, wipes the cache and then checks that nothing is still running or reachable.
 - Remaining risks:
-  - Viewers who turn on P2P see each other's IP addresses.
+  - Viewers who turn on P2P see each other's IP addresses. P2P stays off for viewers on the streamer's own connection (their IP is the streamer's).
   - Cloudflare terminates TLS at its edge.
   - The free tunnel has no uptime guarantee.
   - Direct mode (opt-in) shows the streamer's IP to everyone who has the link.

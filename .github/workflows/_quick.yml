@@ -16,12 +16,13 @@ jobs:
   quick:
     name: lint, typecheck, unit, audit, tray, fmt
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           go: 'true'
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
