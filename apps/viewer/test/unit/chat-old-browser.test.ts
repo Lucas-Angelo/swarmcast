@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
-// Plan §2.4.1b: the chat still renders on browsers without Intl.Segmenter (Firefox < 125) and
-// String.prototype.isWellFormed (Safari < 16.4). The modules are loaded fresh after the APIs are
-// removed, so nothing cached a reference before.
+// Plan §2.4.1b: the chat needs neither Intl.Segmenter (the shared core has its own UAX #29
+// segmenter) nor String.prototype.isWellFormed (Safari < 16.4). The modules are loaded fresh after
+// the APIs are removed, so nothing cached a reference before.
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const intl = Intl as unknown as Record<string, unknown>;
@@ -47,9 +47,9 @@ describe('chat on an older browser', () => {
     expect(rows[2]!.classList.contains('hidden-msg')).toBe(true);
   });
 
-  it('the input still counts (code points instead of graphemes) and sends', async () => {
+  it('the input still counts graphemes', async () => {
     const { lengthState } = await import('../../src/chat/input.js');
-    expect(lengthState('olá', null).graphemes).toBe(3);
+    expect(lengthState('olá 👩‍👩‍👧‍👦', null)).toMatchObject({ graphemes: 5, emoji: 1 });
     expect(lengthState('a'.repeat(250), null).over).toBe(true);
   });
 });
