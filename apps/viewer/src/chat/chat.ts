@@ -169,8 +169,10 @@ export function mountChat(opts: MountOptions): ChatController {
         input.acked(n);
       },
       reject: (n, code, params, retryMs) => {
-        list.reject(n);
-        input.rejected(n, code, params, retryMs);
+        // Without `n` the server refused the frame before reading it: it is the oldest send.
+        const nonce = n ?? input.oldestPending();
+        list.reject(nonce);
+        input.rejected(nonce, code, params, retryMs);
       },
       unsupported: () => {
         chatSession.settings = null;

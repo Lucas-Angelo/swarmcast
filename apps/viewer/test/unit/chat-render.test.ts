@@ -77,6 +77,14 @@ describe('ChatList render rules', () => {
     expect(list.stats.hidden).toBe(4);
   });
 
+  it('an empty streamer name shows the translated default', () => {
+    const { list, flush } = setup();
+    list.append([m(1, 'oi', { ...lucas, n: '' })]);
+    flush();
+    expect(list.list.querySelector('li.from-streamer .nick')!.textContent).toBe('Streamer');
+    expect(list.list.querySelectorAll('li.hidden-msg')).toHaveLength(0);
+  });
+
   it('the streamer gets a badge from the role and a theme colour, never a user colour', () => {
     const { list, flush } = setup();
     list.append([m(1, 'oi', lucas)]);

@@ -97,6 +97,17 @@ describe('ChatInput', () => {
     expect(sent).toEqual(['palavra feia']);
   });
 
+  it('a reject without a nonce belongs to the oldest send still waiting', () => {
+    const { input, type } = makeInput();
+    type('um');
+    input.submit();
+    type('dois');
+    input.submit();
+    expect(input.oldestPending()).toBe(1);
+    input.acked(1);
+    expect(input.oldestPending()).toBe(2);
+  });
+
   it('a reject does not overwrite what the viewer is typing now', () => {
     const { input, type } = makeInput();
     type('primeira');

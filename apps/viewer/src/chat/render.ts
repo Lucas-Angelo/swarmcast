@@ -328,7 +328,8 @@ export class ChatList {
       this.stats.rendered++;
       return li;
     }
-    const nickOk = checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
+    // The streamer's name may be "" (the translated default is shown instead).
+    const nickOk = (e.author.r === 'streamer' && e.author.n === '') || checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
     const textOk = e.text === undefined || checkChatInvariants(e.text);
     if (!nickOk || !textOk) {
       li.classList.add('hidden-msg');

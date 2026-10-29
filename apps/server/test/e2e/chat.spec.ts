@@ -1,23 +1,19 @@
 // The viewer chat against the real server (plan §10.3, chat.spec.ts @ui). The same UI flows run
 // without a server in apps/viewer/test/chat/chat-ui.spec.ts (mock hub).
 //
-// SKELETON until the server chat hub (lane A, C2) lands: on a server without GET /api/chat every
-// test is skipped, so this file switches itself on when C2 merges. Panel-side moderation is chat-moderation.spec.ts (C10).
+// The streamer test needs the panel's chat routes (C3); it is skipped while GET /api/chat does not
+// exist. Panel-side moderation is chat-moderation.spec.ts (C10).
 import type { Page } from '@playwright/test';
 import { adminApi, expect, join, test, uid } from './fixtures.js';
 
-let hub: boolean | undefined;
-/** Does this server have the chat hub (GET /api/chat answers with settings)? Asked once. */
-async function hasHub(): Promise<boolean> {
-  hub ??= await adminApi<{ settings?: unknown }>('GET', '/api/chat')
+let routes: boolean | undefined;
+/** Does the panel have its chat routes (GET /api/chat answers with settings)? Asked once. */
+async function hasChatRoutes(): Promise<boolean> {
+  routes ??= await adminApi<{ settings?: unknown }>('GET', '/api/chat')
     .then((r) => typeof r === 'object' && r !== null && 'settings' in r)
     .catch(() => false);
-  return hub;
+  return routes;
 }
-
-test.beforeEach(async () => {
-  test.skip(!(await hasHub()), 'the server has no chat hub yet (lane A, C2)');
-});
 
 /** The chat column shows (hello carried a snapshot: chat is on by default). */
 async function chatOrSkip(page: Page): Promise<void> {
@@ -26,8 +22,8 @@ async function chatOrSkip(page: Page): Promise<void> {
 
 async function say(page: Page, text: string): Promise<void> {
   const input = page.getByTestId('chat-input');
-  await expect(page.getByTestId('chat-send')).toBeEnabled({ timeout: 10_000 }).catch(() => {});
   await input.fill(text);
+  await expect(page.getByTestId('chat-send')).toBeEnabled({ timeout: 10_000 });
   await input.press('Enter');
 }
 
@@ -49,21 +45,24 @@ test('two viewers chat both ways; "sending…" then the server copy', { tag: '@u
   }
 });
 
-test('slow mode rejects are translated and keep the text (EN and pt-BR)', { tag: '@ui' }, async ({ browser }) => {
+test('slow mode waits on the client; a server reject is translated and keeps the text (EN and pt-BR)', { tag: '@ui' }, async ({ browser }) => {
   for (const lang of ['en', 'pt-BR'] as const) {
-    const v = await join(browser, uid(`slow${lang}`));
+    const v = await join(browser, uid(`rej${lang}`));
     try {
       await v.page.goto(`/watch?lang=${lang}`);
       await chatOrSkip(v.page);
-      await say(v.page, 'primeira');
-      // Bypass the client's own cooldown to reach the server's slow mode.
-      await v.page.evaluate(() => {
-        const ta = document.querySelector<HTMLTextAreaElement>('[data-testid="chat-input"]')!;
-        ta.value = 'segunda';
-        ta.form?.requestSubmit();
-      });
-      await expect(v.page.getByTestId('chat-status')).not.toHaveText('');
-      await expect(v.page.getByTestId('chat-input')).not.toHaveValue('');
+      const text = `de novo ${uid('dup')}`;
+      await say(v.page, text);
+      // Slow mode (2 s by default): Send waits and says so, the box keeps working.
+      await v.page.getByTestId('chat-input').fill(text);
+      await expect(v.page.getByTestId('chat-send')).toBeDisabled();
+      await expect(v.page.getByTestId('chat-status')).toHaveText(lang === 'en' ? /send again/i : /enviar de novo/i);
+      // The same text again after the wait: the server refuses it as a repeat.
+      await expect(v.page.getByTestId('chat-send')).toBeEnabled({ timeout: 5_000 });
+      await v.page.getByTestId('chat-input').press('Enter');
+      await expect(v.page.getByTestId('chat-status')).toHaveText(lang === 'en' ? 'You just sent that message.' : 'Você acabou de mandar essa mensagem.');
+      await expect(v.page.getByTestId('chat-input')).toHaveValue(text);
+      await expect(v.page.getByTestId('chat-list').locator('li.failed')).toHaveCount(1);
     } finally {
       await v.context.close();
     }
@@ -94,8 +93,9 @@ for (const scheme of ['light', 'dark'] as const) {
       await a.page.getByTestId('chat-settings-button').click();
       await a.page.getByTestId('chat-settings').locator('button.swatch').nth(2).click();
       await a.page.keyboard.press('Escape');
-      await say(a.page, 'cor nova');
-      const nick = b.page.getByTestId('chat-list').locator('li.msg', { hasText: 'cor nova' }).locator('.nick');
+      const text = `cor nova ${uid('cor')}`;
+      await say(a.page, text);
+      const nick = b.page.getByTestId('chat-list').locator('li.msg', { hasText: text }).locator('.nick');
       await expect(nick).toBeVisible({ timeout: 5_000 });
       const ratio = await nick.evaluate((el) => {
         const ch = (css: string) => (css.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
@@ -116,6 +116,7 @@ for (const scheme of ['light', 'dark'] as const) {
 }
 
 test('a streamer message carries the badge; links are never clickable', { tag: '@ui' }, async ({ browser }) => {
+  test.skip(!(await hasChatRoutes()), 'the panel chat routes (C3) are not there yet');
   const v = await join(browser, uid('badge'));
   try {
     await chatOrSkip(v.page);

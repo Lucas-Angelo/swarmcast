@@ -147,6 +147,11 @@ export class ChatInput {
     this.update();
   }
 
+  /** The oldest send still waiting for its ack (a reject without `n` belongs to it). */
+  oldestPending(): number | undefined {
+    return this.sent.keys().next().value;
+  }
+
   acked(n: number): void {
     this.sent.delete(n);
   }
