@@ -1,9 +1,29 @@
 {
   "version": "17.0",
   "files": {
-    "UnicodeData.txt": { "sha256": "2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c" },
-    "DerivedJoiningType.txt": { "sha256": "f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d" },
-    "IdentifierStatus.txt": { "sha256": "617228a16da13850bf8af28b6cd08f5e9b6595d2eb60404fe6eee2c85b4e4a35" },
-    "confusables.txt": { "sha256": "091c7f82fc39ef208faf8f94d29c244de99254675e09de163160c810d13ef22a" }
+    "UnicodeData.txt": {
+      "sha256": "2e1efc1dcb59c575eedf5ccae60f95229f706ee6d031835247d843c11d96470c"
+    },
+    "DerivedJoiningType.txt": {
+      "sha256": "f39ebe974825d6736aee15582250307aa532b2cfab3caf3f86bd23fddc9c5c4d"
+    },
+    "IdentifierStatus.txt": {
+      "sha256": "617228a16da13850bf8af28b6cd08f5e9b6595d2eb60404fe6eee2c85b4e4a35"
+    },
+    "confusables.txt": {
+      "sha256": "091c7f82fc39ef208faf8f94d29c244de99254675e09de163160c810d13ef22a"
+    },
+    "GraphemeBreakProperty.txt": {
+      "sha256": "d6b51d1d2ae5c33b451b7ed994b48f1f4dc62b2272a5831e7fd418514a6bae89"
+    },
+    "DerivedCoreProperties.txt": {
+      "sha256": "24c7fed1195c482faaefd5c1e7eb821c5ee1fb6de07ecdbaa64b56a99da22c08"
+    },
+    "emoji-data.txt": {
+      "sha256": "2cb2bb9455cda83e8481541ecf5b6dfda66a3bb89efa3fa7c5297eccf607b72b"
+    },
+    "GraphemeBreakTest.txt": {
+      "sha256": "e2d134d2c52919bace503ebb6a551c1855fe1a1faec18478c78fff254a1793ec"
+    }
   }
 }

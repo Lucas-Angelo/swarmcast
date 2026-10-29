@@ -28,7 +28,7 @@ import {
   ZWJ,
   ZWNJ,
   codePoints,
-  graphemeSegmenter,
+  graphemeCodePoints,
   inRemovalSet,
   isBidiExplicit,
   isBidiImplicit,
@@ -41,6 +41,7 @@ import {
   props,
   utf8Length,
 } from './ucd.js';
+import { graphemeBounds } from './grapheme.js';
 
 /**
  * The chat's Unicode pipeline (docs/CHAT.md, plan §2.3). Pure, synchronous, linear in the input
@@ -148,27 +149,8 @@ interface Pass {
 
 /** Step 6a–e over every grapheme of `s` (NFC already applied). */
 function graphemePass(s: string): Pass {
-  const seg = graphemeSegmenter();
   const all = codePoints(s);
-  // Grapheme boundaries as code-point indexes.
-  const bounds: number[] = [];
-  if (seg) {
-    let cpIndex = 0;
-    let unit = 0;
-    for (const g of seg.segment(s)) {
-      bounds.push(cpIndex);
-      // Count code points of this segment.
-      const end = unit + g.segment.length;
-      for (let u = unit; u < end; u++) {
-        const c = s.charCodeAt(u);
-        if (!(c >= 0xdc00 && c <= 0xdfff && u > unit)) cpIndex++;
-      }
-      unit = end;
-    }
-  } else {
-    for (let i = 0; i < all.length; i++) bounds.push(i);
-  }
-  bounds.push(all.length);
+  const bounds = graphemeBounds(all);
 
   const out: number[] = [];
   let dropped = 0;
@@ -289,13 +271,11 @@ function canonicalText(input: string): { text: string; dropped: number } {
 
 /** Count graphemes, visible graphemes and emoji graphemes of canonical text. */
 export function measureChatText(s: string): { graphemes: number; visible: number; emoji: number; latinOnly: boolean } {
-  const seg = graphemeSegmenter();
-  const parts = seg ? Array.from(seg.segment(s), (x) => x.segment) : codePoints(s).map((c) => String.fromCodePoint(c));
+  const parts = graphemeCodePoints(s);
   let visible = 0;
   let emoji = 0;
   let latinOnly = true;
-  for (const g of parts) {
-    const cps = codePoints(g);
+  for (const cps of parts) {
     let vis = false;
     for (const cp of cps) {
       const p = props(cp);
@@ -358,13 +338,10 @@ export function checkChatInvariants(text: string, opts: { maxGraphemes?: number;
       prevMark = -1;
     }
   }
-  const seg = graphemeSegmenter();
-  if (!seg) return true;
   let n = 0;
   let emoji = 0;
-  for (const g of seg.segment(text)) {
+  for (const cps of graphemeCodePoints(text)) {
     n++;
-    const cps = codePoints(g.segment);
     const isEmoji = isEmojiGrapheme(cps);
     if (cps.length > (isEmoji ? CHAT_EMOJI_MAX_CODEPOINTS : CHAT_GRAPHEME_MAX_CODEPOINTS)) return false;
     if (isEmoji) emoji++;
