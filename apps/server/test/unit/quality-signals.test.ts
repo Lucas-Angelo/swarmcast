@@ -71,6 +71,85 @@ describe('obs-websocket', () => {
     c.stop();
     expect(() => new ObsWebsocketClient('ws://192.168.1.2:4455', undefined, silentLog)).toThrow();
   });
+
+  it('only accepts a loopback obs-websocket URL', () => {
+    for (const url of ['ws://127.0.0.1.evil.example:4455', 'ws://localhost.evil.example:4455', 'wss://example.com:4455', 'ws://10.0.0.2:4455', 'http://127.0.0.1:4455', 'ws+unix:/tmp/obs.sock']) {
+      expect(() => new ObsWebsocketClient(url, 'pw', silentLog), url).toThrow();
+    }
+    for (const url of ['ws://127.0.0.1:4455', 'ws://localhost:4455', 'ws://[::1]:4455']) expect(() => new ObsWebsocketClient(url, 'pw', silentLog), url).not.toThrow();
+  });
+
+  /** A process on the obs-websocket port that is not (a well-behaved) OBS. */
+  async function fakeObs(onConnection: (ws: import('ws').WebSocket) => void): Promise<string> {
+    wss = new WebSocketServer({ port: 0, host: '127.0.0.1', handleProtocols: () => 'obswebsocket.json' });
+    wss.on('connection', onConnection);
+    await new Promise<void>((r) => wss!.once('listening', () => r()));
+    return `ws://127.0.0.1:${(wss.address() as { port: number }).port}`;
+  }
+
+  it('survives malformed messages from whatever listens on the port (no crash, no health)', async () => {
+    const bad = ['null', '42', '"x"', '[]', '{"op":0}', '{"op":0,"d":null}', '{"op":0,"d":{"authentication":{"salt":1,"challenge":null}}}', '{"op":2}', '{"op":7}', '{"op":7,"d":null}', '{"op":7,"d":{"requestStatus":{"result":true}}}'];
+    let gotIdentify = false;
+    const url = await fakeObs((ws) => {
+      for (const m of bad) ws.send(m);
+      ws.on('message', () => (gotIdentify = true));
+      setTimeout(() => ws.close(), 300);
+    });
+    const thrown: unknown[] = [];
+    const onUncaught = (err: unknown): void => void thrown.push(err);
+    process.on('uncaughtException', onUncaught);
+    try {
+      const c = new ObsWebsocketClient(url, 'pw', silentLog, 50);
+      c.start();
+      await new Promise((r) => setTimeout(r, 500));
+      c.stop();
+      expect(thrown).toEqual([]);
+      expect(gotIdentify).toBe(false);
+      expect(c.health).toBeUndefined();
+      expect(c.connected).toBe(false);
+    } finally {
+      process.off('uncaughtException', onUncaught);
+    }
+  });
+
+  it('ignores stream numbers that are not finite, non-negative numbers', async () => {
+    const url = await fakeObs((ws) => {
+      ws.send(JSON.stringify({ op: 0, d: { rpcVersion: 1 } }));
+      ws.on('message', (raw) => {
+        const m = JSON.parse(String(raw)) as { op: number; d: { requestId?: string } };
+        if (m.op === 1) ws.send(JSON.stringify({ op: 2, d: { negotiatedRpcVersion: 1 } }));
+        else if (m.op === 6) {
+          const responseData = { outputActive: true, outputReconnecting: false, outputCongestion: '<b>9</b>', outputBytes: 1e308, outputSkippedFrames: -5, outputTotalFrames: 'x', outputDuration: 1 };
+          ws.send(JSON.stringify({ op: 7, d: { requestId: m.d.requestId, requestStatus: { result: true, code: 100 }, responseData } }));
+        }
+      });
+    });
+    const c = new ObsWebsocketClient(url, undefined, silentLog, 30);
+    c.start();
+    await expect.poll(() => c.connected, { timeout: 5000 }).toBe(true);
+    await new Promise((r) => setTimeout(r, 200));
+    expect(c.health).toBeUndefined();
+    c.stop();
+  });
+
+  it('a repeated Identified message does not start a second poll timer', async () => {
+    let polls = 0;
+    const url = await fakeObs((ws) => {
+      ws.send(JSON.stringify({ op: 0, d: { rpcVersion: 1 } }));
+      ws.on('message', (raw) => {
+        const m = JSON.parse(String(raw)) as { op: number };
+        if (m.op === 1) for (let i = 0; i < 20; i++) ws.send(JSON.stringify({ op: 2, d: { negotiatedRpcVersion: 1 } }));
+        else if (m.op === 6) polls++;
+      });
+    });
+    const c = new ObsWebsocketClient(url, undefined, silentLog, 100);
+    c.start();
+    await expect.poll(() => c.connected, { timeout: 5000 }).toBe(true);
+    await new Promise((r) => setTimeout(r, 450));
+    c.stop();
+    // One poll on Identified plus about one per 100 ms: never 20 timers' worth.
+    expect(polls).toBeLessThanOrEqual(7);
+  });
 });
 
 describe('QualityManager wiring', () => {
