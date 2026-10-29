@@ -430,6 +430,46 @@ button#unmute {
   margin: 0 auto var(--sp-4);
 }
 
+/* ---- Chat (chat/chat.css styles the column itself) ---------------------------------------- */
+/* Under 1100 px the chat sits between the bar and the settings card, 40% of the screen tall. */
+.stage > .chat {
+  height: 40vh;
+  height: 40dvh;
+  min-height: 260px;
+  margin-bottom: var(--sp-4);
+}
+/* From 1100 px: a column right of the player, as tall as it; the stage widens to fit it. */
+@media (min-width: 1100px) {
+  .watch.has-chat:not(.chat-hidden) {
+    --chat-w: 340px;
+    --stage-w: min(calc(100% - 48px), calc(1200px + var(--chat-w) + var(--sp-4)), calc(max(560px, calc((100dvh - 210px) * 16 / 9)) + var(--chat-w) + var(--sp-4)));
+  }
+  .watch.has-chat:not(.chat-hidden) .stage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--chat-w);
+    grid-template-areas:
+      'player chat'
+      'bar .'
+      'panel .';
+    column-gap: var(--sp-4);
+  }
+  .watch.has-chat .stage > .player {
+    grid-area: player;
+  }
+  .watch.has-chat .stage > .bar {
+    grid-area: bar;
+  }
+  .watch.has-chat .stage > .panel {
+    grid-area: panel;
+  }
+  .watch.has-chat .stage > .chat {
+    grid-area: chat;
+    height: 0;
+    min-height: 100%;
+    margin: 0;
+  }
+}
+
 /* ---- Phones -------------------------------------------------------------------------------- */
 @media (max-width: 640px) {
   .watch {
@@ -458,6 +498,9 @@ button#unmute {
   .panel {
     margin: 0 var(--sp-4);
     padding: 0 var(--sp-4);
+  }
+  .stage > .chat {
+    margin: 0 var(--sp-4) var(--sp-4);
   }
   button.golive,
   button#unmute {
