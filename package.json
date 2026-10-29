@@ -1,6 +1,6 @@
 {
   "name": "swarmcast",
-  "version": "0.2.1",
+  "version": "0.0.0-beta.1",
   "private": true,
   "description": "Self-hosted, members-only live streaming with optional viewer P2P.",
   "license": "MIT",

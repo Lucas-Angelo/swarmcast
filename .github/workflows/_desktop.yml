@@ -4,7 +4,7 @@ name: desktop
 # clean-machine tests start as soon as its own build is done, not after the slowest target's.
 #
 # build: the target's installers, with exactly two `tauri build`s:
-# - A (0.0.0-test.1), the update test's starting point: --fast, accepts http:// update URLs and
+# - A (0.0.0-alpha.1), the update test's starting point: --fast, accepts http:// update URLs and
 #   trusts the key that signed the real build;
 # - the real installers, which are also the update test's target.
 # Pull requests and main build the release profile without LTO and with 16 codegen units (through
@@ -151,17 +151,17 @@ jobs:
           echo "TEST_KEY=$key" >> "$GITHUB_ENV"
       # Only what the update test installs (macOS: the .app and its .app.tar.gz, Linux: the
       # AppImage), with --fast: no LTO, 16 codegen units, NSIS uncompressed.
-      - name: Build A (0.0.0-test.1, update test)
+      - name: Build A (0.0.0-alpha.1, update test)
         run: |
           case "$TARGET" in macos-*) bundles=app ;; linux-*) bundles=appimage ;; *) bundles=nsis ;; esac
           trust=(--updater-pubkey "$TEST_KEY.pub")
           [ "$RELEASE" = true ] && trust=()
           TAURI_SIGNING_PRIVATE_KEY="$(cat "$TEST_KEY")"
           export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test
-          node scripts/build/desktop.mjs --target "$TARGET" --version 0.0.0-test.1 --bundles "$bundles" --fast \
+          node scripts/build/desktop.mjs --target "$TARGET" --version 0.0.0-alpha.1 --bundles "$bundles" --fast \
             --insecure-updates "${trust[@]}"
           mkdir -p release/update-test
-          mv "release/desktop/$TARGET" release/update-test/0.0.0-test.1
+          mv "release/desktop/$TARGET" release/update-test/0.0.0-alpha.1
       # macOS: desktop.mjs retries the .dmg step by itself when hdiutil reports "Resource busy".
       # Linux: it checks that the server bundled in the .deb and the AppImage starts (--version).
       - name: Build the installers
@@ -178,6 +178,36 @@ jobs:
           node scripts/build/desktop.mjs --target "$TARGET" --version "$VERSION"
           ls -la "release/desktop/$TARGET" release/update-test/*
           ls "release/desktop/$TARGET"/*.sig >/dev/null || { echo "::error::no updater signatures (*.sig) in release/desktop/$TARGET"; exit 1; }
+      # THROWAWAY build check (pre-release version): what each bundler made of the version.
+      - name: Build check - versions inside the bundles
+        if: always()
+        continue-on-error: true
+        run: |
+          d="release/desktop/$TARGET"
+          case "$TARGET" in
+            macos-*)
+              for app in "$d/SwarmCast.app" release/update-test/*/SwarmCast.app; do
+                [ -d "$app" ] || continue
+                echo "$app:"
+                /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist"
+                /usr/libexec/PlistBuddy -c 'Print :CFBundleVersion' "$app/Contents/Info.plist"
+              done
+              ls "$d"/*.dmg ;;
+            linux-*)
+              for deb in "$d"/*.deb; do
+                v="$(dpkg-deb --field "$deb" Version)"
+                echo "$deb: Version=$v"
+                for other in 0.0.0 0.0.0-beta.2 0.0.0~beta.2 0.0.1; do
+                  if dpkg --compare-versions "$v" lt "$other"; then r='<'; else r='>='; fi
+                  echo "  dpkg: $v $r $other"
+                done
+              done ;;
+            windows-*)
+              for exe in "$d"/*-setup.exe release/update-test/*/*-setup.exe; do
+                [ -f "$exe" ] || continue
+                pwsh -NoProfile -Command "\$i = (Get-Item '$exe').VersionInfo; '$exe'; 'FileVersion=' + \$i.FileVersion; 'ProductVersion=' + \$i.ProductVersion"
+              done ;;
+          esac
       - name: Remove the throwaway key
         if: always()
         run: rm -f "$RUNNER_TEMP/update-test.key" "$RUNNER_TEMP/update-test.key.pub"
@@ -307,7 +337,7 @@ jobs:
             run=(xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session --)
           fi
           "${run[@]}" node scripts/test/desktop/verify.mjs --installers release/desktop \
-            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811
+            --update-from release/update-test/0.0.0-alpha.1 --update-to release/desktop --update-port 47811
 
       # ---------------------------------------------------------------- AppImage, minimal host
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
