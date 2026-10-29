@@ -67,17 +67,18 @@ describe('config', () => {
   });
 
   it('migration: pure function cases', () => {
-    expect(migrateConfig({ security: { requireBrowserCheck: false } })).toEqual({ config: { configVersion: 3, security: { requireBrowserCheck: true } }, changed: true });
+    expect(migrateConfig({ security: { requireBrowserCheck: false } })).toEqual({ config: { configVersion: 4, security: { requireBrowserCheck: true } }, changed: true });
     // Old file without the switch: only the version is added (the new default applies).
-    expect(migrateConfig({ uploadLimitMbps: 5 })).toEqual({ config: { uploadLimitMbps: 5, configVersion: 3 }, changed: true });
+    expect(migrateConfig({ uploadLimitMbps: 5 })).toEqual({ config: { uploadLimitMbps: 5, configVersion: 4 }, changed: true });
     expect(migrateConfig({ configVersion: 1, security: { requireBrowserCheck: true } }).config).toMatchObject({ security: { requireBrowserCheck: true } });
     // Version 2 (or newer) files are the streamer's choice.
     expect(migrateConfig({ configVersion: 2, security: { requireBrowserCheck: false } })).toEqual({
-      config: { configVersion: 3, security: { requireBrowserCheck: false } },
+      config: { configVersion: 4, security: { requireBrowserCheck: false } },
       changed: true,
     });
-    expect(migrateConfig({ configVersion: 3, security: { requireBrowserCheck: false } }).changed).toBe(false);
+    expect(migrateConfig({ configVersion: 3, security: { requireBrowserCheck: false } })).toEqual({ config: { configVersion: 4, security: { requireBrowserCheck: false } }, changed: true });
     expect(migrateConfig({ configVersion: 4, security: { requireBrowserCheck: false } }).changed).toBe(false);
+    expect(migrateConfig({ configVersion: 5, security: { requireBrowserCheck: false } }).changed).toBe(false);
     // Unknown shapes pass through untouched (the schema reports them).
     for (const x of [null, 5, 'x', [1]]) expect(migrateConfig(x)).toEqual({ config: x, changed: false });
     const input = { security: { requireBrowserCheck: false } };
@@ -85,15 +86,28 @@ describe('config', () => {
     expect(input).toEqual({ security: { requireBrowserCheck: false } });
   });
 
+  it('version 4 adds the chat with its defaults (on, GIFs off, slow mode 2 s) and keeps saved choices', () => {
+    const f = path.join(tmp(), 'config.json');
+    const v3 = { ...defaultConfig(), configVersion: 3 } as Record<string, unknown>;
+    delete v3.chat;
+    fs.writeFileSync(f, JSON.stringify(v3));
+    const c = loadConfig(f);
+    expect(c.configVersion).toBe(4);
+    expect(c.chat).toMatchObject({ enabled: true, slowModeS: 2, maxGraphemes: 200, content: { text: true, emotes: true, gifs: false }, gif: { key: '' } });
+    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: 4, chat: { enabled: true } });
+    saveConfig(f, { ...c, chat: { ...c.chat, enabled: false, slowModeS: 10 } });
+    expect(loadConfig(f).chat).toMatchObject({ enabled: false, slowModeS: 10 });
+  });
+
   it('defaults maxViewers to what a quick tunnel holds, and migrates the old default 500 once', () => {
     expect(defaultConfig().maxViewers).toBe(QUICK_TUNNEL_MAX_VIEWERS);
     // 500 saved before version 3 was the old default: it becomes 120.
-    expect(migrateConfig({ maxViewers: 500 }).config).toMatchObject({ maxViewers: QUICK_TUNNEL_MAX_VIEWERS, configVersion: 3 });
+    expect(migrateConfig({ maxViewers: 500 }).config).toMatchObject({ maxViewers: QUICK_TUNNEL_MAX_VIEWERS, configVersion: 4 });
     expect(migrateConfig({ configVersion: 2, maxViewers: 500 }).config).toMatchObject({ maxViewers: QUICK_TUNNEL_MAX_VIEWERS });
     // Any other number was the streamer's choice.
     expect(migrateConfig({ configVersion: 2, maxViewers: 300 }).config).toMatchObject({ maxViewers: 300 });
     // A 500 chosen after the migration stays.
-    expect(migrateConfig({ configVersion: 3, maxViewers: 500 })).toEqual({ config: { configVersion: 3, maxViewers: 500 }, changed: false });
+    expect(migrateConfig({ configVersion: 3, maxViewers: 500 })).toEqual({ config: { configVersion: 4, maxViewers: 500 }, changed: true });
     const f = path.join(tmp(), 'config.json');
     const old = { ...defaultConfig(), configVersion: 2, maxViewers: 500 };
     fs.writeFileSync(f, JSON.stringify(old));
