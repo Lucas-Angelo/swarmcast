@@ -286,22 +286,25 @@ mode the server does it on first start (no `system-check.json`, or a different a
 | Unit (vitest, cargo test) | protocol encode/decode, autostart entry generation per OS, system check thresholds, i18n completeness, update state |
 | Integration (vitest) | real server with `--desktop` driven by a fake shell over stdio: ready, state, start/stop, quit, stdin EOF, fatal on busy ports |
 | macOS (local + CI arm64/x64) | build `.app`/`.dmg`, install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
-| Linux (Docker, CI x64) | Ubuntu 22.04/24.04, Debian 12: install `.deb`/run AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
+| Linux (CI runners) | Ubuntu 22.04/24.04 x64 and 24.04 arm64 (`_desktop.yml`, clean-machine job): install `.deb` and AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
+| Linux (Docker, CI x64 + arm64, weekly) | the AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 with only the host packages the website lists (`scripts/test/docker/appimage.sh`, `linux-docker.yml`): starts, panel login, `/api/desktop`, webview up, Quit leaves nothing running |
 | Windows (CI) | NSIS silent install, launch, panel through the admin API, Job object (killing the app ends the server), autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
-CI: `.github/workflows/desktop.yml` runs `cargo fmt --check`, `cargo clippy -D warnings` and `cargo test`
-on each OS, builds the installers for every target (windows-x64, macos-arm64, macos-x64 on the Intel
-image, linux-x64 and linux-arm64 on Ubuntu 22.04 for an older glibc) and runs
-`scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`, `.dmg` → `~/Applications`, `.deb` and the
-AppImage), launch, panel login (admin API), autostart on/off, kill (the server and tools go too), quit,
-the NSIS uninstaller / `apt remove` and `scripts/uninstall-*`, and an update from test build A
-(0.0.0-test.1) to B (0.0.0-test.2) served on 127.0.0.1, with config and secrets kept. A and B are built
-with `--insecure-updates --updater-pubkey` and a key pair generated in the job. Only `release.yml` passes
-the real `TAURI_SIGNING_PRIVATE_KEY` and publishes the tested installers, their `.sig` files and
-`latest.json` ([RELEASING.md](RELEASING.md)); other builds of the real installers have no updater
-artifacts.
+CI ([.github/workflows/README.md](../.github/workflows/README.md)): `cargo fmt --check` runs in `quick`,
+`cargo clippy -D warnings` and `cargo test` in the `node` stage on each OS. `_desktop.yml` builds the
+installers for every target (windows-x64, macos-arm64 and macos-x64, both on Apple silicon, linux-x64 and
+linux-arm64 on Ubuntu 22.04 for an older glibc; the Intel Mac image tests the macos-x64 build), two `tauri build`s per target: test build A (0.0.0-test.1,
+`--fast --insecure-updates --updater-pubkey`) and the real installers, signed with a key pair generated in
+the job. Its clean-machine job then runs `scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`,
+`.dmg` → `~/Applications`, `.deb` and the AppImage), launch, panel login (admin API), autostart on/off,
+kill (the server and tools go too), quit, the NSIS uninstaller / `apt remove` and `scripts/uninstall-*`,
+and an update from A to the real installers, served on 127.0.0.1 with a `latest.json` made in the job,
+with config and secrets kept. Pull requests build the release profile without LTO (16 codegen units);
+only `release.yml` builds with fat LTO, signs with the real `TAURI_SIGNING_PRIVATE_KEY` (A then trusts
+the release key) and publishes the tested installers, their `.sig` files and `latest.json`
+([RELEASING.md](RELEASING.md)).
 
-Run manually with `screenshots: true` (`gh workflow run desktop.yml -f screenshots=true`), the Windows test
-first clicks through the installer's normal pages and captures each page and the app window (English and pt-BR)
-for the website guide (`SC_DESKTOP_SCREENSHOTS`, artifact `guide-screenshots-windows-x64`, no checks), then removes
-everything so the real test starts clean.
+Run `pipeline.yml` by hand with `screenshots: true` (`gh workflow run pipeline.yml -f screenshots=true`)
+and the Windows clean-machine test first clicks through the installer's normal pages and captures each
+page and the app window (English and pt-BR) for the website guide (`SC_DESKTOP_SCREENSHOTS`, artifact
+`guide-screenshots-windows-x64`, no checks), then removes everything so the real test starts clean.

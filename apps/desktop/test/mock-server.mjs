@@ -52,9 +52,12 @@ process.stderr.write('mock: this line goes to stderr\n');
 const dir = dataDir();
 fs.mkdirSync(dir, { recursive: true });
 const configFile = path.join(dir, 'mock-config.json');
-if (!fs.existsSync(configFile)) {
-  fs.writeFileSync(configFile, JSON.stringify({ createdAt: new Date().toISOString(), secret: crypto.randomBytes(8).toString('hex') }, null, 2));
+try {
+  // 'wx': created only when it is not there yet (an existing one is kept as it is).
+  fs.writeFileSync(configFile, JSON.stringify({ createdAt: new Date().toISOString(), secret: crypto.randomBytes(8).toString('hex') }, null, 2), { flag: 'wx' });
   log(`wrote ${configFile}`);
+} catch (err) {
+  if (err.code !== 'EEXIST') throw err;
 }
 
 if (mode === 'crash') {
@@ -63,7 +66,12 @@ if (mode === 'crash') {
 }
 if (mode === 'crash-twice') {
   const counter = path.join(dir, 'mock-crash-count');
-  const n = fs.existsSync(counter) ? Number(fs.readFileSync(counter, 'utf8')) : 0;
+  let n = 0;
+  try {
+    n = Number(fs.readFileSync(counter, 'utf8'));
+  } catch {
+    /* first start */
+  }
   if (n < 2) {
     fs.writeFileSync(counter, String(n + 1));
     log(`crashing before ready (${n + 1}/2)`);

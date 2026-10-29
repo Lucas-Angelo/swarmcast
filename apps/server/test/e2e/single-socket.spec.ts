@@ -1,18 +1,17 @@
-import { expect, test } from '@playwright/test';
-import { enableP2P, liveLink, waitPlaying } from './fixtures.js';
+import { enableP2P, expect, liveLink, test, uid, waitPlaying } from './fixtures.js';
 
 // A Cloudflare quick tunnel counts every open WebSocket against its 200-requests-in-flight
 // limit (docs/ARCHITECTURE.md), so a viewer keeps exactly one: /control, which also carries the
 // WebTorrent tracker (apps/viewer/src/tracker-mux.ts). That the tracker really works over it
 // is covered by p2p.spec.ts (peers find each other through it).
-test('a viewer holds one WebSocket; the tracker rides on /control', async ({ browser }) => {
+test('a viewer holds one WebSocket; the tracker rides on /control', { tag: '@ui' }, async ({ browser }) => {
   const context = await browser.newContext();
   const page = await context.newPage();
   const sockets: string[] = [];
   page.on('websocket', (ws) => sockets.push(new URL(ws.url()).pathname));
   await page.goto(await liveLink());
   await expect(page).toHaveURL(/\/join$/);
-  await page.fill('#nickname', `onesocket-${test.info().project.name}`);
+  await page.fill('#nickname', uid('onesocket'));
   await page.click('#join');
   await expect(page).toHaveURL(/\/watch$/);
   await waitPlaying(page);

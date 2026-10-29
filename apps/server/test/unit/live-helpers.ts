@@ -16,8 +16,10 @@ export function makeController(direct: DirectMode, over: Partial<LiveDeps> = {})
     stop: async () => {},
   }) as unknown as MediaMtx;
   const config = defaultConfig();
-  // Ports nothing listens on, so the stop verification passes.
-  config.ports = { rtmp: 39351, public: 39352, admin: 39353, mediamtxHls: 39354 };
+  // Port 0: the public server gets a port from the OS when the live starts (`live.publicPort`),
+  // and the fake MediaMTX binds nothing. No program can listen on port 0, so "Stop everything"
+  // never mistakes another program's port (or another test file's) for a leftover of ours.
+  config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
   const live = new LiveController({
     config,
     saveConfig: () => {},

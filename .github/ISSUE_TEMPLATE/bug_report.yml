@@ -1,0 +1,117 @@
+name: Bug report
+description: Something in SwarmCast does not work as it should.
+labels: [bug, needs-triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report this. You do not need to be technical: just tell us what happened.
+
+        **Please never post your stream key, your live link, the panel address or a password here.** This page is public.
+
+        - A security problem? Report it privately instead: [Report a vulnerability](https://github.com/Lucas-Angelo/swarmcast/security/advisories/new).
+        - A question, or not sure it is a bug? Ask in [Discussions → Q&A](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/q-a) or look at the [troubleshooting guide](https://lucas-angelo.github.io/swarmcast/help/troubleshooting/).
+
+  - type: input
+    id: version
+    attributes:
+      label: SwarmCast version
+      description: It is at the bottom of the panel ("SwarmCast 0.2.2"). In the desktop app it is also on the **Desktop app** card. Not sure? Write when you downloaded it.
+      placeholder: "0.2.2"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Your computer
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS on Apple silicon (M1, M2, M3…)
+        - macOS on Intel
+        - Linux
+        - Other or not sure
+    validations:
+      required: true
+
+  - type: input
+    id: os-details
+    attributes:
+      label: System details (optional)
+      description: For example "macOS 15.4", or the Linux distribution and version ("Ubuntu 24.04").
+    validations:
+      required: false
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How do you run SwarmCast?
+      options:
+        - Desktop app (installed from the download page)
+        - Start script (script mode)
+        - Built from the source code
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Tell us in your own words. If you saw an error message, copy it here.
+      placeholder: "I clicked Start live and the viewers only saw a black screen."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: false
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: How can we make it happen again? (optional)
+      description: The steps you took, one per line, if you remember them.
+      placeholder: |
+        1. Open SwarmCast
+        2. Start the stream in OBS
+        3. Click Start live
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (the diagnostics ZIP)
+      description: |
+        The logs are the most useful thing you can send. To get them:
+
+        1. In the panel, scroll down to the **Problem report** card and click **Export logs**. In the desktop app you can also use the tray icon (on a Mac, the menu bar icon) → **Export logs…**.
+        2. A ZIP file is saved to your **Downloads** folder. Click **Show in folder** to find it.
+        3. Drag the ZIP file into this box.
+
+        The ZIP is anonymised: it never contains your stream key, the live link, passwords or keys, and viewers' IP addresses and nicknames are replaced by labels. Please leave **Include full IP addresses** off unless we ask.
+
+        If the panel does not open at all, the [troubleshooting guide](https://lucas-angelo.github.io/swarmcast/help/troubleshooting/) says where the log files are.
+    validations:
+      required: false
+
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else? (optional)
+      description: Screenshots help a lot. Cover the live link and the stream key before you add them.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Before you send
+      options:
+        - label: This report does not contain my stream key, my live link, the panel address or a password.
+          required: true

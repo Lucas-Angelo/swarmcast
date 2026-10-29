@@ -4,7 +4,7 @@ import tls from 'node:tls';
 import type { CodedText, DirectModeState, MessageKey, MessageParams } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
 import { CodedError, coded } from '../core/messages.js';
-import { canBindPort } from '../core/ports.js';
+import { excludedPortRanges, reservePort, type PortReservation } from '../core/ports.js';
 import type { Logger } from '../core/logger.js';
 import type { StateStore } from '../core/state.js';
 import type { CertificateIssuer, IssuedCert } from './certs.js';
@@ -37,12 +37,26 @@ export interface DirectDeps {
   /** TCP reachability probe used to confirm the port is closed afterwards. */
   probe?: (host: string, port: number) => Promise<boolean>;
   random?: () => number;
-  /** Can the public server listen on host:port? (tests; default: a real bind, see ports.ts) */
-  canBind?: (port: number, host: string) => Promise<boolean>;
+  /**
+   * Listen on host:port for real and hold it until released; rejects with the listen error
+   * (tests inject EACCES/EADDRINUSE; default: `reservePort`, see ports.ts).
+   */
+  reservePort?: (port: number, host: string) => Promise<PortReservation>;
+  /** `netsh … excludedportrange` output, logged when Windows refuses a port (tests). */
+  excludedPortRanges?: () => Promise<string | null>;
 }
 
 /** Random ports tried before giving up (Windows can reserve large blocks of high ports). */
 const PORT_TRIES = 25;
+
+/**
+ * Direct mode's random external port. The top is 49151: 49152–65535 is the dynamic port range,
+ * which Windows hands out for outgoing connections and where Hyper-V, WSL and Docker reserve
+ * whole blocks (listening there fails with EACCES). Microsoft's workaround is a port below it:
+ * https://learn.microsoft.com/troubleshoot/windows-server/networking/error-10013-wsaeacces-is-returned
+ */
+export const DIRECT_PORT_MIN = 20000;
+export const DIRECT_PORT_MAX = 49151;
 
 /** `message` is English; `code`/`params` let the panel translate it. */
 type Coded = { message: string; code: MessageKey; params?: MessageParams };
@@ -144,26 +158,50 @@ export class DirectMode {
     };
   }
 
+  /** A random port in DIRECT_PORT_MIN–DIRECT_PORT_MAX (both included). */
   pickPort(): number {
     const r = this.d.random ?? Math.random;
-    return 20000 + Math.floor(r() * 40000);
+    const span = DIRECT_PORT_MAX - DIRECT_PORT_MIN + 1;
+    return DIRECT_PORT_MIN + Math.min(span - 1, Math.floor(r() * span));
   }
 
   /**
-   * A random high port the public server can really listen on. Checked before anything is
-   * mapped on the router: Windows reserves whole ranges of high ports (Hyper-V, WinNAT) where
-   * listening fails with EACCES, and another program may already use the port.
+   * A random port the public server can really listen on, held by a real listen until the
+   * caller releases it right before starting the server. Done before anything is mapped on the
+   * router: Windows reserves whole ranges of ports (Hyper-V, WSL, Docker, WinNAT) where
+   * listening fails with EACCES, and another program may already use the port (EADDRINUSE).
+   * Either way, the next random port is tried.
    */
-  async pickBindablePort(host: string): Promise<number> {
-    const canBind = this.d.canBind ?? canBindPort;
+  async reserveBindablePort(host: string): Promise<PortReservation> {
+    const reserve = this.d.reservePort ?? reservePort;
     const tried: number[] = [];
-    for (let i = 0; i < PORT_TRIES; i++) {
+    const reserved: number[] = [];
+    const inUse: number[] = [];
+    const other: Array<{ port: number; code: string }> = [];
+    let reservation: PortReservation | null = null;
+    for (let i = 0; i < PORT_TRIES && !reservation; i++) {
       const port = this.pickPort();
       if (tried.includes(port)) continue;
       tried.push(port);
-      if (await canBind(port, host)) return port;
+      try {
+        reservation = await reserve(port, host);
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code ?? 'unknown';
+        if (code === 'EACCES') reserved.push(port);
+        else if (code === 'EADDRINUSE') inUse.push(port);
+        else other.push({ port, code });
+      }
     }
-    this.d.log.warn({ tried }, 'direct mode: no port could be opened');
+    if (reserved.length) {
+      this.d.log.warn({ ports: reserved }, 'direct mode: port(s) reserved by Windows (excluded port range: Hyper-V, WSL or Docker), tried another');
+      void (this.d.excludedPortRanges ?? excludedPortRanges)()
+        .then((ranges) => ranges && this.d.log.info({ excludedPortRanges: ranges }, 'direct mode: ports Windows keeps for itself'))
+        .catch(() => {});
+    }
+    if (inUse.length) this.d.log.warn({ ports: inUse }, 'direct mode: port(s) used by another program, tried another');
+    if (other.length) this.d.log.warn({ ports: other }, 'direct mode: port(s) could not be opened, tried another');
+    if (reservation) return reservation;
+    this.d.log.warn({ tried: tried.length }, 'direct mode: no port could be opened');
     throw new CodedError('err.directNoPort');
   }
 
@@ -177,10 +215,14 @@ export class DirectMode {
     if (!check.ok) throw new CodedError(check.code, check.params);
     if (check.needsManualForward && !opts.manualPortForward) throw new CodedError(check.code, check.params);
 
-    const externalPort = await this.pickBindablePort(check.family === 4 ? '0.0.0.0' : '::');
+    const bindHost = check.family === 4 ? '0.0.0.0' : '::';
+    // Held by a real listen through the router mapping and the certificate (which can take a
+    // while), released just before the server takes it over.
+    const reservation = await this.reserveBindablePort(bindHost);
+    const externalPort = reservation.port;
     const internalPort = externalPort;
-    const localHost = check.family === 4 ? await this.d.localAddress() : '::';
     try {
+      const localHost = check.family === 4 ? await this.d.localAddress() : '::';
       if (check.mapper) {
         await check.mapper.map(externalPort, internalPort, localHost, 'SwarmCast direct mode', 3600);
         this.mapper = check.mapper;
@@ -197,12 +239,33 @@ export class DirectMode {
       }
       this.cert = await this.d.issuer.issue(check.publicIp, { mapper: check.mapper, internalHost: localHost });
       this.ctx = tls.createSecureContext({ key: this.cert.keyPem, cert: this.cert.certPem });
-      this.server = await this.d.startServer(internalPort, check.family === 4 ? '0.0.0.0' : '::', (_name, cb) => cb(null, this.ctx ?? undefined), {
-        key: this.cert.keyPem,
-        cert: this.cert.certPem,
-      });
+      await reservation.release();
+      try {
+        this.server = await this.d.startServer(internalPort, bindHost, (_name, cb) => cb(null, this.ctx ?? undefined), {
+          key: this.cert.keyPem,
+          cert: this.cert.certPem,
+        });
+      } catch (err) {
+        // Only possible if another program grabbed the port in the instant between the release
+        // and the listen: say so plainly instead of a raw "listen EADDRINUSE".
+        const code = (err as NodeJS.ErrnoException).code;
+        if (code === 'EACCES' || code === 'EADDRINUSE') {
+          this.d.log.warn({ port: internalPort, code }, 'direct mode: the port was taken right before the server started');
+          throw new CodedError('err.directNoPort');
+        }
+        throw err;
+      }
     } catch (err) {
+      await reservation.release().catch(() => {});
+      // A router mapping made before the failure (certificate, server start) must not stay
+      // open: teardown removes the mapping of the port it is told about.
+      if (this.mapper) {
+        this.externalPort = externalPort;
+        this.internalPort = internalPort;
+      }
       await this.teardown().catch(() => {});
+      this.externalPort = undefined;
+      this.internalPort = undefined;
       throw err;
     }
     this.active = true;

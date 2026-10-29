@@ -1,14 +1,11 @@
-import { spawn, execFileSync, type ChildProcess } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createApp } from '../../src/app.js';
 import { isListening } from '../../src/core/ports.js';
 import { isAlive } from '../../src/process/children.js';
-import { tmpDir, waitFor } from './helpers.js';
+import { allocAppPorts, bootApp, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
-const ROOT = path.resolve(__dirname, '../../../..');
-const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const posix = process.platform !== 'win32';
 
 function writeConfig(dir: string, ports: Record<string, number>, extra: Record<string, unknown> = {}): void {
@@ -18,10 +15,10 @@ function writeConfig(dir: string, ports: Record<string, number>, extra: Record<s
   );
 }
 
-function startMain(dir: string): ChildProcess {
-  return spawn(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir], {
+function startMain(dir: string): Tracked {
+  return spawnTracked(process.execPath, serverArgs(['--no-tunnel', '--no-open', '--no-tray', '--data-dir', dir]), {
+    name: 'SwarmCast',
     cwd: ROOT,
-    stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, SWARMCAST_LOG_LEVEL: 'warn' },
   });
 }
@@ -42,65 +39,59 @@ function processName(pid: number): string {
   }
 }
 
-const procs: ChildProcess[] = [];
-afterEach(() => {
-  for (const p of procs.splice(0)) if (p.exitCode === null) p.kill('SIGKILL');
-});
+/** MediaMTX started by this SwarmCast (its own child, by pid) and listening: not just "the port answers". */
+async function ownMediaMtx(main: Tracked, rtmpPort: number): Promise<number> {
+  let pid: number | undefined;
+  await until(
+    async () => {
+      pid = childPids(main.pid!).find((p) => processName(p).includes('mediamtx'));
+      return pid !== undefined && (await isListening(rtmpPort));
+    },
+    { timeoutMs: 30_000, what: 'MediaMTX started by this SwarmCast', abortOn: [main], detail: () => `children ${JSON.stringify(childPids(main.pid!))}; last output: ${main.tail(10)}` },
+  );
+  return pid!;
+}
+
+afterEach(stopTracked);
 
 describe.skipIf(!posix)('process lifecycle', () => {
   it('killing SwarmCast with SIGKILL takes MediaMTX down with it (reaper)', async () => {
     const dir = tmpDir();
-    const ports = { rtmp: 29450, public: 28180, admin: 28181, mediamtxHls: 28988 };
+    // Ports of this worker's block, free right now: not ports another SwarmCast may hold (one
+    // made "something listens on the RTMP port" true before this test's own MediaMTX existed).
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
-    procs.push(main);
-    await waitFor(() => isListening(ports.public), 30_000, 'public server');
-    await waitFor(() => isListening(ports.rtmp), 30_000, 'MediaMTX');
-    const mediamtx = childPids(main.pid!).find((p) => processName(p).includes('mediamtx'));
-    expect(mediamtx).toBeDefined();
+    const mediamtx = await ownMediaMtx(main, ports.rtmp);
 
-    main.kill('SIGKILL');
-    await waitFor(() => !isAlive(mediamtx!), 10_000, 'MediaMTX to die');
-    await waitFor(async () => !(await isListening(ports.rtmp)), 5_000, 'RTMP port to close');
+    // A crash: SwarmCast alone dies at once; its reaper must take MediaMTX down.
+    main.child.kill('SIGKILL');
+    await until(() => !isAlive(mediamtx), { timeoutMs: 10_000, what: 'MediaMTX to die' });
+    await until(async () => !(await isListening(ports.rtmp)), { timeoutMs: 5_000, what: 'RTMP port to close' });
     expect(await isListening(ports.mediamtxHls)).toBe(false);
   });
 
   it('Ctrl+C (SIGINT) stops everything and exits cleanly', async () => {
     const dir = tmpDir();
-    const ports = { rtmp: 29550, public: 28280, admin: 28281, mediamtxHls: 29088 };
+    const ports = await allocAppPorts();
     writeConfig(dir, ports);
     const main = startMain(dir);
-    procs.push(main);
-    let out = '';
-    main.stdout!.on('data', (d) => (out += d));
-    await waitFor(() => isListening(ports.rtmp), 30_000, 'MediaMTX');
-    const mediamtx = childPids(main.pid!).find((p) => processName(p).includes('mediamtx'));
-    main.kill('SIGINT');
-    const code = await new Promise<number | null>((r) => main.on('exit', r));
+    const mediamtx = await ownMediaMtx(main, ports.rtmp);
+    main.child.kill('SIGINT');
+    const { code } = await main.exited;
     expect(code).toBe(0);
-    expect(out).toContain('Off: nothing on your computer is reachable');
-    if (mediamtx) expect(isAlive(mediamtx)).toBe(false);
+    expect(main.lines.join('\n')).toContain('Off: nothing on your computer is reachable');
+    expect(isAlive(mediamtx)).toBe(false);
     for (const p of Object.values(ports)) expect(await isListening(p)).toBe(false);
   });
 
   it('turns everything off automatically when OBS sends no video', async () => {
-    const app = await createApp({
-      dataDir: tmpDir(),
-      noTunnel: true,
-      noReaper: true,
-      logToStdout: false,
-      configOverrides: {
-        ports: { rtmp: 29650, public: 28380, admin: 28381, mediamtxHls: 29188 },
-        speedTest: { enabled: false, intervalMinutes: 15 },
-        autoStopMinutes: 0.08,
-      },
-    });
+    const { app, ports } = await bootApp({ configOverrides: { autoStopMinutes: 0.08 } });
     try {
-      await app.live.start();
       expect(app.live.phase).toBe('waiting-obs');
       expect(app.live.snapshot().autoStopAt).toBeGreaterThan(Date.now());
-      await waitFor(() => app.live.phase === 'off', 40_000, 'automatic stop');
-      expect(await isListening(29650)).toBe(false);
+      await until(() => app.live.phase === 'off', { timeoutMs: 40_000, what: 'automatic stop', detail: () => `phase ${app.live.phase}`, on: [[app.live, 'state']] });
+      expect(await isListening(ports.rtmp)).toBe(false);
     } finally {
       await app.close();
     }

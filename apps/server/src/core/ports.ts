@@ -1,4 +1,6 @@
+import { execFile } from 'node:child_process';
 import net from 'node:net';
+import path from 'node:path';
 
 /** True when something accepts TCP connections on host:port. */
 export function isListening(port: number, host = '127.0.0.1', timeoutMs = 1000): Promise<boolean> {
@@ -45,4 +47,42 @@ export async function firstFreePort(preferred: number, span = 20, host = '127.0.
     if (await isPortFree(p, host)) return p;
   }
   return null;
+}
+
+/** A port held by a real, exclusive listen until `release()`. */
+export interface PortReservation {
+  port: number;
+  release(): Promise<void>;
+}
+
+/**
+ * Listen on host:port for real (exclusive) and keep the port until `release()`. Rejects with the
+ * listen error: EACCES when the OS refuses the port (on Windows: inside an excluded range, see
+ * `excludedPortRanges`), EADDRINUSE when another program has it. Holding the port closes the
+ * probe-then-bind gap while slow work (router mapping, certificate) runs before the real server.
+ */
+export function reservePort(port: number, host: string): Promise<PortReservation> {
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    // Nothing is served on it: a connection during the short holding time is just closed.
+    srv.on('connection', (s) => s.destroy());
+    srv.once('error', reject);
+    srv.listen({ port, host, exclusive: true }, () => {
+      srv.off('error', reject);
+      let closed: Promise<void> | null = null;
+      resolve({ port, release: () => (closed ??= new Promise<void>((r) => srv.close(() => r()))) });
+    });
+  });
+}
+
+/**
+ * Windows only: the TCP port ranges the OS keeps for itself (Hyper-V, WSL, Docker, WinNAT), as
+ * `netsh int ipv4 show excludedportrange protocol=tcp` prints them. Null elsewhere or on error.
+ */
+export function excludedPortRanges(timeoutMs = 5000): Promise<string | null> {
+  if (process.platform !== 'win32') return Promise.resolve(null);
+  const netsh = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'netsh.exe');
+  return new Promise((resolve) => {
+    execFile(netsh, ['int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp'], { windowsHide: true, timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout.trim()));
+  });
 }

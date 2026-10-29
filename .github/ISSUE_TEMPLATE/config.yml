@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/Lucas-Angelo/swarmcast/security/advisories/new
+    about: Privately, so only the maintainer sees it. Please do not open a public issue for security problems.
+  - name: Questions and help
+    url: https://github.com/Lucas-Angelo/swarmcast/discussions/categories/q-a
+    about: How do I…? Is this normal? Ask in Discussions.
+  - name: Ideas and feedback
+    url: https://github.com/Lucas-Angelo/swarmcast/discussions/categories/ideas
+    about: Rough ideas, suggestions and feedback, including on beta versions.
+  - name: Guide and troubleshooting
+    url: https://lucas-angelo.github.io/swarmcast/help/troubleshooting/
+    about: Answers to common problems, in English and Portuguese.

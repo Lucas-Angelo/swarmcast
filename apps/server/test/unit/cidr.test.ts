@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CidrSet, ipPrefixLabel, isNonPublicIp, parseCidr, parseIp } from '../../src/security/cidr.js';
+import { CidrSet, formatCidr, ipPrefixLabel, isNonPublicIp, parseCidr, parseIp, prefixLength } from '../../src/security/cidr.js';
 import { scrubActivity } from '../../src/core/activity.js';
 
 describe('IP parsing', () => {
@@ -23,6 +23,26 @@ describe('IP parsing', () => {
     expect(parseCidr('2001:db8::/32')!.end).toBe((0x20010db8n << 96n) | ((1n << 96n) - 1n));
     expect(parseCidr('::ffff:1.2.3.0/120')).toEqual({ v: 4, start: 0x01020300n, end: 0x010203ffn });
     for (const bad of ['1.2.3.4/33', '1.2.3.4/-1', '::/129', '1.2.3.4/a', 'x/8']) expect(parseCidr(bad), bad).toBeNull();
+  });
+
+  it('formats ranges back to CIDRs that parse to the same range', () => {
+    const cases: Array<[string, string]> = [
+      ['10.1.2.3/8', '10.0.0.0/8'],
+      ['1.2.3.4', '1.2.3.4/32'],
+      ['0.0.0.0/0', '0.0.0.0/0'],
+      ['255.255.255.255', '255.255.255.255/32'],
+      ['::ffff:1.2.3.0/120', '1.2.3.0/24'],
+      ['2001:db8::/32', '2001:db8:0:0:0:0:0:0/32'],
+      ['::1', '0:0:0:0:0:0:0:1/128'],
+      ['ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128', 'ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff/128'],
+      ['::/0', '0:0:0:0:0:0:0:0/0'],
+    ];
+    for (const [input, text] of cases) {
+      const r = parseCidr(input)!;
+      expect(formatCidr(r), input).toBe(text);
+      expect(parseCidr(text), text).toEqual(r);
+    }
+    expect(prefixLength(parseCidr('2a06:1280::/29')!)).toBe(29);
   });
 });
 

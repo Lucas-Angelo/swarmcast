@@ -1,14 +1,19 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { VERIFIED_COOKIE } from '@swarmcast/shared';
 import { createApp, type App } from '../../src/app.js';
 import { CONFIG_VERSION, defaultConfig } from '../../src/core/config.js';
 import { generateSecrets } from '../../src/core/secrets.js';
-import { Jar, joinAs, tmpDir } from './helpers.js';
+import { allocAppPorts, Jar, joinAs, tmpDir, type Ports } from './helpers.js';
 
-const PORTS = { rtmp: 29850, public: 28580, admin: 28581, mediamtxHls: 29888 };
-const BASE = `http://127.0.0.1:${PORTS.public}`;
+// Fixed for the whole file: the browser keeps its cookies for the same address across restarts.
+let PORTS: Ports;
+let BASE = '';
+beforeAll(async () => {
+  PORTS = await allocAppPorts();
+  BASE = `http://127.0.0.1:${PORTS.public}`;
+});
 
 let app: App | null = null;
 afterEach(async () => {

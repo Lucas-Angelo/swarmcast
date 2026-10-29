@@ -26,7 +26,13 @@ Most computers need the **x64** (`amd64`) files. Use the **arm64** (`aarch64`) o
 2. Allow it to run: right-click the file → **Properties** → **Permissions** → tick **Allow executing file as program** (or in a terminal: `chmod +x SwarmCast_*.AppImage`).
 3. Double-click it.
 
-The AppImage uses the usual desktop libraries (fonts, graphics/OpenGL), which every desktop distribution already has. On a minimal install without a full desktop, use the `.deb` instead.
+The AppImage brings its own WebKitGTK and GTK. From your computer it needs only graphics (OpenGL), fonts and text shaping, which every desktop distribution already has. On a minimal Debian or Ubuntu install, add them once (or use the `.deb`, which installs what it needs by itself):
+
+```sh
+sudo apt install libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
+```
+
+SwarmCast's automated tests run the AppImage on Ubuntu 22.04, Ubuntu 24.04 and Debian 12 (x64 and arm64) with only these packages and FUSE 2 installed.
 
 :::caution[Ubuntu 22.04 or newer: "AppImages require FUSE to run"]
 Install the FUSE 2 library once, then try again:

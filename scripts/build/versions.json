@@ -69,7 +69,7 @@
     "version": "9.0.2",
     "bundle": false,
     "license": "LGPL-3.0-or-later (Windows/Linux: BtbN LGPL builds) / GPL-3.0-or-later (macOS: Martin Riedl builds)",
-    "notes": "Not bundled by default: the streamer installs it from the panel (downloaded from the publisher, SHA-256 verified against this file). Month-end BtbN autobuilds are kept for 2 years. Bundling it (fetch-binaries --with-ffmpeg) makes the packager a redistributor: ship the license and the corresponding source. See docs/QUALITY.md.",
+    "notes": "Not bundled by default: the streamer installs it from the panel (downloaded from the publisher, SHA-256 verified against this file). Month-end BtbN autobuilds are kept for 2 years. The macOS \"mirrors\" are byte-identical copies in this repo's ci-deps pre-release for CI (the publisher host is very slow from GitHub's runners); only fetch-binaries uses them, never binaries.json or the app. Bundling it (fetch-binaries --with-ffmpeg) makes the packager a redistributor: ship the license and the corresponding source. See docs/QUALITY.md.",
     "url": "{assetUrl}",
     "assets": {
       "windows-x64": {
@@ -81,6 +81,9 @@
       },
       "macos-arm64": {
         "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/ffmpeg-9.0.2-macos-arm64.zip"
+        ],
         "asset": "ffmpeg.zip",
         "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
         "binary": "ffmpeg",
@@ -88,6 +91,9 @@
       },
       "macos-x64": {
         "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/ffmpeg-9.0.2-macos-x64.zip"
+        ],
         "asset": "ffmpeg.zip",
         "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
         "binary": "ffmpeg",
@@ -111,6 +117,52 @@
     "source": {
       "url": "https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
       "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+    }
+  },
+  "ffmpeg-test": {
+    "version": "9.0.2",
+    "bundle": false,
+    "testOnly": true,
+    "license": "GPL-3.0-or-later",
+    "notes": "Tests only, never shipped or offered to streamers (not in binaries.json): the ffmpeg CI's test feeds use on every OS (the OBS-like feeds encode with libx264, which the LGPL builds above lack). Same publishers and releases as the ffmpeg entry, GPL variants; hashes from BtbN's checksums.sha256. Fetch: node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>.",
+    "url": "{assetUrl}",
+    "assets": {
+      "windows-x64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip",
+        "sha256": "a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278",
+        "binary": "ffmpeg.exe"
+      },
+      "macos-arm64": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2/ffmpeg.zip",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/ffmpeg-9.0.2-macos-arm64.zip"
+        ],
+        "asset": "ffmpeg.zip",
+        "sha256": "c8ed4c4e6978a03c485edbfe4e0a5dc2380f8a30bba5150531b31b094492d924",
+        "binary": "ffmpeg"
+      },
+      "macos-x64": {
+        "url": "https://ffmpeg.martin-riedl.de/download/macos/amd64/1789931006_9.0.2/ffmpeg.zip",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/ffmpeg-9.0.2-macos-x64.zip"
+        ],
+        "asset": "ffmpeg.zip",
+        "sha256": "7c6b4125b191cbf773832dc51f424cf2b6bb7da43007d1e066f95909e47cacd4",
+        "binary": "ffmpeg"
+      },
+      "linux-x64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-linux64-gpl-9.0.tar.xz",
+        "sha256": "68ee646831adaae2495618346f3bba94ff207ff83bbd34d643e7004730d66269",
+        "binary": "ffmpeg"
+      },
+      "linux-arm64": {
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-9.0.tar.xz",
+        "asset": "ffmpeg-n9.0.2-17-g2a571b6068-linuxarm64-gpl-9.0.tar.xz",
+        "sha256": "91afcd7695d4bbbb9e0057aa10baaf9875ec4e1a97303f9059ec971336a2ab46",
+        "binary": "ffmpeg"
+      }
     }
   }
 }

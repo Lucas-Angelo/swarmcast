@@ -1,0 +1,60 @@
+name: Set up Rust for the desktop app
+description: >-
+  The Rust toolchain pinned in apps/desktop/src-tauri/rust-toolchain.toml (also made the default),
+  the rust-cache for apps/desktop/src-tauri (saved on main only), and on Linux the Tauri build
+  dependencies through .github/scripts/apt-retry.sh. Run ./.github/actions/setup first, with
+  `apt-debs: tauri-build` on Linux so the .debs come from (and go to) the .deb cache.
+
+inputs:
+  components:
+    description: Extra rustup components (comma-separated), e.g. `rustfmt,clippy`.
+    default: ''
+  targets:
+    description: Extra rustup targets (comma-separated), for a cross build such as x86_64-apple-darwin on an Apple silicon runner.
+    default: ''
+  cache-key:
+    description: rust-cache key (one per target and build flavour); empty for no rust-cache.
+    default: ''
+  linux-deps:
+    description: Linux only. Install the Tauri build dependencies (WebKitGTK 4.1, tray, AppImage tools).
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Rust toolchain (rust-toolchain.toml)
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      run: |
+        file="$GITHUB_WORKSPACE/apps/desktop/src-tauri/rust-toolchain.toml"
+        channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' "$file")"
+        [ -n "$channel" ] || { echo "::error file=$file::no channel in rust-toolchain.toml"; exit 1; }
+        args=(--profile minimal --no-self-update)
+        [ -z "$COMPONENTS" ] || args+=(--component "$COMPONENTS")
+        [ -z "$TARGETS" ] || args+=(--target "$TARGETS")
+        rustup toolchain install "$channel" "${args[@]}"
+        # Also the default: rust-cache computes its key with the default rustc, and the scripts run
+        # cargo outside apps/desktop/src-tauri too.
+        rustup default "$channel"
+    # Saved from main only: pull requests restore main's cache instead of each storing a copy (the
+    # repository's 10 GB cache limit). Every CARGO_* variable is part of the key, so set the build
+    # profile overrides before this step.
+    - if: inputs.cache-key != ''
+      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      with:
+        workspaces: apps/desktop/src-tauri -> target
+        key: ${{ inputs.cache-key }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
+    # Tauri v2 build prerequisites on Linux. apt-retry.sh downloads them (time limit per try,
+    # retries, another mirror after a slow try) into $APT_DEBS when the setup action restored the
+    # .deb cache, then installs offline.
+    - name: Linux build dependencies
+      if: runner.os == 'Linux' && inputs.linux-deps == 'true'
+      shell: bash
+      run: |
+        deps=(build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils)
+        "$GITHUB_WORKSPACE/.github/scripts/apt-retry.sh" update
+        "$GITHUB_WORKSPACE/.github/scripts/apt-retry.sh" install -y --no-install-recommends "${deps[@]}"

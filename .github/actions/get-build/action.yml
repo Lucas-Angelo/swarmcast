@@ -1,0 +1,50 @@
+name: Get the build artifacts of this run
+description: >-
+  Downloads build artifacts made earlier in the same workflow run (web-dist, pkg-<target>,
+  desktop-<target>...) and unpacks their .tar into the workspace, with the file modes kept
+  (upload-artifact drops the executable bit, so the build jobs upload tar files).
+
+inputs:
+  names:
+    description: Comma-separated artifact names, e.g. `web-dist,pkg-windows-x64`.
+    required: true
+
+runs:
+  using: composite
+  steps:
+    # download-artifact takes one glob; {a,b} is a brace list, a single name stays as it is.
+    - name: Which artifacts
+      id: which
+      shell: bash
+      env:
+        NAMES: ${{ inputs.names }}
+      run: |
+        names="${NAMES// /}"
+        if [[ "$names" == *,* ]]; then pattern="{$names}"; else pattern="$names"; fi
+        echo "pattern=$pattern" >> "$GITHUB_OUTPUT"
+        echo "count=$(tr ',' '\n' <<<"$names" | grep -c .)" >> "$GITHUB_OUTPUT"
+    - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        pattern: ${{ steps.which.outputs.pattern }}
+        merge-multiple: true
+        path: ${{ runner.temp }}/build-artifacts
+    - name: Unpack
+      shell: bash
+      env:
+        WANT: ${{ steps.which.outputs.count }}
+      run: |
+        dir="$RUNNER_TEMP/build-artifacts" ws="$GITHUB_WORKSPACE"
+        # Git Bash's GNU tar reads "D:\..." as host:path; give it /d/... paths.
+        if [ "$RUNNER_OS" = Windows ]; then dir="$(cygpath -u "$dir")" ws="$(cygpath -u "$ws")"; fi
+        cd "$dir" || exit 1
+        shopt -s nullglob
+        tars=(*.tar)
+        if [ "${#tars[@]}" -ne "$WANT" ]; then
+          echo "::error::expected $WANT build artifacts, got ${#tars[@]}: ${tars[*]}"
+          exit 1
+        fi
+        for t in "${tars[@]}"; do
+          tar -xf "$t" -C "$ws"
+          echo "$t: $(tar -tf "$t" | wc -l | tr -d ' ') entries"
+          rm -f "$t"
+        done

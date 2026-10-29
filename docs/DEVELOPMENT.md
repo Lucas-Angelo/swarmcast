@@ -40,7 +40,7 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 - Every segment a viewer gets from another viewer is checked against the signed SHA-256 hash before it reaches the player.
 - "Stop everything" disconnects viewers, closes the tunnel, stops MediaMTX, wipes the cache and then checks that nothing is still running or reachable.
 - Remaining risks:
-  - Viewers who turn on P2P see each other's IP addresses.
+  - Viewers who turn on P2P see each other's IP addresses. P2P stays off for viewers on the streamer's own connection (their IP is the streamer's).
   - Cloudflare terminates TLS at its edge.
   - The free tunnel has no uptime guarantee.
   - Direct mode (opt-in) shows the streamer's IP to everyone who has the link.
@@ -106,7 +106,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `quality.obsWebsocket.enabled` / `url` / `password` | false / `ws://127.0.0.1:4455` / — | Read the main stream's health from OBS (loopback only) (panel) |
 | `ffmpegPath` | — | ffmpeg for the extra qualities. Unset: `bin/ffmpeg` if a packager bundled it, else `<data>/tools/ffmpeg/ffmpeg[.exe]` (installed by the start scripts or the panel). `SWARMCAST_FFMPEG` overrides it; `"ffmpeg"` uses the one on PATH (source checkouts only) |
 
-**ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (published with each release as `binaries.json`) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. See [QUALITY.md](QUALITY.md).
+**ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (published with each release as `binaries.json`) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. (CI downloads the macOS archives from byte-identical copies in the `ci-deps` pre-release first; see [RELEASING.md](RELEASING.md).) See [QUALITY.md](QUALITY.md).
 
 `secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date), `system-check.json` (the computer check shown by the setup tutorial), `tools/ffmpeg/` and `logs/` (daily `swarmcast-YYYY-MM-DD.log` files, plus `desktop.log` from the desktop app; [apps/server/README.md](../apps/server/README.md) has the rotation, retention and "Export logs" details).
 

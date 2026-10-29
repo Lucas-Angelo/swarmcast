@@ -155,12 +155,25 @@ export const TUNING: Record<DelayProfileId, Tuning> = {
   },
 };
 
-/** Time-based constants divided by `speed` (test-only fast clock); statistics windows unchanged. */
-export function scaledTuning(t: Tuning, speed: number): Tuning {
+/** Furthest the test-only rate scaling moves playbackRate from 1 (see scaledTuning). */
+export const MAX_SCALED_RATE_STEP = 0.5;
+
+/**
+ * Time-based constants divided by `speed` (test-only fast clock); statistics windows unchanged.
+ * `rateScale` (test-only, default 1) also multiplies how far playbackRate moves from 1 (the
+ * catch-up boost maxRate − 1 and the slow-down 1 − slowRate, each at most
+ * MAX_SCALED_RATE_STEP), so the delay itself follows the fast clock: with 10 × 10 the stable
+ * profile catches up at 1.5× and builds delay at 0.5×, and a 5 s change takes 10 s, not 100 s.
+ */
+export function scaledTuning(t: Tuning, speed: number, rateScale = 1): Tuning {
   const s = Number.isFinite(speed) && speed > 0 ? speed : 1;
-  if (s === 1) return t;
+  const r = Number.isFinite(rateScale) && rateScale > 0 ? rateScale : 1;
+  if (s === 1 && r === 1) return t;
+  const step = (d: number): number => Math.round(Math.min(MAX_SCALED_RATE_STEP, d * r) * 1000) / 1000;
   return {
     ...t,
+    maxRate: 1 + step(t.maxRate - 1),
+    slowRate: 1 - step(1 - t.slowRate),
     firm: { ...t.firm, enterS: t.firm.enterS / s },
     firmExit: { ...t.firmExit, afterS: t.firmExit.afterS / s },
     unstable: { ...t.unstable, enterS: t.unstable.enterS / s, exitS: t.unstable.exitS / s },
@@ -210,6 +223,8 @@ export interface DelayControllerOptions {
   profile: DelayProfileId;
   /** Test-only: run the controller's clocks this many times faster (URL flag in adaptive-delay.ts). */
   speed?: number;
+  /** Test-only: move playbackRate this many times further from 1 (scaledTuning). */
+  rateScale?: number;
   /** Override the bounds (tests). */
   bounds?: AdaptiveDelayBounds;
   /** Clock value at creation. */
@@ -219,6 +234,7 @@ export interface DelayControllerOptions {
 export class DelayController {
   private profile: DelayProfileId;
   private readonly speed: number;
+  private readonly rateScale: number;
   private boundsOverride: AdaptiveDelayBounds | undefined;
   private bounds!: AdaptiveDelayBounds;
   private tuning!: Tuning;
@@ -245,6 +261,7 @@ export class DelayController {
   constructor(o: DelayControllerOptions) {
     this.profile = o.profile;
     this.speed = o.speed ?? 1;
+    this.rateScale = o.rateScale ?? 1;
     this.boundsOverride = o.bounds;
     this.reset(o.profile, o.now);
   }
@@ -253,7 +270,7 @@ export class DelayController {
   reset(profile: DelayProfileId = this.profile, now?: number): void {
     this.profile = profile;
     this.bounds = this.boundsOverride ?? ADAPTIVE_DELAY[profile];
-    this.tuning = scaledTuning(TUNING[profile], this.speed);
+    this.tuning = scaledTuning(TUNING[profile], this.speed, this.rateScale);
     this.targetS = clamp(this.bounds.initial, this.bounds.min, this.bounds.max);
     this.state = 'steady';
     this.rateMode = 'normal';
@@ -272,6 +289,11 @@ export class DelayController {
 
   get networkState(): NetworkState {
     return this.state;
+  }
+
+  /** The playbackRate limits in force: catch-up at most `max`, slow-down at `slow`. */
+  get rates(): { max: number; slow: number } {
+    return { max: this.tuning.maxRate, slow: this.tuning.slowRate };
   }
 
   /**

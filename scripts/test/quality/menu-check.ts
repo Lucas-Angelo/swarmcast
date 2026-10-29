@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { build } from 'esbuild';
 import { chromium } from '@playwright/test';
+import { loopbackBase, panelLogin } from '../lib/loopback.mjs';
 
 type W = Window & {
   __hls: { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; latency: number; targetLatency: number };
@@ -14,7 +15,10 @@ type W = Window & {
 };
 
 const root = path.resolve(import.meta.dirname, '../../..');
-const env = JSON.parse(fs.readFileSync(path.join('test-results', 'quality', 'env.json'), 'utf8')) as { adminLoginUrl: string; adminUrl: string; base: string };
+// The quality server's test control port (QUALITY_CONTROL_PORT in server.ts): GET /env gives the
+// panel's address and login path, checked by panelLogin().
+const env = (await (await fetch(new URL('/env', loopbackBase('http://127.0.0.1:45082')))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
+const admin = panelLogin(env);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-menu-'));
 const entry = path.join(tmp, 'entry.ts');
 fs.writeFileSync(
@@ -41,8 +45,8 @@ const bundle = await build({ entryPoints: [entry], bundle: true, write: false, f
 const js = bundle.outputFiles.find((f) => f.path.endsWith('.js'))!.text;
 const css = bundle.outputFiles.find((f) => f.path.endsWith('.css'))?.text ?? '';
 
-const cookie = (await fetch(env.adminLoginUrl, { redirect: 'manual' })).headers.getSetCookie()[0]!.split(';')[0]!;
-const state = (await (await fetch(`${env.adminUrl}/api/state`, { headers: { cookie } })).json()) as { liveLink: string };
+const cookie = (await fetch(admin.loginUrl, { redirect: 'manual' })).headers.getSetCookie()[0]!.split(';')[0]!;
+const state = (await (await fetch(new URL('/api/state', admin.base), { headers: { cookie } })).json()) as { liveLink: string };
 const browser = await chromium.launch({ channel: process.env.PW_CHROMIUM_CHANNEL ?? 'chrome', args: ['--autoplay-policy=no-user-gesture-required'] });
 const context = await browser.newContext();
 const page = await context.newPage();

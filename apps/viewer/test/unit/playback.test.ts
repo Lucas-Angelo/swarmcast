@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { PLAYER_LIVE_DELAYS, PLAYLIST_WINDOW_S, SEGMENT_DURATION_S } from '@swarmcast/shared';
-import { latencyFor, mismatchWindow, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
+import { latencyFor, mismatchWindow, playlistsKnown, PROFILES, urgentSecondsFor } from '../../src/player-config.js';
 import { installStallRecovery, planStallRecovery, type StallSnapshot } from '../../src/stall-recovery.js';
 
 describe('latencyFor', () => {
@@ -31,6 +31,19 @@ describe('latencyFor', () => {
     const fit = latencyFor('stable', { windowS: 4, targetDurationS: 2 });
     expect(fit.liveSyncDuration).toBe(4);
     expect(fit.liveMaxLatencyDuration).toBe(8);
+  });
+});
+
+describe('playlistsKnown', () => {
+  const d = { totalduration: 20, targetduration: 2 };
+  it('a source reload loads the video playlist first: the windows measured before must still hold', () => {
+    // After the stall watchdog's reload hls.js loaded the 40 s video playlist before the 20 s
+    // audio one; read as "no mismatch", the ceiling went and the restart landed 14 s before the
+    // oldest audio segment.
+    expect(playlistsKnown(true, { video: d })).toBe(false);
+    expect(playlistsKnown(true, {})).toBe(false);
+    expect(playlistsKnown(true, { video: d, audio: d })).toBe(true);
+    expect(playlistsKnown(false, { video: d })).toBe(true);
   });
 });
 
@@ -107,6 +120,67 @@ describe('installStallRecovery', () => {
       expect(hls.startLoad).not.toHaveBeenCalled();
       vi.advanceTimersByTime(2000);
       expect(hls.startLoad).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a stall that is ending (the playhead moves again) is not reloaded, even when the reload was due', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      // Stuck (nothing buffered, playhead still): the four attempts come at 8, 13, 18 and 23 s, the reload is due at 28 s.
+      vi.advanceTimersByTime(24_000);
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      // The network is back: frames play at the edge of a thin buffer (readyState stays 2).
+      for (let i = 0; i < 10; i++) {
+        video.currentTime += 1;
+        vi.advanceTimersByTime(1000);
+      }
+      expect(reload).not.toHaveBeenCalled();
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("its own seeks are not playback: a player that stays frozen after them is reloaded on time (job 122719989311)", () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      // Every restart moves the playhead to the live position, as hls.startLoad(to) does.
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn((to?: number) => void (to !== undefined && (video.currentTime = to))) };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      for (let i = 0; i < 30; i++) {
+        hls.liveSyncPosition += 1;
+        vi.advanceTimersByTime(1000);
+      }
+      expect(hls.startLoad).toHaveBeenCalledTimes(4);
+      expect(reload).toHaveBeenCalledTimes(1);
+      stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('still stuck: hls.js nudging the playhead (0.1-0.3 s) does not hide the stall, and the reload comes', () => {
+    vi.useFakeTimers();
+    try {
+      const video = fake();
+      const hls = { liveSyncPosition: 20, stopLoad: vi.fn(), startLoad: vi.fn() };
+      const reload = vi.fn();
+      const stop = installStallRecovery({ video, hls, windowStart: () => null, reload });
+      for (let i = 0; i < 30; i++) {
+        video.currentTime += 0.1 * ((i % 3) + 1);
+        vi.advanceTimersByTime(1000);
+      }
+      expect(reload).toHaveBeenCalledTimes(1);
       stop();
     } finally {
       vi.useRealTimers();

@@ -1,22 +1,18 @@
-import { spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import readline from 'node:readline';
 import { strFromU8, unzipSync } from 'fflate';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { LogExportResult } from '@swarmcast/shared';
 import { decodeDesktopMessage, encodeShellMessage, type DesktopOutMessage } from '../../src/desktop/protocol.js';
-import { Jar, tmpDir, waitFor } from './helpers.js';
+import { allocAppPorts, Jar, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until, type Tracked } from './helpers.js';
 
 // The real server from source, with a temporary data folder, HOME and Downloads folder
 // (SWARMCAST_DOWNLOADS_DIR): never the user's own SwarmCast data or ~/Downloads.
 
-const ROOT = path.resolve(__dirname, '../../../..');
-const MAIN = path.join(ROOT, 'apps/server/src/main.ts');
 const VIEWER_IP = '203.0.113.99';
 
 interface Started {
-  proc: ChildProcess;
+  proc: Tracked;
   stdout: string[];
   messages: DesktopOutMessage[];
   dataDir: string;
@@ -24,23 +20,12 @@ interface Started {
   home: string;
 }
 
-const procs: ChildProcess[] = [];
+const procs: Tracked[] = [];
 afterEach(async () => {
-  for (const p of procs.splice(0)) {
-    if (p.exitCode === null) {
-      p.kill('SIGTERM');
-      await new Promise((r) => {
-        const t = setTimeout(() => {
-          p.kill('SIGKILL');
-          r(null);
-        }, 15_000);
-        p.once('exit', () => {
-          clearTimeout(t);
-          r(null);
-        });
-      });
-    }
-  }
+  // Graceful first (SwarmCast stops its MediaMTX), then whatever is left of the tree; the
+  // stop confirms that nothing survived.
+  await Promise.all(procs.splice(0).map((p) => p.stop({ graceMs: 10_000 })));
+  await stopTracked();
 });
 
 function start(ports: Record<string, number>, args: string[]): Started {
@@ -51,7 +36,8 @@ function start(ports: Record<string, number>, args: string[]): Started {
   // A log line with a viewer's IP address (as if written by an older run).
   fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true });
   fs.writeFileSync(path.join(dataDir, 'logs', 'swarmcast.log.1'), JSON.stringify({ level: 'warn', msg: `viewer from ${VIEWER_IP} was rate-limited` }) + '\n');
-  const proc = spawn(process.execPath, ['--import', 'tsx', MAIN, '--no-tunnel', '--no-autostart', '--data-dir', dataDir, ...args], {
+  const proc = spawnTracked(process.execPath, serverArgs(['--no-tunnel', '--no-autostart', '--data-dir', dataDir, ...args]), {
+    name: 'SwarmCast',
     cwd: ROOT,
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
@@ -68,13 +54,18 @@ function start(ports: Record<string, number>, args: string[]): Started {
   });
   procs.push(proc);
   const s: Started = { proc, stdout: [], messages: [], dataDir, downloads, home };
-  readline.createInterface({ input: proc.stdout! }).on('line', (line) => {
+  proc.on('line', (line, stream) => {
+    if (stream !== 'stdout') return;
     const msg = decodeDesktopMessage(line);
     if (msg) s.messages.push(msg);
     else s.stdout.push(line);
   });
-  proc.stderr!.resume();
   return s;
+}
+
+/** Wait for `pred` (checked on every output line); fails at once if the server exits. */
+function waitOn(s: Started, pred: () => boolean, what: string): Promise<void> {
+  return until(pred, { timeoutMs: 60_000, what, abortOn: [s.proc], on: [[s.proc, 'line']], detail: () => `last output: ${s.proc.tail(10)}` });
 }
 
 /** Open the ZIP and check that the secrets of this data folder are not in it. */
@@ -99,9 +90,9 @@ function checkZip(file: string, s: Started, token?: string): Record<string, stri
 
 describe('log export (real server)', () => {
   it('script mode: the panel API writes an anonymised ZIP to the Downloads folder', async () => {
-    const ports = { rtmp: 29481, public: 28280, admin: 28281, mediamtxHls: 28998 };
+    const ports = await allocAppPorts();
     const s = start(ports, ['--no-tray', '--no-open']);
-    await waitFor(() => s.stdout.some((l) => l.includes('/auth/')), 60_000, 'panel login URL');
+    await waitOn(s, () => s.stdout.some((l) => l.includes('/auth/')), 'panel login URL');
     const login = /(http:\/\/127\.0\.0\.1:\d+)\/auth\/(\S+)/.exec(s.stdout.find((l) => l.includes('/auth/'))!)!;
     const base = login[1]!;
     const token = login[2]!;
@@ -131,18 +122,18 @@ describe('log export (real server)', () => {
   });
 
   it('desktop mode: {"type":"export-logs"} on stdin answers with the ZIP path', async () => {
-    const ports = { rtmp: 29482, public: 28290, admin: 28291, mediamtxHls: 28999 };
+    const ports = await allocAppPorts();
     const s = start(ports, ['--desktop']);
-    await waitFor(() => s.messages.some((m) => m.type === 'ready'), 60_000, 'ready');
+    await waitOn(s, () => s.messages.some((m) => m.type === 'ready'), 'ready');
     const ready = s.messages.find((m) => m.type === 'ready') as { adminUrl: string };
-    s.proc.stdin!.write(encodeShellMessage({ type: 'export-logs' }));
-    await waitFor(() => s.messages.some((m) => m.type === 'export-logs'), 60_000, 'export-logs answer');
+    s.proc.child.stdin!.write(encodeShellMessage({ type: 'export-logs' }));
+    await waitOn(s, () => s.messages.some((m) => m.type === 'export-logs'), 'export-logs answer');
     const answer = s.messages.find((m) => m.type === 'export-logs') as { ok: boolean; path: string };
     expect(answer.ok).toBe(true);
     const files = checkZip(answer.path, s, ready.adminUrl.split('/auth/')[1]);
     expect(files['about.txt']).toContain('Mode: desktop app');
     expect(files['about.txt']).toContain('Desktop app version: 9.9.9-test');
-    s.proc.stdin!.write(encodeShellMessage({ type: 'quit' }));
-    await new Promise((r) => s.proc.once('exit', r));
+    s.proc.child.stdin!.write(encodeShellMessage({ type: 'quit' }));
+    expect((await s.proc.exited).code).toBe(0);
   });
 });

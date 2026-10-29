@@ -680,6 +680,8 @@ try {
     Assert-Contains $calls "exe=$uninst" 'the SwarmCast uninstaller was run'
     Assert-Contains $calls 'silent=True' 'it was run with /S'
     Assert-Contains $calls "dir=$inst" 'it was run in place (_?=<install folder>)'
+    Assert-Contains $script:Out 'uninstaller finished (exit code 0' 'its exit code was read and was 0'
+    Assert-NotContains $script:Out 'uninstaller stopped with exit code' 'no "stopped with exit code" warning'
     Assert-NotContains $calls $otherUninst 'the other app''s uninstaller was not run'
     Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\NotTheProductName_1234") $false 'the SwarmCast Uninstall key is gone'
     Assert-Eq (Test-Path -LiteralPath "$RegBase\Uninstall\OtherApp") $true 'the other Uninstall key is kept'

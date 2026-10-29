@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, loginPanel, test } from './fixtures.js';
 
 // Panel login through /auth/<token> (the cookie is SameSite=Strict). Chromium and WebKit
 // (WebKit is the desktop app's webview on macOS).
@@ -14,14 +14,12 @@ test.beforeEach(({ browserName }) => {
   test.skip(browserName === 'firefox', 'checked on Chromium and WebKit');
 });
 
-test('script mode: opening the login URL shows the panel, logged in', async ({ page }) => {
-  const login = adminLoginUrl();
-  await page.goto(login);
-  await expect(page).toHaveURL(new URL('/', login).toString());
+test('script mode: opening the login URL shows the panel, logged in', { tag: '@ui' }, async ({ page }) => {
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('status')).toBeVisible();
 });
 
-test('desktop app: a login started on another site (the splash) still lands logged in', async ({ page }) => {
+test('desktop app: a login started on another site (the splash) still lands logged in', { tag: '@ui' }, async ({ page }) => {
   const login = adminLoginUrl();
   // A page on another site, like the desktop splash (tauri://localhost), that opens the panel.
   await page.route('http://splash.test/**', (route) =>

@@ -6,9 +6,22 @@ emulated and are slower). Nothing here changes the release folder.
 
 | Script | What it runs |
 | --- | --- |
-| `run.sh` | Section 1: `start-linux.sh` + the real `SwarmCast-v*-linux-*.tar.gz` on Ubuntu 22.04/24.04, Debian 12 (arm64) and Ubuntu 24.04 (amd64), plus the real Cloudflare quick tunnel |
+| `run.sh` | Section 1: `start-linux.sh` + the real `SwarmCast-v*-linux-*.tar.gz` on Ubuntu 22.04/24.04, Debian 12 (the host's architecture) and Ubuntu 24.04 (amd64), plus the real Cloudflare quick tunnel |
 | `obs.sh` | Section 2: real OBS Studio (Ubuntu 24.04 package, obs-websocket) headless under Xvfb + Mesa llvmpipe, streaming to SwarmCast in the same container |
 | `e2e.sh` | Section 3: the Playwright suite (Firefox, Chromium) in `mcr.microsoft.com/playwright:v<version>-noble` (version read from `package-lock.json`) |
+| `appimage.sh` | Section 4: the desktop AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 that has only the host packages the website's Linux page lists |
+
+## In CI
+
+`.github/workflows/linux-docker.yml` runs all four natively on `ubuntu-24.04` (x64) and
+`ubuntu-24.04-arm` (arm64), no emulation: weekly, manually, and on pull requests that touch
+this folder, `start-linux.sh` or `uninstall-linux.sh`. A build job makes the package and the
+AppImage of the commit for each architecture (on Ubuntu 22.04, like the release); then one job
+per base image and architecture runs `run.sh --serial <base>` and `appimage.sh`. The tunnel
+check (d) runs on the weekly schedule only (Ubuntu 24.04), because Cloudflare rate-limits quick
+tunnels. The images are built in each job (no layer cache: a weekly job outlives GitHub's 7-day
+cache eviction, and the repository's cache is full); their `apt-get` uses retries and a 30 s
+time limit per connection.
 
 The release folder defaults to `<main checkout>/release` (override with `--release DIR` or
 `RELEASE_DIR`). Build it first (`npm run package` for each target, plus `SHA256SUMS.txt`).
@@ -57,7 +70,9 @@ scripts/test/docker/obs.sh            # Advanced output, x264, keyframe interval
 scripts/test/docker/obs.sh --simple   # OBS Simple output defaults
 ```
 
-`obs-test.sh` installs SwarmCast with the start script (`file:///release`), starts it, writes
+`obs-test.sh` serves the release folder on `http://127.0.0.1:8000` inside the container (not
+`file:///release`: the start script needs an HTTP 200 for the checksum list, and curl reports no
+HTTP status for `file://`), installs SwarmCast with the start script from there, starts it, writes
 the OBS config (first-run wizard skipped via `global.ini`; obs-websocket enabled without auth
 in both `global.ini` `[OBSWebSocket]` (obs-websocket ≤ 5.4, OBS ≤ 30) and
 `plugin_config/obs-websocket/config.json` (5.5+)), starts OBS under `xvfb-run` with
@@ -79,6 +94,27 @@ ffmpeg, runs `npm ci`, `fetch-binaries.mjs` (detects linux-arm64), `npm run buil
 H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each project with
 `playwright.linux.config.ts`: the main config, but the chromium project has no `channel`
 (Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/`.
+
+## Section 4: `appimage.sh`
+
+```sh
+scripts/test/docker/appimage.sh --version 0.2.2 release/desktop/linux-arm64/SwarmCast_0.2.2_aarch64.AppImage
+scripts/test/docker/appimage.sh --platform linux/amd64 SwarmCast_0.2.2_amd64.AppImage ubuntu:24.04   # one base, emulated
+```
+
+The AppImage must match the container's architecture (the Docker host's, or `--platform`). `Dockerfile.appimage` is the bare base
+image plus `HOST_PACKAGES` (the list on the website's Linux page: `libgl1 libegl1 fontconfig
+fonts-dejavu-core libharfbuzz0b libfribidi0`), FUSE 2 (`libfuse2t64` or `libfuse2`), and the
+test's own display and session tools (`xvfb xauth dbus`). There is no curl, Python or Node:
+`appimage-test.sh` talks HTTP through bash's `/dev/tcp`, so the test adds no library the app could
+quietly borrow. The container has no network (`--network none`) and no FUSE device, so the AppImage
+runs with `APPIMAGE_EXTRACT_AND_RUN=1`. Under `xvfb-run` and `dbus-run-session` it checks: the
+server starts (login URL), panel login, the panel page, `/api/desktop` (version), the shell logs
+"ready, opening the panel", the app and a `WebKitWebProcess` are still running 5 s later, no
+"error while loading shared libraries" or panic, and Quit in the panel leaves no process.
+When a base fails with a missing library, the list (here and on the website, both languages) is
+what needs fixing. `libharfbuzz0b` and `libfribidi0` were found that way: AppImages leave them to
+the host (the AppImage exclude list), and the v0.2.1 AppImage does not start without them.
 
 ## Cleanup
 

@@ -14,3 +14,7 @@ test-results/
 *.blob
 apps/tray/bin/
 .claude/
+
+# Updater signing key copies (never commit)
+swarmcast-updater.key
+swarmcast-updater.password

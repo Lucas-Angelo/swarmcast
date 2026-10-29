@@ -1,9 +1,14 @@
-import { expect, test, type CDPSession, type Page } from '@playwright/test';
-import { join, viewerByNick, waitPlaying } from './fixtures.js';
+import type { CDPSession, Page } from '@playwright/test';
+import { expect, join, test, uid, unmute, viewerByNick, waitForPlaylist, waitPlaying } from './fixtures.js';
 
-// The adaptive playback delay (apps/viewer/src/latency-controller.ts, docs/QUALITY.md).
-// `?delaySpeed=10` runs the controller's own clocks (dwell times, quiet period, target drift)
-// 10× faster; the playbackRate limits stay real, so lowering the delay by 5 s still takes 100 s.
+// The adaptive playback delay (apps/viewer/src/latency-controller.ts, docs/QUALITY.md), end to
+// end in a real player on a real (emulated) network, on a fast clock: `?delaySpeed=10` runs the
+// controller's own clocks (dwell times, quiet period, target drift) 10× faster, and
+// `?delayRate=10` moves playbackRate 10× further from 1 (catch-up ≤ 1.5× instead of 1.05×,
+// slow-down 0.5× instead of 0.95×), so the delay follows that clock: a 5 s change takes 10 s
+// instead of 100 s. The real-time numbers are covered by latency-controller.test.ts. The page
+// honours both flags only because server.ts starts SwarmCast with SWARMCAST_TEST_HOOKS=1.
+const FAST = '/watch?delaySpeed=10&delayRate=10';
 
 interface Delay {
   delay: number | null;
@@ -11,38 +16,34 @@ interface Delay {
   state: string;
   rateMode: string;
   playbackRate: number;
+  /** The controller's playbackRate limits on this clock. */
+  rates: { max: number; slow: number };
   stalls: number;
   stalledS: number;
   holds: number;
+  /** What the controller measured (latency-controller.ts Signals). */
+  signals: unknown;
 }
-
-type HlsDebug = { levels: Array<{ details?: { totalduration: number } }>; currentLevel: number };
 
 const delayOf = (page: Page): Promise<Delay> => page.evaluate(() => (window as unknown as { __swarmcast: { delay: Delay } }).__swarmcast.delay);
 
-test.describe.configure({ mode: 'serial' });
-
-/** Join, wait until the live playlist is long enough to start ~20 s behind live, then reopen the player with the fast clock. */
+/** Once the live playlist is long enough to start ~20 s behind live: join, then reopen the player on the fast clock. */
 async function watchWithFastClock(browser: Parameters<typeof join>[0], nick: string, before?: (page: Page) => Promise<void>): Promise<Awaited<ReturnType<typeof join>>> {
+  await waitForPlaylist(32);
   const joined = await join(browser, nick);
   const { page } = joined;
-  await waitPlaying(page);
-  await page.waitForFunction(() => {
-    const h = (window as unknown as { __hls: HlsDebug }).__hls;
-    return (h.levels[h.currentLevel]?.details?.totalduration ?? 0) >= 32;
-  }, null, { timeout: 90_000, polling: 1000 });
   if (before) await before(page);
-  await page.goto('/watch?delaySpeed=10');
+  await page.goto(FAST);
   await waitPlaying(page);
+  // With sound, so the browser clocks playback in real time (fixtures.ts unmute).
+  await unmute(page);
   return joined;
 }
 
-test('on a good network the delay drifts below 15 s, the status line shows it, and Go live still works', async ({ browser, browserName }) => {
+test('on a good network the delay drifts below 15 s, the status line shows it, and Go live still works', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName === 'firefox', 'checked on Chromium and WebKit');
-  // A busy CI runner (the test stream is encoded on the same machine) can stall a few times:
-  // each stall rightly raises the delay, and lowering it again takes real time (≤ 1.05×).
-  test.setTimeout(600_000);
-  const nick = `delay-good-${browserName}`;
+  test.setTimeout(240_000);
+  const nick = uid('delaygood');
   const { context, page } = await watchWithFastClock(browser, nick, async (p) => {
     if (browserName !== 'chromium') return;
     // A good home connection: 30 Mbps, 20 ms.
@@ -61,24 +62,36 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   await expect(page.locator('#delay-wrap .tip-btn')).toHaveCount(1);
   await expect(page.locator('#tip-delay')).toContainText('adjusts itself to your connection');
 
-  // Drifts down with a gentle catch-up (≤ 1.05×), no stalls.
+  // Drifts down with a gentle catch-up (≤ the profile's limit), no stalls. Every sample of the
+  // controller is kept (attached to the result), so a failure shows how it classified the network.
   let maxRate = 1;
+  const timeline: Array<Pick<Delay, 'delay' | 'target' | 'state' | 'playbackRate'> & { s: number; signals?: unknown }> = [];
+  const since = Date.now();
   await expect
     .poll(
       async () => {
         const d = await delayOf(page);
+        timeline.push({ s: Math.round((Date.now() - since) / 100) / 10, delay: d.delay, target: d.target, state: d.state, playbackRate: d.playbackRate, signals: d.signals });
         maxRate = Math.max(maxRate, d.playbackRate);
         return d.delay ?? 99;
       },
-      { timeout: 420_000, intervals: [2000] },
+      { timeout: 120_000, intervals: [1000] },
     )
     .toBeLessThan(15);
   const low = await delayOf(page);
-  expect(low.state).toBe('firm');
+  await test.info().attach('adaptive-delay timeline (good network)', { body: JSON.stringify({ low, timeline }, null, 1), contentType: 'application/json' });
+  // The drift is the controller's "firm" verdict: only "firm" lowers the target, and the network
+  // never looked unstable. The state of the very last sample is not checked: on this 10× clock
+  // "firm" ends after two loose ticks (firmExit.afterS 0.5 s; 5 s in real time), so one slow
+  // segment load on a busy CI machine may end it right after the drift (1 of 40 WebKit runs on
+  // macos-latest in the calibration soak), which says nothing about the drift itself.
+  expect(timeline.some((d) => d.state === 'firm'), 'the controller called the network firm').toBe(true);
+  expect(timeline.filter((d) => d.state === 'unstable'), 'samples that called the network unstable').toEqual([]);
   expect(low.target).toBeLessThan(15);
   console.log('good network:', JSON.stringify({ start: start.delay, low: low.delay, target: low.target, stalls: low.stalls, stalledS: low.stalledS, holds: low.holds }));
   expect(low.stalls).toBeLessThanOrEqual(3);
-  expect(maxRate).toBeLessThanOrEqual(1.05);
+  expect(maxRate).toBeGreaterThan(1);
+  expect(maxRate).toBeLessThanOrEqual(low.rates.max);
   // The label refreshes once a second: poll it rather than read it once.
   await expect.poll(async () => Number(/\d+/.exec((await label.textContent()) ?? '')?.[0] ?? 99), { timeout: 10_000 }).toBeLessThanOrEqual(16);
 
@@ -100,11 +113,11 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   await context.close();
 });
 
-test('on a throttled, oscillating network the delay rises and stalls stay rare', async ({ browser, browserName }) => {
+test('on a throttled, oscillating network the delay rises and stalls stay rare', { tag: '@media' }, async ({ browser, browserName }) => {
   test.skip(browserName !== 'chromium', 'CDP network throttling is Chromium only');
-  test.setTimeout(330_000);
+  test.setTimeout(240_000);
   let cdp: CDPSession | null = null;
-  const { context, page } = await watchWithFastClock(browser, `delay-osc-${browserName}`, async (p) => {
+  const { context, page } = await watchWithFastClock(browser, uid('delayosc'), async (p) => {
     cdp = await p.context().newCDPSession(p);
     await cdp.send('Network.enable');
   });
@@ -118,7 +131,8 @@ test('on a throttled, oscillating network the delay rises and stalls stay rare',
   let maxRate = 1;
   let maxTarget = start.target;
   let last = start;
-  const end = Date.now() + 180_000;
+  // Three bad/good cycles: on this clock, enough to raise the target to the top of its range.
+  const end = Date.now() + 60_000;
   for (let i = 0; Date.now() < end; i++) {
     await cdp!.send('Network.emulateNetworkConditions', i % 2 === 0 ? bad : good);
     for (let k = 0; k < 5; k++) {

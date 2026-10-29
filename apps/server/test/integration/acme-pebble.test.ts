@@ -34,6 +34,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FetchLike } from '../../src/direct/acme.js';
 import { LetsEncryptIpIssuer, type IssuedCert } from '../../src/direct/certs.js';
 import type { PortMapper } from '../../src/direct/mapper.js';
+import { allocPorts } from './helpers.js';
 
 /** ghcr.io/letsencrypt/pebble 2.10.1 (multi-arch index, revision b1e1ca4), pinned by digest. */
 const PEBBLE_IMAGE = 'ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199';
@@ -51,15 +52,9 @@ const hasDocker = (() => {
 const log = pino({ level: 'silent' });
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8', timeout: 120_000 }).trim();
 
-function freePort(): Promise<number> {
-  return new Promise((resolve, reject) => {
-    const s = net.createServer();
-    s.once('error', reject);
-    s.listen(0, '127.0.0.1', () => {
-      const { port } = s.address() as net.AddressInfo;
-      s.close(() => resolve(port));
-    });
-  });
+/** A port of this worker's block, free right now (not one from the OS's ephemeral range). */
+async function freePort(): Promise<number> {
+  return (await allocPorts(1))[0]!;
 }
 
 /** fetch() replacement that trusts an extra CA (global fetch has no per-call CA option without undici). */

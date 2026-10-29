@@ -1,7 +1,7 @@
 import dns from 'node:dns';
 import { EventEmitter } from 'node:events';
 import https from 'node:https';
-import type { LookupFunction } from 'node:net';
+import net, { type LookupFunction } from 'node:net';
 import { abortable, sleep } from '../core/retry.js';
 
 export type TunnelEvents = {
@@ -80,7 +80,17 @@ export async function resolveViaDoh(hostname: string): Promise<string | null> {
   }
 }
 
-/** GET url/healthz and return the X-SwarmCast header (or null), resolving the host via DoH when possible. */
+/** True for a URL host that is an IP address (`203.0.113.7`, `[2001:db8::5]`), not a name. */
+export function isIpHost(hostname: string): boolean {
+  return net.isIP(hostname.replace(/^\[(.*)\]$/, '$1')) !== 0;
+}
+
+/**
+ * GET url/healthz and return the X-SwarmCast header (or null), resolving the host via DoH when
+ * it is a name. An IP address (Direct mode: https://<public IP>:<port>) needs no DNS at all:
+ * asking a DNS-over-HTTPS server about it would only send the streamer's address to Cloudflare
+ * and, offline, wait up to 5 s on every check of "Stop everything".
+ */
 export async function probeHealth(url: string): Promise<string | null> {
   const u = new URL('/healthz', url);
   if (u.protocol !== 'https:') {
@@ -88,7 +98,7 @@ export async function probeHealth(url: string): Promise<string | null> {
     await res.body?.cancel();
     return res.ok ? res.headers.get('x-swarmcast') : null;
   }
-  const ip = await resolveViaDoh(u.hostname);
+  const ip = isIpHost(u.hostname) ? null : await resolveViaDoh(u.hostname);
   const lookup: LookupFunction | undefined = ip
     ? (_host, opts, cb) => {
         if ((opts as dns.LookupOptions).all) (cb as unknown as (e: null, a: dns.LookupAddress[]) => void)(null, [{ address: ip, family: 4 }]);

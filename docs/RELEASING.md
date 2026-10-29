@@ -1,10 +1,11 @@
 # Releasing (maintainer)
 
-How to set up the GitHub repository and ship a SwarmCast release. The repository
-(`Lucas-Angelo/swarmcast`) is public, so release assets, the one-line installs and the desktop app's
-update check all work straight from it.
+How the GitHub repository is set up, how changes reach `main`, and how to ship a SwarmCast release.
+The repository (`Lucas-Angelo/swarmcast`) is public, so release assets, the one-line installs and the
+desktop app's update check all work straight from it.
 
 Streamers never read this: their guide is the website, <https://lucas-angelo.github.io/swarmcast/>.
+Contributors start with [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## 1. Repository settings (once)
 
@@ -22,61 +23,137 @@ gh repo edit Lucas-Angelo/swarmcast \
 On the repository page, the gear next to **About** also has "Use your GitHub Pages website" (fills the
 homepage link) and the Releases / Packages / Deployments toggles: keep **Releases** on.
 
-**Security.** Under **Settings → Code security**, turn on **Private vulnerability reporting** (it is
-how [SECURITY.md](../SECURITY.md) asks people to report), Dependabot alerts and secret scanning.
+**Settings → General.**
 
-## 2. Branch protection
+- Features: **Issues** on, **Discussions** on (categories Announcements, Q&A, Ideas and, from 0.3.0,
+  Beta feedback), **Wiki** off (the docs live in `docs/` and on the website).
+- Pull requests: allow **squash merging** only, with "Default commit message" set to **Pull request
+  title** (blank body). Turn on **Automatically delete head branches** and **Always suggest updating pull
+  request branches**.
+- Releases: **Enable release immutability** (section 4).
 
-Protect `main` so every change goes through a pull request with green checks. In
-**Settings → Branches → Add branch ruleset** (or the classic branch protection rule):
+**Settings → Moderation options → Reported content.** Accept reports, so people can use **Report
+content → Report to repository admins**, the private route in
+[CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md).
 
-- target the default branch;
-- require a pull request before merging (0 approvals is fine for a solo maintainer);
-- require status checks to pass, and pick the CI checks from the list (GitHub only offers checks that
-  have already run once, so open a pull request first). Require branches to be up to date;
-- block force pushes and deletions.
+**Settings → Code security.** Turn on **Private vulnerability reporting** (it is how
+[SECURITY.md](../SECURITY.md) asks people to report), Dependabot alerts and Dependabot security updates
+(version updates are in `.github/dependabot.yml`), and secret scanning with push protection.
 
-With the classic rule, the same thing from the command line (replace the `contexts` with the check names
-your pull requests show):
+**Settings → Actions → General.** Require actions to be pinned to a full-length commit SHA, require
+approval for fork pull request workflows from all outside contributors, and keep the default token
+read-only (it may not create or approve pull requests).
+
+**Labels.** The issue forms, the pull request template and `.github/release.yml` (the categories of
+GitHub's generated pull request list) use these labels besides GitHub's defaults:
 
 ```sh
-gh api -X PUT repos/Lucas-Angelo/swarmcast/branches/main/protection --input - <<'EOF'
-{
-  "required_status_checks": { "strict": true, "contexts": ["<check name>", "<check name>"] },
-  "enforce_admins": false,
-  "required_pull_request_reviews": { "required_approving_review_count": 0 },
-  "restrictions": null,
-  "allow_force_pushes": false,
-  "allow_deletions": false
-}
-EOF
+for l in breaking performance maintenance dependencies security skip-changelog needs-triage beta; do
+  gh label create "$l" -R Lucas-Angelo/swarmcast 2>/dev/null || true
+done
 ```
 
-CI runs automatically on every pull request and push to `main` (standard runners are free on a public
-repository), again on the 1st of every month (to catch dead third-party downloads or runner image
-changes), and by hand from **Actions → (workflow) → Run workflow**; the **Re-run** button repeats a run.
-A newer push to a pull request cancels its older runs; runs on `main` and tags are never cancelled.
+## 2. Branches, pull requests and protection
 
-| Workflow | What | Runs on |
-|----------|------|---------|
-| `ci.yml` | lint, typecheck, build, unit, integration and E2E tests, `npm audit`, tray helper | Windows, macOS, Ubuntu |
-| `scripts.yml` | start and uninstall scripts against a fake release | Windows (PowerShell 5.1), macOS, Ubuntu |
-| `preflight.yml` | clean-machine check of the real script-mode package (install, live, watch, P2P, tunnel) | Windows, macOS arm64 + Intel, Ubuntu 22.04 + latest |
-| `windows.yml` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
-| `desktop.yml` | `cargo fmt`/`clippy`/`test`, desktop installers per target, clean-machine install/launch/autostart/update/uninstall tests | Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
-| `codeql.yml` | code scanning (TypeScript, Go, Rust, the workflows) | Ubuntu |
-| `site.yml`, `stats.yml` | the website and the usage numbers (section 6) | Ubuntu |
-| `release.yml` | on a `v*` tag: the suites above as a gate, then build, sign and publish (section 4) | all |
+SwarmCast uses **trunk-based GitHub Flow**:
 
-Changes that only touch `docs/`, `site/` or `.md` files do not rebuild the app (`scripts.yml` and
-`site.yml` run for the pages they use). A required check that did not run keeps a pull request waiting,
-so require only checks that always run for app changes, or merge such docs-only pull requests as an admin.
-The usage-stats job writes only to its own `stats` branch (section 6), so the protection on `main` never
-blocks it.
+- **`main` is the only long-lived branch.** Every change goes through a short-lived branch and a pull
+  request (`feat/…`, `fix/…`, `docs/…`, `ci/…`, `chore/…`; the name does not matter after the merge).
+- Pull requests are **squash-merged**: the pull request title becomes the one commit on `main`, the body
+  is dropped, and the branch is deleted. A branch may have as many commits as it likes. Titles follow
+  [CONTRIBUTING.md](../CONTRIBUTING.md#pull-request-titles); a release pull request is titled
+  `SwarmCast vX.Y.Z`.
+- **Releases are tags on `main`** (section 4). There is no `develop` branch and no branch per release.
+- **`release/X.Y` maintenance branches** are made only when a stable fix cannot ship from `main`
+  (section 4, "Hotfixes"). The `release/` prefix is kept for them. The orphan `stats` branch is data, not
+  code (section 6).
+
+**Protection.** Two rulesets, in **Settings → Rules → Rulesets** (or with
+`gh api -X POST repos/Lucas-Angelo/swarmcast/rulesets --input <file>.json`).
+
+`main` and the maintenance lines:
+
+```json
+{
+  "name": "main and release lines",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH", "refs/heads/release/*"], "exclude": [] } },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    { "type": "required_linear_history" },
+    { "type": "pull_request", "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": true,
+        "allowed_merge_methods": ["squash"] } },
+    { "type": "required_status_checks", "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": true,
+        "required_status_checks": [ { "context": "ci-ok", "integration_id": 15368 } ] } }
+  ]
+}
+```
+
+- **0 approvals:** there is one maintainer, and agents work with the maintainer's account, so a required
+  approval would only block every merge. Open review threads must be resolved before merging.
+- **Required check `ci-ok`:** one check that sums up every CI job of a pull request and always reports,
+  also when a docs-only change skips the app suites. GitHub only offers a check in the picker after it
+  has run once. `15368` is the GitHub Actions app; the picker shows the source of each check.
+- **"Up to date" is off:** a merge queue is not available on a user-owned repository, and requiring
+  up-to-date branches would mean a rebase and a full multi-OS rerun for every parallel pull request. CI on
+  `main` after the merge catches the rare clash.
+- **No bypass.** In an emergency, edit the ruleset for a moment; the change shows in the audit log.
+- `do_not_enforce_on_create` lets you create `release/X.Y` from a tag.
+
+Release tags:
+
+```json
+{
+  "name": "release tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ],
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" }, { "type": "non_fast_forward" } ]
+}
+```
+
+Only the admin role (`actor_id` 5; check it in the bypass picker) can create, move or delete `v*` tags,
+so a stray `git push --tags` or `--force` cannot change a release tag.
+
+**CI.** One workflow, `pipeline.yml`, runs automatically on every pull request and push to `main`
+(standard runners are free on a public repository), again on the 1st of every month with everything (to
+catch dead third-party downloads or runner image changes), and by hand from **Actions → Pipeline → Run
+workflow**; the **Re-run** button repeats a run. A newer push to a pull request cancels its older run;
+runs on `main` and tags are never cancelled. Its stages, how it builds once and tests the same bytes
+everywhere, and what each change runs are in [.github/workflows/README.md](../.github/workflows/README.md).
+
+| Stage | What | Runs on |
+|-------|------|---------|
+| `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, tray helper, `cargo fmt` | Ubuntu |
+| `build`, `desktop` | the web build, the script-mode packages, the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
+| `node` | unit and integration tests, `cargo clippy`/`test`, the start and uninstall scripts (when they changed) | Windows, macOS, Ubuntu |
+| `e2e` | Playwright (Chrome, Firefox, WebKit), split into the `ui` and `media` tests | macOS, Ubuntu |
+| `windows` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
+| `clean-machine` | per runner image: the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
+| `site` | the website's tests, when it changed | Ubuntu |
+| `ci-ok` | the one required check: green only when every stage the change needs passed | Ubuntu |
+
+Other workflows: `codeql.yml` (code scanning of TypeScript, Go, Rust and the workflows), `site.yml` and
+`stats.yml` (the website and the usage numbers, section 6), `soak.yml` and `linux-docker.yml` (stability
+measurements and the Docker suites), and `release.yml` (on a `v*` tag: the whole pipeline as a gate, then
+sign and publish, section 4).
+
+Changes that only touch `docs/`, `site/` or `.md` files skip the app stages: `ci-ok` is green within a
+minute (and the `site` stage runs for the pages they use). The usage-stats job writes only to its own
+`stats` branch (section 6), which the rulesets do not cover.
 
 ## 3. Secrets
-
-Set them in **Settings → Secrets and variables → Actions → Repository secrets**.
 
 ### Updater signing key (required for every release)
 
@@ -88,6 +165,21 @@ Set them in **Settings → Secrets and variables → Actions → Repository secr
 The desktop app installs an update only when its signature matches the public key built into the app
 (`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`). The release workflow refuses to
 start without these two secrets, because a release without signatures could never reach installed apps.
+
+**They live in the `release` environment**, not in the repository secrets:
+
+- **Settings → Environments → `release`**: "Deployment branches and tags" is **Selected branches and
+  tags**, with one **tag** rule `v*` and no branch rule. No required reviewer and no wait timer. The two
+  secrets above are **environment secrets** of `release`.
+- GitHub gives environment secrets only to a job that names the environment (`environment: release`),
+  and only after the environment's rules pass. So only release jobs started by a `v*` tag can read the
+  key. Pull request runs, including ones from branches of this repository that edit a workflow, cannot.
+  (Repository secrets, by contrast, reach every same-repository pull request.)
+- In a reusable workflow, the job inside the called workflow is the one that must declare
+  `environment: release`; the caller still passes the secrets down.
+- The tag rule pairs with the tag ruleset (section 2): only the admin can create `v*` tags.
+
+Key care:
 
 - **Where it lives:** the key pair was made with
   `npx tauri signer generate -w ~/.tauri/swarmcast-updater.key`. The private key is that file, its
@@ -107,14 +199,30 @@ hand.
 
 ### Code signing (optional, paid)
 
-See section 7. Without those secrets the release is unsigned, which is the default.
+See section 7. Without those secrets the release is unsigned, which is the default. They belong in the
+`release` environment too.
 
 ## 4. Ship a release
+
+**Versions** follow [Semantic Versioning](https://semver.org/): minor bumps (`0.3.0`) for features,
+patch bumps (`0.2.2`) for fixes.
+
+**Pre-releases** (planned with the opt-in beta channel in 0.3.0): `X.Y.Z-beta.N`, and optionally
+`X.Y.Z-rc.N` for a final frozen build. Always put a dot before the number (`beta.2`, not `beta2`), so
+`beta.11` sorts after `beta.2`. No alpha. They are tags on `main` like any release, and a version with a
+hyphen is published as a **GitHub pre-release**, which `/releases/latest` (stable apps, the start scripts
+and the site's download button) never returns. Patch releases normally skip betas.
+
+**A published release is never changed.** Release immutability is on (section 1): once published, its
+assets and its tag cannot be edited, replaced or deleted, and GitHub adds a release attestation.
+Installed apps and the scripts may already have it. A mistake is fixed by shipping the next version.
+
+### Steps
 
 1. **Changelog.** In `CHANGELOG.md`, rename `## [Unreleased]` (or the prepared `## [X.Y.Z] - Unreleased`)
    to `## [X.Y.Z] - YYYY-MM-DD`, start a new empty `## [Unreleased]` above it, and update the link
    references at the bottom. The section must not be empty: it becomes the release notes and the
-   desktop app's update dialog.
+   desktop app's update dialog, so it is written for streamers.
 2. **Version.** Set the same version in every `package.json` and `apps/desktop/src-tauri/Cargo.toml`:
    ```sh
    npm version X.Y.Z --no-git-tag-version --workspaces --include-workspace-root
@@ -122,25 +230,25 @@ See section 7. Without those secrets the release is unsigned, which is the defau
    ```
    The root `package.json` is the one that counts: the tag must match it, and the build stamps it into the
    server, the packages and the desktop app.
-3. Open a pull request with both changes, wait for CI, merge it.
-4. **Tag** the merge commit on `main` and push the tag:
+3. **Release pull request.** Open a pull request with both changes, titled **`SwarmCast vX.Y.Z`**. Wait
+   for `ci-ok` and squash-merge it: `SwarmCast vX.Y.Z` becomes the release commit on `main`.
+4. **Tag** that commit on `main` and push the tag:
    ```sh
    git switch main && git pull
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
-   A version with a hyphen (`v0.3.0-rc.1`) becomes a GitHub pre-release. Pre-releases are never offered
-   to installed apps or the site's download button (both use `/releases/latest`), so they are safe for
-   testing.
 5. **Watch the release workflow** in the **Actions** tab. It runs by itself on the tag and:
    1. checks that the tag matches `package.json`, that `CHANGELOG.md` has a section for the version and
-      that the updater signing secrets exist, and that no GitHub release exists yet for the tag (a published
-      release is never changed);
-   2. runs the full test suites (the same checks as pull requests, plus the install-script, pre-release,
-      Windows and desktop-installer tests). If anything fails, nothing is published;
-   3. builds and smoke-tests the server package on each platform, and signs the binaries when the
-      code-signing secrets exist;
-   4. builds the desktop installers and signs their update packages with the updater key;
-   5. publishes the GitHub release, with the release notes taken from the `CHANGELOG.md` section.
+      that the updater signing secrets exist, and that no GitHub release exists yet for the tag;
+   2. runs the whole pipeline, every stage, the same as for pull requests, with the desktop installers
+      built with full optimisation and their update packages signed with the updater key (from the
+      `release` environment, section 3). If anything fails, nothing is published;
+   3. signs the server packages the pipeline built and tested when the code-signing secrets exist, and
+      smoke-tests them on each platform;
+   4. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
+      `CHANGELOG.md` section: it uploads every asset to a draft first, checks them, attests them (build
+      provenance, `gh attestation verify <file> -R Lucas-Angelo/swarmcast`) and only then publishes the
+      draft, so nothing edits a published release.
 6. **Check the result** (a few minutes after it finishes):
    - the release is marked **Latest** and has every asset listed below;
    - `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json` shows the new
@@ -150,10 +258,33 @@ See section 7. Without those secrets the release is unsigned, which is the defau
      job, which records the latest release's installers and rebuilds the site (section 6). If the button
      still shows the old version after that, run **Usage stats** by hand in the Actions tab.
 
-**If the release workflow fails** before publishing, fix the problem on `main`, then move the tag:
+**If the release workflow fails** before publishing, fix the problem on `main` (a normal pull request),
+then move the tag (the admin bypass of the tag ruleset allows it):
 `git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`, tag the fixed commit and push it again. Once
-a release is **published**, never re-use its version: installed apps and the scripts may already have
-it. Ship `X.Y.Z+1` instead.
+a release is **published**, never re-use its version: ship `X.Y.Z+1` instead.
+
+**Pull request list.** The release notes are the curated `CHANGELOG.md` text. GitHub's generated list of
+merged pull requests (**Generate release notes**, or the `generate-notes` API) is sorted by label into
+the categories in `.github/release.yml`; pull requests labelled `skip-changelog` are left out.
+
+### Hotfixes
+
+- **Usual case: `main` can be released.** Merge the fix, then a release pull request for `vX.Y.(Z+1)`,
+  and tag it on `main`. No branch is needed.
+- **`main` holds work that must not ship yet** (an open beta, a half-finished feature) and the stable bug
+  cannot wait (security, data loss, crash on launch, broken update):
+  1. merge the fix to `main` first, so the next minor has it too;
+  2. if it does not exist yet, create the maintenance branch from the stable tag, named after the minor
+     line: `git switch -c release/X.Y vX.Y.Z && git push -u origin release/X.Y`;
+  3. on a short-lived branch from `release/X.Y`, `git cherry-pick -x <commit on main>`, do steps 1–2 for
+     `X.Y.(Z+1)`, and open a pull request into `release/X.Y` titled `SwarmCast vX.Y.(Z+1)`;
+  4. squash-merge it, tag the commit on `release/X.Y` and let the release workflow publish it;
+  5. copy the new `CHANGELOG.md` section forward to `main` in a small pull request.
+
+  A maintenance branch is never merged back. Once a newer minor is stable, ship fixes there instead:
+  everyone is moved to the newest stable by the updater within about 6 hours.
+- **Security fix:** prepare it in the advisory's temporary private fork, then follow one of the two cases
+  above, then publish the advisory.
 
 ## 5. What a release publishes
 
@@ -226,3 +357,47 @@ ones) by itself:
 
 The desktop installers are not code-signed yet even with these secrets: that needs the Tauri bundler's
 signing settings (see [DESKTOP.md](DESKTOP.md), "Installers") and is future work.
+
+## 8. Mirrored CI dependencies (`ci-deps`)
+
+Some publisher hosts are very slow from GitHub's runners: the macOS ffmpeg host
+(`ffmpeg.martin-riedl.de`) has served 10–30 kB/s with stalls there, while a home connection gets the
+same 28 MB in seconds. CI therefore downloads byte-identical copies from the
+[`ci-deps`](https://github.com/Lucas-Angelo/swarmcast/releases/tag/ci-deps) pre-release of this
+repository, which GitHub serves fast to its own runners.
+
+- In `scripts/build/versions.json`, such an asset has `"mirrors": [<ci-deps URL>]` next to its publisher
+  `url`. `fetch-binaries.mjs` tries the mirrors first and the publisher last, each with its own resume,
+  retries and time cap. A missing or unreachable mirror falls back to the publisher; a file whose
+  SHA-256 differs from the pin stops the download (the pin is the only thing trusted, whatever the source).
+- Only CI and packagers use the mirrors. `binaries.json`, the start scripts and the app always download
+  from the publisher's `url` (a test checks that `binaries.json` never contains `ci-deps`).
+- `ci-deps` is a **pre-release, never "latest"**, so `/releases/latest` (the app's updater, the start
+  scripts, the site) never sees it, and its asset names do not count as downloads in the usage numbers.
+  It was created before immutable releases were turned on, so it stays editable: new files can be added.
+  Do not delete it or its tag: with immutable releases on, a deleted release's tag name cannot be reused.
+  If a new mirror release is ever needed, create a new pre-release (for example `ci-deps-2`) and point the
+  new `mirrors` URLs at it.
+
+To add or refresh a mirrored file (for example after pinning a new ffmpeg):
+
+1. Pin the publisher's `url` and `sha256` in `versions.json` first, as for any dependency.
+2. Download the file from the publisher into an empty folder, under a name that says what it is and never
+   repeats an existing one: `<tool>-<version>-<target>.<ext>`, e.g. `ffmpeg-9.0.3-macos-arm64.zip`. Check it:
+   `shasum -a 256 <file>` (Linux: `sha256sum`) must print the pin.
+3. Upload it, without `--clobber` (old branches still pin the old files):
+   `gh release upload ci-deps <file> --repo Lucas-Angelo/swarmcast`.
+4. Check what GitHub stored: `gh release view ci-deps --repo Lucas-Angelo/swarmcast --json assets --jq '.assets[] | [.name, .digest] | @tsv'`
+   shows `sha256:<pin>` for the new file.
+5. Add `https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/<file>` to the asset's
+   `mirrors` in every `versions.json` entry that pins the same file (`ffmpeg` and `ffmpeg-test` on macOS).
+   `npx vitest run scripts/build/test/fetch-binaries.test.ts` checks the URLs and that one mirror file
+   has one pin. `node scripts/build/fetch-binaries.mjs --only ffmpeg-test --target macos-arm64 --out <tmp>`
+   proves the download.
+6. Update the table in the release notes (`gh release edit ci-deps --notes-file <file>`), keeping the
+   license section: for a GPL build, attach the matching FFmpeg source and say where the build script and
+   library versions are.
+7. Make sure it is still not the latest release: `gh api repos/Lucas-Angelo/swarmcast/releases/latest --jq .tag_name`
+   must print the app's last version.
+
+Delete an old file only when no supported branch pins it any more.

@@ -1,60 +1,104 @@
 import crypto from 'node:crypto';
-import type { ChildProcess } from 'node:child_process';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createApp, type App } from '../../src/app.js';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import type { App } from '../../src/app.js';
 import { isAlive } from '../../src/process/children.js';
-import { LoadGuard } from '../../src/quality/load-guard.js';
 import { variantInfoHashHex } from '../../src/tracker/tracker.js';
-import { hasFfmpeg, joinAs, pushTestStream, tmpDir, waitFor, type Jar } from './helpers.js';
-
-const PORTS = { rtmp: 29450, public: 28180, admin: 28181, mediamtxHls: 28988 };
-const BASE = `http://127.0.0.1:${PORTS.public}`;
+import { bootApp, FEEDS, FFMPEG_BIN, hasFfmpeg, joinAs, startFeed, stopTracked, until, type Feed, type Jar, type Ports } from './helpers.js';
 
 function mediaSegments(playlist: string): string[] {
   return playlist.split('\n').filter((l) => l && !l.startsWith('#'));
 }
 
+const mediaSequence = (playlist: string): number => Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(playlist)![1]);
+/** The ladder run a segment belongs to (`<runId>_<n>.m4s`). */
+const runOf = (seg: string): string => seg.split('_')[0]!;
+
 describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multivariant playlist', () => {
   let app: App;
-  let ffmpeg: ChildProcess | null = null;
+  let ports: Ports;
+  let feed: Feed | null = null;
   let jar: Jar;
-  const state = () => JSON.stringify({ phase: app.live.phase, source: app.live.origin.sourceKind, quality: app.live.quality.state() });
+  const ladder = () => app.live.quality.transcoder;
+  const state = () =>
+    JSON.stringify({
+      phase: app.live.phase,
+      source: app.live.origin.sourceKind,
+      transcoder: { status: ladder().status, pid: ladder().pid, outDir: ladder().outDir, launches: ladder().launches, crashes: ladder().crashes },
+      quality: app.live.quality.state(),
+    });
+  /** The ladder runs with its own folder, and the origin serves it. */
+  const ladderRunning = (): boolean => ladder().status === 'running' && !!ladder().outDir && !!ladder().pid && app.live.origin.sourceKind === 'ladder';
+  /**
+   * The load guard never drops a rendition here (see beforeAll). If it does anyway, every test
+   * after it would wait for playlists that no longer exist: fail at once, saying so.
+   */
+  const noShed = (): void => {
+    const shed = app.live.quality.state().shed;
+    if (shed) throw new Error(`the load guard dropped a rendition during the test: ${JSON.stringify(shed)} (${state()})`);
+  };
+  /**
+   * Crashes the tests caused on purpose. Any other crash fails the test it happened in: the
+   * feed loops a 10 s clip, so a ladder ffmpeg that cannot take the loop's timestamps shows here.
+   */
+  let deliberateCrashes = 0;
+  /**
+   * Wait for `pred`, re-checked on every live, quality, ladder and origin change. Fails at once
+   * if the feed dies (unless `feed: false`) or a rendition is dropped.
+   */
+  const waitUntil = (pred: () => boolean | Promise<boolean>, timeoutMs: number, what: string, o: { feed?: boolean } = {}): Promise<void> =>
+    until(() => (noShed(), pred()), {
+      timeoutMs,
+      what,
+      detail: state,
+      abortOn: o.feed === false || !feed ? [] : [feed],
+      on: [
+        [app.live, 'state'],
+        [app.live.quality, 'changed'],
+        [ladder(), 'status'],
+        [app.live.origin, 'updated'],
+      ],
+    });
+  const push = (): Feed => (feed = startFeed(`rtmp://127.0.0.1:${ports.rtmp}/live/${app.live.snapshot().streamKey}`, FEEDS.hd));
+  /** A media playlist by name ("v480" or "v480.m3u8"); '' while it is not served. */
+  const playlist = async (name: string): Promise<string> => {
+    const res = await jar.fetch(`/hls/${name.replace(/\.m3u8$/, '')}.m3u8`);
+    return res.ok ? res.text() : '';
+  };
 
   beforeAll(async () => {
-    app = await createApp({
-      dataDir: tmpDir(),
-      noTunnel: true,
-      noReaper: true,
-      logToStdout: false,
+    // The ladder probes the encoders itself when OBS connects.
+    ({ app, ports } = await bootApp({
+      // These tests are about the ladder itself (renditions, crash recovery, reconnects). On a
+      // 3-vCPU CI runner, x264 720p + 480p keeps the machine ≥ 90 % busy, so the load guard
+      // rightly drops 720p after 10 s and the 720p playlist disappears mid-test. The guard has
+      // its own unit tests (quality-decisions.test.ts): never shed here.
+      loadGuard: { cpuSaturatedPercent: 101, behindSpeed: 0 },
       configOverrides: {
-        ports: PORTS,
-        speedTest: { enabled: false, intervalMinutes: 15 },
-        // The system ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
+        // The test ffmpeg; manual ladder with the encoder forced to x264, so the test also runs
         // on machines without a GPU encoder and with fewer than 6 CPU threads (CI runners), where
         // `encoder: 'auto'` keeps only the original quality to protect OBS.
-        ffmpegPath: 'ffmpeg',
+        ffmpegPath: FFMPEG_BIN,
         quality: {
           ladder: { mode: 'manual', enabled: true, heights: [720, 480], encoder: 'libx264' },
           upload: { mode: 'manual', otherStreamKbps: null, headroomPercent: 15 },
           obsWebsocket: { enabled: false, url: 'ws://127.0.0.1:4455' },
         },
       },
-    });
-    // These tests are about the ladder itself (renditions, crash recovery, reconnects). On a
-    // 3-vCPU CI runner, x264 720p + 480p next to the test feed keeps the machine ≥ 90 % busy, so
-    // the load guard rightly drops 720p after 10 s and the 720p playlist disappears mid-test.
-    // The guard has its own unit tests (quality-decisions.test.ts): never shed here.
-    (app.live.quality as unknown as { guard: LoadGuard }).guard = new LoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
-    await app.live.quality.probe();
-    await app.live.start();
-    ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });
-    await waitFor(() => app.live.phase === 'live' && app.live.origin.sourceKind === 'ladder' && app.live.quality.transcoder.status === 'running', 60_000, 'ladder to become live', state);
-    jar = await joinAs(BASE, app.live.snapshot().liveLink!, 'Ladder');
+    }));
+    push();
+    await waitUntil(() => app.live.phase === 'live' && app.live.origin.sourceKind === 'ladder' && app.live.quality.transcoder.status === 'running', 60_000, 'ladder to become live');
+    jar = await joinAs(`http://127.0.0.1:${app.live.publicPort}`, app.live.snapshot().liveLink!, 'Ladder');
+  });
+
+  afterEach(() => {
+    noShed();
+    expect(ladder().crashes, `ladder ffmpeg crashes nobody caused (${state()})`).toBe(deliberateCrashes);
   });
 
   afterAll(async () => {
-    ffmpeg?.kill('SIGKILL');
+    await feed?.stop();
     await app?.close();
+    await stopTracked();
   });
 
   it('serves 1080p (copied) + 720p + 480p, highest first, without an audio-only variant', async () => {
@@ -69,7 +113,7 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   });
 
   it('hashes the segments of every variant in the signed manifest', async () => {
-    await waitFor(async () => {
+    await waitUntil(async () => {
       const pl = await (await jar.fetch('/hls/v480.m3u8')).text();
       return mediaSegments(pl).length >= 2;
     }, 30_000, 'v480 segments');
@@ -90,7 +134,11 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   });
 
   it('measures each rendition near its target bitrate', async () => {
-    await new Promise((r) => setTimeout(r, 4000));
+    // The origin measures over the last (up to 5) segments of each playlist: wait until every
+    // variant lists at least 3, instead of a fixed sleep.
+    const names = app.live.origin.variants().map((x) => x.name);
+    expect(names).toHaveLength(3);
+    await waitUntil(async () => (await Promise.all(names.map(playlist))).every((pl) => mediaSegments(pl).length >= 3), 30_000, '3 segments in every variant');
     const v = Object.fromEntries(app.live.origin.variants().map((x) => [x.height, x.measuredKbps]));
     expect(v[1080]).toBeGreaterThan(4500);
     expect(v[720]).toBeGreaterThan(1200);
@@ -104,44 +152,61 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
   });
 
   it('survives an ffmpeg crash: restarted, playlist continues with a discontinuity and a growing media sequence', async () => {
-    const before = await (await jar.fetch('/hls/v720.m3u8')).text();
-    const seqBefore = Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(before)![1]);
-    const pid = app.live.quality.transcoder.pid!;
-    process.kill(pid, 'SIGKILL');
-    await waitFor(async () => {
-      const pl = await (await jar.fetch('/hls/v720.m3u8')).text();
-      return pl.includes('#EXT-X-DISCONTINUITY') && app.live.quality.transcoder.status === 'running';
-    }, 40_000, 'ladder restart', state);
-    const after = await (await jar.fetch('/hls/v720.m3u8')).text();
-    expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
+    await waitUntil(ladderRunning, 30_000, 'ladder running before the crash');
+    // A rendition the ladder encodes (not the copied source), whichever exists right now.
+    const name = app.live.origin.variants().find((v) => v.height < 1080)!.name;
+    const before = await playlist(name);
+    const runsBefore = new Set(mediaSegments(before).map(runOf));
+    const { launches, crashes } = ladder();
+    deliberateCrashes += 1;
+    process.kill(ladder().pid!, 'SIGKILL');
+    // Restarted means: the crash was counted, a new ffmpeg was launched and runs, and the same
+    // playlist lists a segment of the new run behind a discontinuity.
+    await waitUntil(async () => {
+      if (!(ladder().crashes > crashes && ladder().launches > launches && ladderRunning())) return false;
+      const pl = await playlist(name);
+      // The tag itself, not EXT-X-DISCONTINUITY-SEQUENCE (the ladder's first run already has a
+      // number above 0: the original OBS run before it is run 0).
+      return /^#EXT-X-DISCONTINUITY$/m.test(pl) && mediaSegments(pl).some((s) => !runsBefore.has(runOf(s)));
+    }, 40_000, `ladder restart (${name})`);
+    const after = await playlist(name);
+    expect(mediaSequence(after)).toBeGreaterThanOrEqual(mediaSequence(before));
     expect((after.match(/#EXT-X-MAP/g) ?? []).length).toBeGreaterThanOrEqual(1);
-    expect(app.live.quality.transcoder.restarts).toBe(1);
+    expect(ladder().crashes).toBe(crashes + 1);
+    expect(ladder().launches).toBe(launches + 1);
   });
 
   it('OBS reconnecting: same playlist names, sequence keeps growing, a discontinuity marks the restart', async () => {
-    const before = await (await jar.fetch('/hls/v480.m3u8')).text();
-    const seqBefore = Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(before)![1]);
+    await waitUntil(ladderRunning, 30_000, 'ladder running before OBS leaves');
+    const before = await playlist('v480');
+    const seqBefore = mediaSequence(before);
     const lastBefore = mediaSegments(before).pop()!;
-    ffmpeg?.kill('SIGKILL');
-    await waitFor(() => app.live.quality.transcoder.status === 'off', 20_000, 'ladder stop after OBS left', state);
-    ffmpeg = pushTestStream(`rtmp://127.0.0.1:${PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, { size: '1920x1080', kbps: 6000, cbr: true });
-    const oldRun = lastBefore.split('_')[0]!;
-    await waitFor(async () => {
-      const res = await jar.fetch('/hls/v480.m3u8');
-      return res.ok && mediaSegments(await res.text()).some((s) => !s.startsWith(oldRun));
-    }, 60_000, 'ladder back after reconnect', state);
-    const after = await (await jar.fetch('/hls/v480.m3u8')).text();
-    expect(Number(/#EXT-X-MEDIA-SEQUENCE:(\d+)/.exec(after)![1])).toBeGreaterThanOrEqual(seqBefore);
+    // Every run listed so far (the crash test leaves two in the stitched playlist): "back after
+    // the reconnect" means a segment of a run that did not exist before, never an old one.
+    const runsBefore = new Set(mediaSegments(before).map(runOf));
+    const launches = ladder().launches;
+    // OBS leaves abruptly: the whole feed process tree is gone when stop() returns.
+    await feed!.stop();
+    await waitUntil(() => ladder().status === 'off' && app.live.origin.sourceKind !== 'ladder', 20_000, 'ladder stop after OBS left', { feed: false });
+    push();
+    const oldRun = runOf(lastBefore);
+    await waitUntil(async () => {
+      if (!(ladder().launches > launches && ladderRunning())) return false;
+      return mediaSegments(await playlist('v480')).some((s) => !runsBefore.has(runOf(s)));
+    }, 60_000, 'ladder back after reconnect');
+    const after = await playlist('v480');
+    expect(mediaSequence(after)).toBeGreaterThanOrEqual(seqBefore);
     // If segments of the previous session are still listed, the restart is marked.
-    if (mediaSegments(after).some((s) => s.startsWith(oldRun))) expect(after).toContain('#EXT-X-DISCONTINUITY');
+    if (mediaSegments(after).some((s) => s.startsWith(oldRun))) expect(after).toMatch(/^#EXT-X-DISCONTINUITY$/m);
     const multi = await (await jar.fetch('/hls/index.m3u8')).text();
     expect([...multi.matchAll(/RESOLUTION=\d+x(\d+)/g)].map((m) => Number(m[1]))).toEqual([1080, 720, 480]);
   });
 
   it('"Stop everything" also stops ffmpeg and deletes its files', async () => {
-    const pid = app.live.quality.transcoder.pid;
-    const dir = app.live.quality.transcoder.outDir;
-    ffmpeg?.kill('SIGKILL');
+    await waitUntil(ladderRunning, 30_000, 'ladder running before "Stop everything"');
+    const pid = ladder().pid;
+    const dir = ladder().outDir;
+    await feed!.stop();
     expect(await app.live.stop()).toBe(true);
     if (pid) expect(isAlive(pid)).toBe(false);
     expect(dir).toBeTruthy();

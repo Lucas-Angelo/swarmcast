@@ -144,6 +144,43 @@ function Invoke-Captured([string]$Exe, [string]$Arguments, [int]$TimeoutSec) {
   return @{ Code = $p.ExitCode; Out = ($stdout.Result + $stderr.Result); TimedOut = $false }
 }
 
+# Runs the desktop app's NSIS uninstaller silently, in place, and waits for it. Returns
+# @{ Code; Out; TimedOut; Seconds; Threw }. "_?=<dir>" must come last and unquoted (NSIS reads the
+# rest of the command line as the folder): it runs the uninstaller from its folder instead
+# of a copy in TEMP that returns at once, so the wait and the exit code are real. NSIS is a
+# GUI program: it is started like a double-click (no redirected output, which it never
+# writes), with its window hidden; /S shows nothing anyway.
+function Invoke-NsisUninstaller([string]$Exe, [string]$Dir, [int]$TimeoutSec) {
+  $sw = [System.Diagnostics.Stopwatch]::StartNew()
+  $p = $null
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $Exe
+    $psi.Arguments = "/S _?=$Dir"
+    $psi.WorkingDirectory = $Dir
+    $psi.UseShellExecute = $true
+    $psi.WindowStyle = [System.Diagnostics.ProcessWindowStyle]::Hidden
+    $p = [System.Diagnostics.Process]::Start($psi)
+  } catch {
+    return @{ Code = -1; Out = "$($_.Exception.GetType().FullName): $($_.Exception.Message)"; TimedOut = $false; Seconds = 0; Threw = $true }
+  }
+  if ($null -eq $p) { return @{ Code = -1; Out = "the shell started no process for $Exe"; TimedOut = $false; Seconds = 0; Threw = $true } }
+  if (-not $p.WaitForExit($TimeoutSec * 1000)) {
+    try { $p.Kill() } catch { }
+    return @{ Code = -1; Out = ''; TimedOut = $true; Seconds = [int]$sw.Elapsed.TotalSeconds }
+  }
+  $p.WaitForExit()
+  return @{ Code = $p.ExitCode; Out = ''; TimedOut = $false; Seconds = [int]$sw.Elapsed.TotalSeconds }
+}
+
+# NSIS exit codes (https://nsis.sourceforge.io/Docs/AppendixD.html), for the warning.
+function Get-NsisExitMeaning([int]$Code) {
+  if ($Code -eq 1) { return ': cancelled' }
+  if ($Code -eq 2) { return ': it stopped itself, for example because SwarmCast could not be closed' }
+  if ($Code -eq -1) { return ': it was ended before it finished' }
+  return ''
+}
+
 # ---------------------------------------------------------------------------
 # Steps
 # ---------------------------------------------------------------------------
@@ -590,16 +627,25 @@ function Uninstall-DesktopApp {
     if (-not $e.Exe -or -not (Test-Path -LiteralPath $e.Exe -PathType Leaf)) { continue }
     $dir = Split-Path -Parent (Get-NormalPath $e.Exe)
     Say "Running the SwarmCast desktop app's uninstaller (silently)..."
-    $r = $null
-    try {
-      $r = Invoke-Captured $e.Exe "/S _?=$dir" $SC_UninstallTimeout
-    } catch {
-      $r = @{ Code = -1; Out = "$($_.Exception.Message)"; TimedOut = $false }
-    }
+    $r = Invoke-NsisUninstaller $e.Exe $dir $SC_UninstallTimeout
     if ($r.TimedOut) {
       Say-Warn "The desktop app's uninstaller did not finish in $SC_UninstallTimeout s; removing its files directly."
     } elseif ($r.Code -ne 0) {
-      Say-Warn "The desktop app's uninstaller stopped with exit code $($r.Code); removing its files directly."
+      Say-Warn "The desktop app's uninstaller stopped with exit code $($r.Code)$(Get-NsisExitMeaning $r.Code); removing its files directly."
+      # Always one line of why, so a failure explains itself: the reason it could not be run,
+      # its output (an NSIS uninstaller normally prints none), or that the exit code came from
+      # the uninstaller process itself.
+      $detail = "$($r.Out)".Trim()
+      if ($detail.Length -gt 1500) { $detail = '...' + $detail.Substring($detail.Length - 1500) }
+      if ($r.Threw) {
+        Say "  The uninstaller could not be run: $detail"
+      } elseif ($detail) {
+        Say "  Uninstaller said: $detail"
+      } else {
+        Say "  Uninstaller said nothing (exit code $($r.Code) came from the uninstaller process itself)."
+      }
+    } else {
+      Say-Ok "The desktop app's uninstaller finished (exit code 0, $($r.Seconds) s)."
     }
   }
   foreach ($dir in $d.InstallDirs) {

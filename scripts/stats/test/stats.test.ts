@@ -50,6 +50,12 @@ describe('classifyAsset', () => {
       expect(classifyAsset(n).kind).toBe('other');
     }
   });
+
+  it('does not count the CI mirrors of the ci-deps pre-release (CI downloads them on every run)', () => {
+    for (const n of ['ffmpeg-9.0.2-macos-arm64.zip', 'ffmpeg-9.0.2-macos-x64.zip', 'ffmpeg-9.0.2.tar.xz', 'versions-macos-arm64.txt']) {
+      expect(classifyAsset(n).kind).toBe('other');
+    }
+  });
 });
 
 describe('roundAbout', () => {

@@ -14,9 +14,16 @@
 //
 // Usage: node scripts/build/desktop.mjs [--target macos-arm64] [--version 0.2.0] [--package]
 //          [--bundles app,dmg] [--sidecar mock] [--insecure-updates [--updater-pubkey <file.pub>]]
-//          [--debug] [--runner cargo-xwin]
+//          [--debug] [--fast] [--runner cargo-xwin]
 //
 //   --package           run package.mjs first (needs `npm run build`)
+//   --bundles           which bundles to make (default: all of the target's). macOS: the .dmg is
+//                       made by its own `tauri bundle` step after the .app, retried when hdiutil
+//                       reports "Resource busy", so a busy disk costs seconds, not a rebuild
+//   --fast              throwaway test builds (the update test's A and B): no LTO, 16 codegen
+//                       units (CARGO_PROFILE_RELEASE_* environment overrides, so `tauri bundle`
+//                       still finds target/<triple>/release) and an uncompressed NSIS installer.
+//                       Never for builds that ship
 //   --sidecar mock      bundle apps/desktop/test/mock-server.mjs instead of the real server (tests)
 //   --insecure-updates  allow http:// update URLs (local update tests only; never for releases)
 //   --updater-pubkey    with --insecure-updates: trust this public key (`tauri signer generate`'s
@@ -29,7 +36,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { hostTarget } from './fetch-binaries.mjs';
 import { writeThirdPartyLicenses } from './licenses.mjs';
@@ -192,19 +199,110 @@ if (arg('updater-pubkey')) {
   overlay.plugins.updater.pubkey = fs.readFileSync(arg('updater-pubkey'), 'utf8').trim();
   console.warn(`⚠ --updater-pubkey: this build trusts ${arg('updater-pubkey')}, not the release key`);
 }
+const fast = flag('fast');
+if (fast) {
+  // Test builds only: the release profile without LTO and with parallel codegen. Through the
+  // environment, so the output stays in target/<triple>/release (where `tauri bundle` looks);
+  // the dependencies compiled this way sit next to the release ones in target/ (and the cache).
+  env.CARGO_PROFILE_RELEASE_LTO ??= 'false';
+  env.CARGO_PROFILE_RELEASE_CODEGEN_UNITS ??= '16';
+  if (isWin) overlay.bundle.windows = { nsis: { compression: 'none' } };
+  // Fixed text only: `env` also holds the updater signing key, so nothing from it is logged.
+  console.warn(`⚠ --fast: test build (no LTO, parallel codegen${isWin ? ', NSIS uncompressed' : ''}), never publish it`);
+}
 const overlayFile = path.join(stageDir, 'tauri.build.json');
 fs.writeFileSync(overlayFile, `${JSON.stringify(overlay, null, 2)}\n`);
 
-const tauriArgs = ['build', '--target', spec.triple, '--bundles', bundles.join(','), '--config', overlayFile, '--ci'];
-if (insecure) tauriArgs.push('--features', 'insecure-updates');
-if (flag('debug')) tauriArgs.push('--debug');
+const tauriCli = path.join(root, 'node_modules/@tauri-apps/cli/tauri.js');
+const profileDir = flag('debug') ? 'debug' : 'release';
+const bundleDir = path.join(tauriDir, 'target', spec.triple, profileDir, 'bundle');
+// The macOS updater archive has no version in its name: drop the one of an earlier build, so a
+// build without updater artifacts cannot pick it up.
+fs.rmSync(path.join(bundleDir, 'macos'), { recursive: true, force: true });
+
+// macOS: the .dmg gets its own step (below), after the .app.
+const dmg = isMac && bundles.includes('dmg');
+let buildBundles = dmg ? bundles.filter((b) => b !== 'dmg') : bundles;
+if (dmg && !buildBundles.includes('app')) buildBundles = ['app', ...buildBundles];
+const common = ['--target', spec.triple, '--ci', ...(insecure ? ['--features', 'insecure-updates'] : []), ...(flag('debug') ? ['--debug'] : [])];
+const tauriArgs = ['build', '--bundles', buildBundles.join(','), '--config', overlayFile, ...common];
 if (arg('runner')) tauriArgs.push('--runner', arg('runner'));
-const res = spawnSync(process.execPath, [path.join(root, 'node_modules/@tauri-apps/cli/tauri.js'), ...tauriArgs], { stdio: 'inherit', cwd: desktopDir, env });
+const res = spawnSync(process.execPath, [tauriCli, ...tauriArgs], { stdio: 'inherit', cwd: desktopDir, env });
 if (res.status !== 0) process.exit(res.status ?? 1);
 
+/** Runs a command with its output shown live and returned. */
+function runTee(cmd, argv, o) {
+  return new Promise((resolve) => {
+    const p = spawn(cmd, argv, { ...o, stdio: ['ignore', 'pipe', 'pipe'] });
+    let out = '';
+    p.stdout.on('data', (d) => {
+      out += d;
+      process.stdout.write(d);
+    });
+    p.stderr.on('data', (d) => {
+      out += d;
+      process.stderr.write(d);
+    });
+    p.on('error', (err) => resolve({ status: -1, out: `${out}${err.message}` }));
+    p.on('close', (status) => resolve({ status, out }));
+  });
+}
+
+/** Detaches disk images bundle_dmg.sh left attached (its read-write `rw.<pid>.*.dmg`). */
+function detachLeftovers() {
+  const info = spawnSync('hdiutil', ['info'], { encoding: 'utf8' }).stdout ?? '';
+  for (const block of info.split(/^=+$/m)) {
+    if (!/image-path\s*:.*\/bundle\/dmg\/rw\./.test(block)) continue;
+    const dev = /^(\/dev\/disk\d+)\b/m.exec(block)?.[1];
+    if (!dev) continue;
+    console.log(`detaching a leftover disk image (${dev})`);
+    spawnSync('hdiutil', ['detach', '-force', dev], { stdio: 'inherit' });
+  }
+  const dir = path.join(bundleDir, 'dmg');
+  if (fs.existsSync(dir)) for (const n of fs.readdirSync(dir)) if (n.startsWith('rw.')) fs.rmSync(path.join(dir, n), { force: true });
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** Waits (up to 30 s) while XProtect scans: it keeps a freshly attached image busy. */
+async function xprotectQuiet() {
+  for (let i = 0; i < 30 && spawnSync('pgrep', ['-x', 'XProtect'], { stdio: 'ignore' }).status === 0; i++) await sleep(1000);
+}
+
+// The .dmg from the .app just built: `tauri bundle` reuses the compiled binary, so a retry costs
+// seconds. hdiutil fails now and then on CI with "Resource busy" (create or detach), and the
+// create-dmg script Tauri vendors does not retry those (tauri#14686). No updater artifacts
+// here: the .app.tar.gz above is the one that ships. `app` again (seconds) because the .dmg step
+// deletes an .app it had to make itself.
+if (dmg) {
+  const tries = 4;
+  const backoff = [5, 10, 20];
+  const dmgArgs = ['bundle', '--bundles', 'app,dmg', '--config', overlayFile, '--config', JSON.stringify({ bundle: { createUpdaterArtifacts: false } }), ...common];
+  for (let i = 1; ; i++) {
+    detachLeftovers();
+    spawnSync('sync');
+    if (i > 1) await xprotectQuiet();
+    const t0 = Date.now();
+    const r = await runTee(process.execPath, [tauriCli, ...dmgArgs], { cwd: desktopDir, env });
+    if (r.status === 0) {
+      if (i > 1) console.log(`::notice title=hdiutil::the .dmg succeeded on try ${i} of ${tries}`);
+      break;
+    }
+    const busy = /Resource busy/i.test(r.out);
+    const why = busy ? 'hdiutil: Resource busy' : `exit ${r.status}`;
+    if (i >= tries) {
+      console.log(`::error title=hdiutil::the .dmg failed ${tries} times (${why})`);
+      process.exit(r.status || 1);
+    }
+    const wait = backoff[i - 1];
+    console.log(`::warning title=hdiutil::the .dmg failed after ${Math.round((Date.now() - t0) / 1000)} s (${why}, try ${i} of ${tries}); retrying in ${wait} s`);
+    await sleep(wait * 1000);
+  }
+}
+
 // 5. Collect the results with names that carry version and architecture.
-const bundleDir = path.join(tauriDir, 'target', spec.triple, flag('debug') ? 'debug' : 'release', 'bundle');
 const outDir = path.join(root, 'release', 'desktop', target);
+
 fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 const macArch = target === 'macos-arm64' ? 'aarch64' : 'x64';
@@ -227,3 +325,38 @@ collect('deb', (n) => n.includes(`_${version}_`) && (n.endsWith('.deb') || n.end
 collect('appimage', (n) => n.includes(`_${version}_`) && (n.endsWith('.AppImage') || n.endsWith('.AppImage.sig')));
 for (const f of collected) console.log(`✓ ${rel(f)}`);
 if (updaterArtifacts && !collected.some((f) => f.endsWith('.sig'))) console.warn('⚠ no updater signature (*.sig) was produced');
+const PRODUCES = { nsis: /-setup\.exe$/, dmg: /\.dmg$/, app: /SwarmCast\.app$/, deb: /\.deb$/, appimage: /\.AppImage$/ };
+for (const b of bundles) {
+  if (PRODUCES[b] && !collected.some((f) => PRODUCES[b].test(f))) throw new Error(`the ${b} bundle was not produced in ${rel(bundleDir)}`);
+}
+
+// 6. Linux: the server inside each package must start. linuxdeploy once broke it in the AppImage
+// (patchelf moved pkg's payload: "SyntaxError" in pkg/prelude/bootstrap.js), and only the
+// clean-machine test noticed, 10 minutes later. `--version` runs pkg's bootstrap and the server.
+if (isLinux && arg('sidecar', 'server') !== 'mock') {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-sidecar-'));
+  try {
+    for (const f of collected) {
+      let server;
+      if (f.endsWith('.AppImage')) {
+        // Extracting needs no FUSE.
+        execFileSync(f, ['--appimage-extract', LINUX_SIDECAR.appimage.slice(1)], { cwd: tmp, stdio: 'ignore' });
+        server = path.join(tmp, 'squashfs-root', LINUX_SIDECAR.appimage);
+      } else if (f.endsWith('.deb')) {
+        execFileSync('dpkg-deb', ['-x', f, path.join(tmp, 'deb')]);
+        server = path.join(tmp, 'deb', LINUX_SIDECAR.deb);
+      } else {
+        continue;
+      }
+      const r = spawnSync(server, ['--version'], { encoding: 'utf8', input: '', timeout: 60_000 });
+      const out = `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? r.error.message : ''}`.trim();
+      const expected = stagedVersion === '?' ? null : stagedVersion;
+      if (r.status !== 0 || !/^\d+\.\d+\.\d+/.test(out) || (expected && out !== expected)) {
+        throw new Error(`the server in ${path.basename(f)} does not start (${r.status ?? r.signal}): ${out.slice(0, 2000)}`);
+      }
+      console.log(`✓ the server in ${path.basename(f)} starts (--version: ${out})`);
+    }
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}

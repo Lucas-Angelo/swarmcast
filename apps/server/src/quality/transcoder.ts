@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { playlistEntries, SEGMENT_DURATION_S, type CodedText, type EncoderId, type Rung, type TranscoderStatus, type X264Preset } from '@swarmcast/shared';
+import { removeDir } from '../core/fs-cleanup.js';
 import type { Logger } from '../core/logger.js';
 import { coded } from '../core/messages.js';
 import { ManagedChild, type Reaper } from '../process/children.js';
@@ -145,13 +146,22 @@ export interface TranscoderOptions {
  */
 export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready: [] }> {
   status: TranscoderStatus = 'off';
+  /** Restarts of the current ladder (back to 0 on every start; drives the backoff and "failed"). */
   restarts = 0;
+  /** ffmpeg processes started since this transcoder was created (monotonic, never reset). */
+  launches = 0;
+  /** Unexpected ffmpeg exits since this transcoder was created (monotonic; stops are not crashes). */
+  crashes = 0;
   message?: CodedText;
   outDir: string | null = null;
   private child: ManagedChild | null = null;
   private plan: { rungs: Rung[]; encoder: EncoderId; preset?: X264Preset; hasAudio: boolean } | null = null;
   private restartTimer: NodeJS.Timeout | null = null;
   private stopping = false;
+  /** Bumped by every start() and stop(): a stop only reports 'off' if nothing started since. */
+  private generation = 0;
+  /** Children still being stopped: every stop() waits for all of them, so 'off' means none is left. */
+  private stopped: Promise<void> = Promise.resolve();
   private readonly window = new SpeedWindow();
 
   constructor(private readonly o: TranscoderOptions) {
@@ -194,6 +204,7 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
   }
 
   start(rungs: Rung[], encoder: EncoderId, hasAudio: boolean, preset?: X264Preset): void {
+    this.generation += 1;
     this.stopping = false;
     this.plan = { rungs, encoder, hasAudio, ...(preset ? { preset } : {}) };
     this.window.clear();
@@ -212,6 +223,7 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     this.set(this.restarts === 0 ? 'starting' : 'restarting');
     const child = new ManagedChild('ffmpeg-ladder', this.o.ffmpeg, args, { cwd: this.outDir }, this.o.reaper, this.o.log);
     this.child = child;
+    this.launches += 1;
     if (child.pid) {
       try {
         // OBS (and her stream to other platforms) must always win the CPU.
@@ -235,8 +247,12 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
       this.o.log.warn({ ffmpeg: clean(line) }, 'ffmpeg ladder');
     });
     child.once('exit', (code, signal) => {
-      if (this.child === child) this.child = null;
+      // A child that was stopped (or replaced by a newer start) is no longer ours: its exit is
+      // neither a crash nor a reason to restart, even if a new ladder runs by now.
+      if (this.child !== child) return;
+      this.child = null;
       if (this.stopping) return;
+      this.crashes += 1;
       this.restarts += 1;
       const max = this.o.maxRestarts ?? 5;
       if (this.restarts > max) {
@@ -250,18 +266,35 @@ export class Transcoder extends EventEmitter<{ status: [TranscoderStatus]; ready
     });
   }
 
+  /**
+   * Stop ffmpeg and delete its folder. The child and the folder are taken over at once, so a
+   * start() while this stop waits (OBS reconnecting, a rendition dropped) gets its own child and
+   * a fresh folder, and neither is touched by this stop. 'off' is reported only when no start
+   * happened in between.
+   */
   async stop(): Promise<void> {
+    const generation = ++this.generation;
     this.stopping = true;
     if (this.restartTimer) clearTimeout(this.restartTimer);
     this.restartTimer = null;
-    await this.child?.stop(2000);
+    const child = this.child;
+    const dir = this.outDir;
     this.child = null;
+    this.outDir = null;
     this.window.clear();
-    if (this.outDir) {
-      fs.rmSync(this.outDir, { recursive: true, force: true });
-      this.outDir = null;
+    const previous = this.stopped;
+    // The folder's deletion is part of the chain: a stop that finds nothing of its own to stop
+    // ("Stop everything" right after OBS left) still returns only once every folder is gone.
+    const done = (async () => {
+      await previous;
+      await child?.stop(2000);
+      if (dir) await removeDir(dir, this.o.log, 'quality ladder');
+    })();
+    this.stopped = done;
+    await done;
+    if (generation === this.generation) {
+      this.plan = null;
+      this.set('off');
     }
-    this.plan = null;
-    this.set('off');
   }
 }

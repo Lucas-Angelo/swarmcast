@@ -16,10 +16,12 @@ use url::Url;
 
 use crate::i18n::{self, t, tr};
 use crate::logs;
+use crate::page::{Page, PageTracker, SplashRoute};
 use crate::protocol::{ClickId, LiveState, Phase, ServerMessage, ShellMessage, UpdateInfo, UpdateStatus};
 use crate::sidecar::{Layout, Process, SpawnEnv};
 use crate::tray::{self, TrayView};
 use crate::updater;
+use crate::window;
 
 /// Restarts before `ready`: up to 3, after these delays. Then the splash shows the error.
 pub const RESTART_DELAYS: [Duration; 3] = [Duration::from_secs(2), Duration::from_secs(5), Duration::from_secs(10)];
@@ -82,7 +84,9 @@ pub struct Shell {
     inner: Mutex<Inner>,
     /// Origin of the admin panel, read by the navigation handler on the main thread.
     admin_origin: Arc<RwLock<Option<url::Origin>>>,
-    splash_url: RwLock<Option<Url>>,
+    splash_url: RwLock<Url>,
+    /// The page the main window shows (never read from the webview: see page.rs).
+    page: Mutex<PageTracker>,
     has_tray: RwLock<bool>,
 }
 
@@ -121,7 +125,8 @@ impl Shell {
                 close_dialog_open: false,
             }),
             admin_origin: Arc::new(RwLock::new(None)),
-            splash_url: RwLock::new(None),
+            splash_url: RwLock::new(window::splash_url()),
+            page: Mutex::new(PageTracker::new(Instant::now())),
             has_tray: RwLock::new(false),
         }))
     }
@@ -134,8 +139,21 @@ impl Shell {
         self.admin_origin.clone()
     }
 
-    pub fn set_splash_url(&self, url: Url) {
-        *self.splash_url.write().unwrap() = Some(url);
+    /// A page of the main window started loading (`finished`: it has loaded). Called by the
+    /// webview's page-load handler on the main thread.
+    pub fn on_page_load(&self, url: &Url, finished: bool) {
+        let page = Page::of(url);
+        if page == Page::Splash {
+            // Where Tauri really serves the splash (window::splash_url is the default).
+            *self.splash_url.write().unwrap() = url.clone();
+        }
+        let shown = self.page.lock().unwrap().loaded(page);
+        if shown && finished && page == Page::Splash {
+            // A status set while the splash was loading may have missed its first request.
+            if let Some(window) = self.window() {
+                push_splash(&window, &self.splash());
+            }
+        }
     }
 
     pub fn set_has_tray(&self, has: bool) {
@@ -252,6 +270,7 @@ impl Shell {
         // from the panel's own origin, so the SameSite=Strict cookie is sent although this
         // navigation starts on the splash.
         if let Some(window) = self.window() {
+            self.page.lock().unwrap().navigating(Page::Panel, Instant::now());
             if let Err(err) = window.navigate(url) {
                 logs::shell(format!("could not open the panel: {err}"));
             }
@@ -491,22 +510,26 @@ impl Shell {
         let _ = self.app.set_dock_visibility(false);
     }
 
-    fn is_on_splash(&self, window: &WebviewWindow) -> bool {
-        let Ok(current) = window.url() else { return false };
-        let splash = self.splash_url.read().unwrap();
-        splash.as_ref().is_some_and(|s| s.scheme() == current.scheme() && s.host_str() == current.host_str())
+    fn splash_route(&self) -> SplashRoute {
+        self.page.lock().unwrap().splash_route(Instant::now())
     }
 
     /// Shows `splash` on the splash page (navigating back to it if the panel is open).
+    /// Safe at any time, also while the webview has no page yet: nothing here asks it for its URL.
     pub fn show_splash(&self, splash: Splash) {
         self.inner.lock().unwrap().splash = splash.clone();
         let Some(window) = self.window() else { return };
-        if self.is_on_splash(&window) {
-            let json = serde_json::to_string(&splash).unwrap_or_default();
-            let _ = window.eval(format!("window.swarmcastSplash && window.swarmcastSplash({json})"));
-        } else if let Some(url) = self.splash_url.read().unwrap().clone() {
-            // The page asks for the current status when it loads.
-            let _ = window.navigate(url);
+        match self.splash_route() {
+            SplashRoute::Update => push_splash(&window, &splash),
+            // The loading splash asks for the status itself, and gets it again when loaded.
+            SplashRoute::Wait => {}
+            SplashRoute::Navigate => {
+                let url = self.splash_url.read().unwrap().clone();
+                self.page.lock().unwrap().navigating(Page::Splash, Instant::now());
+                if let Err(err) = window.navigate(url) {
+                    logs::shell(format!("could not open the splash: {err}"));
+                }
+            }
         }
     }
 
@@ -517,9 +540,10 @@ impl Shell {
             inner.splash.progress = progress;
             inner.splash.clone()
         };
-        if let Some(window) = self.window().filter(|w| self.is_on_splash(w)) {
-            let json = serde_json::to_string(&splash).unwrap_or_default();
-            let _ = window.eval(format!("window.swarmcastSplash && window.swarmcastSplash({json})"));
+        if self.splash_route() == SplashRoute::Update {
+            if let Some(window) = self.window() {
+                push_splash(&window, &splash);
+            }
         }
     }
 
@@ -568,6 +592,12 @@ impl Shell {
         };
         tray::update(&self.app, &view);
     }
+}
+
+/// Updates the splash page in place (a no-op on any other page).
+fn push_splash(window: &WebviewWindow, splash: &Splash) {
+    let json = serde_json::to_string(splash).unwrap_or_default();
+    let _ = window.eval(format!("window.swarmcastSplash && window.swarmcastSplash({json})"));
 }
 
 /// Opens `url` in the default browser (or only logs it with `SWARMCAST_NO_OPEN=1`, for tests).

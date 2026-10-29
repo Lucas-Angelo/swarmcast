@@ -8,10 +8,23 @@ describe('fallbackReason', () => {
   it('leaves fragments that are far ahead to P2P', () => {
     expect(fallbackReason({ ...base, pendingMs: 10_000 })).toBeNull();
   });
-  it('takes an urgent fragment back after the grace period when the core is idle or on P2P', () => {
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 500 })).toBeNull();
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800 })).toBe('urgent');
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800, attempt: { source: 'p2p', peerId: 'x', since: 0 } })).toBe('urgent');
+  it('takes an urgent fragment the core is not fetching at all (idle) at once', () => {
+    // After the stall watchdog's reload the idle core held each start-up fragment for the whole
+    // grace: 2 x 750 ms of the 2.7 s back to playing, then 750 ms on every 1 s audio segment.
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 0 })).toBe('urgent');
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 0, pendingMs: 250 })).toBe('urgent');
+  });
+  it('gives a peer that is sending an urgent fragment the grace period first', () => {
+    const p2p = { source: 'p2p' as const, peerId: 'x', since: 0 };
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 500, attempt: p2p })).toBeNull();
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800, attempt: p2p })).toBe('urgent');
+  });
+  it('a healthy, buffered viewer leaves what it fetches ahead to P2P, idle core or not (no extra HTTP load)', () => {
+    // 20 s behind live with a full buffer, hls.js asks for fragments well past urgentS.
+    for (const secondsUntilNeeded of [6, 10, 18]) {
+      expect(fallbackReason({ ...base, secondsUntilNeeded, pendingMs: 5_000 })).toBeNull();
+      expect(fallbackReason({ ...base, secondsUntilNeeded, pendingMs: 5_000, attempt: { source: 'p2p', peerId: 'x', since: 0 } })).toBeNull();
+    }
   });
   it('treats a fragment the playhead already passed (slid out, after a seek) as urgent', () => {
     expect(fallbackReason({ ...base, secondsUntilNeeded: -15, pendingMs: 1000 })).toBe('urgent');
@@ -97,6 +110,10 @@ function context(start: number): FragmentLoaderContext {
   return { url: 'https://x/hls/a_00001.m4s', frag: { sn: 1, start, type: 'audio' }, part: null, responseType: 'arraybuffer' } as unknown as FragmentLoaderContext;
 }
 
+/** A media element whose buffered ranges are `ranges`. */
+const mediaAt = (currentTime: number, ...ranges: Array<[number, number]>): HTMLMediaElement =>
+  ({ currentTime, buffered: { length: ranges.length, start: (i: number) => ranges[i]![0], end: (i: number) => ranges[i]![1] } }) as unknown as HTMLMediaElement;
+
 describe('withHttpFallback', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -109,7 +126,7 @@ describe('withHttpFallback', () => {
   const loaderConfig = {} as LoaderConfiguration;
 
   it('fetches a fragment the core sits on over HTTP once it is needed soon, exactly once', async () => {
-    const media = { currentTime: 0, buffered: { length: 1 } } as unknown as HTMLMediaElement;
+    const media = mediaAt(0, [0, 30]);
     const onFallback = vi.fn();
     const Loader = withHttpFallback(StuckP2PLoader, { media: () => media, urgentS: () => 6, activity: new CoreActivity(), onFallback });
     const l = new Loader(config);
@@ -131,7 +148,7 @@ describe('withHttpFallback', () => {
   });
 
   it('at start (nothing buffered) any fragment the core holds is needed now', async () => {
-    const media = { currentTime: 0, buffered: { length: 0 } } as unknown as HTMLMediaElement;
+    const media = mediaAt(0);
     const Loader = withHttpFallback(StuckP2PLoader, { media: () => media, urgentS: () => 6, activity: new CoreActivity() });
     const onSuccess = vi.fn();
     new Loader(config).load(context(30), loaderConfig, { onSuccess, onError: vi.fn(), onTimeout: vi.fn() });
@@ -140,9 +157,22 @@ describe('withHttpFallback', () => {
     expect(onSuccess).toHaveBeenCalledTimes(1);
   });
 
+  it('after a source reload (old buffers kept, playhead at 0 before the new start) the new fragments are needed now', async () => {
+    // The stall watchdog's reload in barely-delivers: the playhead sat at 0, buffers of the old
+    // timeline stayed, and the live fragment 27 s "ahead" was left to a P2P core that never
+    // delivered it, until the watchdog moved the playhead again 8-10 s later.
+    const media = mediaAt(0, [30, 32], [36, 38]);
+    const Loader = withHttpFallback(StuckP2PLoader, { media: () => media, urgentS: () => 6, activity: new CoreActivity() });
+    const onSuccess = vi.fn();
+    new Loader(config).load(context(27), loaderConfig, { onSuccess, onError: vi.fn(), onTimeout: vi.fn() });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(FakeHttpLoader.loads).toBe(1);
+    expect(onSuccess).toHaveBeenCalledTimes(1);
+  });
+
   it('does not touch loads that already went to plain HTTP inside the P2P loader', async () => {
     class InnerHttp extends FakeHttpLoader {}
-    const Loader = withHttpFallback(InnerHttp, { media: () => ({ currentTime: 100, buffered: { length: 1 } }) as unknown as HTMLMediaElement, urgentS: () => 6, activity: new CoreActivity() });
+    const Loader = withHttpFallback(InnerHttp, { media: () => mediaAt(100, [90, 110]), urgentS: () => 6, activity: new CoreActivity() });
     const onSuccess = vi.fn();
     new Loader(config).load(context(0), loaderConfig, { onSuccess, onError: vi.fn(), onTimeout: vi.fn() });
     await vi.advanceTimersByTimeAsync(3000);
@@ -151,7 +181,7 @@ describe('withHttpFallback', () => {
   });
 
   it('passes a core success straight through', async () => {
-    const Loader = withHttpFallback(StuckP2PLoader, { media: () => ({ currentTime: 0, buffered: { length: 1 } }) as unknown as HTMLMediaElement, urgentS: () => 6, activity: new CoreActivity() });
+    const Loader = withHttpFallback(StuckP2PLoader, { media: () => mediaAt(0, [0, 30]), urgentS: () => 6, activity: new CoreActivity() });
     const onSuccess = vi.fn();
     new Loader(config).load(context(2), loaderConfig, { onSuccess, onError: vi.fn(), onTimeout: vi.fn() });
     StuckP2PLoader.instances[0]!.callbacks!.onSuccess({ url: 'x', data: new ArrayBuffer(1) }, newStats(), context(2), null);

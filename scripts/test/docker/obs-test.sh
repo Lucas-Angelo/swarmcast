@@ -3,12 +3,15 @@
 # Installs SwarmCast with the real start script, starts it, runs OBS headless (Xvfb + llvmpipe)
 # with obs-websocket, builds a scene with a media source over the websocket API, points the
 # stream at SwarmCast and starts streaming, then checks the panel and a curl viewer.
-#   RELEASE_URL  release folder URL (file:///release works: the script downloads with curl)
+#   RELEASE_URL  release folder URL (default: /release, served here on http://127.0.0.1:8000)
 #   SCRIPT       start-linux.sh path (default /release/start-linux.sh)
 #   OUTPUT_MODE  advanced (default: x264, 2 s keyframes, as the panel asks) or simple (OBS defaults)
+#
+# Not file:///release: start-linux.sh requires HTTP 200 for the checksum list, and curl reports
+# no HTTP status (000) for file:// URLs, so the script calls the release server unreachable.
 set -u
 set -o pipefail
-RELEASE_URL="${RELEASE_URL:-file:///release}"
+RELEASE_URL="${RELEASE_URL:-}"
 SCRIPT="${SCRIPT:-/release/start-linux.sh}"
 OUTPUT_MODE="${OUTPUT_MODE:-advanced}"   # advanced (x264, keyframes every 2 s) | simple (OBS defaults)
 WS="python3 /tests/obs_ws.py"
@@ -24,12 +27,21 @@ wait_for() { local s="$1" _i; shift; for _i in $(seq 1 "$((s * 2))"); do "$@" &&
 
 APP_PID=""
 OBS_PID=""
+HTTP_PID=""
 finish() {
   [ -n "$OBS_PID" ] && kill "$OBS_PID" 2>/dev/null
   [ -n "$APP_PID" ] && kill -INT "$APP_PID" 2>/dev/null
   sleep 1
+  [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null
 }
 trap finish EXIT
+
+if [ -z "$RELEASE_URL" ]; then
+  python3 -m http.server 8000 --bind 127.0.0.1 --directory /release >"$W/http.log" 2>&1 &
+  HTTP_PID=$!
+  RELEASE_URL="http://127.0.0.1:8000"
+  wait_for 10 curl -fsS -o /dev/null "$RELEASE_URL/SHA256SUMS.txt" || { bad "release server on $RELEASE_URL did not start"; cat "$W/http.log"; exit 1; }
+fi
 
 echo "== versions"
 echo "  $(. /etc/os-release && echo "$PRETTY_NAME") $(uname -m)"

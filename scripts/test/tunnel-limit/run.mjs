@@ -43,7 +43,8 @@ const MAX_WS = Number(opt('max-ws', 400));
 const STEP = Number(opt('step', 25));
 const HOLD_S = Number(opt('hold', 10));
 const BUDGET_S = Number(opt('budget', 540));
-const OUT = opt('out', path.join(os.tmpdir(), `swarmcast-tunnel-limit-${new Date().toISOString().replace(/[:.]/g, '-')}`));
+// Default output: a new private folder (mkdtemp), never a predictable name in the shared temp dir.
+const OUT = opt('out') ? path.resolve(opt('out')) : fs.mkdtempSync(path.join(os.tmpdir(), 'swarmcast-tunnel-limit-'));
 const platformDir = `${process.platform === 'win32' ? 'windows' : process.platform === 'darwin' ? 'macos' : 'linux'}-${process.arch === 'arm64' ? 'arm64' : 'x64'}`;
 const CLOUDFLARED = opt('cloudflared', path.join(repo, 'vendor', platformDir, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared'));
 const UA = 'swarmcast-tunnel-limit-harness/1 (one-off capacity test; see scripts/test/tunnel-limit/README.md)';
@@ -94,7 +95,9 @@ const server = http.createServer((req, res) => {
     res.writeHead(200, { ...headers, 'content-type': 'application/octet-stream', 'content-length': BLOB.length });
     res.end(BLOB);
   } else if (u.pathname === '/slow') {
-    const ms = Math.min(10_000, Math.max(0, Number(u.searchParams.get('ms')) || 2000));
+    // This origin is reachable through the public quick tunnel: ?ms= is capped at 10 s.
+    const asked = Number(u.searchParams.get('ms')) || 2000;
+    const ms = asked > 10_000 ? 10_000 : Math.max(0, asked);
     let t;
     if (u.searchParams.get('mode') === 'body') {
       // Headers and a first chunk right away, the rest after `ms` (a long download).

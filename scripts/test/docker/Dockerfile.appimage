@@ -1,0 +1,20 @@
+# Minimal host for the AppImage: a bare distribution plus only
+#   - the host packages the website's Linux page lists (HOST_PACKAGES, FUSE 2 added below), and
+#   - the test's own tools: a virtual display (xvfb, xauth) and a D-Bus session (dbus).
+# No curl, Python or Node: the checks use bash's /dev/tcp, so the test adds no library the app
+# could quietly borrow. When this image cannot run the AppImage, the list on the website is wrong.
+#   docker build -f Dockerfile.appimage --build-arg BASE=ubuntu:22.04 .
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+# Keep in sync with site/src/content/docs/install/linux.md (and pt-br).
+ARG HOST_PACKAGES="libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0"
+RUN set -e; \
+    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update; \
+    fuse=libfuse2; \
+    if apt-cache show libfuse2t64 >/dev/null 2>&1; then fuse=libfuse2t64; fi; \
+    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 \
+      install -y --no-install-recommends $HOST_PACKAGES "$fuse" xvfb xauth dbus; \
+    rm -rf /var/lib/apt/lists/*; \
+    useradd -m -s /bin/bash tester
+USER tester
+WORKDIR /home/tester

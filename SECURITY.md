@@ -2,17 +2,20 @@
 
 ## Supported versions
 
-Only the latest release of SwarmCast receives security fixes. Please update to the newest
-version (the start scripts can do it for you) before reporting an issue.
+Only the latest stable release of SwarmCast receives security fixes. Please update to the
+newest version (the desktop app and the start scripts can do it for you) before reporting an
+issue.
 
-| Version        | Supported |
-| -------------- | --------- |
-| Latest release | Yes       |
-| Older releases | No        |
+| Version                      | Supported                       |
+| ---------------------------- | ------------------------------- |
+| Latest stable release        | Yes                             |
+| Beta versions (from 0.3.0)   | Fixed in the next beta          |
+| Older releases               | No                              |
 
 ## Reporting a vulnerability
 
-Please do **not** open a public issue, discussion or pull request for security problems.
+Please do **not** open a public issue, discussion or pull request for security problems, and
+never include a real stream key, live link or admin token in a report.
 
 Report them privately through GitHub's security advisories:
 
@@ -25,6 +28,9 @@ Report them privately through GitHub's security advisories:
 You can expect an acknowledgement within a few days. Once the issue is confirmed, a fix is
 prepared in a private fork, released, and the advisory is published with credit to you
 (unless you prefer to stay anonymous). Please keep the details private until the fix is out.
+
+This private form is also one of the ways to report behaviour that breaks the
+[Code of Conduct](CODE_OF_CONDUCT.md#enforcement); start the title with "Code of Conduct".
 
 ## Scope
 

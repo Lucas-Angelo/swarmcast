@@ -4,29 +4,59 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canBindPort } from '../../src/core/ports.js';
 import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
-import { CGNAT_MESSAGE, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
-import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
+import { CGNAT_MESSAGE, DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
+import { UpnpGateway, discoverUpnp, parseDeviceDescription } from '../../src/direct/upnp.js';
 import { isNonPublicIPv4 } from '../../src/direct/mapper.js';
+import { probeHealth } from '../../src/tunnel/provider.js';
+import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { MockIgd } from './mock-igd.js';
 import { silentLog } from './helpers.js';
+
+// "Stop everything" checks that the Direct-mode address no longer answers. The address of these
+// tests (203.0.113.7, a documentation range) never does: a real probe would wait out its 5 s
+// timeout, after a DNS-over-HTTPS query to 1.1.1.1. It answers "gone" at once instead.
+vi.mock('../../src/tunnel/provider.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/tunnel/provider.js')>()),
+  probeHealth: vi.fn(async () => null),
+}));
 
 let igd: MockIgd;
 const servers: Array<{ close(): Promise<void> }> = [];
 
+/** The `random` that makes Direct mode pick exactly `port` (DirectMode.pickPort). */
+const randomFor = (port: number) => (): number => (port - DIRECT_PORT_MIN + 0.5) / (DIRECT_PORT_MAX - DIRECT_PORT_MIN + 1);
+/**
+ * The port Direct mode picks in these tests, and really listens on. A fixed `random` would give
+ * every test file the same port (port-range.test.ts listens on 34576 and 28745, which `0.5` and
+ * the old sequence below gave too): a port from this worker's block instead.
+ */
+let directPort: number;
+
 beforeEach(async () => {
   igd = new MockIgd('203.0.113.7');
   await igd.start();
+  [directPort] = (await allocPorts(1)) as [number];
 });
 afterEach(async () => {
   for (const s of servers.splice(0)) await s.close();
   await igd.stop();
 });
 
+/**
+ * The mock router, found from its description URL. SSDP discovery collects answers for its whole
+ * window (400 ms here, every time); only the SSDP test below needs that.
+ */
+async function mockGateway(): Promise<UpnpGateway | null> {
+  const location = `http://127.0.0.1:${igd.httpPort}/desc.xml`;
+  const service = parseDeviceDescription(await (await fetch(location)).text(), location);
+  return service ? new UpnpGateway(service, location) : null;
+}
+
 function deps(over: Partial<DirectDeps> = {}): DirectDeps {
   return {
     log: silentLog,
     state: new MemoryStateStore(),
-    discoverMapper: () => discoverUpnp({ address: '127.0.0.1', port: igd.ssdpPort, timeoutMs: 400 }),
+    discoverMapper: mockGateway,
     mapperFromId: (_k, id) => UpnpGateway.fromId(id),
     publicIps: async () => ({ v4: '203.0.113.7' }),
     localAddress: async () => '127.0.0.1',
@@ -41,10 +71,18 @@ function deps(over: Partial<DirectDeps> = {}): DirectDeps {
       return h;
     },
     probe: async () => false,
-    random: () => 0.5,
+    random: randomFor(directPort),
     ...over,
   };
 }
+
+describe('direct mode: finding the router', () => {
+  it('finds the router by SSDP and talks to it', async () => {
+    const gw = await discoverUpnp({ address: '127.0.0.1', port: igd.ssdpPort, timeoutMs: 400 });
+    expect(gw?.location).toBe(`http://127.0.0.1:${igd.httpPort}/desc.xml`);
+    expect(await gw!.externalIp()).toBe('203.0.113.7');
+  });
+});
 
 describe('direct mode: CGNAT detection', () => {
   it('blocks activation when the router WAN IP differs from the public IP', async () => {
@@ -221,6 +259,8 @@ describe('controller: switching modes', () => {
     expect(igd.mappings.size).toBe(0);
     expect(live.phase).toBe('off');
     expect(live.steps.find((x) => x.id === 'tunnel')?.status).toBe('ok');
+    expect(live.steps.find((x) => x.id === 'verify')?.status).toBe('ok');
+    expect(vi.mocked(probeHealth)).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/203\.0\.113\.7:\d+$/));
   });
 });
 
@@ -231,13 +271,14 @@ describe('direct mode TLS without SNI (browsers never send SNI for an IP address
     const cert = await new SelfSignedIssuer().issue('127.0.0.1');
     const tls = await import('node:tls');
     const ctx = tls.createSecureContext({ key: cert.keyPem, cert: cert.certPem });
-    const port = 41000 + Math.floor(Math.random() * 2000);
+    const port = (await allocPorts(1))[0]!;
     const handle = await live.startDirectServer(port, '127.0.0.1', (_n, cb) => cb(null, ctx), { key: cert.keyPem, cert: cert.certPem });
     servers.push(handle);
     const body = await new Promise<string>((resolve, reject) => {
-      // An IP host: Node (like browsers) sends no SNI.
+      // An IP host: Node (like browsers) sends no SNI. The certificate is verified, pinned to
+      // the one issued above (it names 127.0.0.1).
       https
-        .get({ host: '127.0.0.1', port, path: '/healthz', rejectUnauthorized: false }, (res) => {
+        .get({ host: '127.0.0.1', port, path: '/healthz', ca: cert.certPem }, (res) => {
           let b = '';
           res.on('data', (c) => (b += c));
           res.on('end', () => resolve(`${res.statusCode} ${b}`));
@@ -252,32 +293,33 @@ describe('direct mode: a port the computer can really open', () => {
   // Windows reserves whole ranges of high ports (Hyper-V/WinNAT); listening there fails with
   // EACCES. Such ports (and ports in use) are skipped before anything is mapped on the router.
   it('skips ports that cannot be bound and maps the first one that can', async () => {
-    const seq = [0.1, 0.2, 0.3];
+    const [a, b] = (await allocPorts(2)) as [number, number];
+    const seq = [a, b, directPort].map((p) => randomFor(p)());
     let i = 0;
     const refused: number[] = [];
     const d = new DirectMode(
       deps({
         random: () => seq[Math.min(i++, seq.length - 1)]!,
-        canBind: async (port, host) => {
+        reservePort: async (port, host) => {
           expect(host).toBe('0.0.0.0');
-          if (port < 30000) {
+          if (port !== directPort) {
             refused.push(port);
-            return false;
+            throw Object.assign(new Error(`listen EACCES ${host}:${port}`), { code: 'EACCES' });
           }
-          return true;
+          return { port, release: async () => {} };
         },
       }),
     );
     const url = await d.enable();
-    expect(refused).toEqual([24000, 28000]);
-    expect(url).toBe('https://203.0.113.7:32000');
-    expect([...igd.mappings.keys()]).toEqual([32000]);
+    expect(refused).toEqual([a, b]);
+    expect(url).toBe(`https://203.0.113.7:${directPort}`);
+    expect([...igd.mappings.keys()]).toEqual([directPort]);
     await d.disable();
   });
 
   it('gives a clear error, and maps nothing, when no port can be opened', async () => {
     let n = 0;
-    const d = new DirectMode(deps({ random: () => (n++ % 1000) / 1000, canBind: async () => false }));
+    const d = new DirectMode(deps({ random: () => (n++ % 1000) / 1000, reservePort: async () => Promise.reject(Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })) }));
     await expect(d.enable()).rejects.toMatchObject({ code: 'err.directNoPort' });
     expect(igd.mappings.size).toBe(0);
     expect(d.active).toBe(false);

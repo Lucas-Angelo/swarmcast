@@ -106,7 +106,7 @@ describe('licence check and texts', () => {
       [
         { name: 'objc2', license: 'MIT', repository: repo, authors: ['Mads <m@x>'] },
         { name: 'objc2-foundation', license: 'MIT', repository: `${repo}.git` },
-        { name: 'block2', license: 'MIT', repository: 'https://github.com/x/block2', authors: ['Mads <m@x>', 'Other'] },
+        { name: 'block2', license: 'MIT', repository: 'https://github.com/x/block2', authors: ['Mads <m@x>', 'Other <o@x> (Org) <p@x>'] },
         { name: 'selectors', license: 'MPL-2.0' },
         { name: 'zlibonly', license: 'Zlib' },
       ],
@@ -118,7 +118,7 @@ describe('licence check and texts', () => {
     expect(by.objc2.files).toEqual([{ name: 'LICENSE-MIT', text: 'Copyright Mads\nMIT terms' }]);
     expect(by['objc2-foundation'].files).toEqual(by.objc2.files);
     expect(by['objc2-foundation'].note).toMatch(/one of objc2 1\.0\.0, from the same repository/);
-    expect(by.block2.files).toEqual([{ name: 'MIT (standard text)', text: 'Copyright (c) Mads, Other\n\n<MIT text>' }]);
+    expect(by.block2.files).toEqual([{ name: 'MIT (standard text)', text: 'Copyright (c) Mads, Other (Org)\n\n<MIT text>' }]);
     expect(by.selectors.files).toEqual([{ name: 'MPL-2.0 (standard text)', text: '<MPL-2.0 text>' }]);
     expect(by.selectors.note).not.toMatch(/copyright holders/);
     // No standard text for Zlib in this fake: the build must say what to add.
@@ -136,7 +136,7 @@ describe('licence check and texts', () => {
     const apache = 'Apache License\nVersion 2.0';
     const files: Record<string, { name: string; text: string }[]> = {
       a: [{ name: 'LICENSE', text: apache }],
-      b: [{ name: 'LICENSE-APACHE', text: `  ${apache.replace('\n', '\n\n')}  ` }, { name: 'LICENSE-MIT', text: 'MIT by b' }],
+      b: [{ name: 'LICENSE-APACHE', text: `  ${apache.replaceAll('\n', '\n\n')}  ` }, { name: 'LICENSE-MIT', text: 'MIT by b' }],
     };
     const read = (p: { name: string }) => files[p.name] ?? [];
     const { crates } = collectCrates(shippedPackages(m), { readFiles: read, canonical });

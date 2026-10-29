@@ -1,8 +1,17 @@
 name: Release
 
-# On a `v*` tag: check the tag, run the full test suites (the same workflows that run on pull
-# requests, via workflow_call), build and sign every package, and publish the GitHub release
-# only if everything passed.
+# On a `v*` tag: check the tag, run the whole pipeline (pipeline.yml with `release: true`: every
+# stage, the same as pull requests, with the desktop apps built in release flavour and signed
+# with the updater key), sign and archive the script-mode packages the pipeline built, and
+# publish the GitHub release only if everything passed.
+#
+# A published release is never changed (immutable releases, docs/RELEASING.md section 4): the
+# release is created as a draft, every asset is uploaded and checked, the assets get a build
+# provenance attestation, and only then is the draft published. Nothing edits it afterwards.
+#
+# The signing jobs name the `release` environment, whose secrets only `v*` tags can read. GitHub
+# creates an environment that a workflow names and that does not exist yet (without rules or
+# secrets; the repository secrets then still apply), so this works before and after it is set up.
 on:
   push:
     tags: ['v*']
@@ -21,8 +30,10 @@ env:
 jobs:
   verify:
     name: Verify tag and changelog
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # For the updater key check: environment secrets are visible only to jobs that name it.
+    environment: release
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
@@ -55,7 +66,7 @@ jobs:
           HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY != '' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD != '' }}
         run: |
           if [ "$HAS_KEY" != true ]; then
-            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (Settings > Secrets and variables > Actions): without them the desktop installers have no update signatures."
+            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (Settings > Environments > release, docs/RELEASING.md section 3): without them the desktop installers have no update signatures."
             exit 1
           fi
       - name: CHANGELOG.md must have a section for this version
@@ -68,39 +79,24 @@ jobs:
             exit 1
           fi
 
-  # ---- Gate: the full test suites. Nothing is built or published unless they all pass. ----
-  ci:
-    name: CI
+  # ---- Gate: the whole pipeline. Nothing is signed or published unless all of it passes. ----
+  # It builds the desktop installers in release flavour (updater artifacts signed with the
+  # Tauri key) and tests them on every OS; publish uploads the very artifacts that were tested.
+  pipeline:
+    name: Pipeline
     needs: verify
-    uses: ./.github/workflows/ci.yml
-  scripts:
-    name: Install scripts
-    needs: verify
-    uses: ./.github/workflows/scripts.yml
-  preflight:
-    name: Pre-release check
-    needs: verify
-    uses: ./.github/workflows/preflight.yml
-  windows:
-    name: Windows E2E
-    needs: verify
-    uses: ./.github/workflows/windows.yml
-  # Builds the desktop installers (updater artifacts signed with the Tauri key) and tests them
-  # on every OS; publish uploads the very artifacts that were tested.
-  desktop:
-    name: Desktop app
-    needs: verify
-    uses: ./.github/workflows/desktop.yml
+    uses: ./.github/workflows/pipeline.yml
     with:
       release: true
-      version: ${{ needs.verify.outputs.version }}
     secrets:
       TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+  # The script-mode packages the pipeline built and tested (pkg-<target>: release/staging), signed
+  # when the code-signing secrets exist, smoke-tested on their own platform and archived.
   build:
-    name: Build ${{ matrix.target }}
-    needs: [verify, ci, scripts, preflight, windows, desktop]
+    name: Sign ${{ matrix.target }}
+    needs: [verify, pipeline]
     strategy:
       fail-fast: true
       matrix:
@@ -108,9 +104,10 @@ jobs:
           - { target: windows-x64, os: windows-latest }
           - { target: macos-arm64, os: macos-latest }
           - { target: macos-x64, os: macos-15-intel }
-          - { target: linux-x64, os: ubuntu-latest }
+          - { target: linux-x64, os: ubuntu-24.04 }
           - { target: linux-arm64, os: ubuntu-24.04-arm }
     runs-on: ${{ matrix.os }}
+    environment: release
     timeout-minutes: 30
     defaults:
       run:
@@ -120,7 +117,7 @@ jobs:
       TARGET: ${{ matrix.target }}
       STAGING: release/staging/${{ matrix.target }}
       # Only "true"/"false" here: the secrets themselves are mapped into the signing steps
-      # alone, so `npm ci` lifecycle scripts and the build never see them.
+      # alone, so nothing else in the job sees them.
       MACOS_SIGNING: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 != '' && secrets.MACOS_CERTIFICATE_PASSWORD != '' && secrets.MACOS_SIGN_IDENTITY != '' }}
       MACOS_NOTARIZE: ${{ secrets.APPLE_ID != '' && secrets.APPLE_TEAM_ID != '' && secrets.APPLE_APP_PASSWORD != '' }}
       WINDOWS_SIGNING: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 != '' && secrets.WINDOWS_CERTIFICATE_PASSWORD != '' }}
@@ -130,12 +127,14 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         with:
-          go: 'true'
-      - run: npm run build
-      - name: Build tray helper
-        run: node apps/tray/build.mjs --target "$TARGET" --vendor
-      - name: Assemble release/staging/${{ matrix.target }}
-        run: node scripts/build/package.mjs --target "$TARGET" --version "$VERSION" --no-archive
+          npm-ci: 'false'
+      - uses: ./.github/actions/get-build
+        with:
+          names: pkg-${{ matrix.target }}
+      - name: The staged package is this version
+        run: |
+          staged="$(cat "$STAGING/VERSION")"
+          [ "$staged" = "$VERSION" ] || { echo "::error::$STAGING is version $staged, not $VERSION"; exit 1; }
 
       # ---- macOS code signing (skipped unless the MACOS_* secrets exist) ----
       - name: Import macOS signing certificate
@@ -275,11 +274,14 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    needs: [verify, build, desktop]
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+    needs: [verify, pipeline, build]
+    runs-on: ubuntu-24.04
+    environment: release
+    timeout-minutes: 15
     permissions:
-      contents: write
+      contents: write # create and publish the release
+      id-token: write # sign the build provenance attestation (Sigstore)
+      attestations: write # store it with the repository's attestations
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ github.ref_name }}
@@ -489,11 +491,50 @@ jobs:
 
       - name: Generate SHA256SUMS.txt
         run: node scripts/build/checksums.mjs release
-      - name: Create release
+
+      # Draft first: nobody sees the release (and /releases/latest does not move) until every
+      # asset is there. A draft left by an earlier failed attempt of this tag was never public, so
+      # it is deleted; a published release is never touched (checked again right here).
+      - name: Create the release as a draft, with every asset
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           ls -l release
+          if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$TAG" >/dev/null 2>&1; then
+            echo "::error::A published release for $TAG exists; it is never changed."
+            exit 1
+          fi
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | while read -r id; do
+            echo "Deleting the unpublished draft $id of an earlier attempt"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+          done
           prerelease=()
           if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" release/* --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
+          gh release create "$TAG" release/* --draft --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
+      - name: Every asset is on the draft, byte for byte the same size
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id="$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq ".[] | select(.draft and .tag_name == \"$TAG\") | .id" | head -n 1)"
+          [ -n "$id" ] || { echo "::error::no draft release for $TAG"; exit 1; }
+          echo "DRAFT_ID=$id" >> "$GITHUB_ENV"
+          gh api "repos/$GITHUB_REPOSITORY/releases/$id/assets?per_page=100" --paginate \
+            --jq '.[] | select(.state == "uploaded") | "\(.name) \(.size)"' | sort > "$RUNNER_TEMP/remote.txt"
+          (cd release && for f in *; do [ -f "$f" ] && echo "$f $(stat -c %s "$f")"; done) | sort > "$RUNNER_TEMP/local.txt"
+          if ! diff -u "$RUNNER_TEMP/local.txt" "$RUNNER_TEMP/remote.txt"; then
+            echo "::error::the draft's assets differ from release/ (above: - local, + on the draft)"
+            exit 1
+          fi
+          echo "$(wc -l < "$RUNNER_TEMP/local.txt") assets on the draft"
+      # Build provenance for every asset (SHA-256 subjects), verifiable with
+      # `gh attestation verify <file> -R Lucas-Angelo/swarmcast`.
+      - name: Attest the assets
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: release/*
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" -F draft=false --jq '"Published \(.html_url)"'

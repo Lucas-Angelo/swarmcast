@@ -8,13 +8,25 @@ export default defineConfig({
   testDir: 'apps/server/test/e2e',
   timeout: 150_000,
   expect: { timeout: 30_000 },
+  // One worker, one e2e server: the media tests are CPU-sensitive (the runner also encodes the
+  // stream). Tests are independent (the gate in fixtures.ts resets the server before each), so
+  // a retry re-runs one test, not its file. Every test is tagged @media (live video, P2P, the
+  // ladder: p2p, quality, adaptive-delay, attack) or @ui (the rest), so CI can run the two
+  // groups on separate runners: `--grep @media` / `--grep @ui`.
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  // CI keeps the evidence of every run (_e2e.yml uploads playwright-report/ and test-results/ unless
+  // cancelled, flaky-green runs included): the HTML report, results.json for flake statistics,
+  // and annotations on the PR. test-results/ also holds e2e-server.log and fake-obs.log.
+  reporter: process.env.CI
+    ? [['list'], ['github'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]]
+    : 'list',
+  reportSlowTests: { max: 10, threshold: 60_000 },
   use: {
     baseURL: `http://127.0.0.1:${PUBLIC}`,
-    trace: 'retain-on-failure',
+    // CI: a trace for every retried (failed or flaky) test, and no tracing cost on first attempts.
+    trace: process.env.CI ? 'on-first-retry' : 'retain-on-failure',
   },
   webServer: {
     command: 'node --import tsx apps/server/test/e2e/server.ts',

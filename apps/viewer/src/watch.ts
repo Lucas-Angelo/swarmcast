@@ -4,9 +4,9 @@ import { formatNumber, t, type MessageKey } from './i18n.js';
 import Hls, { type ErrorData, type LevelDetails } from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import { debug as p2pDebug } from 'p2p-media-loader-core';
-import type { ServerMessage, ViewerConfig } from '@swarmcast/shared';
+import type { P2PBlockReason, ServerMessage, ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
-import { attachAdaptiveDelay, delaySpeedFromSearch, type AdaptiveDelay } from './adaptive-delay.js';
+import { attachAdaptiveDelay, delayTestFlags, type AdaptiveDelay } from './adaptive-delay.js';
 import { createLatencyToggle } from './latency-toggle.js';
 import { CoreActivity, PeerStrikes, withHttpFallback } from './p2p-fallback.js';
 import { asciiToHex, peerGuard } from './peer-guard.js';
@@ -15,6 +15,7 @@ import {
   hlsConfigFor,
   latencyFor,
   mismatchWindow,
+  playlistsKnown,
   type applyProfile,
   loadProfile,
   p2pCoreConfigFor,
@@ -158,10 +159,15 @@ const stats = {
   /** Peers dropped locally because they did not deliver. */
   peersDropped: 0,
   stallRecoveries: 0,
+  /** Source reloads (hls.loadSource after the first), and why the last one happened. */
+  reloads: 0,
+  lastReload: null as string | null,
   p2pEnabled: false,
   p2pAllowed: true,
   /** The streamer's switch for everyone (false = P2P off for this live). */
   p2pForAll: true,
+  /** Why P2P is off although the streamer allows it (the streamer's own connection, or a check in progress). */
+  p2pBlock: null as P2PBlockReason | null,
   playing: false,
 };
 (window as unknown as { __swarmcast: unknown }).__swarmcast = {
@@ -230,6 +236,7 @@ async function main(): Promise<void> {
   }
   $('nick').textContent = cfg.nickname;
   stats.p2pAllowed = cfg.p2pAllowed;
+  stats.p2pBlock = cfg.p2pBlock ?? null;
   // p2p-media-loader's tracker socket becomes a channel inside /control (tracker-mux.ts).
   trackerMux.trackerUrl = cfg.trackerUrl;
 
@@ -312,15 +319,27 @@ async function main(): Promise<void> {
   // (liveMaxLatencyDuration) would drag a paused viewer to live and "Go live −N s" would read 0.
   // Playing again restores the limit, so a viewer who paused past the window is brought back.
   // A short hold inside a stall (adaptive delay) is not a viewer pause.
+  // While the playlists in use are (re)loading (a source reload: hls.js forgets them and loads
+  // the video one first), the windows measured before still hold: the stream did not change.
+  // Dropping them let a target raised by a long stall (27 s) place the restart before the
+  // oldest audio segment of a 20 s audio playlist; video and audio then started 14 s apart and
+  // the player sat frozen until the stall watchdog moved it again.
+  let lastWindow: PlaylistWindow | null = null;
+  let lastShortest: PlaylistWindow | null = null;
   const fitLatency = (): void => {
-    const w = playlistWindow();
+    const known = playlistsKnown(hls.audioTracks.length > 0, liveDetails());
+    if (known) {
+      lastWindow = playlistWindow();
+      lastShortest = shortestWindow();
+    }
+    const w = lastWindow;
     const fit = latencyFor(loadProfile(), w);
     const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
     // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
     // the target itself; the shortest window only stops the controller building delay past it.
     const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
     adaptive?.setCeiling(room(w));
-    adaptive?.setGrowthLimit(room(shortestWindow()));
+    adaptive?.setGrowthLimit(room(lastShortest));
     if (hls.config.liveMaxLatencyDuration !== max) {
       debugLog(`live delay max ${max}s for window ${JSON.stringify(w)}`);
       hls.config.liveMaxLatencyDuration = max;
@@ -387,16 +406,23 @@ async function main(): Promise<void> {
   });
 
   // Each viewer's delay adapts to their connection (latency-controller.ts, docs/QUALITY.md).
-  adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, speed: delaySpeedFromSearch(location.search) });
+  adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, ...delayTestFlags(location.search, cfg.testHooks === true) });
   fitLatency();
   mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id));
   setInterval(showDelay, 1000);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
+  // Every load of the source after the first goes through here, so the stats count it.
+  const reloadSource = (why: string): void => {
+    stats.reloads += 1;
+    stats.lastReload = why;
+    debugLog(`reloading the source (${why})`);
+    hls.loadSource(cfg.playlistUrl);
+  };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
   // or ffmpeg fell back to the original quality): a media playlist the player knows may be
   // gone for good. Repeated 404s on media playlists re-read the multivariant playlist.
-  const reloader = createManifestReloader(() => hls.loadSource(cfg.playlistUrl));
+  const reloader = createManifestReloader(() => reloadSource('media playlists gone'));
   hls.on(Hls.Events.LEVEL_LOADED, () => reloader.reset());
 
   let networkErrors = 0;
@@ -421,7 +447,7 @@ async function main(): Promise<void> {
         data.details === Hls.ErrorDetails.MANIFEST_LOAD_TIMEOUT ||
         data.details === Hls.ErrorDetails.MANIFEST_PARSING_ERROR ||
         data.details === Hls.ErrorDetails.LEVEL_LOAD_ERROR;
-      setTimeout(() => (reload ? hls.loadSource(cfg.playlistUrl) : hls.startLoad()), Math.min(10_000, 1000 * networkErrors));
+      setTimeout(() => (reload ? reloadSource(`network error: ${data.details}`) : hls.startLoad()), Math.min(10_000, 1000 * networkErrors));
     } else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) {
       hls.recoverMediaError();
     } else {
@@ -480,7 +506,7 @@ async function main(): Promise<void> {
 
   const renderP2PLine = (): void => {
     if (!stats.p2pAllowed) {
-      showP2PLine(t(stats.p2pForAll ? 'watch.p2pRevoked' : 'watch.p2pOffForAll'));
+      showP2PLine(t(p2pOffKey()));
     } else if (stats.p2pEnabled) {
       const total = stats.httpBytes + stats.p2pDownBytes;
       const share = total > 0 ? Math.round((stats.p2pDownBytes / total) * 100) : 0;
@@ -500,9 +526,10 @@ async function main(): Promise<void> {
   setInterval(renderP2PLine, 2000);
 
   connectControl(cfg, {
-    onP2P: (allowed, forAll) => {
+    onP2P: (allowed, forAll, reason) => {
       stats.p2pAllowed = allowed;
       stats.p2pForAll = forAll ?? true;
+      stats.p2pBlock = reason ?? null;
       if (!allowed) setP2P(false);
       else if (!stats.p2pEnabled && p2pWanted()) setP2P(true);
       updateP2PUi();
@@ -531,7 +558,7 @@ async function main(): Promise<void> {
     isEnded: () => ended,
     // The adaptive delay's deliberate hold inside a stall is not a stuck player.
     isHeld: () => adaptive?.holding ?? false,
-    reload: () => hls.loadSource(cfg.playlistUrl),
+    reload: () => reloadSource('stall watchdog'),
     log: (msg) => {
       stats.stallRecoveries += 1;
       debugLog(msg);
@@ -543,7 +570,15 @@ function sendControl(msg: unknown): void {
   if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
 }
 
-function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean, forAll?: boolean) => void } | null): void {
+/** The line under the P2P switch while P2P is not allowed: who turned it off, and why. */
+function p2pOffKey(): MessageKey {
+  if (!stats.p2pForAll) return 'watch.p2pOffForAll';
+  if (stats.p2pBlock === 'own-connection') return 'watch.p2pOwnConnection';
+  if (stats.p2pBlock === 'checking') return 'watch.p2pChecking';
+  return 'watch.p2pRevoked';
+}
+
+function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean, forAll?: boolean, reason?: P2PBlockReason) => void } | null): void {
   let attempts = 0;
   const open = (): void => {
     if (ended) return;
@@ -566,10 +601,10 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
         case 'hello':
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
-          handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll);
+          handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
           break;
         case 'p2p':
-          handlers?.onP2P(msg.allowed, msg.forAll);
+          handlers?.onP2P(msg.allowed, msg.forAll, msg.reason);
           break;
         case 'viewers':
           showViewerCount(msg.count);

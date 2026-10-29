@@ -79,6 +79,27 @@ export function parseCidr(text: string): CidrRange | null {
   return { v: ip.v, start, end };
 }
 
+/** Prefix length of a range made by parseCidr (always one aligned power-of-two block). */
+export function prefixLength(r: CidrRange): number {
+  const size = r.end - r.start + 1n;
+  return (r.v === 4 ? 32 : 128) - (size.toString(2).length - 1);
+}
+
+/**
+ * A range back as text that parseCidr reads: "a.b.c.d/nn", or IPv6 as eight hex groups
+ * ("2001:678:254:0:0:0:0:0/48"; not shortened, which keeps it simple and unambiguous).
+ */
+export function formatCidr(r: CidrRange): string {
+  const bits = prefixLength(r);
+  if (r.v === 4) {
+    const n = Number(r.start);
+    return `${n >>> 24}.${(n >>> 16) & 255}.${(n >>> 8) & 255}.${n & 255}/${bits}`;
+  }
+  const groups: string[] = [];
+  for (let i = 7; i >= 0; i--) groups.push(((r.start >> BigInt(16 * i)) & 0xffffn).toString(16));
+  return `${groups.join(':')}/${bits}`;
+}
+
 /** Binary search: is `x` inside one of the sorted, non-overlapping [starts[i], ends[i]] ranges? */
 function contains<T extends number | bigint>(starts: ArrayLike<T>, ends: ArrayLike<T>, x: T): boolean {
   let lo = 0;

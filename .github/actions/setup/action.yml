@@ -13,25 +13,153 @@ inputs:
   npm-ci:
     description: Run `npm ci`.
     default: 'true'
+  downloads:
+    description: >-
+      Restore the download cache (pinned tools, pkg's Node.js binaries) for a job that runs
+      fetch-binaries.mjs or package.mjs. Implied by ffmpeg.
+    default: 'false'
+  apt-debs:
+    description: >-
+      Linux: a name for a .deb cache (for example `playwright-<hash>`). Sets APT_DEBS, which
+      .github/scripts/apt-retry.sh downloads into; save it with ./.github/actions/setup/save.
+    default: ''
 
 runs:
   using: composite
   steps:
-    # A stalled download from the Ubuntu mirror is retried instead of waiting for minutes
-    # (this also covers `playwright install --with-deps` and the desktop build dependencies).
-    - name: apt retries and timeouts (Linux)
+    # One macOS VM reached neither github.com (UND_ERR_CONNECT_TIMEOUT) nor the cache service
+    # (ENOTFOUND) for its first minute and lost a release run. Wait up to 2 minutes for
+    # github.com, and say so when it had to wait (the downloads retry too).
+    - name: Wait for github.com (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        start=$SECONDS
+        for i in $(seq 1 12); do
+          if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+            [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
+    # apt settings for every apt call of the job (apt-retry.sh adds a time limit per try). The
+    # file must sort after the image's own /etc/apt/apt.conf.d/zz-retries (Retries 1, Timeout 15),
+    # which overrode our earlier 99-ci-retries: apt reads the folder in order, the last value wins.
+    # Timeout stays at the image's 15 s (it only fires when no data arrives; a trickling mirror is
+    # apt-retry.sh's job); 3 retries instead of 1. The step fails if apt does not see our values.
+    - name: apt settings (Linux)
       if: runner.os == 'Linux'
       shell: bash
-      run: printf 'Acquire::Retries "5";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' | sudo tee /etc/apt/apt.conf.d/99-ci-retries >/dev/null
+      run: |
+        sudo=(); [ "$(id -u)" = 0 ] || sudo=(sudo)
+        printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' 'Dpkg::Lock::Timeout "60";' |
+          "${sudo[@]}" tee /etc/apt/apt.conf.d/zzz-ci-retries >/dev/null
+        apt-config dump | grep -E '^(Acquire::Retries|Acquire::https?::Timeout|Dpkg::Lock::Timeout) '
+        eval "$(apt-config shell R Acquire::Retries T Acquire::https::Timeout L Dpkg::Lock::Timeout)"
+        if [ "$R $T $L" != "3 15 60" ]; then
+          echo "::error::apt does not use our settings (Retries=$R https::Timeout=$T Dpkg::Lock::Timeout=$L): a file sorting after zzz-ci-retries overrides them"
+          exit 1
+        fi
+        if [ -f /etc/apt/apt-mirrors.txt ]; then echo "Mirrors:"; cat /etc/apt/apt-mirrors.txt; fi
 
-    # One npm cache for the root workspace and the website (site/ has its own lockfile).
+    # Downloaded .debs (apt-retry.sh install/download put them in $APT_DEBS), for jobs whose apt
+    # packages are part of what they test. The key has the runner image version: a new image
+    # brings new package versions, and the first job on main refills the cache. Saved on main only
+    # (./.github/actions/setup/save at the end of the job): pull requests restore main's.
+    - name: .deb cache key (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      id: apt-debs
+      shell: bash
+      env:
+        NAME: ${{ inputs.apt-debs }}
+      run: |
+        echo "APT_DEBS=$RUNNER_TEMP/apt-debs" >> "$GITHUB_ENV"
+        echo "key=apt-debs-$NAME-${ImageOS:?}-${ImageVersion:?}-$RUNNER_ARCH" >> "$GITHUB_OUTPUT"
+    - name: Restore the .deb cache (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      id: apt-debs-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/apt-debs/*.deb
+        key: ${{ steps.apt-debs.outputs.key }}
+    - name: Remember the .deb cache for the save step (Linux)
+      if: inputs.apt-debs != '' && runner.os == 'Linux'
+      shell: bash
+      env:
+        KEY: ${{ steps.apt-debs.outputs.key }}
+        HIT: ${{ steps.apt-debs-cache.outputs.cache-hit }}
+      run: |
+        echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
+        echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
+
+    # One npm cache for the root workspace and the website (site/ has its own lockfile), only in
+    # jobs that run `npm ci`: a job without it saved an empty ~/.npm first under the same key, so
+    # the npm caches on main held 677 B to 75 KB and every `npm ci` went to the registry. This
+    # file is part of the key: that moves past those empty entries (they are never restored
+    # again and expire), and a change here that changes what the cache holds starts a new one.
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24.x
-        cache: npm
+        cache: ${{ inputs.npm-ci == 'true' && 'npm' || '' }}
+        package-manager-cache: ${{ inputs.npm-ci == 'true' }}
         cache-dependency-path: |
           package-lock.json
           site/package-lock.json
+          .github/actions/setup/action.yml
+
+    # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared:
+    # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs) and pkg's Node.js base binaries
+    # (PKG_CACHE_PATH, only in jobs that run package.mjs: its own entry), so a job does not
+    # depend on github.com for them. One release run was lost to a github.com connect timeout.
+    # restore-keys: after a pin changes, the old entry still serves the rest (fetch-binaries.mjs
+    # deletes what is no longer pinned). Saved on main only (./.github/actions/setup/save).
+    - name: Download cache keys
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      id: dl
+      shell: bash
+      env:
+        WITH_FFMPEG: ${{ inputs.ffmpeg }}
+        PINS: ${{ hashFiles('scripts/build/versions.json') }}
+        LOCK: ${{ hashFiles('package-lock.json') }}
+      run: |
+        echo "SC_DOWNLOAD_CACHE=$RUNNER_TEMP/sc-cache/downloads" >> "$GITHUB_ENV"
+        echo "PKG_CACHE_PATH=$RUNNER_TEMP/sc-cache/pkg" >> "$GITHUB_ENV"
+        # A job without ffmpeg must not save the entry that jobs with ffmpeg restore.
+        dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-"
+        pkg="sc-pkg-$RUNNER_OS-$RUNNER_ARCH-"
+        { echo "dl-prefix=$dl"; echo "dl-key=$dl$PINS"; echo "pkg-prefix=$pkg"; echo "pkg-key=$pkg$LOCK"; } >> "$GITHUB_OUTPUT"
+    - name: Restore the download cache
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      id: dl-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/sc-cache/downloads
+        key: ${{ steps.dl.outputs.dl-key }}
+        restore-keys: ${{ steps.dl.outputs.dl-prefix }}
+    - name: Restore the pkg cache
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      id: pkg-cache
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/sc-cache/pkg
+        key: ${{ steps.dl.outputs.pkg-key }}
+        restore-keys: ${{ steps.dl.outputs.pkg-prefix }}
+    - name: Remember the download caches for the save step
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      shell: bash
+      env:
+        DL_KEY: ${{ steps.dl.outputs.dl-key }}
+        DL_HIT: ${{ steps.dl-cache.outputs.cache-hit }}
+        PKG_KEY: ${{ steps.dl.outputs.pkg-key }}
+        PKG_HIT: ${{ steps.pkg-cache.outputs.cache-hit }}
+      run: |
+        {
+          echo "SC_DL_CACHE_KEY=$DL_KEY"
+          echo "SC_DL_CACHE_HIT=${DL_HIT:-false}"
+          echo "SC_PKG_CACHE_KEY=$PKG_KEY"
+          echo "SC_PKG_CACHE_HIT=${PKG_HIT:-false}"
+        } >> "$GITHUB_ENV"
 
     - if: inputs.go == 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -39,47 +167,28 @@ runs:
         go-version: 1.27.x
         cache-dependency-path: apps/tray/go.sum
 
-    # Ubuntu's ffmpeg (what the suites have always run against), through apt-retry.sh: a time
-    # limit per try, retries and a fallback mirror, because GitHub's Ubuntu mirror sometimes
-    # stalls for many minutes.
-    - name: Install ffmpeg (Linux)
-      if: inputs.ffmpeg == 'true' && runner.os == 'Linux'
+    # The same pinned GPL ffmpeg on every OS (scripts/build/versions.json "ffmpeg-test": BtbN on
+    # Linux and Windows, Martin Riedl on macOS, the publishers of the app's own ffmpeg pins),
+    # SHA-256 verified. GPL because the test feeds encode with libx264, which the LGPL build the
+    # app installs for streamers does not have. No apt (Ubuntu's ffmpeg pulled 88 packages from a
+    # mirror that sometimes stalls for many minutes), Homebrew or Chocolatey (whose install
+    # sometimes left no ffmpeg.exe).
+    # It goes first on PATH, ahead of any shim on the image: a shim runs ffmpeg as a child, so
+    # tests that kill "ffmpeg" by PID would only kill the shim. The Windows suites run the app
+    # with a bare-OS PATH and hand the test feed FFMPEG_BIN.
+    - name: ffmpeg for the tests (pinned, verified)
+      if: inputs.ffmpeg == 'true'
       shell: bash
       run: |
-        "$GITHUB_ACTION_PATH/../../scripts/apt-retry.sh" update
-        "$GITHUB_ACTION_PATH/../../scripts/apt-retry.sh" install -y --no-install-recommends ffmpeg
-        echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
-    - name: Install ffmpeg (macOS)
-      if: inputs.ffmpeg == 'true' && runner.os == 'macOS'
-      shell: bash
-      run: |
-        brew install ffmpeg
-        echo "FFMPEG_BIN=$(command -v ffmpeg)" >> "$GITHUB_ENV"
-    # A pinned BtbN build, SHA-256 verified (same release as the app's pin in
-    # scripts/build/versions.json), instead of Chocolatey, whose install sometimes left no
-    # ffmpeg.exe. This is the GPL variant: the test feeds encode with libx264, which the LGPL
-    # build the app installs for streamers does not have. Hash from BtbN's checksums.sha256.
-    # The real ffmpeg.exe goes first on PATH, ahead of any shim on the image: a shim runs
-    # ffmpeg as a child, so tests that kill "ffmpeg" by PID would only kill the shim. The
-    # Windows suites run the app with a bare-OS PATH and hand the test feed FFMPEG_BIN.
-    - name: Install ffmpeg (Windows)
-      if: inputs.ffmpeg == 'true' && runner.os == 'Windows'
-      shell: pwsh
-      env:
-        FFMPEG_URL: https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n9.0.2-17-g2a571b6068-win64-gpl-9.0.zip
-        FFMPEG_SHA256: a0e45723c72141975f51d8666302e614711745f3102b704ca3f82c897a58d278
-      run: |
-        $zip = Join-Path $env:RUNNER_TEMP 'ffmpeg-gpl.zip'
-        curl.exe --fail --location --silent --show-error --retry 5 --retry-all-errors --retry-delay 5 -o $zip $env:FFMPEG_URL
-        if ($LASTEXITCODE -ne 0) { throw "Downloading ffmpeg failed (curl exit $LASTEXITCODE): $env:FFMPEG_URL" }
-        $hash = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLowerInvariant()
-        if ($hash -ne $env:FFMPEG_SHA256) { throw "ffmpeg checksum mismatch: expected $env:FFMPEG_SHA256, got $hash" }
-        $dir = Join-Path $env:RUNNER_TEMP 'ffmpeg'
-        Expand-Archive -LiteralPath $zip -DestinationPath $dir -Force
-        $f = Get-ChildItem $dir -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-        if (-not $f) { throw "ffmpeg.exe not found in $zip" }
-        "FFMPEG_BIN=$($f.FullName)" >> $env:GITHUB_ENV
-        Split-Path $f.FullName >> $env:GITHUB_PATH
+        dir="$RUNNER_TEMP/ffmpeg-test"
+        node "$GITHUB_WORKSPACE/scripts/build/fetch-binaries.mjs" --only ffmpeg-test --out "$dir"
+        bin="$dir/ffmpeg"
+        if [ "$RUNNER_OS" = Windows ]; then
+          dir="$(cygpath -w "$dir")"
+          bin="$dir\ffmpeg.exe"
+        fi
+        echo "FFMPEG_BIN=$bin" >> "$GITHUB_ENV"
+        echo "$dir" >> "$GITHUB_PATH"
     - name: ffmpeg version (and the libx264 encoder the test feeds need)
       if: inputs.ffmpeg == 'true'
       shell: bash
@@ -88,6 +197,8 @@ runs:
         encoders="$("$FFMPEG_BIN" -hide_banner -encoders)"
         grep -q libx264 <<<"$encoders" || { echo "::error::$FFMPEG_BIN has no libx264 encoder (the test feeds need it)"; exit 1; }
 
+    # --prefer-offline: packages in the restored cache are not re-checked with the registry.
+    # The audit runs in its own CI job.
     - if: inputs.npm-ci == 'true'
       shell: bash
-      run: npm ci
+      run: npm ci --prefer-offline --no-audit --no-fund

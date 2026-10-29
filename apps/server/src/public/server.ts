@@ -34,6 +34,7 @@ import type { TrackerService } from '../tracker/tracker.js';
 import type { Logger } from '../core/logger.js';
 import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
+import { resettableRateLimits } from './rate-limit-store.js';
 import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
 
 /** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
@@ -78,6 +79,12 @@ export interface PublicDeps {
   stats: HttpStats;
   /** Attack detection feed, public blocklists and the join proof-of-work. */
   security: PublicSecurity;
+  /**
+   * A known session made a request from `ip` (its client address as clientIp() reads it). The
+   * live checks whether that is the streamer's own connection (P2P privacy) before the request
+   * goes on, so a /tracker or /control upgrade already sees the outcome.
+   */
+  clientSeen?: (session: Session, ip: string) => void;
 }
 
 export interface PublicServerOptions {
@@ -124,6 +131,8 @@ function apiError(code: MessageKey): ApiErrorBody {
 export async function createPublicServer(deps: PublicDeps, opts: PublicServerOptions): Promise<FastifyInstance> {
   const { access, origin, signer, log } = deps;
   const direct = opts.mode === 'direct';
+  // The watch page's test-only URL flags work only for a server started with this (E2E harness).
+  const testHooks = process.env.SWARMCAST_TEST_HOOKS === '1';
 
   const app = Fastify({
     logger: false,
@@ -155,7 +164,10 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   const cookieBase = { path: '/', httpOnly: true, secure: opts.secureCookies, sameSite: 'lax' as const };
 
   await app.register(cookie);
+  const limits = resettableRateLimits();
+  app.decorate('resetRateLimits', limits.reset);
   await app.register(rateLimit, {
+    store: limits.Store,
     global: true,
     max: direct ? 300 : 900,
     timeWindow: '1 minute',
@@ -191,7 +203,9 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     if (res.renew) {
       reply.setCookie(SESSION_COOKIE, await access.issueSessionToken(res.session), { ...cookieBase, maxAge: SESSION_TTL_S });
     }
-    if (direct) res.session.ip = ip(req);
+    const addr = ip(req);
+    if (direct) res.session.ip = addr;
+    deps.clientSeen?.(res.session, addr);
     return res.session;
   }
 
@@ -332,7 +346,9 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       stunServers: deps.stunServers(),
       swarmId: deps.swarmId(),
       p2pAllowed: access.p2pAllowed(s),
+      ...(access.p2pBlock(s) ? { p2pBlock: access.p2pBlock(s) } : {}),
       segmentDurationS: SEGMENT_DURATION_S,
+      ...(testHooks ? { testHooks: true as const } : {}),
     };
   });
 
@@ -391,12 +407,14 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       socket.end(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     };
     sec.upgrade();
-    if (sec.blocked(clientIp(req, opts.trustTunnel && !direct))) return reject(403, 'Forbidden');
+    const addr = clientIp(req, opts.trustTunnel && !direct);
+    if (sec.blocked(addr)) return reject(403, 'Forbidden');
     if (url.pathname !== '/control' && url.pathname !== '/tracker') return reject(404, 'Not Found');
     if (!originMatchesHost(req.headers.origin, req.headers.host)) return reject(403, 'Forbidden');
     const cookies = app.parseCookie(req.headers.cookie ?? '');
     const res = await access.verifySessionToken(cookies[SESSION_COOKIE]);
     if (!res) return reject(401, 'Unauthorized');
+    deps.clientSeen?.(res.session, addr);
     if (url.pathname === '/control') {
       deps.control.handleUpgrade(req, socket, head, res.session);
     } else {

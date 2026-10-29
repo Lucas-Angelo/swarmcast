@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import type { FastifyInstance } from 'fastify';
 import {
   QUICK_TUNNEL_CONCURRENCY_LIMIT,
@@ -17,13 +18,16 @@ import {
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
 import { AccessControl, type Session } from '../access/access.js';
+import { EgressWatch, type EgressWatchOptions } from '../access/own-connection.js';
 import { ControlChannel } from '../control/control.js';
 import { DirectMode, ipChangeNotice } from '../direct/direct.js';
+import { lookupPublicIps } from '../direct/publicip.js';
 import { ManifestSigner } from '../hls/manifest.js';
 import { HlsOrigin } from '../hls/origin.js';
 import { BandwidthLimiter } from '../hls/throttle.js';
 import { MediaMtx, streamPath } from '../media/mediamtx.js';
 import { isAlive, type Reaper } from '../process/children.js';
+import type { LoadGuard, LoadGuardOptions } from '../quality/load-guard.js';
 import { QualityManager } from '../quality/manager.js';
 import { createPublicServer, recentPeak, type HttpStats, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
@@ -58,11 +62,13 @@ export interface LiveDeps {
   /** In-memory activity log shown in the panel (a private one is created when omitted). */
   activity?: ActivityLog;
   /** Quality ladder / adaptive upload (docs/QUALITY.md). Omitted in logic tests: no ffmpeg, no ladder. */
-  quality?: { binDir: string; dataDir: string; runDir: string; reaper: Reaper | null };
+  quality?: { binDir: string; dataDir: string; runDir: string; reaper: Reaper | null; loadGuard?: LoadGuard | Partial<LoadGuardOptions> };
   /** Public IP blocklists (downloaded by the app; none in logic tests). */
   blocklists?: PublicBlocklists;
   /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
   browserCheckKey?: string;
+  /** Replaces parts of the own-public-address watch (tests: a fake lookup, fast ticks). */
+  egress?: Partial<Omit<EgressWatchOptions, 'log'>>;
 }
 
 type StepDef = { id: string; labelKey: MessageKey };
@@ -99,6 +105,9 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   readonly limiter: BandwidthLimiter;
   readonly quality: QualityManager;
   private publicServer: FastifyInstance | null = null;
+  private directServer: FastifyInstance | null = null;
+  /** `config.ports.public` as configured: 0 (tests) means "any free port" on every start. */
+  private readonly wantedPublicPort: number;
   private baseUrl: string | null = null;
   tunnelUrlChangedAt?: number;
   private obsConnected = false;
@@ -126,11 +135,16 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   private readonly quitting = new AbortController();
   private originBytes = { http: 0 };
   private lastStepError?: string;
+  /** The server's own public addresses, while a live runs in Secure mode (P2P privacy). */
+  readonly egress: EgressWatch;
+  /** Client addresses already checked per session (each one is checked once). */
+  private seenIps = new WeakMap<Session, Set<string>>();
 
   constructor(private readonly d: LiveDeps) {
     super();
     this.activity = d.activity ?? new ActivityLog();
     const ports = d.config.ports;
+    this.wantedPublicPort = ports.public;
     this.origin = new HlsOrigin(`http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`, d.log);
     this.limiter = BandwidthLimiter.fromMbps(d.config.uploadLimitMbps);
     this.access.p2pForAll = d.config.allowViewerP2P;
@@ -138,6 +152,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.control = new ControlChannel(this.access, d.log);
     // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
     this.control.tracker = this.tracker;
+    this.egress = new EgressWatch({ lookup: lookupPublicIps, now: d.now, ...d.egress, log: d.log });
+    this.egress.on('changed', () => this.egressChanged());
     const q = d.quality ?? { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
     this.quality = new QualityManager({
       config: d.config,
@@ -200,13 +216,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.access.on('p2p-changed', (s) => {
       if (s.p2pAllowed) this.activity.action('log.p2pAllowed', { nickname: s.nickname });
       else if (!s.autoRemovedFromP2P) this.activity.action('log.p2pRemoved', { nickname: s.nickname });
-      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: this.access.p2pForAll });
-      if (!this.access.p2pAllowed(s)) {
-        this.tracker.disconnectSession(s.id);
-        this.control.blockPeers([...s.peerIds]);
-      } else {
-        this.control.unblockPeers([...s.peerIds]);
-      }
+      this.pushP2P(s);
       this.changed();
     });
     this.control.viewerCount = () => {
@@ -223,6 +233,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     };
     this.access.on('session-created', (s) => {
       this.activity.add({ kind: 'viewer', code: 'log.viewerJoined', params: { nickname: s.nickname } });
+      this.clientSeen(s, s.ip);
       this.viewerCountChanged();
       this.d.direct.noteViewer(s.id);
       this.changed();
@@ -266,6 +277,89 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private changed(): void {
     this.emit('state');
+  }
+
+  /** Tell a viewer whether it may use P2P now, and drop it from the swarm (and from peers) when not. */
+  private pushP2P(s: Session): void {
+    const allowed = this.access.p2pAllowed(s);
+    const reason = this.access.p2pBlock(s);
+    this.control.send(s.id, { t: 'p2p', allowed, forAll: this.access.p2pForAll, ...(reason ? { reason } : {}) });
+    if (!allowed) {
+      this.tracker.disconnectSession(s.id);
+      this.control.blockPeers([...s.peerIds]);
+    } else {
+      this.control.unblockPeers([...s.peerIds]);
+    }
+  }
+
+  // ---- P2P privacy: no P2P on the streamer's own connection (access/own-connection.ts) ----
+
+  /**
+   * Viewers' real addresses are known (CF-Connecting-IP from the local quick-tunnel connector),
+   * so viewers on the streamer's own connection can be told apart. Direct mode needs none of
+   * this: there the streamer's IP is public by design.
+   */
+  private get tunnelTrusted(): boolean {
+    return this.mode === 'secure' && this.d.config.trustTunnelProxy && this.d.tunnel.name === 'cloudflare-quick';
+  }
+
+  /** Start or stop the own-address watch to match the mode, and apply its state. */
+  private syncEgress(): void {
+    if (this.tunnelTrusted && this.access.live) this.egress.start();
+    else this.egress.stop();
+    this.egressChanged();
+  }
+
+  /** The own addresses (or their status) changed: check every session again. */
+  private egressChanged(): void {
+    const checking = this.egress.active && this.egress.status === 'unknown';
+    const flip = checking !== this.access.p2pChecking;
+    this.access.p2pChecking = checking;
+    for (const s of this.access.sessions.values()) {
+      const flagged = this.recheck(s);
+      if (flip && !flagged) {
+        // Not this viewer's own doing: no peers to block, just "P2P waits" or "P2P may resume".
+        const reason = this.access.p2pBlock(s);
+        this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: this.access.p2pForAll, ...(reason ? { reason } : {}) });
+        if (!this.access.p2pAllowed(s)) this.tracker.disconnectSession(s.id);
+      }
+    }
+    if (flip) this.changed();
+  }
+
+  /** A session made a request from `ip`: remember it and check it once. */
+  private clientSeen(s: Session, ip: string): void {
+    if (!this.egress.active || s.ownConnection) return;
+    let seen = this.seenIps.get(s);
+    if (!seen) this.seenIps.set(s, (seen = new Set()));
+    if (seen.has(ip)) return;
+    // A handful is plenty (a phone moving between Wi-Fi and mobile data); drop the oldest.
+    if (seen.size >= 8) seen.delete(seen.values().next().value!);
+    seen.add(ip);
+    if (this.egress.classify(ip) === 'own') this.markOwnConnection(s);
+  }
+
+  /** Check every address a session was seen with; true when it was just flagged. */
+  private recheck(s: Session): boolean {
+    if (!this.egress.active || s.ownConnection) return false;
+    const ips = this.seenIps.get(s) ?? new Set([s.ip]);
+    for (const ip of ips) {
+      if (this.egress.classify(ip) === 'own') {
+        this.markOwnConnection(s);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** For the rest of the live: no P2P for this session, and every peer drops it. */
+  private markOwnConnection(s: Session): void {
+    s.ownConnection = true;
+    // The nickname only (the log export anonymises it); never the address.
+    this.d.log.info({ viewer: s.nickname }, 'viewer on the streamer\'s own internet connection: P2P off for it, to keep the streamer\'s IP private');
+    this.activity.action('log.p2pOwnConnection', { nickname: s.nickname });
+    this.pushP2P(s);
+    this.changed();
   }
 
   private warn(code: MessageKey, params?: MessageParams): void {
@@ -332,17 +426,21 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.setSteps(START_STEPS);
       try {
         await this.step('server', async () => {
-          const port = await firstFreePort(this.d.config.ports.public);
-          if (port === null) throw new CodedError('err.portsBusy', { port: this.d.config.ports.public });
+          // Port 0: the OS picks a free port at listen time (no probe-then-bind race).
+          const port = this.wantedPublicPort === 0 ? 0 : await firstFreePort(this.wantedPublicPort);
+          if (port === null) throw new CodedError('err.portsBusy', { port: this.wantedPublicPort });
           this.d.config.ports.public = port;
           if (!(await isPortFree(this.d.config.ports.rtmp))) {
             throw new CodedError('err.rtmpBusy', { port: this.d.config.ports.rtmp });
           }
           this.access.begin();
+          // Look up our own public address while the tunnel opens (P2P privacy).
+          this.syncEgress();
           this.shield.start();
           this.tracker.setSwarm(this.access.liveId);
           this.publicServer = await this.createServer('secure');
           await this.publicServer.listen({ host: '127.0.0.1', port: this.d.config.ports.public });
+          this.d.config.ports.public = (this.publicServer.server.address() as AddressInfo).port;
         });
         await this.step('mediamtx', async () => {
           await this.d.mediamtx.start();
@@ -412,11 +510,12 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       limits: () => this.shield.effectiveLimits(),
       stats: this.httpStats,
       security: this.shield,
+      clientSeen: (s, ip) => this.clientSeen(s, ip),
     };
     return createPublicServer(deps, {
       mode,
       secureCookies: mode === 'direct' ? true : this.d.secureCookies,
-      trustTunnel: mode === 'secure' && this.d.config.trustTunnelProxy && this.d.tunnel.name === 'cloudflare-quick',
+      trustTunnel: mode === 'secure' && this.tunnelTrusted,
       https,
     });
   }
@@ -431,7 +530,25 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     const app = await this.createServer('direct', { key: defaultCert.key, cert: defaultCert.cert, SNICallback: sni });
     app.server.maxConnections = 300;
     await app.listen({ host, port });
-    return { close: () => app.close() };
+    this.directServer = app;
+    return {
+      close: async () => {
+        if (this.directServer === app) this.directServer = null;
+        await app.close();
+      },
+    };
+  }
+
+  /** The port the local public server listens on (null while the live is off). */
+  get publicPort(): number | null {
+    const addr = this.publicServer?.server.address();
+    return addr && typeof addr === 'object' ? addr.port : null;
+  }
+
+  /** Test hook: forget the rate-limit counters of the public server (and of Direct mode's). */
+  resetRateLimits(): void {
+    this.publicServer?.resetRateLimits();
+    this.directServer?.resetRateLimits();
   }
 
   private startTimers(): void {
@@ -524,6 +641,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.control.closeAll('ended');
       this.tracker.disconnectAll();
       this.access.reset();
+      this.syncEgress();
       await this.publicServer?.close();
       this.publicServer = null;
     });
@@ -621,7 +739,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.access.p2pForAll = on;
     this.activity.action(on ? 'log.p2pForAllOn' : 'log.p2pForAllOff');
     for (const s of this.access.sessions.values()) {
-      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: on });
+      const reason = this.access.p2pBlock(s);
+      this.control.send(s.id, { t: 'p2p', allowed: this.access.p2pAllowed(s), forAll: on, ...(reason ? { reason } : {}) });
       if (!on) this.tracker.disconnectSession(s.id);
     }
   }
@@ -693,6 +812,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.mode = 'direct';
       this.baseUrl = base;
       this.disconnectAll();
+      this.syncEgress();
       this.access.rotateLink();
       this.tunnelUrlChangedAt = this.now();
       this.activity.action('log.directOn', undefined, 'warn');
@@ -708,6 +828,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       const r = await this.d.direct.disable();
       if (!r.verified) this.warn('warn.routerPortUnconfirmed', { details: r.details.join(', ') });
       this.mode = 'secure';
+      this.syncEgress();
       this.baseUrl = null;
       this.baseUrl = await this.openTunnel();
       this.access.rotateLink();
@@ -805,6 +926,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     }
     const keyframes = this.keyframeWarning();
     if (keyframes) warnings.push(keyframes);
+    if (this.access.p2pChecking && this.egress.failing) warnings.push(coded('warn.p2pChecking'));
     const attack = this.phase !== 'off' ? this.shield.warning() : undefined;
     if (attack) warnings.unshift(attack);
     const suggestion = this.mode === 'secure' && (http429 > 20 || this.tunnelDrops >= 2) ? coded('warn.tunnelStruggling') : undefined;
@@ -839,6 +961,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         httpBytes: s.stats.httpBytes,
         hashFailures: s.hashFailures,
         autoRemovedFromP2P: s.autoRemovedFromP2P,
+        ...(s.ownConnection ? { ownConnection: true } : {}),
         delayS: s.delayS,
       })),
       stats: {

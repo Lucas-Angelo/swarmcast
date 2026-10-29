@@ -1,0 +1,23 @@
+# Categories for GitHub's generated list of merged pull requests ("Generate release notes" and the
+# generate-notes API). The release notes users read come from CHANGELOG.md; this list is only the
+# developer appendix. See docs/RELEASING.md, section 4.
+changelog:
+  exclude:
+    labels: [skip-changelog]
+  categories:
+    - title: Breaking changes
+      labels: [breaking]
+    - title: New features
+      labels: [enhancement]
+    - title: Fixes
+      labels: [bug]
+    - title: Security
+      labels: [security]
+    - title: Performance
+      labels: [performance]
+    - title: Documentation and website
+      labels: [documentation]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Maintenance
+      labels: ['*']

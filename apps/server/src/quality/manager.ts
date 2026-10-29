@@ -35,7 +35,7 @@ import type { TrackerService } from '../tracker/tracker.js';
 import { cpuCores, probeEncoders, testCpu } from './encoders.js';
 import { installFfmpeg, resolveFfmpeg, type InstallProgress } from './ffmpeg.js';
 import { withRetries } from '../core/retry.js';
-import { CpuSampler, LoadGuard, type ShedReason } from './load-guard.js';
+import { CpuSampler, LoadGuard, type LoadGuardOptions, type ShedReason } from './load-guard.js';
 import { ObsWebsocketClient, tcpConnectRtt } from './signals.js';
 import { Transcoder, renderLadderMultivariant } from './transcoder.js';
 import { RttTracker, UploadController } from './upload-controller.js';
@@ -67,6 +67,8 @@ export interface QualityDeps {
   probe?: typeof probeEncoders;
   installFfmpeg?: typeof installFfmpeg;
   cpuTest?: typeof testCpu;
+  /** The load guard (tests): an instance, or options for the default one. */
+  loadGuard?: LoadGuard | Partial<LoadGuardOptions>;
   /** Whole-machine CPU busy percent since the last call (tests). */
   cpuBusy?: () => number | undefined;
   tickMs?: number;
@@ -104,7 +106,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
   private lastBackoff?: UploadState['lastBackoff'];
   private ceiling?: number;
   private mediamtxSource: MediaMtxSource;
-  private readonly guard = new LoadGuard();
+  private readonly guard: LoadGuard;
   private readonly cpuSampler = new CpuSampler();
   private shed?: { reason: ShedReason; heights: number[]; at: number };
   private ladderSource: SourceInfo | null = null;
@@ -112,6 +114,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
 
   constructor(private readonly d: QualityDeps) {
     super();
+    this.guard = d.loadGuard instanceof LoadGuard ? d.loadGuard : new LoadGuard(d.loadGuard);
     this.ffmpegPath = resolveFfmpeg({ configPath: d.config.ffmpegPath, binDir: d.binDir, dataDir: d.dataDir });
     this.transcoder = new Transcoder({ ffmpeg: this.ffmpegPath ?? 'ffmpeg', inputUrl: d.rtmpReadUrl, workDir: d.runDir, reaper: d.reaper, log: d.log, secret: d.streamKey });
     this.transcoder.on('status', (s) => {
@@ -284,6 +287,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
         // A new publisher replaced the old one without a "closed" first (MediaMTX lets a new
         // OBS connection take over the path): treat it as a reconnect.
         void this.transcoder.stop().then(() => {
+          this.leaveStoppedLadder();
           if (seq !== this.publishSeq || !this.live) return;
           this.d.origin.setSource(this.mediamtxSource);
           this.d.origin.hold(false);
@@ -300,12 +304,27 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
       this.publishSeq += 1;
       if (this.ladderTimer) clearTimeout(this.ladderTimer);
       this.ladderTimer = null;
+      const seq = this.publishSeq;
       void this.transcoder.stop().then(() => {
+        this.leaveStoppedLadder();
+        // OBS may be back already (a new publish during the stop): its own flow owns the origin.
+        if (seq !== this.publishSeq) return;
         this.d.origin.setSource(this.mediamtxSource);
         this.d.origin.hold(false);
         this.changed();
       });
     }
+  }
+
+  /**
+   * After a ladder stop: never keep serving the stopped ladder's (deleted) folder from cache.
+   * A flow that started a new ladder meanwhile has its own folder (outDir set) and is left alone.
+   */
+  private leaveStoppedLadder(): void {
+    if (this.d.origin.sourceKind !== 'ladder' || this.transcoder.outDir) return;
+    this.d.origin.setSource(this.mediamtxSource);
+    this.d.origin.hold(false);
+    this.changed();
   }
 
   /** True when the current settings could give more than one rendition for a 1080p source. */
@@ -386,6 +405,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     if (rungs.length < 2) {
       this.d.warn(reason === 'behind' ? 'warn.quality.shedAllBehind' : 'warn.quality.shedAllCpu', { height: dropped.height });
       await this.transcoder.stop();
+      this.leaveStoppedLadder();
       if (!this.live || seq !== this.publishSeq) return;
       this.d.origin.setSource(this.mediamtxSource);
       this.d.origin.hold(false);
@@ -395,14 +415,20 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
     this.d.warn(reason === 'behind' ? 'warn.quality.shedBehind' : 'warn.quality.shedCpu', { height: dropped.height, rest });
     const source = this.ladderSource;
     await this.transcoder.stop();
-    if (!this.live || !this.publishing || seq !== this.publishSeq || !source) return;
+    if (!this.live || !this.publishing || seq !== this.publishSeq || !source) {
+      this.leaveStoppedLadder();
+      return;
+    }
     this.launchLadder(seq, source, rungs);
   }
 
   private fallBackToPlain(code: MessageKey, params?: MessageParams): void {
     this.d.warn(code, params);
+    const seq = this.publishSeq;
     void this.transcoder.stop().then(() => {
-      if (!this.live) return;
+      this.leaveStoppedLadder();
+      // Only for the publish it was about: a reconnect meanwhile runs its own ladder flow.
+      if (!this.live || seq !== this.publishSeq) return;
       this.d.origin.setSource(this.mediamtxSource);
       this.d.origin.hold(false);
       this.changed();

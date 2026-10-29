@@ -8,6 +8,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { chromium, type BrowserContext, type CDPSession } from '@playwright/test';
 import { hlsConfigFor } from '../../../apps/viewer/src/player-config.js';
+import { loopbackBase, panelLogin } from '../lib/loopback.mjs';
 
 const require = createRequire(import.meta.url);
 const HLS_JS = fs.readFileSync(require.resolve('hls.js/dist/hls.min.js'), 'utf8');
@@ -17,7 +18,10 @@ function arg(name: string, fallback: string): string {
   return i > 0 ? process.argv[i + 1]! : fallback;
 }
 
-const env = JSON.parse(fs.readFileSync(path.join('test-results', 'quality', 'env.json'), 'utf8')) as { adminLoginUrl: string; adminUrl: string; base: string; readyAt: number };
+// The quality server's test control port (QUALITY_CONTROL_PORT in server.ts): GET /env gives the
+// panel's address and login path, checked by panelLogin().
+const env = (await (await fetch(new URL('/env', loopbackBase('http://127.0.0.1:45082')))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
+const admin = panelLogin(env);
 const MINUTES = Number(arg('minutes', '2.5'));
 
 // ---- network profiles (CDP Network.emulateNetworkConditions; throughput in bytes/s) ----
@@ -151,13 +155,13 @@ const BENCH_HTML = `<!doctype html><meta charset="utf-8"><title>bench</title>
 </script>`;
 
 async function adminCookie(): Promise<string> {
-  const res = await fetch(env.adminLoginUrl, { redirect: 'manual' });
+  const res = await fetch(admin.loginUrl, { redirect: 'manual' });
   return res.headers.getSetCookie()[0]!.split(';')[0]!;
 }
 
 async function liveLink(cookie: string): Promise<string> {
   for (let i = 0; i < 120; i++) {
-    const s = (await (await fetch(`${env.adminUrl}/api/state`, { headers: { cookie } })).json()) as { phase: string; liveLink?: string };
+    const s = (await (await fetch(new URL('/api/state', admin.base), { headers: { cookie } })).json()) as { phase: string; liveLink?: string };
     if (s.phase === 'live' && s.liveLink) return s.liveLink;
     await new Promise((r) => setTimeout(r, 1000));
   }
@@ -288,6 +292,7 @@ try {
 }
 
 const outFile = path.join('test-results', 'quality', `results-${new Date().toISOString().replace(/[:.]/g, '-')}.json`);
+fs.mkdirSync(path.dirname(outFile), { recursive: true });
 fs.writeFileSync(outFile, JSON.stringify({ minutes: MINUTES, networks: NETWORKS.map((n) => [n.name, n.label]), configs: CONFIGS.map((c) => [c.name, c.label]), results }, null, 2));
 console.log(`| Network | Config | Startup (s) | Stalls | Stalled (s) | Rebuffer % | Latency to edge (s) | Wall-clock latency (s) | Levels played | Switches |`);
 console.log('|---|---|---|---|---|---|---|---|---|---|');

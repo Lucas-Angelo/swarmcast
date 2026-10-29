@@ -1,18 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
-import { admin, liveLink } from './fixtures.js';
+import type { Page } from '@playwright/test';
+import { admin, expect, liveLink, loginPanel, test } from './fixtures.js';
 
 // First-run setup tutorial in the admin panel (checked on Chromium).
-test.describe.configure({ mode: 'serial' });
-
 function adminLoginUrl(): string {
   const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { adminLoginUrl: string };
   return env.adminLoginUrl;
 }
 
 async function openPanel(page: Page): Promise<void> {
-  await page.goto(adminLoginUrl());
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('status')).toBeVisible();
 }
 
@@ -20,7 +18,7 @@ test.beforeEach(({ browserName }) => {
   test.skip(browserName !== 'chromium', 'checked on Chromium');
 });
 
-test('the first panel open shows the tutorial; finishing it keeps it closed on reload', async ({ page }) => {
+test('the first panel open shows the tutorial; finishing it keeps it closed on reload', { tag: '@ui' }, async ({ page }) => {
   await admin('/api/onboarding', { done: false });
   // The e2e server is live with a synthetic OBS stream.
   await liveLink();
@@ -70,14 +68,18 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   await expect(dialog).toBeHidden();
   await expect.poll(async () => (await page.request.get(new URL('/api/onboarding', page.url()).toString())).json()).toEqual({ done: true });
 
+  // The panel decides from GET /api/onboarding: wait for that answer and the frame after it,
+  // instead of a fixed second, before checking the tutorial stayed closed.
+  const decided = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/onboarding' && r.request().method() === 'GET');
   await page.reload();
+  await decided;
   await expect(page.getByTestId('status')).toBeVisible();
-  await page.waitForTimeout(1000);
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
   await expect(dialog).toBeHidden();
   expect(errors.filter((e) => /Content Security Policy|Refused/.test(e))).toEqual([]);
 });
 
-test('"Redo setup tutorial" reopens it; Escape asks before closing', async ({ page }) => {
+test('"Redo setup tutorial" reopens it; Escape asks before closing', { tag: '@ui' }, async ({ page }) => {
   await admin('/api/onboarding', { done: true });
   await openPanel(page);
   const dialog = page.getByTestId('onboarding');
@@ -108,11 +110,11 @@ test('"Redo setup tutorial" reopens it; Escape asks before closing', async ({ pa
   await expect(dialog).toBeHidden();
 });
 
-test('the tutorial is translated (pt-BR)', async ({ browser }) => {
+test('the tutorial is translated (pt-BR)', { tag: '@ui' }, async ({ browser }) => {
   await admin('/api/onboarding', { done: false });
   const context = await browser.newContext({ locale: 'pt-BR' });
   const page = await context.newPage();
-  await page.goto(adminLoginUrl());
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('onboarding')).toBeVisible();
   await expect(page.getByTestId('onb-progress')).toHaveText('Passo 1 de 9');
   await expect(page.getByTestId('onb-skip')).toHaveText('Pular tutorial');
@@ -123,7 +125,7 @@ test('the tutorial is translated (pt-BR)', async ({ browser }) => {
   await context.close();
 });
 
-test('"Your PC check" shows the installer system check, with a fallback to live data', async ({ page }) => {
+test('"Your PC check" shows the installer system check, with a fallback to live data', { tag: '@ui' }, async ({ page }) => {
   const env = JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { dataDir: string };
   const file = path.join(env.dataDir, 'system-check.json');
   fs.rmSync(file, { force: true });

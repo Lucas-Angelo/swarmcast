@@ -5,7 +5,9 @@
 #   scripts/test/docker/run.sh [options] [TARGET...]
 #
 # TARGET is an image, optionally with "@amd64" to run it as linux/amd64 (emulated on arm64).
-# Default targets: ubuntu:22.04 ubuntu:24.04 debian:12 ubuntu:24.04@amd64
+# Default targets: ubuntu:22.04 ubuntu:24.04 debian:12 ubuntu:24.04@amd64. A target without
+# "@amd64" runs natively and uses the release's package for the Docker host's architecture
+# (linux-arm64 or linux-x64); CI passes one native target per job (.github/workflows/linux-docker.yml).
 #
 # Options:
 #   --release DIR     Release folder (default: $RELEASE_DIR, or <main checkout>/release)
@@ -30,6 +32,8 @@ set -u
 set -o pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=pull.sh
+. "$DIR/pull.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 
 RELEASE="${RELEASE_DIR:-}"
@@ -70,8 +74,15 @@ fi
 [ -n "$RELEASE" ] && [ -f "$RELEASE/SHA256SUMS.txt" ] && [ -f "$RELEASE/start-linux.sh" ] ||
   { echo "Release folder not found (need SHA256SUMS.txt and start-linux.sh). Use --release DIR." >&2; exit 2; }
 RELEASE="$(cd "$RELEASE" && pwd)"
-VERSION="$(sed -nE 's/^[0-9a-f]{64} [ *]?SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+)-linux-arm64\.tar\.gz$/\1/p' "$RELEASE/SHA256SUMS.txt" | head -n1)"
-[ -n "$VERSION" ] || { echo "No linux-arm64 package in $RELEASE/SHA256SUMS.txt" >&2; exit 2; }
+VERSION="$(sed -nE 's/^[0-9a-f]{64} [ *]?SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+)-linux-(arm64|x64)\.tar\.gz$/\1/p' "$RELEASE/SHA256SUMS.txt" | head -n1)"
+[ -n "$VERSION" ] || { echo "No linux package in $RELEASE/SHA256SUMS.txt" >&2; exit 2; }
+# Each target needs the package of its own architecture (the Docker host's, or x64 for @amd64).
+HOST_ARCH="$(docker version -f '{{.Server.Arch}}')" || exit 2
+for t in "${TARGETS[@]}"; do
+  case "$t" in *@amd64) a=x64 ;; *) case "$HOST_ARCH" in amd64 | x86_64) a=x64 ;; *) a=arm64 ;; esac ;; esac
+  grep -qE " [ *]?SwarmCast-v$VERSION-linux-$a\.tar\.gz$" "$RELEASE/SHA256SUMS.txt" ||
+    { echo "No linux-$a package (needed by $t) in $RELEASE/SHA256SUMS.txt" >&2; exit 2; }
+done
 
 ID="$$"
 NET="sc-test-net-$ID"
@@ -109,6 +120,7 @@ for arch in arm64 x64; do
 done
 
 # --- release server on a private Docker network ----------------------------------------------
+pull_image python:3.12-alpine || exit 2
 docker network create "$NET" >/dev/null || exit 2
 docker run -d --name "$SERVER" --network "$NET" --network-alias release \
   -v "$RELEASE:/srv/ok:ro" -v "$WORK/corrupt:/srv/corrupt:ro" \
@@ -122,12 +134,13 @@ tag_of() { # ubuntu:24.04@amd64 -> ubuntu-24.04-amd64
   case "$1" in *@amd64) t="$t-amd64" ;; esac
   printf '%s' "$t"
 }
-platform_of() { case "$1" in *@amd64) echo linux/amd64 ;; *) echo "linux/$(docker version -f '{{.Server.Arch}}')" ;; esac; }
+platform_of() { case "$1" in *@amd64) echo linux/amd64 ;; *) echo "linux/$HOST_ARCH" ;; esac; }
 
 build() { # build DOCKERFILE IMAGE BASE PLATFORM [build-args...]
   local df="$1" img="$2" base="$3" plat="$4"
   shift 4
   if [ "$BUILD" = 1 ]; then
+    pull_image "$base" "$plat" || { echo "pull of $base ($plat) failed"; return 1; }
     docker build -q --platform "$plat" -f "$DIR/$df" --build-arg "BASE=$base" "$@" -t "$img" "$DIR" >/dev/null ||
       { echo "build of $img failed"; return 1; }
   fi

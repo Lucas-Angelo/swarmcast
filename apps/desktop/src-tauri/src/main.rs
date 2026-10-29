@@ -7,6 +7,7 @@
 
 mod i18n;
 mod logs;
+mod page;
 mod protocol;
 mod shell;
 mod sidecar;

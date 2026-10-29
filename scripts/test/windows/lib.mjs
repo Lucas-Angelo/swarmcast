@@ -1,4 +1,4 @@
-// Shared helpers for the Windows end-to-end matrix (.github/workflows/windows.yml).
+// Shared helpers for the Windows end-to-end matrix (.github/workflows/_windows.yml).
 //
 // Every suite (installer.mjs, app.mjs, quality.mjs, direct.mjs, obs.mjs) records each check
 // with record()/check(), keeps going after a failed section, and at the end writes
@@ -14,6 +14,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { mdCell } from '../lib/markdown.mjs';
 
 export const isWin = process.platform === 'win32';
 export const here = path.dirname(fileURLToPath(import.meta.url));
@@ -27,8 +28,29 @@ export const opt = (n, d) => {
 };
 export const flag = (n) => args.includes(`--${n}`);
 
-export const ART = path.resolve(process.env.SC_ARTIFACTS ?? path.join(os.tmpdir(), 'sc-win-artifacts'));
+// Section loops for targeted soaks (one install, then the chosen sections N times):
+//   --sections 13          only section 13 (plus section 0 / "environment", which always runs once)
+//   --sections 0,5,X button  numbers match the section number, other words part of its name
+//   --repeat 100           every section that runs (except section 0) runs 100 times
+// Sections a chosen one depends on (an install, a running app) must be listed too.
+const SECTIONS = (opt('sections') ?? '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+export const REPEAT = Math.max(1, Number(opt('repeat', '1')) || 1);
+const sectionNumber = (name) => /^(\d+)\./.exec(name)?.[1] ?? (/^environment/i.test(name) ? '0' : null);
+function sectionWanted(name) {
+  const n = sectionNumber(name);
+  if (!SECTIONS.length || n === '0') return true;
+  return SECTIONS.some((s) => (/^\d+$/.test(s) ? s === n : name.toLowerCase().includes(s.toLowerCase())));
+}
+
+// CI sets SC_ARTIFACTS (the uploaded folder). Otherwise a new private folder (mkdtemp: unique
+// name, mode 0700), never a fixed name in the shared temp dir that another user could create or
+// point elsewhere with a symlink first.
+export const ART = process.env.SC_ARTIFACTS ? path.resolve(process.env.SC_ARTIFACTS) : fs.mkdtempSync(path.join(os.tmpdir(), 'sc-win-artifacts-'));
 fs.mkdirSync(ART, { recursive: true });
+if (!process.env.SC_ARTIFACTS) console.log(`artifacts (results, logs, screenshots, failure dumps): ${ART}`);
 export const SUITE = opt('suite', path.basename(process.argv[1] ?? 'suite', '.mjs'));
 export const RUNNER = process.env.SC_RUNNER_LABEL ?? process.env.ImageOS ?? os.release();
 const harnessLog = path.join(ART, `${SUITE}-harness.log`);
@@ -48,11 +70,15 @@ export function log(...a) {
 // ---------------------------------------------------------------------------
 
 export const results = [];
+/** One entry per section run: { section, rep, ms, failed } (the soak summary's durations). */
+export const sectionRuns = [];
 let currentSection = '';
+let currentRep = 1;
 
 /** status: pass | fail | warn (a finding that does not fail the job) | skip | info */
 export function record(name, status, detail = '') {
   const r = { section: currentSection, name, status, detail: String(detail ?? '').slice(0, 1500) };
+  if (REPEAT > 1) r.rep = currentRep;
   results.push(r);
   const sym = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', skip: 'SKIP', info: 'INFO' }[status] ?? status;
   log(`${sym} [${currentSection}] ${name}${r.detail ? ` -- ${r.detail}` : ''}`);
@@ -65,6 +91,22 @@ export const info = (name, detail) => record(name, 'info', detail);
  * prefixed "BUG") instead of failing the job, and as a plain pass once the bug is fixed.
  */
 export const bug = (name, ok, detail = '') => record(name, ok ? 'pass' : 'warn', ok ? '' : `BUG: ${detail}`);
+/**
+ * Only for checks that go through a third party's network (the Cloudflare tunnel): `fn(attempt)`
+ * gets one retry. A pass on the retry is recorded as warn "passed on retry" (retry: true), which
+ * the soak summary counts separately; no other check is ever retried.
+ */
+export async function checkWithRetry(name, fn) {
+  const first = await fn(1).then(() => null, (e) => e ?? new Error('failed'));
+  if (!first) return check(name, true);
+  const why = (e) => String(e?.message ?? e).split('\n')[0];
+  log(`${name}: first try failed (${why(first)}), retrying once`);
+  const second = await fn(2).then(() => null, (e) => e ?? new Error('failed'));
+  if (second) return check(name, false, `${why(first)} | retry: ${why(second)}`);
+  record(name, 'warn', `passed on retry; first try: ${why(first)}`);
+  results[results.length - 1].retry = true;
+  return true;
+}
 /** Like check(), but aborts the current section when it fails. */
 export function must(name, ok, detail = '') {
   check(name, ok, detail);
@@ -93,15 +135,30 @@ export function onCleanup(fn) {
 }
 
 export async function section(name, fn) {
+  if (!sectionWanted(name)) {
+    log(`===== ${name}: skipped (--sections ${SECTIONS.join(',')})`);
+    return;
+  }
+  const reps = sectionNumber(name) === '0' ? 1 : REPEAT;
+  for (let rep = 1; rep <= reps; rep++) await runSection(name, fn, rep, reps);
+}
+
+async function runSection(name, fn, rep, reps) {
   currentSection = name;
-  log(`===== ${name}`);
+  currentRep = rep;
+  log(`===== ${name}${reps > 1 ? ` (run ${rep} of ${reps})` : ''}`);
   const t0 = Date.now();
+  const tag = `${name.slice(0, 40)}${reps > 1 ? `-run${rep}` : ''}`;
+  const failsBefore = results.filter((r) => r.status === 'fail').length;
   try {
     await fn();
   } catch (e) {
     record('section aborted', 'fail', e?.stack?.split('\n').slice(0, 3).join(' | ') ?? String(e));
-    await screenshotAll(name.slice(0, 40));
+    await screenshotAll(tag);
   } finally {
+    // Before the cleanups, so the dump shows the processes and ports as the failure left them.
+    const failed = results.filter((r) => r.status === 'fail').length > failsBefore;
+    if (failed) failureDump(tag);
     while (cleanups.length) {
       const c = cleanups.pop();
       try {
@@ -111,7 +168,15 @@ export async function section(name, fn) {
       }
     }
     openPages.clear();
-    closeStrayBrowsers();
+    let list = null;
+    try {
+      list = isWin ? processes() : null;
+    } catch {
+      /* best effort */
+    }
+    closeStrayBrowsers(list);
+    sweepStrays(list);
+    sectionRuns.push({ section: name, rep, ms: Date.now() - t0, failed });
     log(`===== ${name} done in ${Math.round((Date.now() - t0) / 1000)} s`);
   }
 }
@@ -120,10 +185,10 @@ export async function section(name, fn) {
  * SwarmCast opens the panel in the default browser at every start (`cmd /c start <url>`).
  * Close those windows between sections; Playwright's own browsers are left alone.
  */
-export function closeStrayBrowsers() {
+export function closeStrayBrowsers(list = null) {
   if (!isWin) return;
   try {
-    for (const p of processes()) {
+    for (const p of list ?? processes()) {
       if (!/^(msedge|chrome|firefox|iexplore)\.exe$/i.test(p.name)) continue;
       if (/remote-debugging-pipe|juggler|playwright/i.test(p.cmd)) continue;
       spawnSync('taskkill', ['/F', '/PID', String(p.pid)], { stdio: 'ignore', windowsHide: true });
@@ -133,18 +198,132 @@ export function closeStrayBrowsers() {
   }
 }
 
+// Path-based sweep at the end of every section. taskkill /T follows parent pids and misses
+// orphans whose parent already exited, so anything whose executable or command line points into
+// the artifacts folder, the work folder or a folder a suite adds (addSweepPath) is ended: console
+// helpers, cmd /c wrappers, a start script a cleanup missed. Never this harness or its ancestors,
+// nor what a suite keeps across sections (keepAcrossSections) and everything below it.
+const sweepPaths = new Set([ART, path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')))]);
+const keptPids = new Set();
+export const addSweepPath = (p) => sweepPaths.add(path.resolve(p));
+export const keepAcrossSections = (pid) => pid && keptPids.add(pid);
+function sweepStrays(list) {
+  if (!isWin || !list) return;
+  const byPid = new Map(list.map((p) => [p.pid, p]));
+  const exempt = new Set();
+  for (let p = byPid.get(process.pid); p && !exempt.has(p.pid); p = byPid.get(p.ppid)) exempt.add(p.pid);
+  exempt.add(process.pid);
+  for (const k of keptPids) {
+    if (!byPid.has(k)) keptPids.delete(k);
+    else for (const d of descendants(list, k)) exempt.add(d.pid);
+  }
+  const roots = [...sweepPaths].map((r) => r.toLowerCase());
+  const strays = list.filter((p) => {
+    if (exempt.has(p.pid)) return false;
+    const cmd = (p.cmd || '').toLowerCase().replaceAll('/', '\\');
+    const exe = (p.path || '').toLowerCase();
+    return roots.some((r) => cmd.includes(r) || exe.startsWith(r + path.sep));
+  });
+  if (!strays.length) return;
+  for (const p of strays) spawnSync('taskkill', ['/F', '/T', '/PID', String(p.pid)], { stdio: 'ignore', windowsHide: true });
+  info('stray processes ended after the section (path sweep)', strays.map((p) => `${p.name}#${p.pid} (ppid ${p.ppid}): ${(p.cmd || p.path).slice(0, 160)}`).join(' | '));
+}
+
+/**
+ * Indented process tree, one line per process: "<pid> (ppid <ppid>) <name>: <command line>".
+ * A process whose parent is gone (or is itself, like the System Idle Process) is a root. Every
+ * process is listed exactly once: a parent pid that Windows reused for a later process can form
+ * a cycle that no root reaches, and those processes are listed as extra roots, marked.
+ */
+export function processTree(list) {
+  const pids = new Set(list.map((p) => p.pid));
+  const ROOT = Symbol('root');
+  const kids = new Map();
+  for (const p of list) {
+    const parent = pids.has(p.ppid) && p.ppid !== p.pid ? p.ppid : ROOT;
+    if (!kids.has(parent)) kids.set(parent, []);
+    kids.get(parent).push(p);
+  }
+  for (const k of kids.values()) k.sort((a, b) => a.pid - b.pid);
+  const lines = [];
+  const seen = new Set();
+  const visit = (p, depth, note = '') => {
+    seen.add(p.pid);
+    lines.push(`${'  '.repeat(depth)}${p.pid} (ppid ${p.ppid}${note}) ${p.name}: ${(p.cmd || p.path || '').slice(0, 600)}`);
+    for (const c of kids.get(p.pid) ?? []) if (!seen.has(c.pid)) visit(c, depth + 1);
+  };
+  for (const p of kids.get(ROOT) ?? []) if (!seen.has(p.pid)) visit(p, 0);
+  for (const p of [...list].sort((a, b) => a.pid - b.pid)) if (!seen.has(p.pid)) visit(p, 0, ', parent pid reused');
+  return lines.join('\n');
+}
+
+/**
+ * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
+ * TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
+ * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
+ * logs are copied by startApp's cleanup.
+ */
+export function failureDump(tag) {
+  if (!isWin) return;
+  const file = path.join(ART, `${SUITE}-dump-${tag}.txt`.replace(/[^\w.-]+/g, '_'));
+  const parts = [`failure dump: ${SUITE} [${currentSection}] on ${RUNNER} at ${new Date().toISOString()}`];
+  const add = (title, fn) => {
+    let out;
+    try {
+      out = fn();
+    } catch (e) {
+      out = `error: ${e.message}`;
+    }
+    parts.push(`\n===== ${title}\n${String(out ?? '').trimEnd()}`);
+  };
+  const netsh = (...a) => {
+    const r = spawnSync('netsh', a, { encoding: 'utf8', windowsHide: true, timeout: 30_000 });
+    return `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
+  };
+  let names = new Map();
+  add('process tree (pid, ppid, name, command line)', () => {
+    const list = processes();
+    names = new Map(list.map((p) => [p.pid, p.name]));
+    return processTree(list);
+  });
+  const owner = (pid) => `${pid} ${names.get(pid) ?? '?'}`;
+  add('TCP listeners (address:port owner)', () =>
+    psJson('Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
+      .sort((a, b) => a.LocalPort - b.LocalPort)
+      .map((c) => `${c.LocalAddress}:${c.LocalPort}\t${owner(c.OwningProcess)}`)
+      .join('\n'),
+  );
+  add('UDP endpoints (address:port owner)', () =>
+    psJson('Get-NetUDPEndpoint -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
+      .sort((a, b) => a.LocalPort - b.LocalPort)
+      .map((c) => `${c.LocalAddress}:${c.LocalPort}\t${owner(c.OwningProcess)}`)
+      .join('\n'),
+  );
+  add('netsh int ipv4 show excludedportrange protocol=tcp', () => netsh('int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp'));
+  add('netsh int ipv4 show excludedportrange protocol=udp', () => netsh('int', 'ipv4', 'show', 'excludedportrange', 'protocol=udp'));
+  add('netsh int ipv4 show dynamicport tcp', () => netsh('int', 'ipv4', 'show', 'dynamicport', 'tcp'));
+  try {
+    fs.writeFileSync(file, parts.join('\n') + '\n');
+    log(`failure dump: ${file}`);
+  } catch (e) {
+    log(`failure dump failed: ${e.message}`);
+  }
+}
+
 export function finish() {
   const out = opt('out', path.join(ART, `${SUITE}.json`));
   const failed = results.filter((r) => r.status === 'fail');
   fs.mkdirSync(path.dirname(out), { recursive: true });
-  fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, results }, null, 2));
+  const e = process.env;
+  const run = e.GITHUB_RUN_ID ? { url: `${e.GITHUB_SERVER_URL ?? 'https://github.com'}/${e.GITHUB_REPOSITORY}/actions/runs/${e.GITHUB_RUN_ID}`, attempt: Number(e.GITHUB_RUN_ATTEMPT ?? 1), sha: e.GITHUB_SHA } : null;
+  fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, run, repeat: REPEAT, sectionsFilter: SECTIONS, sections: sectionRuns, results }, null, 2));
   const icon = { pass: '✅', fail: '❌', warn: '⚠️', skip: '⏭️', info: 'ℹ️' };
   const md = [
     `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'warn').length} findings`,
     '',
     '| | Section | Check | Detail |',
     '|---|---|---|---|',
-    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${r.detail.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ').slice(0, 300)} |`),
+    ...results.map((r) => `| ${icon[r.status] ?? r.status} | ${r.section} | ${r.name} | ${mdCell(r.detail.slice(0, 300))} |`),
     '',
   ].join('\n');
   if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md);
@@ -203,6 +382,21 @@ export function processes() {
 export function processesUnder(dir) {
   const d = path.resolve(dir).toLowerCase() + path.sep;
   return processes().filter((p) => p.path && p.path.toLowerCase().startsWith(d));
+}
+/** `root` and every process below it in `list` (by parent pid), root first. */
+export function descendants(list, root) {
+  const out = [];
+  const want = new Set([root]);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const p of list) {
+      if (want.has(p.pid) || !want.has(p.ppid) || p.pid === p.ppid) continue;
+      want.add(p.pid);
+      grew = true;
+    }
+  }
+  for (const p of list) if (want.has(p.pid)) out.push(p);
+  return out.sort((a, b) => (a.pid === root ? -1 : b.pid === root ? 1 : 0));
 }
 export const describeProcs = (list) => list.map((p) => `${p.name}#${p.pid}${/--reaper/.test(p.cmd) ? '(reaper)' : ''}`).join(', ');
 /** The main SwarmCast process (not its --reaper twin) installed under `home`. */
@@ -374,6 +568,7 @@ export async function startApp(o) {
   // The start script restarts SwarmCast when it exits within 10 s: stop the script itself too,
   // unless the app is meant to outlive this section (o.persist).
   if (!o.persist) onCleanup(() => inst.child.exitCode === null && killTree(inst.child.pid));
+  else keepAcrossSections(inst.child.pid);
   try {
     const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, inst.exited);
     return { inst, ...admin };
@@ -485,10 +680,17 @@ export function appLog(home) {
 
 export function editConfig(home, fn) {
   const file = path.join(home, 'config.json');
-  const cfg = fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : {};
+  let cfg = {};
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
   fn(cfg);
   fs.mkdirSync(home, { recursive: true });
-  fs.writeFileSync(file, JSON.stringify(cfg, null, 2) + '\n');
+  // Written next to it, then renamed: SwarmCast never reads a half-written config.
+  fs.writeFileSync(`${file}.tmp`, JSON.stringify(cfg, null, 2) + '\n');
+  fs.renameSync(`${file}.tmp`, file);
 }
 
 // ---------------------------------------------------------------------------
@@ -497,24 +699,59 @@ export function editConfig(home, fn) {
 
 export const ffmpegBin = () => process.env.FFMPEG_BIN || 'ffmpeg';
 
+/** The feed waitPhase(…, 'live') watches: the latest one pushStream started and nobody stopped. */
+let currentFeed = null;
+let feedCount = 0;
+
 export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200, rate = 30 } = {}) {
+  const logFile = path.join(ART, `${SUITE}-feed-${String(++feedCount).padStart(2, '0')}.log`);
   const child = spawn(
     ffmpegBin(),
     ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}`, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', String(rate * 2), '-keyint_min', String(rate * 2), '-sc_threshold', '0', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`, '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
   );
   let err = '';
-  child.stderr.on('data', (d) => (err += d));
-  const handle = { child, stderr: () => err, stop: () => killTree(child.pid) };
+  let exit = null;
+  const onErr = (d) => {
+    d = key ? String(d).replaceAll(key, '[stream key]') : String(d);
+    err += d;
+    try {
+      fs.appendFileSync(logFile, d);
+    } catch {
+      /* evidence only */
+    }
+  };
+  child.stderr.on('data', onErr);
+  child.on('error', (e) => onErr(`spawn ${ffmpegBin()} failed: ${e.message}\n`));
+  child.on('exit', (code, signal) => (exit = signal ?? `code ${code}`));
+  log(`test feed #${feedCount} pid ${child.pid ?? '?'}: ${ffmpegBin()} ${size} ${kbps} kbps (stderr: ${path.basename(logFile)})`);
+  const handle = {
+    child,
+    stderr: () => err,
+    /** null while running, else why it ended (also for a feed that never started). */
+    exited: () => exit ?? (child.pid === undefined && err ? 'spawn failed' : null),
+    stop: () => {
+      if (currentFeed === handle) currentFeed = null;
+      killTree(child.pid);
+    },
+  };
+  currentFeed = handle;
   onCleanup(() => handle.stop());
   return handle;
 }
 
+/** Waits for the app's phase. Waiting for 'live' fails at once when the test feed has died. */
 export async function waitPhase(app, phase, timeoutMs = 90_000) {
-  return until(async () => {
-    const s = await app.state();
-    return s.phase === phase ? s : null;
-  }, timeoutMs, `phase ${phase}`);
+  const end = Date.now() + timeoutMs;
+  for (;;) {
+    const s = await app.state().catch(() => null);
+    if (s?.phase === phase) return s;
+    const feed = phase === 'live' ? currentFeed : null;
+    const dead = feed?.exited();
+    if (dead) throw new Error(`test feed exited (${dead}) while waiting for phase live: ${feed.stderr().trim().slice(-1500) || '(no stderr)'}`);
+    if (Date.now() >= end) throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: phase ${phase} (phase ${s?.phase ?? 'unknown'})`);
+    await sleep(500);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -562,7 +799,7 @@ export async function gotoRetry(page, url) {
   // A brand-new trycloudflare name may still be negatively cached by the OS resolver.
   for (let i = 0; ; i++) {
     try {
-      await page.goto(url, { timeout: 60_000 });
+      await page.goto(url, { timeout: 60_000, waitUntil: 'domcontentloaded' });
       return;
     } catch (e) {
       if (!/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ERR_CONNECTION|NS_ERROR_NET|NS_ERROR_CONNECTION/.test(String(e)) || i >= 18) throw e;
@@ -571,11 +808,16 @@ export async function gotoRetry(page, url) {
   }
 }
 
-/** Opens the join link, picks a nickname and waits for the watch page (no playback wait). */
+/**
+ * Opens the join link, picks a nickname and waits for the watch page (no playback wait).
+ * The join page is ready at DOMContentLoaded (its module script has run and handles the
+ * button); "load" would also wait for every image and font through the tunnel (F11), and
+ * "commit" clicked before the script ran, so the viewer never left /join.
+ */
 export async function join(browser, link, nickname, ctxOpts = {}) {
   const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
   await gotoRetry(v.page, link);
-  await v.page.waitForURL(/\/join$/, { timeout: 60_000 });
+  await v.page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'domcontentloaded' });
   await v.page.fill('#nickname', nickname);
   await v.page.click('#join');
   return v;
@@ -594,12 +836,56 @@ export async function waitPlaying(page, timeoutMs = 90_000, minTime = 1.5) {
 
 export async function joinAndPlay(browser, link, nickname, ctxOpts = {}) {
   const v = await join(browser, link, nickname, ctxOpts);
-  await v.page.waitForURL(/\/watch$/, { timeout: 60_000 });
+  await v.page.waitForURL(/\/watch$/, { timeout: 60_000, waitUntil: 'commit' });
   await waitPlaying(v.page);
   return v;
 }
 
 export const stats = (page) => page.evaluate(() => window.__swarmcast.stats);
+
+/**
+ * Records hls.js events in the viewer page (window.__scHls): level switching/switched/loading,
+ * errors, destroy, and the count of 480p fragments, re-attached whenever the viewer creates a
+ * new hls.js instance (a source reload by the stall watchdog does). Read it with hlsProbe().
+ */
+export async function installHlsProbe(page) {
+  await page.evaluate(() => {
+    const w = window;
+    if (w.__scHls) return;
+    const probe = { events: [], instances: 0, frag480: 0 };
+    w.__scHls = probe;
+    let hooked = null;
+    const hook = () => {
+      const h = w.__hls;
+      if (!h || h === hooked) return;
+      hooked = h;
+      const inst = ++probe.instances;
+      const E = h.constructor?.Events ?? {};
+      for (const name of ['MANIFEST_PARSED', 'LEVEL_SWITCHING', 'LEVEL_SWITCHED', 'LEVEL_LOADING', 'FRAG_LOADED', 'ERROR', 'DESTROYING']) {
+        if (!E[name]) continue;
+        h.on(E[name], (_e, d) => {
+          const level = d?.level ?? d?.frag?.level;
+          if (name === 'FRAG_LOADED') {
+            // Main (video) fragments only: an audio rendition's fragments carry the audio track index
+            // in frag.level, which would read as a video level (21 bogus "480p" fragments once).
+            if (d?.frag?.type === 'main' && h.levels?.[level]?.height === 480) probe.frag480++;
+            return;
+          }
+          if (probe.events.length < 400) probe.events.push({ t: Math.round(performance.now()), inst, ev: name, level, details: typeof d?.details === 'string' ? d.details : undefined, fatal: d?.fatal });
+        });
+      }
+    };
+    hook();
+    setInterval(hook, 200);
+  });
+}
+export async function hlsProbe(page) {
+  return page.evaluate(() => {
+    const h = window.__hls;
+    const p = window.__scHls ?? { events: [], instances: 0, frag480: 0 };
+    return { ...p, cur: h?.levels?.[h.currentLevel]?.height, load: h?.levels?.[h.loadLevel]?.height, auto: h?.autoLevelEnabled, stallRecoveries: window.__swarmcast?.stats?.stallRecoveries };
+  });
+}
 
 /** Panel page logged in through the per-run URL. */
 export async function openPanel(browser, loginUrl, label = 'panel', ctxOpts = {}) {
@@ -646,23 +932,31 @@ export function ui(lang, key) {
 // Environment facts (recorded as info rows)
 // ---------------------------------------------------------------------------
 
+/**
+ * Facts about the runner, in ONE PowerShell call (each PowerShell 5.1 started costs seconds on a
+ * cold runner; the old nine calls took 96-102 s). Get-WindowsFeature, a cold Server Manager query,
+ * runs only in the app suite, the one that needs Media Foundation for Firefox.
+ */
 export function environmentFacts() {
-  const facts = {};
-  const tryPs = (k, s) => {
-    try {
-      facts[k] = ps(s, { allowFail: true });
-    } catch (e) {
-      facts[k] = `error: ${e.message}`;
-    }
+  const facts = {
+    os: '(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version) build $($_.BuildNumber)" })',
+    powershell: '"Windows PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"',
+    elevated: '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)',
+    uac: '(Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System).EnableLUA',
+    session: '"session $((Get-Process -Id $PID).SessionId); explorer running: $([bool](Get-Process explorer -ErrorAction SilentlyContinue)); interactive: $([Environment]::UserInteractive)"',
+    defaultTerminal: '$d = (Get-ItemProperty "HKCU:\\Console\\%%Startup" -ErrorAction SilentlyContinue).DelegationTerminal; if ($d) { $d } else { "not set (Windows decides)" }',
+    firewall: '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "',
+    gpu: '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "',
+    cpu: '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"',
+    mediaFoundation: SUITE === 'app' ? '(Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState' : '"n/a (checked in the app suite only)"',
   };
-  tryPs('os', '(Get-CimInstance Win32_OperatingSystem | ForEach-Object { "$($_.Caption) $($_.Version) build $($_.BuildNumber)" })');
-  tryPs('powershell', '"Windows PowerShell $($PSVersionTable.PSVersion) ($($PSVersionTable.PSEdition))"');
-  tryPs('elevated', '([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)');
-  tryPs('uac', '(Get-ItemProperty HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System).EnableLUA');
-  tryPs('session', '"session $((Get-Process -Id $PID).SessionId); explorer running: $([bool](Get-Process explorer -ErrorAction SilentlyContinue)); interactive: $([Environment]::UserInteractive)"');
-  tryPs('firewall', '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "');
-  tryPs('gpu', '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "');
-  tryPs('cpu', '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"');
-  tryPs('mediaFoundation', 'try { (Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState } catch { "n/a: $($_.Exception.Message)" }');
-  return facts;
+  const body = Object.entries(facts)
+    .map(([k, s]) => `try { $f['${k}'] = [string](& { ${s} }) } catch { $f['${k}'] = "error: $($_.Exception.Message)" }`)
+    .join('\n');
+  try {
+    return JSON.parse(ps(`$f = [ordered]@{}\n${body}\n$f | ConvertTo-Json -Compress`, { allowFail: true, timeout: 240_000 }));
+  } catch (e) {
+    return { error: `environment facts failed: ${e.message}` };
+  }
 }
+

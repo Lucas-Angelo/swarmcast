@@ -87,13 +87,21 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
+/**
+ * Why P2P is off for a viewer although the streamer did not turn it off:
+ * - `own-connection`: the viewer is on the streamer's own internet connection, where P2P would
+ *   show other viewers the IP the stream comes from;
+ * - `checking`: the server is still finding out its own public address, so P2P waits.
+ */
+export type P2PBlockReason = 'own-connection' | 'checking';
+
 export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
-  /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone. */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; blockedPeers: string[]; viewerCount: number | null }
+  /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone; `p2pBlock`: see P2PBlockReason. */
+  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
-  | { t: 'p2p'; allowed: boolean; forAll?: boolean }
+  | { t: 'p2p'; allowed: boolean; forAll?: boolean; reason?: P2PBlockReason }
   | { t: 'block-peers'; peerIds: string[] }
   | { t: 'unblock-peers'; peerIds: string[] }
   | { t: 'kicked' }
@@ -116,7 +124,15 @@ export interface ViewerConfig {
   stunServers: string[];
   swarmId: string;
   p2pAllowed: boolean;
+  /** Why P2P is off although the streamer allows it (see P2PBlockReason). */
+  p2pBlock?: P2PBlockReason;
   segmentDurationS: number;
+  /**
+   * Present (true) only when the server runs with SWARMCAST_TEST_HOOKS=1 (the E2E harness):
+   * the watch page then honours its test-only URL flags (`?delaySpeed=`, `?delayRate=`).
+   * Never set for real viewers, so a crafted link cannot change anyone's playback.
+   */
+  testHooks?: true;
 }
 
 /** Payload of the signed integrity manifest. */
@@ -234,6 +250,8 @@ export interface ViewerInfo {
   httpBytes: number;
   hashFailures: number;
   autoRemovedFromP2P: boolean;
+  /** On the streamer's own internet connection: P2P stays off to keep the streamer's IP private. */
+  ownConnection?: boolean;
   /** Seconds behind live, as the player last reported (null: not playing yet). */
   delayS: number | null;
 }

@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { zipSync, type Zippable } from 'fflate';
 import type { ActivityEntry } from '@swarmcast/shared';
+import { readSmallFile } from '../core/small-file.js';
 import type { Anonymizer } from './anonymize.js';
 
 /** Logs from the last 14 days go into an export. */
@@ -120,10 +121,8 @@ export async function buildLogExport(o: LogExportInput): Promise<BuiltExport> {
   files['config.json'] = JSON.stringify(sanitizeConfig(o.config, anon), null, 2) + '\n';
   if (o.systemCheckFile) {
     try {
-      const st = fs.statSync(o.systemCheckFile);
-      if (st.isFile() && st.size <= MAX_SYSTEM_CHECK_BYTES) {
-        files['system-check.json'] = JSON.stringify(anon.json(JSON.parse(fs.readFileSync(o.systemCheckFile, 'utf8'))), null, 2) + '\n';
-      }
+      const text = readSmallFile(o.systemCheckFile, MAX_SYSTEM_CHECK_BYTES);
+      if (text !== null) files['system-check.json'] = JSON.stringify(anon.json(JSON.parse(text)), null, 2) + '\n';
     } catch {
       /* missing or invalid: about.txt says so */
     }

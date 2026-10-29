@@ -1,0 +1,101 @@
+name: quick
+
+# The fast checks of the pipeline (pipeline.yml), on one Ubuntu runner: lint, typecheck, unit tests
+# (macOS and Windows run them in _node.yml), npm audit, the upstream-binaries check, the streamer
+# guides, the tray helper (Linux and Windows cross-builds, go vet) and cargo fmt.
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  quick:
+    name: lint, typecheck, unit, audit, tray, fmt
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          go: 'true'
+      # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
+      - name: Install the website's dependencies
+        run: npm ci --prefix site --no-audit --no-fund
+      - run: npm run lint
+      - run: npm run typecheck
+      - name: Unit tests
+        run: npm test
+      # Kept for every run that was not cancelled (green ones too): per-test results and timings.
+      - name: Upload the unit test results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: vitest-unit-ubuntu-24.04
+          path: test-results/vitest-unit.json
+          if-no-files-found: warn
+          retention-days: 14
+      # Reads package-lock.json; fails on high or critical advisories in runtime dependencies.
+      - name: npm audit (production dependencies)
+        if: ${{ !cancelled() }}
+        run: npm audit --omit=dev --audit-level=high
+
+      # Reports MediaMTX/cloudflared releases newer than the pins in scripts/build/versions.json.
+      # SwarmCast ships pinned, verified versions on purpose, so a newer release is only a warning
+      # on pull requests, main and releases; the monthly scheduled run fails (the rot alarm). It
+      # never opens PRs: run `node scripts/build/update-binaries.mjs` locally to apply the update.
+      - name: Upstream binaries up to date
+        if: ${{ !cancelled() }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -o pipefail
+          status=0
+          node scripts/build/update-binaries.mjs --check 2>&1 | tee binaries.txt || status=$?
+          {
+            echo '## Upstream binaries'
+            echo
+            echo '```'
+            cat binaries.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -ne 0 ]; then
+            if [ "$GITHUB_EVENT_NAME" = schedule ]; then exit "$status"; fi
+            echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins."
+          fi
+
+      # The installer zips carry these guides as HTML, generated from the website's pages
+      # (release.yml, site/offline-guide.json). Screenshots are embedded as data: URIs; anything
+      # else with src= would load from outside. _site.yml runs the same check for site changes.
+      - name: Render the streamer guides
+        if: ${{ !cancelled() }}
+        run: |
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-en.html" --lang en
+          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
+          if grep -qiP '<script|src=(?!"data:)' "$RUNNER_TEMP"/guide-*.html; then
+            echo "::error::The guides must stay self-contained (no scripts, no external resources)."
+            exit 1
+          fi
+
+      # Windows and Linux are pure Go and cross-compile from here; macOS needs cgo and is built
+      # (and vetted) by the macOS desktop builds in _desktop.yml, which package it.
+      - name: Tray helper (Linux x64/arm64, Windows x64) and go vet
+        if: ${{ !cancelled() }}
+        run: |
+          for t in linux-x64 linux-arm64 windows-x64; do node apps/tray/build.mjs --target "$t"; done
+          cd apps/tray
+          go vet ./...
+          GOOS=windows go vet ./...
+
+      - name: cargo fmt
+        if: ${{ !cancelled() }}
+        run: |
+          channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)"
+          rustup toolchain install "$channel" --profile minimal --component rustfmt --no-self-update
+          cargo "+$channel" fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml
