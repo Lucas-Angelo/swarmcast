@@ -16,7 +16,9 @@
 // 2. Update: installs build A (macOS: from its .app.tar.gz, Linux: the AppImage), serves build
 //    B and its latest.json on 127.0.0.1, starts A, clicks "Update now" through the panel API
 //    right after the login and expects B to come back by itself with config.json and
-//    secrets.json unchanged. macOS and Linux then do it again with "Update now" sent the moment
+//    secrets.json unchanged. That first round also tests the update channels: B is only on the
+//    beta feed, so with "Get beta versions" off A finds nothing, and turning it on (panel API)
+//    offers B at once. macOS and Linux then do it again with "Update now" sent the moment
 //    the server is ready, while the window is still on the splash or opening the panel (that
 //    crashed the macOS shell: wry panicked in WebviewWindow::url()).
 //
@@ -383,7 +385,33 @@ function userEnvironment(vars) {
  * right after the panel login, like a streamer clicking at once. No delay either way: the shell
  * must cope (it used to crash on macOS).
  */
-async function updateRound(dirA, manifest, env, atReady) {
+/** Feed requests seen by the local update server (file names). */
+const feedRequests = [];
+
+/**
+ * The update channels against the real shell: the stable feed (SWARMCAST_UPDATE_URL) answers
+ * 404 and B is only on the beta feed (SWARMCAST_BETA_UPDATE_URL). On stable, A's first check
+ * (10 s after start) reads only the stable feed and finds nothing; "Get beta versions" on makes
+ * the shell check both feeds right away and offer B.
+ */
+async function channelChecks(panel, manifest) {
+  let info = await api(panel, 'GET', '/api/desktop');
+  step('the update channel is the saved choice (stable)', info.updateChannel?.choice === 'stable' && info.updateChannel?.effective === 'stable', JSON.stringify(info.updateChannel));
+  info = await until(async () => {
+    const d = await api(panel, 'GET', '/api/desktop');
+    return d.update?.status === 'none' ? d : null;
+  }, 90_000, 'the first automatic check on the stable channel');
+  step('stable channel: no update (the beta feed is not read)', feedRequests.includes('stable.json') && !feedRequests.includes('beta.json'), feedRequests.join(', '));
+  info = await api(panel, 'PUT', '/api/desktop/update/channel', { channel: 'beta' });
+  step('"Get beta versions" on: saved, the shell checks again', info.updateChannel?.effective === 'beta', JSON.stringify(info.updateChannel));
+  info = await until(async () => {
+    const d = await api(panel, 'GET', '/api/desktop');
+    return d.update?.status === 'available' ? d : null;
+  }, 90_000, 'the update offered on the beta channel');
+  step(`beta channel: ${manifest.version} offered from the beta feed`, info.update.version === manifest.version && feedRequests.includes('beta.json'), `${info.update.version}; ${feedRequests.join(', ')}`);
+}
+
+async function updateRound(dirA, manifest, env, atReady, channels = false) {
   const what = atReady ? 'the moment the server is ready (window on the splash)' : 'right after the panel login';
   console.log(`\n=== update to ${manifest.version}: "Update now" ${what}`);
   const exe = await installUpdateFrom(dirA);
@@ -406,8 +434,14 @@ async function updateRound(dirA, manifest, env, atReady) {
     await api(panel, 'POST', '/api/desktop/update/install');
     console.log(`"Update now" sent ${Date.now() - seen} ms after the login URL appeared`);
   } else {
+    if (channels) {
+      // "Get beta versions" off (stable) before A's first start; B is only on the beta feed.
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(config, `${JSON.stringify({ updates: { channel: 'stable' } })}\n`);
+    }
     panel = await launch(exe, env);
     await until(() => fs.existsSync(config) && fs.existsSync(secrets), 30_000, 'config.json and secrets.json');
+    if (channels) await channelChecks(panel, manifest);
     before = [read(config), read(secrets)];
     logFrom = read(log).length;
     fs.rmSync(loginFile, { force: true });
@@ -437,17 +471,22 @@ async function updateTest(dirA, dirB, port) {
   console.log(`\n=== update to ${manifest.version} (${OS})`);
   const server = http.createServer((req, res) => {
     const name = path.basename(decodeURIComponent(new URL(req.url, 'http://x').pathname.slice(1)));
-    const f = path.join(dirB, name);
+    if (name.endsWith('.json')) feedRequests.push(name);
+    // The channel round: beta.json is B's manifest, stable.json (no such file) a feed without B.
+    const f = path.join(dirB, name === 'beta.json' ? 'latest.json' : name);
     console.log(`update server: GET /${name.replace(/[\r\n]/g, "")}`);
     if (!name || !fs.existsSync(f) || !fs.statSync(f).isFile()) return res.writeHead(404).end();
     res.writeHead(200, { 'content-length': fs.statSync(f).size });
     fs.createReadStream(f).pipe(res);
   });
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
-  const env = { SWARMCAST_UPDATE_URL: `http://127.0.0.1:${port}/latest.json` };
-  const restoreUserEnv = userEnvironment({ ...testEnv(), ...env });
+  const base = `http://127.0.0.1:${port}`;
+  // First round: the two channel feeds. Second round: SWARMCAST_UPDATE_URL alone (one feed).
+  const channelEnv = { SWARMCAST_UPDATE_URL: `${base}/stable.json`, SWARMCAST_BETA_UPDATE_URL: `${base}/beta.json` };
+  const env = { SWARMCAST_UPDATE_URL: `${base}/latest.json` };
+  const restoreUserEnv = userEnvironment({ ...testEnv(), ...channelEnv });
   try {
-    let exe = await updateRound(dirA, manifest, env, false);
+    let exe = await updateRound(dirA, manifest, channelEnv, false, true);
     // Windows: reinstalling A over B is a downgrade the NSIS installer handles differently; the
     // early click is a macOS/Linux shell bug (wry), so it runs there.
     if (OS !== 'windows') exe = await updateRound(dirA, manifest, env, true);
