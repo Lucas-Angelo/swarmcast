@@ -6,6 +6,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./constants": "./src/constants.ts",
+    "./chat": "./src/chat/index.ts",
     "./i18n": "./src/i18n/index.ts",
     "./i18n/browser": "./src/i18n/browser.ts",
     "./web/brand.css": "./web/brand.css",
