@@ -1,9 +1,12 @@
 import { useState } from 'preact/hooks';
-import type { DesktopInfo, LivePhase } from '@swarmcast/shared';
+import { isPrereleaseVersion, type DesktopInfo, type LivePhase } from '@swarmcast/shared';
 import { t } from '@swarmcast/shared/i18n';
 import { api, errorText, post } from './api.js';
 import { checkView, setDesktop, updateBanner, useDesktop } from './desktop.js';
 import { Info } from './Info.js';
+
+/** Where beta testers report what they find (GitHub Discussions, "Beta feedback"). */
+const BETA_FEEDBACK_URL = 'https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback';
 
 /** Ask the shell to install the update; when the live is on, confirm first (it stops the live). */
 async function installUpdate(phase: LivePhase): Promise<void> {
@@ -85,6 +88,7 @@ export function DesktopCard() {
   const [busy, setBusy] = useState(false);
   // The switch shows the new value while the OS entry is being written.
   const [wanted, setWanted] = useState<boolean | null>(null);
+  const [wantedBeta, setWantedBeta] = useState<boolean | null>(null);
   if (!d) return null;
 
   const run = async (fn: () => Promise<DesktopInfo>): Promise<void> => {
@@ -103,8 +107,15 @@ export function DesktopCard() {
     await run(() => api<DesktopInfo>('/api/desktop/autostart', 'PUT', { enabled }));
     setWanted(null);
   };
+  const setBeta = async (on: boolean): Promise<void> => {
+    setWantedBeta(on);
+    await run(() => api<DesktopInfo>('/api/desktop/update/channel', 'PUT', { channel: on ? 'beta' : 'stable' }));
+    setWantedBeta(null);
+  };
   const a = d.autostart;
   const check = checkView(d);
+  const channel = d.updateChannel;
+  const beta = wantedBeta ?? channel?.effective === 'beta';
 
   return (
     <section class="card mt" data-testid="desktop-card">
@@ -136,8 +147,30 @@ export function DesktopCard() {
       </div>
       <div class="row tight">
         <span data-testid="desktop-version">{t('desktop.version', { version: d.version })}</span>
+        {isPrereleaseVersion(d.version) && (
+          <span class="badge on" data-testid="beta-badge" title={t('desktop.betaBadge.tip')}>
+            {t('desktop.betaBadge')}
+          </span>
+        )}
         <Info text={t('desktop.version.tip')} />
       </div>
+      {channel && (
+        <div class="field">
+          <label class="switch-label">
+            <input type="checkbox" data-testid="beta-updates" checked={beta} disabled={busy} onChange={(e) => void setBeta((e.target as HTMLInputElement).checked)} />{' '}
+            {t('desktop.beta')}
+          </label>{' '}
+          <Info text={t('desktop.beta.tip')} />
+          {beta && (
+            <p class="muted small" data-testid="beta-note">
+              {t('desktop.beta.on')}{' '}
+              <a href={BETA_FEEDBACK_URL} target="_blank" rel="noopener noreferrer">
+                {t('desktop.beta.feedback')}
+              </a>
+            </p>
+          )}
+        </div>
+      )}
       <div class="row">
         <button data-testid="check-updates" title={t('desktop.check.tip')} disabled={busy || check === 'checking' || check === 'busy'} onClick={() => void run(() => post<DesktopInfo>('/api/desktop/update/check'))}>
           {check === 'checking' ? t('desktop.checking') : t('desktop.check')}

@@ -851,7 +851,15 @@ export const en = {
   'desktop.version': 'App version {version}',
   'desktop.version.tip': "The version of the SwarmCast app on this computer. Updates keep your settings, stream key and viewers' access.",
   'desktop.check': 'Check for updates',
-  'desktop.check.tip': 'Looks on the internet for a newer stable version of SwarmCast. Nothing is installed without your OK. SwarmCast also checks by itself every few hours.',
+  'desktop.check.tip':
+    'Looks on the internet for a newer version of SwarmCast (stable versions, plus beta versions if you get them). Nothing is installed without your OK. SwarmCast also checks by itself every few hours.',
+  'desktop.beta': 'Get beta versions',
+  'desktop.beta.tip':
+    "Try the next version before everyone else. It can have bugs. Your settings are kept. You can turn this off at any time; you'll stay on the beta until the next stable version is newer.",
+  'desktop.beta.on': 'You get beta versions: early versions of the next update, which can have bugs.',
+  'desktop.beta.feedback': 'Tell us what you find',
+  'desktop.betaBadge': 'Beta',
+  'desktop.betaBadge.tip': 'This is a beta version: an early version of the next update.',
   'desktop.checking': 'Checking for updates…',
   'desktop.upToDate': 'You have the latest version.',
   'desktop.update.available': 'SwarmCast {version} is available',
