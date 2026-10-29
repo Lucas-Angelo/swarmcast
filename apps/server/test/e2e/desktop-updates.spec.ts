@@ -52,7 +52,10 @@ const channelsSent = (d: Desktop) => d.messages.filter((m) => m.type === 'update
 const savedChannel = (d: Desktop) => (JSON.parse(fs.readFileSync(path.join(d.dataDir, 'config.json'), 'utf8')) as { updates?: { channel?: string } }).updates?.channel;
 
 async function openPanel(page: Page, d: Desktop, lang: 'en' | 'pt-BR'): Promise<void> {
+  // The login page sets the cookie and moves on to / by itself (meta refresh): wait for that
+  // navigation before starting another one.
   await page.goto(d.adminUrl);
+  await expect(page).toHaveURL(new URL('/', d.adminUrl).toString());
   await page.goto(new URL(`/?lang=${lang}`, d.adminUrl).toString());
   await expect(page.getByTestId('desktop-card')).toBeVisible();
 }
