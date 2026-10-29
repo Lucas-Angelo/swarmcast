@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { NICKNAME_MAX } from './constants.js';
 import { translate, type MessageKey, type MessageParams } from './i18n/index.js';
+import { chatClientSchemas } from './chat/schemas.js';
+import type { AdminChatMessage, ChatServerMessage, ChatSnapshot } from './chat/protocol.js';
 
 /**
  * A server-generated text with a stable code for client-side translation.
@@ -84,6 +86,8 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('pong'),
   }),
+  // Chat (packages/shared/src/chat): its own frame budget on the server, see control.ts.
+  ...chatClientSchemas,
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -98,7 +102,8 @@ export type P2PBlockReason = 'own-connection' | 'checking';
 export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
   /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone; `p2pBlock`: see P2PBlockReason. */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null }
+  /** `chat`: the chat snapshot (absent while the chat is off). */
+  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null; chat?: ChatSnapshot }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
   | { t: 'p2p'; allowed: boolean; forAll?: boolean; reason?: P2PBlockReason }
@@ -106,7 +111,8 @@ export type ServerMessage =
   | { t: 'unblock-peers'; peerIds: string[] }
   | { t: 'kicked' }
   | { t: 'ended' }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  | ChatServerMessage;
 
 // ---------------------------------------------------------------------------
 // Viewer API
@@ -334,7 +340,7 @@ export interface AdminLogMessage {
 export interface AdminDesktopMessage extends DesktopInfo {
   type: 'desktop';
 }
-export type AdminSocketMessage = AdminState | AdminLogMessage | AdminDesktopMessage;
+export type AdminSocketMessage = AdminState | AdminLogMessage | AdminDesktopMessage | AdminChatMessage;
 
 // ---- desktop app (docs/DESKTOP.md) ----
 
