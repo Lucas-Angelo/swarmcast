@@ -71,6 +71,11 @@ export interface ChatHubDeps {
   onAdmin?: (msg: AdminChatMessage) => void;
   /** Effective protection or guard changed (panel state, upload reserve). */
   onState?: () => void;
+  /**
+   * Once a second: the chat's flood level (for the attack shield, capped there at suspicious)
+   * and its upload and budget in bits per second (for the video limiter's reserve).
+   */
+  onTick?: (level: ChatThreat, egressBitsPerS: number, budgetBitsPerS: number) => void;
   guard?: GuardOptions;
 }
 
@@ -248,6 +253,7 @@ export class ChatHub {
     const now = this.now();
     const viewers = this.d.viewers();
     const changed = this.detector.tick(now, viewers);
+    this.d.onTick?.(this.detector.level, this.egressBitsPerS(), this.budgetBps() * 8);
     let refresh = changed;
     if (++this.ticks % 5 === 0 && this.d.settings().autoProtect) refresh = this.adaptive.evaluate(now, this.globalPerS()) || refresh;
     const g = this.globalPerS();

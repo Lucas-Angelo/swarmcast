@@ -31,6 +31,7 @@ import { MediaMtx, streamPath } from '../media/mediamtx.js';
 import { isAlive, type Reaper } from '../process/children.js';
 import type { LoadGuard, LoadGuardOptions } from '../quality/load-guard.js';
 import { QualityManager } from '../quality/manager.js';
+import { chatReserveMbps } from '../quality/upload-controller.js';
 import { createPublicServer, recentPeak, type HttpStats, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
@@ -224,6 +225,10 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       now: d.now,
       onAdmin: (m) => this.emit('chat', m),
       onState: () => this.changed(),
+      onTick: (level, egress, budget) => {
+        this.shield.chatSignal(level);
+        this.limiter.setReserveMbps(chatReserveMbps(budget, egress));
+      },
     });
     this.control.chat = this.chat;
 
@@ -667,6 +672,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.access.reset();
       // Chat history, mutes and colours are wiped with everything else.
       this.chat.reset();
+      this.limiter.setReserveMbps(0);
       this.syncEgress();
       await this.publicServer?.close();
       this.publicServer = null;

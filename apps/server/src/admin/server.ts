@@ -12,6 +12,7 @@ import {
   directEnableSchema,
   securitySettingsSchema,
   settingsSchema,
+  type AdminChatMessage,
   type AdminDesktopMessage,
   type AdminLogMessage,
   type ApiErrorBody,
@@ -25,6 +26,7 @@ import type { Logger } from '../core/logger.js';
 import { codeOf, coded } from '../core/messages.js';
 import { resettableRateLimits } from '../public/rate-limit-store.js';
 import { applySecurityHeaders } from '../public/security.js';
+import { registerChatRoutes } from './chat-routes.js';
 import { registerDesktopRoutes } from './desktop-routes.js';
 import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
 import { gateHead, notAuthorizedPage, signedInPage } from './gate.js';
@@ -215,6 +217,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     return { ok: true };
   }));
   registerQualityRoutes(app, L, auth, wrap);
+  registerChatRoutes(app, L, auth, wrap);
   registerOnboardingRoutes(app, L, auth, wrap);
   registerSystemCheckRoutes(app, o.systemCheckFile, auth);
   registerDesktopRoutes(app, o.desktop, auth, wrap);
@@ -244,6 +247,9 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
       ws.send(JSON.stringify(L.snapshot()));
       ws.send(JSON.stringify({ type: 'log', reset: true, entries: L.activity.list() } satisfies AdminLogMessage));
       if (o.desktop) ws.send(JSON.stringify({ type: 'desktop', ...o.desktop.snapshot() } satisfies AdminDesktopMessage));
+      // The chat as its own message type: the state snapshot never carries chat.
+      const ring = L.chat.adminState();
+      ws.send(JSON.stringify({ type: 'chat', reset: true, items: [...ring.roster.map((au) => ({ k: 'u' as const, au })), ...ring.items], sessions: L.chat.adminSessions(), counters: ring.counters } satisfies AdminChatMessage));
     });
   });
   let pending: NodeJS.Timeout | null = null;
@@ -257,7 +263,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
   L.on('state', push);
   // Activity entries go out right away, as their own message type (the state message is unchanged).
-  const broadcast = (msg: AdminLogMessage | AdminDesktopMessage): void => {
+  const broadcast = (msg: AdminLogMessage | AdminDesktopMessage | AdminChatMessage): void => {
     const data = JSON.stringify(msg);
     for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(data);
   };
@@ -265,6 +271,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   const onClear = (): void => broadcast({ type: 'log', reset: true, entries: [] });
   L.activity.on('entry', onEntry);
   L.activity.on('clear', onClear);
+  const onChat = (m: AdminChatMessage): void => broadcast(m);
+  L.on('chat', onChat);
   // Desktop app state (update status from the shell, autostart, first-run check) as its own message.
   const onDesktop = (): void => {
     if (o.desktop) broadcast({ type: 'desktop', ...o.desktop.snapshot() });
@@ -274,6 +282,7 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     L.off('state', push);
     L.activity.off('entry', onEntry);
     L.activity.off('clear', onClear);
+    L.off('chat', onChat);
     o.desktop?.off('changed', onDesktop);
     for (const c of wss.clients) c.terminate();
     wss.close();
