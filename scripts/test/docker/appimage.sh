@@ -11,6 +11,8 @@
 #   --no-build  reuse the images of a previous run
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=pull.sh
+. "$DIR/pull.sh"
 BUILD=1
 VERSION=""
 PLATFORM=""
@@ -37,6 +39,8 @@ for base in "${BASES[@]}"; do
   img="swarmcast-test-appimage:${base//[:\/]/-}${PLATFORM:+-${PLATFORM##*/}}"
   echo "##### $base${PLATFORM:+ ($PLATFORM)}: $(basename "$FILE")"
   if [ "$BUILD" = 1 ]; then
+    pull_image "$base" "$PLATFORM" ||
+      { echo "FAIL pull of $base"; results+=("FAIL $base (base image pull)"); fails=$((fails + 1)); continue; }
     docker build -q ${PLATFORM:+--platform "$PLATFORM"} -f "$DIR/Dockerfile.appimage" --build-arg "BASE=$base" -t "$img" "$DIR" >/dev/null ||
       { echo "FAIL build of $img"; results+=("FAIL $base (image build)"); fails=$((fails + 1)); continue; }
   fi

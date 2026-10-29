@@ -32,6 +32,8 @@ set -u
 set -o pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source-path=SCRIPTDIR source=pull.sh
+. "$DIR/pull.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 
 RELEASE="${RELEASE_DIR:-}"
@@ -118,6 +120,7 @@ for arch in arm64 x64; do
 done
 
 # --- release server on a private Docker network ----------------------------------------------
+pull_image python:3.12-alpine || exit 2
 docker network create "$NET" >/dev/null || exit 2
 docker run -d --name "$SERVER" --network "$NET" --network-alias release \
   -v "$RELEASE:/srv/ok:ro" -v "$WORK/corrupt:/srv/corrupt:ro" \
@@ -137,6 +140,7 @@ build() { # build DOCKERFILE IMAGE BASE PLATFORM [build-args...]
   local df="$1" img="$2" base="$3" plat="$4"
   shift 4
   if [ "$BUILD" = 1 ]; then
+    pull_image "$base" "$plat" || { echo "pull of $base ($plat) failed"; return 1; }
     docker build -q --platform "$plat" -f "$DIR/$df" --build-arg "BASE=$base" "$@" -t "$img" "$DIR" >/dev/null ||
       { echo "build of $img failed"; return 1; }
   fi
