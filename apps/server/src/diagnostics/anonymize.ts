@@ -39,6 +39,8 @@ const HOST_TLDS = [
 const HOST_LABEL = '[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?';
 /** A dotted host name ending in one of HOST_TLDS, not part of a longer word, file name or call. */
 const HOSTNAME = new RegExp(`(?<![\\w.-])(?:${HOST_LABEL}\\.)+(?:${HOST_TLDS.join('|')})(?![\\w(-]|\\.[A-Za-z0-9])`, 'g');
+/** A run of name characters that is not the tail of a longer word or name (candidates for known host names). */
+const NAME_TOKEN = /(?<![\w.-])[A-Za-z0-9][A-Za-z0-9.-]*/g;
 /** Domains kept as they are: the services SwarmCast talks to, and its own site. */
 const VENDOR_DOMAINS = [
   'trycloudflare.com', 'cloudflare.com', 'cloudflare-dns.com', 'argotunnel.com', 'one.one.one.one',
@@ -98,7 +100,8 @@ export class Anonymizer {
   private nickRe: RegExp | null = null;
   private nickReStale = false;
   private readonly home: Array<[string, string]>;
-  private readonly knownHosts: RegExp | null;
+  /** Lowercase host names known up front (matched as whole names, never turned into a pattern). */
+  private readonly knownHosts: Set<string>;
 
   constructor(private readonly o: AnonymizerOptions = {}) {
     this.salt = o.salt ?? crypto.randomBytes(32);
@@ -108,10 +111,7 @@ export class Anonymizer {
     const h = o.homeDir && o.homeDir.length > 3 ? o.homeDir : null;
     // Plain, and as it appears inside JSON strings on Windows (escaped backslashes).
     this.home = h ? [[h.replace(/\\/g, '\\\\'), '~'], [h, '~']] : [];
-    const hosts = [...new Set([...(o.hostnames ?? [])].map(hostOf).filter((x): x is string => !!x))].sort((a, b) => b.length - a.length);
-    this.knownHosts = hosts.length
-      ? new RegExp(`(?<![\\w.-])(?:${hosts.map((x) => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})(?![\\w-]|\\.[A-Za-z0-9])`, 'gi')
-      : null;
+    this.knownHosts = new Set([...(o.hostnames ?? [])].map(hostOf).filter((x): x is string => !!x));
   }
 
   private hash(kind: string, value: string): string {
@@ -133,7 +133,14 @@ export class Anonymizer {
   }
 
   private maskHosts(s: string): string {
-    if (this.knownHosts) s = s.replace(this.knownHosts, (h) => this.hostLabel(h));
+    if (this.knownHosts.size) {
+      s = s.replace(NAME_TOKEN, (token: string, at: number, all: string) => {
+        // A name never ends with "." or "-": that is the sentence or the text around it.
+        const name = token.replace(/[.-]+$/, '');
+        if (all[at + name.length] === '_' || !this.knownHosts.has(name.toLowerCase())) return token;
+        return this.hostLabel(name) + token.slice(name.length);
+      });
+    }
     return s.replace(HOSTNAME, (h) => (VENDOR_DOMAINS.some((d) => endsWithDomain(h.toLowerCase(), d)) ? h : this.hostLabel(h)));
   }
 
