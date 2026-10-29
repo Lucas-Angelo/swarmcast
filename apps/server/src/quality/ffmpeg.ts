@@ -123,18 +123,22 @@ export async function installFfmpeg(
     const total = Number(res.headers.get('content-length')) || undefined;
     const hash = crypto.createHash('sha256');
     const out = fs.createWriteStream(archive);
+    // A write error (disk full, folder removed) must fail this install, not escape as an
+    // uncaught 'error' event that would stop SwarmCast.
+    const writeFailed = new Promise<never>((_, reject) => out.once('error', reject));
+    writeFailed.catch(() => {});
     let received = 0;
     let lastReport = 0;
     for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       hash.update(chunk);
       received += chunk.length;
-      if (!out.write(chunk)) await new Promise<void>((r) => out.once('drain', () => r()));
+      if (!out.write(chunk)) await Promise.race([new Promise<void>((r) => out.once('drain', () => r())), writeFailed]);
       if (received - lastReport > 1_000_000) {
         lastReport = received;
         onProgress({ phase: 'downloading', receivedBytes: received, totalBytes: total });
       }
     }
-    await new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve())));
+    await Promise.race([new Promise<void>((resolve, reject) => out.end((err?: Error | null) => (err ? reject(err) : resolve()))), writeFailed]);
     onProgress({ phase: 'verifying', receivedBytes: received, totalBytes: total });
     const actual = hash.digest('hex');
     if (actual !== pin.sha256) throw new Error(`Checksum mismatch for ${pin.asset}: expected ${pin.sha256}, got ${actual}.`);
