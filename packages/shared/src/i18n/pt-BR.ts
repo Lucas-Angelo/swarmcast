@@ -1018,4 +1018,6 @@ export const ptBR: Messages = {
   'diag.retention.days': 'dias',
   'diag.retention.save': 'Salvar',
   'diag.retention.saved': 'Salvo ✓',
+  // ---- chat: panel ----
+  // ---- branding: panel ----
 };

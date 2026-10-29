@@ -9,6 +9,11 @@ import { DesktopCard, UpdateBanner } from './DesktopCard.js';
 import { DiagnosticsCard } from './DiagnosticsCard.js';
 import { loadDesktop, setDesktop } from './desktop.js';
 import { Info } from './Info.js';
+// ---- chat: panel ----
+import { ChatCard } from './chat/ChatCard.js';
+// ---- branding: panel ----
+import { BrandingCard } from './branding/BrandingCard.js';
+// ---- end ----
 import { Onboarding, RedoTutorialButton } from './onboarding/Onboarding.js';
 import { QualityCard } from './QualityCard.js';
 import { SecurityCard } from './Security.js';
@@ -343,6 +348,10 @@ export function App() {
         <SecurityCard s={s} busy={busy !== null} act={act} />
       </div>
 
+      {/* ---- branding: panel ---- */}
+      <BrandingCard />
+      {/* ---- end ---- */}
+
       <QualityCard live={s.phase === 'live'} />
 
       <DesktopCard />
@@ -386,6 +395,10 @@ export function App() {
           </div>
         )}
       </section>
+
+      {/* ---- chat: panel ---- */}
+      <ChatCard state={s} />
+      {/* ---- end ---- */}
 
       <ActivityConsole
         entries={activity}

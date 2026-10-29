@@ -1022,4 +1022,6 @@ export const en = {
   'diag.retention.days': 'days',
   'diag.retention.save': 'Save',
   'diag.retention.saved': 'Saved ✓',
+  // ---- chat: panel ----
+  // ---- branding: panel ----
 } as const satisfies Record<string, Entry>;
