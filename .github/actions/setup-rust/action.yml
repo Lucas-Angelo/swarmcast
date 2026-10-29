@@ -46,7 +46,7 @@ runs:
       with:
         workspaces: apps/desktop/src-tauri -> target
         key: ${{ inputs.cache-key }}
-        save-if: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/pull/17/merge' }}
+        save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
     # Tauri v2 build prerequisites on Linux. apt-retry.sh downloads them (time limit per try,
     # retries, another mirror after a slow try) into $APT_DEBS when the setup action restored the
