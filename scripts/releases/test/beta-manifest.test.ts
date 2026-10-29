@@ -7,22 +7,25 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { checkManifest, pickBetaRelease } from '../beta-manifest.mjs';
+import { buildBetaManifest, isMinisignSignature, MAX_NOTES, PLATFORM_FILES, pickBetaRelease } from '../beta-manifest.mjs';
 
 const REPO = 'Lucas-Angelo/swarmcast';
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'beta-manifest.mjs');
 
-function manifest(tag: string, version = tag.replace(/^v/, '')) {
+/** A signature shaped like Tauri's: base64 of a minisign signature file. */
+function signature(seed: string): string {
+  const sig = Buffer.alloc(74, seed).toString('base64');
+  const global = Buffer.alloc(64, seed).toString('base64');
+  const text = `untrusted comment: signature from tauri secret key\n${sig}\ntrusted comment: timestamp:1793313363\tfile:x\tversion:1\n${global}\n`;
+  return Buffer.from(text).toString('base64');
+}
+
+/** A complete latest.json of release `tag`, as updater-manifest.mjs writes it. */
+function manifest(tag: string, version = tag.replace(/^v/, '')): { version: string; notes: string; pub_date: string; platforms: Record<string, { signature: string; url: string }> } {
   const base = `https://github.com/${REPO}/releases/download/${tag}`;
-  return {
-    version,
-    notes: `notes of ${tag}`,
-    pub_date: '2026-11-01T12:00:00Z',
-    platforms: {
-      'darwin-aarch64': { signature: `sig-${tag}`, url: `${base}/SwarmCast_${version}_aarch64.app.tar.gz` },
-      'linux-x86_64-deb': { signature: `sig-${tag}`, url: `${base}/SwarmCast_${version}_amd64.deb` },
-    },
-  };
+  const platforms: Record<string, { signature: string; url: string }> = {};
+  for (const [key, file] of Object.entries(PLATFORM_FILES)) platforms[key] = { signature: signature(key), url: `${base}/${file(version)}` };
+  return { version, notes: `notes of ${tag}`, pub_date: '2026-11-01T12:00:00Z', platforms };
 }
 
 function release(tag: string, o: { prerelease?: boolean; draft?: boolean; manifest?: boolean; base?: string } = {}) {
@@ -59,25 +62,88 @@ describe('pickBetaRelease', () => {
   });
 });
 
-describe('checkManifest', () => {
-  it('accepts the release’s own latest.json', () => {
-    expect(checkManifest(JSON.stringify(manifest('v0.3.0-beta.1')), release('v0.3.0-beta.1'), REPO).version).toBe('0.3.0-beta.1');
+describe('buildBetaManifest (what every beta app reads: strict)', () => {
+  const tag = 'v0.3.0-beta.2';
+  const r = release(tag);
+  const build = (m: unknown, rel = r) => buildBetaManifest(typeof m === 'string' ? m : JSON.stringify(m), rel, REPO);
+
+  it('accepts the release’s own latest.json and rebuilds it from the checked fields only', () => {
+    const m = manifest(tag);
+    const out = build(m);
+    expect(out).toEqual(m);
+    expect(Object.keys(out)).toEqual(['version', 'notes', 'pub_date', 'platforms']);
+    expect(Object.keys(out.platforms)).toEqual(Object.keys(PLATFORM_FILES).sort());
+    // Only the required platforms is enough (an older release without the -deb entries).
+    const minimal = manifest(tag);
+    for (const k of ['windows-x86_64-nsis', 'linux-x86_64-deb', 'linux-aarch64-deb']) delete minimal.platforms[k];
+    expect(Object.keys(build(minimal).platforms)).not.toContain('linux-x86_64-deb');
+    expect(build(manifest('v0.3.0'), release('v0.3.0')).version).toBe('0.3.0');
   });
 
-  it('rejects another version, packages outside the release, missing signatures or platforms', () => {
-    const r = release('v0.3.0-beta.2');
-    expect(() => checkManifest(JSON.stringify(manifest('v0.3.0-beta.2', '0.3.0-beta.1')), r, REPO)).toThrow(/announces version 0.3.0-beta.1/);
-    const outside = manifest('v0.3.0-beta.2');
-    outside.platforms['darwin-aarch64'].url = 'https://example.com/SwarmCast.app.tar.gz';
-    expect(() => checkManifest(JSON.stringify(outside), r, REPO)).toThrow(/points outside the release/);
-    const older = manifest('v0.3.0-beta.2');
-    older.platforms['darwin-aarch64'].url = `https://github.com/${REPO}/releases/download/v0.3.0-beta.1/x.tar.gz`;
-    expect(() => checkManifest(JSON.stringify(older), r, REPO)).toThrow(/points outside the release/);
-    const unsigned = manifest('v0.3.0-beta.2');
-    unsigned.platforms['darwin-aarch64'].signature = '';
-    expect(() => checkManifest(JSON.stringify(unsigned), r, REPO)).toThrow(/no url or signature/);
-    expect(() => checkManifest(JSON.stringify({ ...manifest('v0.3.0-beta.2'), platforms: {} }), r, REPO)).toThrow(/no platforms/);
-    expect(() => checkManifest('not json', r, REPO)).toThrow();
+  it('refuses a package on another host, in another repository or another release', () => {
+    for (const url of [
+      'https://evil.example/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz',
+      `https://github.com.evil.example/${REPO}/releases/download/${tag}/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz`,
+      `http://github.com/${REPO}/releases/download/${tag}/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz`,
+      `https://github.com/someone/swarmcast/releases/download/${tag}/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz`,
+      `https://github.com/${REPO}/releases/download/v0.3.0-beta.1/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz`,
+      `https://github.com/${REPO}/releases/download/${tag}/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz?x=1`,
+    ]) {
+      const m = manifest(tag);
+      m.platforms['darwin-aarch64']!.url = url;
+      expect(() => build(m), url).toThrow(/darwin-aarch64's file of release v0.3.0-beta.2/);
+    }
+  });
+
+  it('refuses a path traversal or another file name', () => {
+    for (const file of ['../../../evil/SwarmCast_0.3.0-beta.2_aarch64.app.tar.gz', '..%2F..%2Fevil.tar.gz', 'SwarmCast_0.3.0-beta.1_aarch64.app.tar.gz', 'SwarmCast_0.3.0-beta.2_x64.app.tar.gz', 'evil.exe']) {
+      const m = manifest(tag);
+      m.platforms['darwin-aarch64']!.url = `https://github.com/${REPO}/releases/download/${tag}/${file}`;
+      expect(() => build(m), file).toThrow(/refused/);
+    }
+  });
+
+  it('refuses extra fields, at the top and in a platform, and unknown platform keys', () => {
+    expect(() => build({ ...manifest(tag), extra: 1 })).toThrow(/refused/);
+    const m = manifest(tag);
+    (m.platforms['linux-x86_64'] as Record<string, string>).with_elevated_task = 'true';
+    expect(() => build(m)).toThrow(/refused/);
+    const k = manifest(tag);
+    k.platforms['windows-aarch64'] = k.platforms['windows-x86_64']!;
+    expect(() => build(k)).toThrow(/refused/);
+  });
+
+  it('refuses a missing or malformed signature and a missing required platform', () => {
+    const missing = manifest(tag) as unknown as { platforms: Record<string, Record<string, string>> };
+    delete missing.platforms['linux-aarch64']!.signature;
+    expect(() => build(missing)).toThrow(/refused/);
+    for (const sig of ['', 'not base64!', Buffer.from('untrusted comment: x\nshort\n').toString('base64'), 'A'.repeat(5000)]) {
+      const m = manifest(tag);
+      m.platforms['linux-aarch64']!.signature = sig;
+      expect(() => build(m), sig.slice(0, 20)).toThrow(/minisign/);
+    }
+    const noLinux = manifest(tag);
+    delete noLinux.platforms['linux-aarch64'];
+    expect(() => build(noLinux)).toThrow(/missing one of/);
+    expect(isMinisignSignature(signature('x'))).toBe(true);
+  });
+
+  it('refuses another version, a stable version in a pre-release or the reverse, other pre-release ids', () => {
+    expect(() => build(manifest(tag, '0.3.0-beta.1'))).toThrow(/release's version/);
+    // A release marked pre-release with a stable version, and a stable release with a beta version.
+    expect(() => build(manifest('v0.3.0'), release('v0.3.0', { prerelease: true }))).toThrow(/marked pre-release, but its version is stable/);
+    expect(() => build(manifest(tag), release(tag, { prerelease: false }))).toThrow(/not marked pre-release, but its version is a pre-release/);
+    expect(() => build(manifest('v0.3.0-alpha.1'), release('v0.3.0-alpha.1'))).toThrow(/not a release tag/);
+    expect(() => build(manifest('0.3.0'), release('0.3.0', { prerelease: false }))).toThrow(/not a release tag/);
+  });
+
+  it('refuses oversized notes, a bad date, a non-object and non-JSON', () => {
+    expect(() => build({ ...manifest(tag), notes: 'x'.repeat(MAX_NOTES + 1) })).toThrow(/refused/);
+    expect(build({ ...manifest(tag), notes: 'x'.repeat(MAX_NOTES) }).notes).toHaveLength(MAX_NOTES);
+    expect(() => build({ ...manifest(tag), notes: 7 })).toThrow(/refused/);
+    expect(() => build({ ...manifest(tag), pub_date: 'yesterday' })).toThrow(/refused/);
+    expect(() => build([])).toThrow(/refused/);
+    expect(() => build('not json')).toThrow(/not JSON/);
   });
 });
 
@@ -122,14 +188,14 @@ describe('beta-manifest.mjs (CLI, fake GitHub API)', () => {
   }
   const cli = (out: string) => run(process.execPath, [SCRIPT, '--repo', REPO, '--out', out, '--api', base], { env: { ...process.env, GITHUB_TOKEN: '' } });
 
-  it('writes an exact copy of the highest release’s latest.json, across API pages', async () => {
+  it('publishes the highest release’s checked latest.json, across API pages', async () => {
     // 120 old stable releases (2 pages), then the beta and a later hotfix on the old line.
     const old = Array.from({ length: 120 }, (_, i) => `v0.1.${i}`);
     publish([...old, 'v0.3.0-beta.2', 'v0.2.3', 'v0.3.0-beta.1']);
     const out = path.join(tmp, 'site', 'public', 'updates', 'beta.json');
     const { stdout } = await cli(out);
     expect(stdout).toContain('v0.3.0-beta.2 (pre-release)');
-    expect(fs.readFileSync(out, 'utf8')).toBe(files.get('/dl/v0.3.0-beta.2/latest.json'));
+    expect(JSON.parse(fs.readFileSync(out, 'utf8'))).toEqual(manifest('v0.3.0-beta.2'));
     expect(requests.filter((r) => r.startsWith(`/repos/${REPO}/releases`))).toEqual([`/repos/${REPO}/releases?per_page=100&page=1`, `/repos/${REPO}/releases?per_page=100&page=2`]);
     // Only the chosen release's manifest is downloaded.
     expect(requests.filter((r) => r.endsWith('latest.json'))).toEqual(['/dl/v0.3.0-beta.2/latest.json']);
@@ -153,7 +219,7 @@ describe('beta-manifest.mjs (CLI, fake GitHub API)', () => {
     fs.writeFileSync(out, 'previous');
     publish(['v0.3.0-beta.1']);
     files.set('/dl/v0.3.0-beta.1/latest.json', JSON.stringify(manifest('v0.3.0-beta.1', '0.2.0')));
-    await expect(cli(out)).rejects.toMatchObject({ stderr: expect.stringContaining('announces version 0.2.0') });
+    await expect(cli(out)).rejects.toMatchObject({ stderr: expect.stringContaining("not the release's version 0.3.0-beta.1") });
     expect(fs.readFileSync(out, 'utf8')).toBe('previous');
   });
 });
