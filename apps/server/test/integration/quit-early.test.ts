@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { isListening } from '../../src/core/ports.js';
 import { allocAppPorts, ROOT, serverArgs, spawnTracked, stopTracked, tmpDir, until } from './helpers.js';
 
-// B11, second half (plan: WIN F1): the start scripts restart SwarmCast when it exits with a
+// Quitting early: the start scripts restart SwarmCast when it exits with a
 // non-zero code within 10 s (start-windows.ps1). A user who quits right after the panel opened
 // (tray Quit or the panel's Quit, while the live, the blocklists and the tray are still
 // starting) must get a clean exit 0, or the script would start SwarmCast again.

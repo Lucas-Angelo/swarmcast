@@ -12,6 +12,9 @@ import { startFeed } from '../integration/helpers.js';
 
 // Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
 process.env.SWARMCAST_NO_NOTIFY ??= '1';
+// The watch page's test-only URL flags (?delaySpeed=, ?delayRate=: adaptive-delay.spec.ts) are
+// ignored unless the server says so in /api/config; a real SwarmCast never does.
+process.env.SWARMCAST_TEST_HOOKS ??= '1';
 
 // Everything the app logs (pino JSON lines on stdout) goes to test-results/e2e-server.log, which
 // CI uploads with the Playwright report. stderr goes there too and still reaches Playwright's

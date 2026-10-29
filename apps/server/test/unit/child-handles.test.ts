@@ -3,7 +3,7 @@ import readline from 'node:readline';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isAlive } from '../../src/process/children.js';
 
-// B11 (plan: WIN F1): when SwarmCast's output is redirected (start script > log file, a support
+// Inherited output handles: when SwarmCast's output is redirected (start script > log file, a support
 // step; the installer test's wrapper), a process SwarmCast starts must not keep that output open
 // after SwarmCast exits, or whoever waits for the end of the output (PowerShell's `& $exe`,
 // cmd's `>>`) hangs until that process exits too. The suspects: the browser launch
@@ -12,7 +12,7 @@ import { isAlive } from '../../src/process/children.js';
 // The question is whether a child inherits the parent's stdout handle although it is spawned
 // with its own stdio ('ignore' or pipes): on Windows every *inheritable* handle is passed to a
 // child created with bInheritHandles, which libuv uses. Node marks the stdio handles it inherited
-// as non-inheritable at startup (uv_disable_stdio_inheritance), which would rule B11 out. These
+// as non-inheritable at startup (uv_disable_stdio_inheritance), which would rule this hang out. These
 // tests check that on each OS, with a positive control proving the method sees a holder.
 
 const leftovers: number[] = [];
