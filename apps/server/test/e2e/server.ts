@@ -55,6 +55,12 @@ fs.mkdirSync(process.env.SWARMCAST_DOWNLOADS_DIR, { recursive: true });
 const app = await createApp({
   dataDir,
   noTunnel: true,
+  // The quality ladder's load guard drops a rendition when the whole machine's CPU is saturated,
+  // to protect OBS. Here the CPU goes to the test's own browsers, not to an OBS: on macos-latest
+  // (3 vCPU) it dropped 480p 12 s after the ladder started, and barely-delivers then waited in
+  // vain for its two qualities (PR #21, run 40917266795). The guard keeps its other trigger
+  // (the ladder falling behind real time); unit and integration tests cover the CPU one.
+  loadGuard: { cpuSaturatedPercent: 101 },
   // stdout is test-results/e2e-server.log (above).
   logToStdout: true,
   configOverrides: {
