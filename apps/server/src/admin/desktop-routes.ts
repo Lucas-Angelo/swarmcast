@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { desktopAutostartSchema, type DesktopInfoResponse } from '@swarmcast/shared';
+import { desktopAutostartSchema, desktopUpdateChannelSchema, type DesktopInfoResponse } from '@swarmcast/shared';
 import { CodedError } from '../core/messages.js';
 import type { DesktopBridge } from '../desktop/bridge.js';
 
@@ -11,6 +11,7 @@ type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
  *   GET  /api/desktop                  DesktopInfo (autostart read back from the OS)
  *   PUT  /api/desktop/autostart        { enabled } → DesktopInfo
  *   POST /api/desktop/update/check     asks the shell to look for an update → DesktopInfo
+ *   PUT  /api/desktop/update/channel   { channel: 'stable' | 'beta' } ("Get beta versions") → DesktopInfo
  *   POST /api/desktop/update/install   asks the shell to install it (stops the live) → DesktopInfo
  */
 export function registerDesktopRoutes(
@@ -38,6 +39,11 @@ export function registerDesktopRoutes(
     const d = need();
     d.requestUpdateCheck();
     return d.info();
+  }));
+  app.put('/api/desktop/update/channel', { preHandler: auth }, wrap(async (req) => {
+    const d = need();
+    const { channel } = desktopUpdateChannelSchema.parse(req.body);
+    return d.setUpdateChannel(channel);
   }));
   app.post('/api/desktop/update/install', { preHandler: auth }, wrap(async () => {
     const d = need();

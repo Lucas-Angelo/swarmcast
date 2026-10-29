@@ -356,6 +356,37 @@ export type DesktopUpdate = z.output<typeof desktopUpdateSchema>;
 /** PUT /api/desktop/autostart */
 export const desktopAutostartSchema = z.object({ enabled: z.boolean() });
 
+/**
+ * Update channels of the desktop app (docs/DESKTOP.md, "Updates"): `stable` gets only stable
+ * versions; `beta` ("Get beta versions") also gets pre-releases (X.Y.Z-beta.N, X.Y.Z-rc.N), always
+ * the higher of the two feeds. Never a downgrade.
+ */
+export const UPDATE_CHANNELS = ['stable', 'beta'] as const;
+export type UpdateChannel = (typeof UPDATE_CHANNELS)[number];
+
+/** PUT /api/desktop/update/channel */
+export const desktopUpdateChannelSchema = z.object({ channel: z.enum(UPDATE_CHANNELS) });
+
+/** A SemVer pre-release (0.3.0-beta.1): it has a hyphen before any build metadata. */
+export function isPrereleaseVersion(version: string): boolean {
+  return /^\d+\.\d+\.\d+-/.test(version.trim().split('+')[0] ?? '');
+}
+
+/**
+ * The channel in use (same rule as the shell's updater.rs `resolve`): the streamer's choice,
+ * otherwise beta when the installed version is a pre-release, otherwise stable.
+ */
+export function effectiveUpdateChannel(choice: UpdateChannel | null | undefined, version: string): UpdateChannel {
+  return choice ?? (isPrereleaseVersion(version) ? 'beta' : 'stable');
+}
+
+export interface DesktopUpdateChannelState {
+  /** What the streamer chose in the panel; null = automatic. */
+  choice: UpdateChannel | null;
+  /** The channel in use. */
+  effective: UpdateChannel;
+}
+
 /** First-run system check of the desktop app: idle (not needed or not started), running, done, failed. */
 export type DesktopSystemCheckRun = 'idle' | 'running' | 'done' | 'failed';
 
@@ -382,6 +413,8 @@ export interface DesktopInfo {
   update: DesktopUpdate | null;
   /** "Check for updates" was asked and the shell has not answered yet. */
   updateChecking: boolean;
+  /** Stable or beta versions ("Get beta versions"). Missing from servers before 0.3.0. */
+  updateChannel?: DesktopUpdateChannelState;
   systemCheck: DesktopSystemCheckRun;
 }
 

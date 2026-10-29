@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import type { DesktopAutostartState, DesktopInfo, DesktopSystemCheckRun, DesktopUpdate } from '@swarmcast/shared';
+import { effectiveUpdateChannel, type DesktopAutostartState, type DesktopInfo, type DesktopSystemCheckRun, type DesktopUpdate, type DesktopUpdateChannelState, type UpdateChannel } from '@swarmcast/shared';
 import type { Autostart } from './autostart.js';
 import { encodeDesktopMessage, type DesktopOutMessage } from './protocol.js';
 
@@ -15,6 +15,12 @@ export interface DesktopBridgeOptions {
   send: (msg: DesktopOutMessage) => void;
 }
 
+/** Where the update channel lives (config.json `updates.channel`). */
+export interface UpdateChannelStore {
+  get(): UpdateChannel | undefined;
+  save(channel: UpdateChannel): void;
+}
+
 /**
  * Desktop-mode state the panel shows (GET /api/desktop and the `desktop` WebSocket message):
  * autostart, update status from the shell, and the first-run system check. Requests from the
@@ -26,6 +32,7 @@ export class DesktopBridge extends EventEmitter<{ changed: [] }> {
   systemCheck: DesktopSystemCheckRun = 'idle';
   private autostartState: DesktopAutostartState;
   private checkTimer: NodeJS.Timeout | null = null;
+  private channelStore: UpdateChannelStore | null = null;
 
   constructor(private readonly o: DesktopBridgeOptions) {
     super();
@@ -46,6 +53,7 @@ export class DesktopBridge extends EventEmitter<{ changed: [] }> {
       autostart: this.autostartState,
       update: this.update,
       updateChecking: this.updateChecking,
+      updateChannel: this.updateChannel(),
       systemCheck: this.systemCheck,
     };
   }
@@ -66,8 +74,42 @@ export class DesktopBridge extends EventEmitter<{ changed: [] }> {
     this.changed();
   }
 
+  /** The config the channel is read from and saved to (createApp, once the config is loaded). */
+  useUpdateChannel(store: UpdateChannelStore): void {
+    this.channelStore = store;
+  }
+
+  updateChannel(): DesktopUpdateChannelState {
+    const choice = this.channelStore?.get() ?? null;
+    return { choice, effective: effectiveUpdateChannel(choice, this.o.version) };
+  }
+
+  /** Tells the shell the channel (at start; the shell resolves "automatic" itself). */
+  sendUpdateChannel(): void {
+    this.o.send({ type: 'update-channel', channel: this.updateChannel().choice });
+  }
+
+  /**
+   * "Get beta versions" on (beta) or off (stable): saved, sent to the shell. When the channel in
+   * use changes, the shell checks again right away, so the panel shows "checking" until it answers.
+   */
+  setUpdateChannel(channel: UpdateChannel): DesktopInfo {
+    if (!this.channelStore) throw new Error('the update channel is not available yet');
+    const before = this.updateChannel().effective;
+    this.channelStore.save(channel);
+    this.sendUpdateChannel();
+    if (this.updateChannel().effective !== before) this.startChecking();
+    this.changed();
+    return this.snapshot();
+  }
+
   requestUpdateCheck(): void {
     this.o.send({ type: 'update-check' });
+    this.startChecking();
+    this.changed();
+  }
+
+  private startChecking(): void {
     this.updateChecking = true;
     if (this.checkTimer) clearTimeout(this.checkTimer);
     this.checkTimer = setTimeout(() => {
@@ -76,7 +118,6 @@ export class DesktopBridge extends EventEmitter<{ changed: [] }> {
       this.changed();
     }, UPDATE_CHECK_TIMEOUT_MS);
     this.checkTimer.unref();
-    this.changed();
   }
 
   requestUpdateInstall(): void {
