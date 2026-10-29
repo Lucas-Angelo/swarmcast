@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { NICKNAME_MAX } from './constants.js';
 import { translate, type MessageKey, type MessageParams } from './i18n/index.js';
 import { chatClientSchemas } from './chat/schemas.js';
+import { NICKNAME_MIN, validateNickname } from './chat/nickname.js';
 import type { AdminChatMessage, ChatServerMessage, ChatSnapshot } from './chat/protocol.js';
 
 /**
@@ -23,22 +24,27 @@ export interface ApiErrorBody {
   params?: MessageParams;
 }
 
-/** Letters, digits, spaces and a few separators; 1..NICKNAME_MAX characters after trimming. */
-export const nicknameSchema = z
-  .string()
-  .transform((s) => s.normalize('NFC').replace(/\s+/g, ' ').trim())
-  .pipe(
-    z
-      .string()
-      .min(1, translate('en', 'nickname.empty'))
-      .max(NICKNAME_MAX, translate('en', 'nickname.tooLong', { max: NICKNAME_MAX }))
-      .regex(/^[\p{L}\p{N} _.-]+$/u, translate('en', 'nickname.chars')),
-  );
+/**
+ * Nickname rules v2 (packages/shared/src/chat/nickname.ts): letters and digits from one
+ * script, spaces, "-", "_" and "."; 2..NICKNAME_MAX graphemes, at most 64 UTF-8 bytes; no
+ * emoji, symbols, invisible or control characters; no stacked marks; no reserved names.
+ * Failures carry the English text of their code (nicknameError maps it back).
+ */
+export const nicknameSchema = z.string().transform((s, ctx) => {
+  const r = validateNickname(s);
+  if (r.ok) return r.value;
+  ctx.addIssue({ code: 'custom', message: translate('en', r.code, r.params) });
+  return z.NEVER;
+});
 
 const NICKNAME_ERRORS: CodedMessage[] = [
   { code: 'nickname.empty' },
+  { code: 'nickname.tooShort', params: { min: NICKNAME_MIN } },
   { code: 'nickname.tooLong', params: { max: NICKNAME_MAX } },
   { code: 'nickname.chars' },
+  { code: 'nickname.marks' },
+  { code: 'nickname.mixed' },
+  { code: 'nickname.reserved' },
 ];
 
 /** Map a nickname validation message back to its code (unknown problems become "Invalid nickname."). */

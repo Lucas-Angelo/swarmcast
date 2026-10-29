@@ -346,7 +346,9 @@ export const en = {
   'viewer.err.invalidNickname': 'Invalid nickname.',
   'nickname.empty': 'Please choose a nickname.',
   'nickname.tooLong': 'Use at most {max} characters.',
-  'nickname.chars': 'Use letters, numbers, spaces, "-", "_" or ".".',
+  'nickname.chars': 'Use only letters, numbers, spaces, "-", "_" or "." (no emoji or symbols).',
+  'nickname.tooShort': 'Use at least {min} characters.',
+  'nickname.marks': 'Too many accent marks on one letter.',
 
   'invalid.pageTitle': 'Link not valid · SwarmCast',
   'invalid.title': 'Link not valid',

@@ -342,7 +342,9 @@ export const ptBR: Messages = {
   'viewer.err.invalidNickname': 'Apelido inválido.',
   'nickname.empty': 'Escolha um apelido.',
   'nickname.tooLong': 'Use no máximo {max} caracteres.',
-  'nickname.chars': 'Use letras, números, espaços, "-", "_" ou ".".',
+  'nickname.chars': 'Use só letras, números, espaços, "-", "_" ou "." (sem emojis nem símbolos).',
+  'nickname.tooShort': 'Use pelo menos {min} caracteres.',
+  'nickname.marks': 'Acentos demais em uma letra.',
 
   'invalid.pageTitle': 'Link inválido · SwarmCast',
   'invalid.title': 'Link inválido',
