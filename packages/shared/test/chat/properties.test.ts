@@ -7,6 +7,7 @@ import {
   CHAT_BG_LIGHT,
   adjustNameColor,
   canonicalizeChatText,
+  chatTextWork,
   checkChatInvariants,
   containsLink,
   contrastRatio,
@@ -128,23 +129,39 @@ describe('canonicalizeChatText properties', () => {
     );
   });
 
-  it('P8: linear time (1,500 units ≤ 4× the time of 375)', () => {
-    const time = (n: number): number => {
-      const input = ('e' + '\u{301}'.repeat(4) + '\u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467} ').repeat(Math.ceil(n / 16)).slice(0, n);
-      const samples: number[] = [];
-      for (let i = 0; i < 30; i++) {
-        const t0 = performance.now();
-        canonicalizeChatText(input);
-        samples.push(performance.now() - t0);
-      }
-      samples.sort((a, b) => a - b);
-      return samples[15]!;
-    };
-    time(1500); // warm-up
-    const big = time(1500);
-    const small = time(375);
-    expect(big).toBeLessThan(2);
-    expect(big).toBeLessThanOrEqual(Math.max(4 * small, 0.2));
+  it('P8: linear work (counted, not timed): work(1,500 units) ≤ 4.5 × work(375) on adversarial inputs', () => {
+    const shapes: Array<[string, (n: number) => string]> = [
+      ['marks', (n) => 'e' + '\u{301}'.repeat(n - 1)],
+      ['mark runs', (n) => 'a\u{300}\u{301}\u{302}\u{303}\u{304}'.repeat(n / 6 + 1).slice(0, n)],
+      ['ZWJ chains', (n) => '\u{1F469}\u{200D}'.repeat(n / 3 + 1).slice(0, n)],
+      ['families', (n) => '\u{1F469}\u{200D}\u{1F469}\u{200D}\u{1F467} '.repeat(n / 9 + 1).slice(0, n)],
+      ['joiners between joining letters', (n) => '\u{628}\u{64B}\u{200C}'.repeat(n / 3 + 1).slice(0, n)],
+      ['joiners after long mark runs', (n) => ('\u{628}' + '\u{64B}'.repeat(30) + '\u{200C}').repeat(n / 32 + 1).slice(0, n)],
+      ['Indic conjuncts', (n) => '\u{915}\u{94D}\u{937}\u{200C}\u{93F}'.repeat(n / 5 + 1).slice(0, n)],
+      ['bidi marks', (n) => '\u{200E}\u{200F}'.repeat(n / 2)],
+      ['invisibles', (n) => 'a\u{200B}'.repeat(n / 2)],
+      ['tags', (n) => ('\u{1F3F4}' + '\u{E0061}'.repeat(10)).repeat(n / 22 + 1).slice(0, n)],
+      ['plain text', (n) => 'boa noite '.repeat(n / 10 + 1).slice(0, n)],
+    ];
+    for (const [name, make] of shapes) {
+      const cost = (n: number): number => {
+        const before = chatTextWork();
+        canonicalizeChatText(make(n).toWellFormed(), { maxGraphemes: 500, maxEmoji: 100 });
+        return chatTextWork() - before;
+      };
+      const small = cost(375);
+      const big = cost(1500);
+      expect(small, name).toBeGreaterThan(0);
+      expect(big, name).toBeLessThanOrEqual(4.5 * small);
+    }
+  });
+
+  it('sanity: the largest input takes far less than 50 ms', () => {
+    const input = 'e' + '\u{301}'.repeat(1499);
+    canonicalizeChatText(input);
+    const t0 = performance.now();
+    canonicalizeChatText(input);
+    expect(performance.now() - t0).toBeLessThan(50);
   });
 });
 
