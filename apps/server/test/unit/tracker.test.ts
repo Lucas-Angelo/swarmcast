@@ -91,6 +91,27 @@ describe('tracker filter', () => {
     expect(res['failure reason']).toBe('p2p not allowed');
   });
 
+  it("rejects sessions on the streamer's own connection, and every session while the own address is unknown", async () => {
+    const e = await setup();
+    const home = e.access.createSession({ nickname: 'home', deviceId: 'd1', device: 'mobile', ip: '203.0.113.7' });
+    const guest = e.access.createSession({ nickname: 'guest', deviceId: 'd2', device: 'desktop', ip: '198.51.100.20' });
+    home.ownConnection = true;
+    expect((await announce(e.url, home.id, infoHashHexFor(e.access.liveId, 'main'), peerAscii(7)))['failure reason']).toBe('p2p not allowed');
+    expect(home.peerIds.size).toBe(0);
+    // A tracker channel inside /control is refused before it opens.
+    const carrier = { readyState: 1, OPEN: 1, send: () => {} } as unknown as WebSocket;
+    expect(e.tracker.openChannel(carrier, 1, {} as http.IncomingMessage, home)).toBeNull();
+    expect(e.access.p2pBlock(home)).toBe('own-connection');
+
+    e.access.p2pChecking = true;
+    expect((await announce(e.url, guest.id, infoHashHexFor(e.access.liveId, 'main'), peerAscii(8)))['failure reason']).toBe('p2p not allowed');
+    expect(e.tracker.openChannel(carrier, 2, {} as http.IncomingMessage, guest)).toBeNull();
+    expect(e.access.p2pBlock(guest)).toBe('checking');
+    e.access.p2pChecking = false;
+    expect((await announce(e.url, guest.id, infoHashHexFor(e.access.liveId, 'main'), peerAscii(8)))['failure reason']).toBeUndefined();
+    expect(e.access.p2pBlock(guest)).toBeUndefined();
+  });
+
   it('rejects sessions that ended (kicked)', async () => {
     const e = await setup();
     const s = e.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });

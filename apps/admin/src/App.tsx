@@ -443,7 +443,9 @@ function Th({ label, tip }: { label: string; tip: string }) {
 }
 
 function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act }) {
-  const p2p = !v.p2pAllowed ? (
+  const p2p = v.ownConnection ? (
+    <span class="badge off" title={t('admin.badge.ownConnection.tip')}>{t('admin.badge.ownConnection')}</span>
+  ) : !v.p2pAllowed ? (
     v.autoRemovedFromP2P ? (
       <span class="badge off" title={t('admin.badge.removedBad.tip')}>{t('admin.badge.removedBad')}</span>
     ) : (
@@ -465,7 +467,8 @@ function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act })
       <td>{v.hashFailures}</td>
       <td data-testid="viewer-delay">{v.delayS === null ? '–' : t('time.secondsShort', { count: v.delayS })}</td>
       <td class="actions">
-        {v.p2pAllowed ? (
+        {/* On the streamer's own connection P2P stays off whatever the streamer picks: no button. */}
+        {v.ownConnection ? null : v.p2pAllowed ? (
           <button class="small" title={t('admin.viewer.removeP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: false }))}>
             {t('admin.viewer.removeP2P')}
           </button>

@@ -44,6 +44,8 @@ export const ptBR: Messages = {
 
   // ---- server: warnings ----
   'warn.autoRemoved': '{nickname} foi tirado do P2P automaticamente depois de enviar dados ruins várias vezes.',
+  'warn.p2pChecking':
+    'P2P pausado: o SwarmCast não conseguiu descobrir o endereço da sua internet. Ele precisa disso para manter o P2P desligado para quem assiste na sua própria conexão, o que mantém seu IP privado. Ele continua tentando; todo mundo segue assistindo via HTTPS.',
   'warn.tunnelDropped': 'O túnel caiu ({reason}). Reconectando…',
   'warn.tunnelNewAddress': 'O túnel voltou com um endereço NOVO. Mande o novo link para quem está assistindo.',
   'warn.tunnelNotAnswering': 'O túnel reconectou, mas ainda não está respondendo.',
@@ -91,6 +93,7 @@ export const ptBR: Messages = {
   'log.disconnectAll': 'Todo mundo foi desconectado.',
   'log.kicked': '{nickname} foi expulso.',
   'log.p2pRemoved': '{nickname} foi tirado do P2P.',
+  'log.p2pOwnConnection': '{nickname} está assistindo na sua própria conexão de internet, então o P2P fica desligado para essa pessoa (ele mostraria seu IP para os outros espectadores).',
   'log.p2pForAllOff': 'P2P desligado para todos os espectadores. Todo mundo assiste por HTTPS agora.',
   'log.p2pForAllOn': 'P2P liberado de novo para os espectadores.',
   'log.p2pAllowed': '{nickname} pode usar P2P de novo.',
@@ -178,7 +181,7 @@ export const ptBR: Messages = {
   'admin.stat.watching.tip': 'Espectadores conectados agora (incluindo quem perdeu a conexão há menos de 30 segundos).',
   'admin.stat.helping': 'Ajudando via P2P',
   'admin.stat.helping.tip':
-    'Espectadores com "Ajudar a transmissão (P2P)" ligado (vem desligado por padrão) e com permissão. Eles trocam vídeo entre si e veem o IP uns dos outros. Seu IP continua escondido.',
+    'Espectadores com "Ajudar a transmissão (P2P)" ligado (vem desligado por padrão) e com permissão. Eles trocam vídeo entre si e veem o IP uns dos outros. No modo seguro seu IP continua escondido: o P2P desliga sozinho para quem assiste na sua própria conexão de internet (você ou alguém aí da sua casa), porque ali o IP da pessoa é o seu.',
   'admin.stat.fromPeers': 'Vídeo vindo de peers',
   'admin.stat.fromPeers.tip':
     'Quanto do vídeo seus espectadores receberam uns dos outros em vez do seu PC (quem está conectado agora, desde que entrou). Quanto maior, menos upload para você.',
@@ -281,6 +284,8 @@ export const ptBR: Messages = {
   'admin.badge.removed.tip': 'Você tirou essa pessoa do P2P. Ela continua assistindo pelo seu PC.',
   'admin.badge.removedBad': 'removido (dados ruins)',
   'admin.badge.removedBad.tip': 'Tirado do P2P automaticamente porque outros espectadores receberam vídeo alterado ou quebrado dessa pessoa.',
+  'admin.badge.ownConnection': 'sua conexão',
+  'admin.badge.ownConnection.tip': 'Assistindo na sua própria conexão de internet (você ou alguém aí da sua casa). O P2P fica desligado para essa pessoa: ele mostraria seu IP para os outros espectadores do P2P.',
   'admin.viewer.removeP2P': 'Tirar do P2P',
   'admin.viewer.removeP2P.tip': 'Impede esse espectador de compartilhar vídeo e corta as conexões P2P dele. Ele continua assistindo pelo seu PC.',
   'admin.viewer.allowP2P': 'Liberar P2P de novo',
@@ -382,6 +387,8 @@ export const ptBR: Messages = {
   'watch.p2pUnavailable': 'P2P não está disponível neste aparelho. Você está assistindo via HTTPS.',
   'watch.p2pRevoked': 'Quem transmite desligou o P2P para você. Pode continuar assistindo normalmente.',
   'watch.p2pOffForAll': 'Quem transmite desligou o P2P nesta live. Pode continuar assistindo normalmente.',
+  'watch.p2pOwnConnection': 'O P2P fica desligado na própria conexão de quem transmite, para manter o IP dessa pessoa privado. Pode continuar assistindo normalmente.',
+  'watch.p2pChecking': 'P2P pausado por um instante enquanto a conexão é verificada. Pode continuar assistindo normalmente.',
   'watch.peers': { one: '{count} peer', other: '{count} peers' },
   'watch.p2pStats': 'P2P ligado · {peers} · {share}% do seu vídeo veio de peers · você compartilhou {mb} MB',
   'watch.p2pStats.tip': 'Peers: outros espectadores conectados a você. A porcentagem é quanto do seu vídeo veio deles em vez de quem transmite. Compartilhado: megabytes (MB) que você mandou para os outros.',
@@ -764,7 +771,7 @@ export const ptBR: Messages = {
   'onb.share.subs': 'Mande só para os seus inscritos, por exemplo num canal do Discord só para subs.',
   'onb.share.viewers': 'Os espectadores digitam um apelido e assistem no navegador.',
   'onb.share.p2p': '"{p2pKey}" vem desligado por padrão: quem liga compartilha vídeo com os outros espectadores.',
-  'onb.share.p2p.tip': 'Quem ajuda pelo P2P pode ver o IP dos outros que também ajudam (só cidade aproximada e provedor). No modo seguro ninguém vê o seu. Qualquer um pode desligar e continuar assistindo via HTTPS.',
+  'onb.share.p2p.tip': 'Quem ajuda pelo P2P pode ver o IP dos outros que também ajudam (só cidade aproximada e provedor). No modo seguro ninguém vê o seu: o P2P desliga sozinho para quem assiste na sua própria conexão de internet (você ou alguém aí da sua casa). Qualquer um pode desligar e continuar assistindo via HTTPS.',
   'onb.tour.title': 'Durante a live: o seu painel',
   'onb.tour.intro': 'Escolha uma área para ver onde ela fica no painel.',
   'onb.tour.map': 'Mapa do painel',

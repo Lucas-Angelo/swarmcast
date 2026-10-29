@@ -79,6 +79,12 @@ export interface PublicDeps {
   stats: HttpStats;
   /** Attack detection feed, public blocklists and the join proof-of-work. */
   security: PublicSecurity;
+  /**
+   * A known session made a request from `ip` (its client address as clientIp() reads it). The
+   * live checks whether that is the streamer's own connection (P2P privacy) before the request
+   * goes on, so a /tracker or /control upgrade already sees the outcome.
+   */
+  clientSeen?: (session: Session, ip: string) => void;
 }
 
 export interface PublicServerOptions {
@@ -197,7 +203,9 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     if (res.renew) {
       reply.setCookie(SESSION_COOKIE, await access.issueSessionToken(res.session), { ...cookieBase, maxAge: SESSION_TTL_S });
     }
-    if (direct) res.session.ip = ip(req);
+    const addr = ip(req);
+    if (direct) res.session.ip = addr;
+    deps.clientSeen?.(res.session, addr);
     return res.session;
   }
 
@@ -338,6 +346,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       stunServers: deps.stunServers(),
       swarmId: deps.swarmId(),
       p2pAllowed: access.p2pAllowed(s),
+      ...(access.p2pBlock(s) ? { p2pBlock: access.p2pBlock(s) } : {}),
       segmentDurationS: SEGMENT_DURATION_S,
       ...(testHooks ? { testHooks: true as const } : {}),
     };
@@ -398,12 +407,14 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       socket.end(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     };
     sec.upgrade();
-    if (sec.blocked(clientIp(req, opts.trustTunnel && !direct))) return reject(403, 'Forbidden');
+    const addr = clientIp(req, opts.trustTunnel && !direct);
+    if (sec.blocked(addr)) return reject(403, 'Forbidden');
     if (url.pathname !== '/control' && url.pathname !== '/tracker') return reject(404, 'Not Found');
     if (!originMatchesHost(req.headers.origin, req.headers.host)) return reject(403, 'Forbidden');
     const cookies = app.parseCookie(req.headers.cookie ?? '');
     const res = await access.verifySessionToken(cookies[SESSION_COOKIE]);
     if (!res) return reject(401, 'Unauthorized');
+    deps.clientSeen?.(res.session, addr);
     if (url.pathname === '/control') {
       deps.control.handleUpgrade(req, socket, head, res.session);
     } else {
