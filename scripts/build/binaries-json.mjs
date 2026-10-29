@@ -30,6 +30,7 @@ export function renderBinariesJson(versions) {
       const url = a.url ?? spec.url.replace('{version}', spec.version).replace('{asset}', a.asset);
       if (!/^https:\/\//.test(url)) throw new Error(`${tool} ${target}: URL must be https (${url})`);
       if (!/^[0-9a-f]{64}$/.test(a.sha256)) throw new Error(`${tool} ${target}: bad sha256`);
+      // No "mirrors": users download from the publisher (`url`); the ci-deps copies are for CI.
       const obj = { url, asset: a.asset, sha256: a.sha256, binary: path.basename(a.binary), license: a.license ?? spec.license };
       lines.push(`      ${JSON.stringify(target)}: ${JSON.stringify(obj).replace(/","/g, '", "').replace(/":"/g, '": "')}${ai < assets.length - 1 ? ',' : ''}`);
     });
