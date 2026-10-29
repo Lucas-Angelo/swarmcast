@@ -1,4 +1,4 @@
-// Shared helpers for the Windows end-to-end matrix (.github/workflows/windows.yml).
+// Shared helpers for the Windows end-to-end matrix (.github/workflows/_windows.yml).
 //
 // Every suite (installer.mjs, app.mjs, quality.mjs, direct.mjs, obs.mjs) records each check
 // with record()/check(), keeps going after a failed section, and at the end writes

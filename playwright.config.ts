@@ -16,7 +16,7 @@ export default defineConfig({
   fullyParallel: false,
   workers: 1,
   retries: process.env.CI ? 1 : 0,
-  // CI keeps the evidence of every run (ci.yml uploads playwright-report/ and test-results/ unless
+  // CI keeps the evidence of every run (_e2e.yml uploads playwright-report/ and test-results/ unless
   // cancelled, flaky-green runs included): the HTML report, results.json for flake statistics,
   // and annotations on the PR. test-results/ also holds e2e-server.log and fake-obs.log.
   reporter: process.env.CI
