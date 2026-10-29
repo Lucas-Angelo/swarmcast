@@ -1,6 +1,6 @@
 import { CHAT_RESERVED_NAMES } from './limits.js';
 import { NICKNAME_MAX } from '../constants.js';
-import { P_ANYMARK, P_DI, P_DIGIT, P_LETTER, P_WS, codePoints, graphemeSegmenter, isIdentifierAllowed, isWellFormedString, props, utf8Length } from './ucd.js';
+import { P_ANYMARK, P_DI, P_DIGIT, P_LETTER, P_WS, codePoints, graphemeCodePoints, isIdentifierAllowed, isWellFormedString, props, utf8Length } from './ucd.js';
 
 /**
  * Nickname rules v2 (docs/CHAT.md). Nicknames are visible to everyone in the live, so they must
@@ -166,17 +166,12 @@ export function validateNickname(raw: unknown, opts: { reserved?: Iterable<strin
   if (letters === 0) return { ok: false, code: 'nickname.chars' };
 
   const value = String.fromCodePoint(...folded);
-  const seg = graphemeSegmenter();
   let count = 0;
-  if (seg) {
-    for (const g of seg.segment(value)) {
-      count++;
-      let marks = 0;
-      for (const ch of g.segment) if (props(ch.codePointAt(0)!) & P_ANYMARK) marks++;
-      if (marks > MAX_MARKS_PER_GRAPHEME) return { ok: false, code: 'nickname.marks' };
-    }
-  } else {
-    for (const cp of folded) if (!(props(cp) & P_ANYMARK)) count++;
+  for (const g of graphemeCodePoints(value)) {
+    count++;
+    let marks = 0;
+    for (const cp of g) if (props(cp) & P_ANYMARK) marks++;
+    if (marks > MAX_MARKS_PER_GRAPHEME) return { ok: false, code: 'nickname.marks' };
   }
   if (count < NICKNAME_MIN) return { ok: false, code: 'nickname.tooShort', params: { min: NICKNAME_MIN } };
   if (count > NICKNAME_MAX || utf8Length(value) > NICKNAME_MAX_BYTES) return { ok: false, code: 'nickname.tooLong', params: { max: NICKNAME_MAX } };

@@ -1,3 +1,4 @@
+import { graphemeBounds } from './grapheme.js';
 import { IDENTIFIER_ALLOWED_RANGES, JOINING_D_RANGES, JOINING_L_RANGES, JOINING_R_RANGES, JOINING_T_RANGES, VIRAMA_RANGES } from './ucd.generated.js';
 
 /**
@@ -211,33 +212,25 @@ export function utf8Length(s: string): number {
   return n;
 }
 
-let segmenter: Intl.Segmenter | null | undefined;
-/** The grapheme segmenter, or null where Intl.Segmenter is missing (Firefox before 125). */
-export function graphemeSegmenter(): Intl.Segmenter | null {
-  if (segmenter === undefined) {
-    try {
-      segmenter = typeof Intl !== 'undefined' && 'Segmenter' in Intl ? new Intl.Segmenter('und', { granularity: 'grapheme' }) : null;
-    } catch {
-      segmenter = null;
-    }
-  }
-  return segmenter;
+/** Graphemes of `s` (UAX #29 extended grapheme clusters, pure TypeScript: grapheme.ts). */
+export function graphemes(s: string): string[] {
+  const cps = codePoints(s);
+  const b = graphemeBounds(cps);
+  const out: string[] = [];
+  for (let i = 0; i + 1 < b.length; i++) out.push(String.fromCodePoint(...cps.slice(b[i], b[i + 1])));
+  return out;
 }
 
-/** Graphemes of `s` (code points per grapheme when no segmenter exists: an over-estimate). */
-export function graphemes(s: string): string[] {
-  const seg = graphemeSegmenter();
-  if (!seg) return codePoints(s).map((cp) => String.fromCodePoint(cp));
-  const out: string[] = [];
-  for (const g of seg.segment(s)) out.push(g.segment);
+/** Graphemes of `s` as code-point arrays. */
+export function graphemeCodePoints(s: string): number[][] {
+  const cps = codePoints(s);
+  const b = graphemeBounds(cps);
+  const out: number[][] = [];
+  for (let i = 0; i + 1 < b.length; i++) out.push(cps.slice(b[i], b[i + 1]));
   return out;
 }
 
 /** Number of graphemes (what users count as characters). */
 export function countGraphemes(s: string): number {
-  const seg = graphemeSegmenter();
-  if (!seg) return codePoints(s).length;
-  let n = 0;
-  for (const _ of seg.segment(s)) n++;
-  return n;
+  return graphemeBounds(codePoints(s)).length - 1;
 }
