@@ -3,7 +3,7 @@
     "What .github/workflows/soak.yml runs: each entry runs `suite` on every runner in `os`, in `jobs` fresh jobs per runner (default 1), each running the suite `repeat` times (default 1; e2e passes it to Playwright as --repeat-each). `args` are added to the suite's command.",
     "Suites: unit, integration, e2e, rust, windows-installer, windows-app, windows-direct, windows-quality, windows-obs, preflight, scripts, desktop-test, desktop-dmg, apt (see scripts/ci/soak-run.mjs for each command).",
     "Edit this file on the branch, push, then add the `soak` label to the pull request (remove and add it again for another soak). Runners: GitHub Free runs 20 jobs at once, 5 of them macOS; the rest queue.",
-    "This plan is the 3-run dry run of every suite type (WP8). The proof counts are in the v0.2.2 plan (MASTER §4.3)."
+    "The entries below run every suite type 3 times: a quick check that each one runs and reports. To measure a failure rate, raise `repeat` or `jobs`: with N clean runs, the soak report gives a 95 % upper bound of about 3/N (rule of three), so 30 runs bound it below 10 %, 60 below 5 %."
   ],
   "suites": [
     { "suite": "unit", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
