@@ -284,6 +284,14 @@ jobs:
           .github/scripts/apt-retry.sh install -y --no-install-recommends $APPIMAGE_HOST_PACKAGES
           deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
           .github/scripts/apt-retry.sh download -y --no-install-recommends "./$deb"
+      # Diagnostics only: one run's first silent NSIS install took 4 min instead of the usual
+      # 15 s (the same installer again: 8 s). This records whether Defender scans what the job
+      # runs, so a repeat can be told apart from a slow VM.
+      - name: Defender state (Windows)
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
+        continue-on-error: true
+        shell: pwsh
+        run: Get-MpComputerStatus | Format-List AMServiceEnabled, AntivirusEnabled, RealTimeProtectionEnabled, OnAccessProtectionEnabled, IoavProtectionEnabled, BehaviorMonitorEnabled
       # The update test serves the real installers with this latest.json on 127.0.0.1 (build A
       # trusts the key that signed them, see _desktop.yml).
       # Linux: a virtual display and a session bus (WebKitGTK and the tray talk D-Bus), without
