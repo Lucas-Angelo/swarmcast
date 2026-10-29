@@ -1,21 +1,24 @@
 {
   "$comment": [
-    "TEMPORARY (WP11 calibration soak of release/0.2.2; reverted after the soak). macOS-heavy rows first, so the 5 macOS slots start on them.",
-    "E2E flake hunt: every project, 10 jobs x --repeat-each=2 = 20 runs per test per OS, --retries=1 --fail-on-flaky-tests. barely-delivers: 20 runs per OS with --retries=0 (Chromium only: the test needs CDP)."
+    "What .github/workflows/soak.yml runs: each entry runs `suite` on every runner in `os`, in `jobs` fresh jobs per runner (default 1), each running the suite `repeat` times (default 1; e2e passes it to Playwright as --repeat-each). `args` are added to the suite's command.",
+    "Suites: unit, integration, e2e, rust, windows-installer, windows-app, windows-direct, windows-quality, windows-obs, preflight, scripts, desktop-test, desktop-dmg, apt (see scripts/ci/soak-run.mjs for each command).",
+    "Edit this file on the branch, push, then add the `soak` label to the pull request (remove and add it again for another soak). Runners: GitHub Free runs 20 jobs at once, 5 of them macOS; the rest queue.",
+    "The entries below run every suite type 3 times: a quick check that each one runs and reports. To measure a failure rate, raise `repeat` or `jobs`: with N clean runs, the soak report gives a 95 % upper bound of about 3/N (rule of three), so 30 runs bound it below 10 %, 60 below 5 %."
   ],
   "suites": [
-    { "suite": "e2e", "label": "hunt", "os": ["macos-latest", "ubuntu-24.04"], "jobs": 10, "repeat": 2, "args": ["--retries=1", "--fail-on-flaky-tests"] },
-    { "suite": "e2e", "label": "barely", "os": ["macos-latest", "ubuntu-24.04"], "jobs": 2, "repeat": 10, "args": ["--project=chromium", "--grep", "barely delivers", "--retries=0"] },
-    { "suite": "desktop-test", "os": ["macos-latest", "macos-15-intel", "windows-latest", "ubuntu-22.04", "ubuntu-24.04", "ubuntu-24.04-arm"], "jobs": 5 },
-    { "suite": "preflight", "os": ["macos-latest", "macos-15-intel", "windows-latest", "ubuntu-22.04", "ubuntu-24.04"], "repeat": 10 },
-    { "suite": "unit", "os": ["macos-latest", "ubuntu-24.04", "windows-latest"], "repeat": 30 },
-    { "suite": "integration", "os": ["macos-latest", "ubuntu-24.04", "windows-latest"], "jobs": 2, "repeat": 15 },
-    { "suite": "scripts", "os": ["macos-latest", "ubuntu-24.04", "windows-latest"], "repeat": 10 },
-    { "suite": "rust", "os": ["macos-latest", "ubuntu-22.04", "windows-latest"], "repeat": 10 },
-    { "suite": "windows-installer", "os": ["windows-latest"], "jobs": 10 },
-    { "suite": "windows-app", "os": ["windows-latest"], "jobs": 10 },
-    { "suite": "windows-direct", "os": ["windows-latest"], "jobs": 10 },
-    { "suite": "windows-quality", "os": ["windows-latest"], "jobs": 10 },
-    { "suite": "windows-obs", "os": ["windows-latest"], "jobs": 10 }
+    { "suite": "unit", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "integration", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "rust", "os": ["ubuntu-22.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "e2e", "os": ["ubuntu-24.04", "macos-latest"], "repeat": 3, "args": ["--project=chromium"] },
+    { "suite": "windows-installer", "os": ["windows-latest"], "jobs": 3 },
+    { "suite": "windows-app", "os": ["windows-latest"], "jobs": 3 },
+    { "suite": "windows-direct", "os": ["windows-latest"], "jobs": 3 },
+    { "suite": "windows-quality", "os": ["windows-latest"], "jobs": 3 },
+    { "suite": "windows-obs", "os": ["windows-latest"], "jobs": 3 },
+    { "suite": "preflight", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "scripts", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "desktop-test", "os": ["ubuntu-24.04", "macos-latest", "windows-latest"], "repeat": 3 },
+    { "suite": "desktop-dmg", "os": ["macos-latest"], "repeat": 3 },
+    { "suite": "apt", "os": ["ubuntu-22.04", "ubuntu-24.04"], "jobs": 3 }
   ]
 }
