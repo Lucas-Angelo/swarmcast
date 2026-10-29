@@ -72,7 +72,7 @@ fi
 [ -n "$RELEASE" ] && [ -f "$RELEASE/SHA256SUMS.txt" ] && [ -f "$RELEASE/start-linux.sh" ] ||
   { echo "Release folder not found (need SHA256SUMS.txt and start-linux.sh). Use --release DIR." >&2; exit 2; }
 RELEASE="$(cd "$RELEASE" && pwd)"
-VERSION="$(sed -nE 's/^[0-9a-f]{64} [ *]?SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+)-linux-(arm64|x64)\.tar\.gz$/\1/p' "$RELEASE/SHA256SUMS.txt" | head -n1)"
+VERSION="$(sed -nE 's/^[0-9a-f]{64} [ *]?SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)-linux-(arm64|x64)\.tar\.gz$/\1/p' "$RELEASE/SHA256SUMS.txt" | head -n1)"
 [ -n "$VERSION" ] || { echo "No linux package in $RELEASE/SHA256SUMS.txt" >&2; exit 2; }
 # Each target needs the package of its own architecture (the Docker host's, or x64 for @amd64).
 HOST_ARCH="$(docker version -f '{{.Server.Arch}}')" || exit 2

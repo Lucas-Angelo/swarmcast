@@ -378,13 +378,32 @@ mbps_of_bps() { awk -v b="$1" 'BEGIN { printf "%.1f", b * 8 / 1000000 }'; }
 # num_ge A B -> true when A >= B (floating point)
 num_ge() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a + 0 >= b + 0) }'; }
 
-# ver_gt A B -> true when version A (X.Y.Z) is newer than version B
+# ver_gt A B -> true when version A is newer than version B, by SemVer 2.0.0 precedence:
+# 0.3.0-beta.2 < 0.3.0-beta.11 < 0.3.0-rc.1 < 0.3.0 (a pre-release is older than its release).
 ver_gt() {
-  awk -v a="$1" -v b="$2" 'BEGIN {
-    split(a, x, "."); split(b, y, ".")
-    for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
-    exit 1
-  }'
+  LC_ALL=C awk -v a="$1" -v b="$2" '
+    function cmp(a, b,   ca, cb, pa, pb, x, y, n, m, i, k) {
+      sub(/\+.*/, "", a); sub(/\+.*/, "", b)
+      ca = a; pa = ""; k = index(a, "-"); if (k > 0) { ca = substr(a, 1, k - 1); pa = substr(a, k + 1) }
+      cb = b; pb = ""; k = index(b, "-"); if (k > 0) { cb = substr(b, 1, k - 1); pb = substr(b, k + 1) }
+      split(ca, x, "."); split(cb, y, ".")
+      for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) return 1; if (x[i] + 0 < y[i] + 0) return -1 }
+      if (pa == "" && pb == "") return 0
+      if (pa == "") return 1
+      if (pb == "") return -1
+      n = split(pa, x, "."); m = split(pb, y, ".")
+      for (i = 1; i <= n || i <= m; i++) {
+        if (i > n) return -1
+        if (i > m) return 1
+        if (x[i] "" == y[i] "") continue
+        if (x[i] ~ /^[0-9]+$/ && y[i] ~ /^[0-9]+$/) return (x[i] + 0 > y[i] + 0) ? 1 : -1
+        if (x[i] ~ /^[0-9]+$/) return -1
+        if (y[i] ~ /^[0-9]+$/) return 1
+        return (x[i] "" > y[i] "") ? 1 : -1
+      }
+      return 0
+    }
+    BEGIN { exit !(cmp(a, b) > 0) }'
 }
 
 gb_of_mb() { awk -v m="$1" 'BEGIN { printf "%.1f GB", m / 1024 }'; }
@@ -699,7 +718,8 @@ check_network() {
 # Finds this platform's package in a GNU-format SHA256SUMS file.
 parse_sums() {
   local re line hash name
-  re="^SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+)-${SC_OS}-${ARCH}\.tar\.gz$"
+  # X.Y.Z or a pre-release X.Y.Z-beta.N / X.Y.Z-rc.N (the beta versions).
+  re="^SwarmCast-v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)-${SC_OS}-${ARCH}\.tar\.gz$"
   while IFS= read -r line || [ -n "$line" ]; do
     line="${line%$'\r'}"
     hash="${line%% *}"
@@ -930,8 +950,13 @@ install_or_update() {
     ok "Already up to date (v$installed)"
     return 0
   fi
-  if [ "$SOURCE" = local ] && [ -n "$installed" ] && ver_gt "$installed" "$PKG_VERSION"; then
-    ok "Already up to date (v$installed; the local bundle has the older v$PKG_VERSION, so it is not used)"
+  # Never a downgrade (settings are migrated one way only): a beta stays until a newer version.
+  if [ -n "$installed" ] && ver_gt "$installed" "$PKG_VERSION"; then
+    if [ "$SOURCE" = local ]; then
+      ok "Already up to date (v$installed; the local bundle has the older v$PKG_VERSION, so it is not used)"
+    else
+      ok "Already up to date (v$installed; the release has the older v$PKG_VERSION, so it is not installed)"
+    fi
     return 0
   fi
 

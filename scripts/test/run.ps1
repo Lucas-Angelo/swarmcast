@@ -626,6 +626,66 @@ try {
   Assert-Absent (Join-Path $Data 'app\current')
   Assert-TmpEmpty
   End-Case
+
+  # --- 12. pre-releases (the beta channel: X.Y.Z-beta.N, X.Y.Z-rc.N) -----------
+  Begin-Case '12a. version order is SemVer: a pre-release is older than its release'
+  $src = [IO.File]::ReadAllText($Script)
+  $fn = [regex]::Match($src, '(?ms)^function Test-NewerVersion\b.*?^\}').Value
+  Invoke-Expression $fn
+  foreach ($c in @('0.3.0 0.3.0-beta.1 True', '0.3.0-beta.1 0.3.0 False', '0.3.0-beta.11 0.3.0-beta.2 True', '0.3.0-beta.2 0.3.0-beta.11 False',
+      '0.3.0-rc.1 0.3.0-beta.11 True', '0.3.0-beta.1 0.2.9 True', '0.2.9 0.3.0-beta.1 False', '0.3.0 0.3.0 False', '0.3.0-rc.1 0.3.0-rc.1 False',
+      '0.10.0 0.9.0 True', '1.0.0-alpha.1 1.0.0-alpha True', '1.0.0-alpha.beta 1.0.0-alpha.1 True', '1.0.0-beta 1.0.0-alpha.beta True',
+      'garbage 0.1.0 False', '0.1.0 garbage True')) {
+    $a, $b, $want = $c.Split(' ')
+    Assert-Eq ([string](Test-NewerVersion $a $b)) $want "Test-NewerVersion $a $b"
+  }
+  End-Case
+
+  Begin-Case '12b. a beta installer zip installs (0.4.0-beta.2)'
+  $Data = Join-Path $Work 'beta home'
+  New-Bundle '0.4.0-beta.2' $ClosedUrl
+  Invoke-Bundle ($Common + '--install-only')
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out "(v0.4.0-beta.2)" 'the bundle is read with its pre-release version'
+  Assert-Contains $script:Out 'Installing SwarmCast v0.4.0-beta.2'
+  Assert-Eq (Read-Text (Join-Path $Data 'app\current\VERSION')) '0.4.0-beta.2' 'current\VERSION is 0.4.0-beta.2'
+  Assert-TmpEmpty
+  End-Case
+
+  Begin-Case '12c. beta.11 is newer than beta.2; an older beta does not downgrade'
+  New-Bundle '0.4.0-beta.11' $ClosedUrl
+  Invoke-Bundle ($Common + '--install-only')
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out 'Updating SwarmCast v0.4.0-beta.2 -> v0.4.0-beta.11'
+  New-Bundle '0.4.0-beta.2' $ClosedUrl
+  Invoke-Bundle ($Common + '--install-only')
+  Assert-Contains $script:Out 'Already up to date (v0.4.0-beta.11; the local bundle has the older v0.4.0-beta.2'
+  Assert-Eq (Read-Text (Join-Path $Data 'app\current\VERSION')) '0.4.0-beta.11' 'current is still 0.4.0-beta.11'
+  End-Case
+
+  Begin-Case '12d. the latest stable release, older than the installed beta, is never installed over it'
+  New-Release '0.3.9'
+  Set-Content -LiteralPath $ReqLog -Value '' -NoNewline
+  Invoke-Installer $Url ($Common + '--install-only')
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out 'Already up to date (v0.4.0-beta.11; the release has the older v0.3.9, so it is not installed)'
+  Assert-NotContains (Read-Text $ReqLog) "GET /$(Get-Pkg '0.3.9')" 'the older package is not downloaded'
+  Assert-Eq (Read-Text (Join-Path $Data 'app\current\VERSION')) '0.4.0-beta.11' 'current is still 0.4.0-beta.11'
+  End-Case
+
+  Begin-Case '12e. the stable release of the beta replaces it; online stable wins over an rc bundle'
+  New-Release '0.4.0'
+  Invoke-Installer $Url ($Common + '--install-only')
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out 'Updating SwarmCast v0.4.0-beta.11 -> v0.4.0'
+  Assert-Eq (Read-Text (Join-Path $Data 'app\current\VERSION')) '0.4.0' 'current\VERSION is 0.4.0'
+  $Data = Join-Path $Work 'rc home'
+  New-Bundle '0.4.0-rc.1' $Url
+  Invoke-Bundle ($Common + '--install-only')
+  Assert-Contains $script:Out 'A newer version v0.4.0 is available online'
+  Assert-Eq (Read-Text (Join-Path $Data 'app\current\VERSION')) '0.4.0' 'current\VERSION is 0.4.0'
+  Assert-TmpEmpty
+  End-Case
   $Data = $savedData
 
   # --- 7. usage ----------------------------------------------------------------

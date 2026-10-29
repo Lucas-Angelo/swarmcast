@@ -517,9 +517,36 @@ function Test-GitHub([switch]$Once) {
   }
 }
 
-# Finds this platform's package in a GNU-format SHA256SUMS file.
+# True when version A is newer than version B, by SemVer 2.0.0 precedence:
+# 0.3.0-beta.2 < 0.3.0-beta.11 < 0.3.0-rc.1 < 0.3.0 (a pre-release is older than its release).
+# [version] cannot read a pre-release ("0.3.0-beta.1"). Unreadable versions are never newer.
+function Test-NewerVersion([string]$A, [string]$B) {
+  $re = '^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$'
+  if ($A.Trim() -notmatch $re) { return $false }
+  $x = @([long]$Matches[1], [long]$Matches[2], [long]$Matches[3]); $p = @(); if ($Matches[4]) { $p = @($Matches[4].Split('.')) }
+  if ($B.Trim() -notmatch $re) { return $true }
+  $y = @([long]$Matches[1], [long]$Matches[2], [long]$Matches[3]); $q = @(); if ($Matches[4]) { $q = @($Matches[4].Split('.')) }
+  for ($i = 0; $i -lt 3; $i++) {
+    if ($x[$i] -ne $y[$i]) { return ($x[$i] -gt $y[$i]) }
+  }
+  if ($p.Count -eq 0 -or $q.Count -eq 0) { return ($p.Count -eq 0 -and $q.Count -gt 0) }
+  for ($i = 0; $i -lt [Math]::Max($p.Count, $q.Count); $i++) {
+    if ($i -ge $p.Count) { return $false }
+    if ($i -ge $q.Count) { return $true }
+    $s = $p[$i]; $t = $q[$i]
+    if ($s -ceq $t) { continue }
+    $an = $s -match '^\d+$'; $bn = $t -match '^\d+$'
+    if ($an -and $bn) { return ([long]$s -gt [long]$t) }
+    if ($an -or $bn) { return $bn }
+    return ([string]::CompareOrdinal($s, $t) -gt 0)
+  }
+  return $false
+}
+
+# Finds this platform's package in a GNU-format SHA256SUMS file: X.Y.Z, or a pre-release
+# X.Y.Z-beta.N / X.Y.Z-rc.N (the beta versions).
 function Find-Package([string]$SumsFile, [string]$Arch) {
-  $re = '^SwarmCast-v(\d+\.\d+\.\d+)-windows-' + [regex]::Escape($Arch) + '\.zip$'
+  $re = '^SwarmCast-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-windows-' + [regex]::Escape($Arch) + '\.zip$'
   foreach ($line in [System.IO.File]::ReadAllLines($SumsFile)) {
     $l = $line.Trim()
     if ($l -notmatch '^([0-9a-fA-F]{64}) [ *]?(.+)$') { continue }
@@ -576,7 +603,7 @@ function Test-Release {
         Save-Url "$SC_DefaultReleaseUrl/SHA256SUMS.txt" $online 30
         $script:OnlineState = 'same'
         $remote = Find-Package $online $script:ArchInfo.Arch
-        if ($remote -and ([version]$remote.Version -gt [version]$local.Version)) {
+        if ($remote -and (Test-NewerVersion $remote.Version $local.Version)) {
           $script:OnlineState = 'newer'
           $script:Source = 'online'
           $script:ReleaseUrl = $SC_DefaultReleaseUrl.TrimEnd('/')
@@ -866,8 +893,13 @@ function Install-OrUpdate {
     Say-Ok "Already up to date (v$installed)"
     return
   }
-  if ($script:Source -eq 'local' -and $installed -and ([version]$installed -gt [version]$script:Package.Version)) {
-    Say-Ok "Already up to date (v$installed; the local bundle has the older v$($script:Package.Version), so it is not used)"
+  # Never a downgrade (settings are migrated one way only): a beta stays until a newer version.
+  if ($installed -and (Test-NewerVersion $installed $script:Package.Version)) {
+    if ($script:Source -eq 'local') {
+      Say-Ok "Already up to date (v$installed; the local bundle has the older v$($script:Package.Version), so it is not used)"
+    } else {
+      Say-Ok "Already up to date (v$installed; the release has the older v$($script:Package.Version), so it is not installed)"
+    }
     return
   }
   if ($installed) {
