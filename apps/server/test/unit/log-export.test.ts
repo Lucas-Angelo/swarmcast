@@ -204,6 +204,73 @@ describe('log export', () => {
   });
 });
 
+describe('anonymiser: partial IPv6 and host names', () => {
+  const salt = Buffer.alloc(32, 7);
+
+  it('masks bare IPv6 prefixes (3+ groups without "::") with the label of the prefix', () => {
+    const a = new Anonymizer({ salt });
+    const prefix = a.ipLabel('2804:1b3:61c1:c649::');
+    expect(a.text('home network 2804:1b3:61c1:c649 is up')).toBe(`home network ${prefix} is up`);
+    expect(a.text('route 2804:1b3:61c1:c649/64 via 2804:1b3:61c1:c649::/64')).toBe(`route ${prefix}/64 via ${prefix}/64`);
+    for (const s of ['2804:1b3:61c1', '2001:db8:aa:bb:cc', 'fd12:3456:789a:1', 'fe80:1:2:3', '2804:1B3:61C1:C649:1234:5678:9']) {
+      expect(a.text(`x ${s} y`), s).toMatch(/^x ip-[0-9a-f]{8} y$/);
+    }
+    // An unbracketed full address with a port still loses the address.
+    expect(a.text('peer 2001:db8:85a3:1:2:8a2e:370:7334:443')).toMatch(/^peer ip-[0-9a-f]{8}:443$/);
+    expect(new Anonymizer({ salt, includeFullIps: true }).text('2804:1b3:61c1:c649')).toBe('2804:1b3:61c1:c649');
+  });
+
+  it('keeps times, MAC addresses, fingerprints, hashes, UUIDs and file positions intact', () => {
+    const a = new Anonymizer({ salt });
+    for (const s of [
+      '2026-10-26T12:34:56.789Z',
+      'at 12:34:56 and 23:59:59.5',
+      'elapsed 2000:00:00',
+      'mac aa:bb:cc:dd:ee:ff and 2c:54:91:88:c9:e3',
+      'fingerprint 3A:4B:5C:6D:7E:8F:90:A1:B2:C3:D4:E5:F6:07:18:29:3A:4B:5C:6D',
+      'sha256 2a3f9c0e1b7d4f6a8c2e5b9d0f1a3c5e7b9d1f3a5c7e9b1d3f5a7c9e1b3d5f7a',
+      'digest sha256:2a3f9c0e1b7d4f6a and git 3f2a1b0c9d8e',
+      'uuid 2b1e4f6a-1c2d-4e5f-8a9b-0c1d2e3f4a5b',
+      'at run (/app/dist/swarmcast.cjs:2345:67) and bundle.cjs:3000:12:5',
+      'version 0.2.1, segment v1_seg2345.mp4, ratio 16:9, port 8080',
+    ]) {
+      expect(a.text(s), s).toBe(s);
+    }
+  });
+
+  it('hashes local, dynamic-DNS and custom host names; keeps the services SwarmCast uses', () => {
+    const a = new Anonymizer({ salt, hostnames: ['https://stream.minha-casa.example.net:8443/', 'Anas-MacBook-Pro', 'server'] });
+    const out = a.text(
+      'mDNS Anas-MacBook-Pro.local, printer.lan, nas.home.arpa, myhome.duckdns.org, casa.ddns.net, https://stream.minha-casa.example.net:8443/x, mail me@private-box.com.br',
+    );
+    expect(out).toMatch(/^mDNS host-[0-9a-f]{8}\.local, host-[0-9a-f]{8}\.lan, host-[0-9a-f]{8}\.home\.arpa, host-[0-9a-f]{8}\.duckdns\.org, host-[0-9a-f]{8}\.ddns\.net, https:\/\/host-[0-9a-f]{8}:8443\/x, mail me@host-[0-9a-f]{8}$/);
+    for (const leaked of ['Anas', 'MacBook', 'printer', 'myhome', 'casa', 'minha-casa', 'private-box']) expect(out).not.toContain(leaked);
+    // One name, one label (also across forms and case).
+    expect(a.text('stream.minha-casa.example.net')).toBe(a.text('STREAM.minha-casa.example.net'));
+    expect(a.text('Anas-MacBook-Pro said hi')).toBe(`${a.hostLabel('anas-macbook-pro')} said hi`);
+    // A plain word given as the computer name is not hunted through the text.
+    expect(a.text('the public server started')).toBe('the public server started');
+    const kept =
+      'https://github.com/Lucas-Angelo/swarmcast speed.cloudflare.com [tunnel].trycloudflare.com objects.githubusercontent.com ' +
+      'acme-v02.api.letsencrypt.org www.spamhaus.org iplists.firehol.org ffmpeg.martin-riedl.de lucas-angelo.github.io obsproject.com';
+    expect(a.text(kept)).toBe(kept);
+  });
+
+  it('leaves code, files and prose that only look dotted alone', () => {
+    const a = new Anonymizer({ salt });
+    for (const s of [
+      'at Logger.info (pino.js:12:3) this.access.live err.message process.env',
+      'README.md swarmcast.cjs index.m3u8 config.json desktop.log.1 p2p-media-loader-core.es.js SwarmCast.app hls.js node:fs',
+      'e.g. i.e. v0.2.1 Node.js 24, see example.com.json',
+    ]) {
+      expect(a.text(s), s).toBe(s);
+    }
+    // JSON log lines stay valid JSON with host names inside.
+    const line = a.line(JSON.stringify({ level: 'info', msg: 'tunnel up', url: 'https://cam.duckdns.org/live', host: 'Anas-MacBook-Pro.local' }));
+    expect(JSON.parse(line)).toMatchObject({ url: expect.stringMatching(/^https:\/\/host-[0-9a-f]{8}\.duckdns\.org\/live$/), host: expect.stringMatching(/^host-[0-9a-f]{8}\.local$/) });
+  });
+});
+
 describe('export file', () => {
   it('is named after the version and the local time', () => {
     const t = new Date(2026, 9, 26, 9, 5).getTime();

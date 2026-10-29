@@ -115,6 +115,8 @@ export class Diagnostics {
         ...snap.viewers.flatMap((v) => [v.sessionId, ...v.peerIds]),
       ],
       nicknames: snap.viewers.map((v) => v.nickname),
+      // A custom tunnel's address and this computer's name (it often carries the owner's name).
+      hostnames: [this.o.config.tunnel.externalUrl, snap.tunnelUrl, os.hostname()],
     });
     const built = await buildLogExport({
       logsDir: this.o.paths.logsDir,
