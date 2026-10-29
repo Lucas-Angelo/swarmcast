@@ -8,10 +8,23 @@ describe('fallbackReason', () => {
   it('leaves fragments that are far ahead to P2P', () => {
     expect(fallbackReason({ ...base, pendingMs: 10_000 })).toBeNull();
   });
-  it('takes an urgent fragment back after the grace period when the core is idle or on P2P', () => {
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 500 })).toBeNull();
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800 })).toBe('urgent');
-    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800, attempt: { source: 'p2p', peerId: 'x', since: 0 } })).toBe('urgent');
+  it('takes an urgent fragment the core is not fetching at all (idle) at once', () => {
+    // After the stall watchdog's reload the idle core held each start-up fragment for the whole
+    // grace: 2 x 750 ms of the 2.7 s back to playing, then 750 ms on every 1 s audio segment.
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 0 })).toBe('urgent');
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 0, pendingMs: 250 })).toBe('urgent');
+  });
+  it('gives a peer that is sending an urgent fragment the grace period first', () => {
+    const p2p = { source: 'p2p' as const, peerId: 'x', since: 0 };
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 500, attempt: p2p })).toBeNull();
+    expect(fallbackReason({ ...base, secondsUntilNeeded: 2, pendingMs: 800, attempt: p2p })).toBe('urgent');
+  });
+  it('a healthy, buffered viewer leaves what it fetches ahead to P2P, idle core or not (no extra HTTP load)', () => {
+    // 20 s behind live with a full buffer, hls.js asks for fragments well past urgentS.
+    for (const secondsUntilNeeded of [6, 10, 18]) {
+      expect(fallbackReason({ ...base, secondsUntilNeeded, pendingMs: 5_000 })).toBeNull();
+      expect(fallbackReason({ ...base, secondsUntilNeeded, pendingMs: 5_000, attempt: { source: 'p2p', peerId: 'x', since: 0 } })).toBeNull();
+    }
   });
   it('treats a fragment the playhead already passed (slid out, after a seek) as urgent', () => {
     expect(fallbackReason({ ...base, secondsUntilNeeded: -15, pendingMs: 1000 })).toBe('urgent');
