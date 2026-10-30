@@ -460,3 +460,57 @@ the chat stopped itself.
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
 | Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
+| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
+| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+
+## Load and soak
+
+The chat bench ([`scripts/test/chat/bench.ts`](../scripts/test/chat/bench.ts)) runs the real public
+server and chat hub in one process (fake MediaMTX, a fake quick tunnel on 127.0.0.1, port 0, no data
+folder) and its bots in another ([`bots.ts`](../scripts/test/chat/bots.ts)). Each bot joins like a
+browser behind its own address and holds `/control`. The bench samples the server every second (CPU,
+event-loop utilisation and p99 delay, RSS, chat upload against the budget, accepted messages, G,
+protection, tunnel in-flight) and checks each scenario after a 5 s calm baseline:
+
+| Scenario | Bots | Behaviour | Must hold |
+|---|---|---|---|
+| quiet / lively | 120 | 0.5 / 3 msg/s overall | delivery p95 ≤ 1 s; no refusal, no protection, nothing skipped |
+| flood | 120 | every bot at the highest rate its socket allows | accepted ≤ G; the flood is limited |
+| raid | 120 + 60 joining in 30 s | the newcomers chat at once at their maximum | protection reaches slow or lockdown; chat never rotates the link |
+| zalgo | 50 | the corpus at the highest rate | server CPU p95 ≤ 50 % of a core |
+| slow-readers | 120, 20 of them stop reading | normal chat | RSS grows ≤ 30 MB; the others get their messages within 1.5 s |
+| dup-storm | 60 | the same text | repeats refused or detected |
+| gif-spam | 30 | GIFs as fast as allowed | at most one GIF per 30 s per viewer |
+| reconnect-storm | 120 | everyone drops and reconnects at once (`?chatAfter`) | everyone gets their hello back within 10 s |
+
+In every scenario: no bot that keeps to the limits loses its socket, the event-loop p99 stays within
+30 ms of calm, chat adds no connection, and chat upload stays within its budget (twice the budget while
+many viewers join or reconnect, since their hellos are sent at once and charged afterwards).
+
+```sh
+node --import tsx scripts/test/chat/bench.ts --scenario lively,flood   # or all; --seconds 30
+```
+
+Results: `test-results/chat-bench/<scenario>.json` (every sample) and `summary.md`.
+
+**On demand in CI** (never on every push):
+
+- [`chat-load.yml`](../.github/workflows/chat-load.yml): the `chat-load` label on a pull request, by
+  hand, monthly. The bench on Ubuntu and Windows; the property tests at 1,000,000 runs and the
+  exhaustive 24-bit colour sweeps of chat names and the page theme (`CHAT_EXHAUSTIVE=1`).
+- [`rendering.yml`](../.github/workflows/rendering.yml): the `rendering` label, by hand, monthly. The
+  corpus and the chat UI in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone
+  and Pixel emulation, with a screenshot per engine.
+- Soak ([`.github/soak-plan.json`](../.github/soak-plan.json)): the chat, nickname and branding E2E
+  specs 20 times on Ubuntu and macOS, and the bench (`chat-load` suite) 3 times on Ubuntu and Windows.
+
+## Rendering checks
+
+Before a release, by hand: a real iPhone and iPad (current iOS), an older iPhone if there is one, a mid
+and a low-end Android phone (Chrome and Samsung Internet), Windows 10 and 11 (Edge, Chrome, Firefox),
+macOS Safari, Ubuntu Firefox, and the desktop app's panel on each OS. Each one opens a live with the
+corpus posted in the chat and 50 bots chatting, and must stay responsive (scrolling and typing within
+100 ms), never crash or reload, keep every glyph inside its message box, and show the bidi cases
+isolated.
