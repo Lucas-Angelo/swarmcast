@@ -18,9 +18,10 @@ export interface BotStats {
   bots: number;
   sent: number;
   acks: number;
-  rejects: Record<string, number>;
+  /** Reject code → count (pairs: codes come from the network, so never object keys). */
+  rejects: Array<[string, number]>;
   /** Sockets the server closed (code → count); a bot that keeps to the limits must never see one. */
-  closedByServer: Record<string, number>;
+  closedByServer: Array<[string, number]>;
   /** Delivery latency (server receive → bot receive) seen by the observer bots, ms. */
   latencies: number[];
   /** Messages the server told observers it skipped for them (skip items). */
@@ -54,8 +55,10 @@ class Bot {
   }
 }
 
-const stats: BotStats = { bots: 0, sent: 0, acks: 0, rejects: {}, closedByServer: {}, latencies: [], skipped: 0, delivered: 0, maxGifAcksPerBot: 0, reconnected: 0, reconnectMaxMs: 0, joinFailures: 0 };
+const stats: BotStats = { bots: 0, sent: 0, acks: 0, rejects: [], closedByServer: [], latencies: [], skipped: 0, delivered: 0, maxGifAcksPerBot: 0, reconnected: 0, reconnectMaxMs: 0, joinFailures: 0 };
 const bots: Bot[] = [];
+const rejects = new Map<string, number>();
+const closedByServer = new Map<string, number>();
 let base = '';
 let link = '';
 let scenario: Scenario;
@@ -94,7 +97,7 @@ async function connect(bot: Bot): Promise<void> {
       else if (m.t === 'chat.ack') {
         bot.acks++;
         stats.acks++;
-      } else if (m.t === 'chat.reject') stats.rejects[m.code] = (stats.rejects[m.code] ?? 0) + 1;
+      } else if (m.t === 'chat.reject') rejects.set(String(m.code), (rejects.get(String(m.code)) ?? 0) + 1);
       else if (m.t === 'chat.batch' && isObserver(bot)) {
         const now = Date.now();
         for (const it of m.items) {
@@ -107,7 +110,7 @@ async function connect(bot: Bot): Promise<void> {
     });
   });
   ws.on('close', (code) => {
-    if (!bot.closing && ws === bot.ws) stats.closedByServer[code] = (stats.closedByServer[code] ?? 0) + 1;
+    if (!bot.closing && ws === bot.ws) closedByServer.set(String(code), (closedByServer.get(String(code)) ?? 0) + 1);
   });
   await hello;
   if (bot.i < (scenario.slowReaders ?? 0)) (ws as unknown as { _socket: net.Socket })._socket.pause();
@@ -228,6 +231,8 @@ process.on('message', (msg: { type: 'start'; base: string; link: string; scenari
     void joinAll(0, scenario.bots, 8).then(() => process.send!({ type: 'joined', bots: stats.bots, joinFailures: stats.joinFailures }));
   } else if (msg.type === 'go') {
     void run().then(() => {
+      stats.rejects = [...rejects];
+      stats.closedByServer = [...closedByServer];
       process.send!({ type: 'done', stats }, () => process.exit(0));
     });
   }

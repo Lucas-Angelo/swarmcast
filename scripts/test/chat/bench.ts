@@ -193,7 +193,9 @@ async function runScenario(sc: Scenario): Promise<Result> {
     const rssGrowth = Math.max(...run.map((s) => s.rssMb)) - mean(base0.map((s) => s.rssMb));
     const protects = new Set(run.map((s) => s.protect.split(':')[0]!));
     const protectStates = new Set(run.map((s) => s.protect));
-    const closed = Object.values(bots.closedByServer).reduce((a, b) => a + b, 0);
+    const rejects = new Map(bots.rejects);
+    const rejected = [...rejects.values()].reduce((a, b) => a + b, 0);
+    const closed = bots.closedByServer.reduce((a, [, n]) => a + n, 0);
     const inflightBase = Math.max(...base0.map((s) => s.tunnelInFlight));
     const inflightRun = Math.max(...run.map((s) => s.tunnelInFlight));
 
@@ -212,13 +214,13 @@ async function runScenario(sc: Scenario): Promise<Result> {
         check(bots.delivered > 0, 'no message delivered');
         // Normal chat is never treated as a flood (no false positives, chat plan §6.3).
         check(!protects.has('slow') && !protects.has('lockdown'), `normal chat switched protection on (${[...protectStates].join(' ')})`);
-        check(Object.values(bots.rejects).reduce((a, b) => a + b, 0) <= Math.ceil(bots.sent * 0.02), `normal chat was refused: ${JSON.stringify(bots.rejects)}`);
+        check(rejected <= Math.ceil(bots.sent * 0.02), `normal chat was refused: ${JSON.stringify(bots.rejects)}`);
         // Far below the budget, every accepted message reaches everyone.
         check(bots.skipped <= Math.ceil(bots.delivered * 0.01), `observers missed ${bots.skipped} messages (got ${bots.delivered}) with chat upload at ${egressP95} of ${budget} kbps`);
         break;
       case 'flood':
         check(acceptedP95 <= maxG * 1.25 + 1, `accepted p95 ${acceptedP95}/s over G ${maxG}/s`);
-        check((bots.rejects['chat.err.busy'] ?? 0) + (bots.rejects['chat.err.slow'] ?? 0) > 0, 'the flood was never limited');
+        check((rejects.get('chat.err.busy') ?? 0) + (rejects.get('chat.err.slow') ?? 0) > 0, 'the flood was never limited');
         break;
       case 'raid':
         check(protects.has('slow') || protects.has('lockdown'), `protection never reached slow or lockdown (${[...protects].join(', ')})`);
@@ -232,7 +234,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
         check(lat95 <= 1500, `delivery p95 to readers ${lat95} ms (limit 1500)`);
         break;
       case 'dup-storm':
-        check((bots.rejects['chat.err.dup'] ?? 0) > 0 || protects.has('slow') || protects.has('lockdown'), 'repeats were neither refused nor detected');
+        check((rejects.get('chat.err.dup') ?? 0) > 0 || protects.has('slow') || protects.has('lockdown'), 'repeats were neither refused nor detected');
         break;
       case 'gif-spam': {
         const limit = Math.ceil(sc.seconds / 30) + 1;
@@ -250,7 +252,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
       bots: joined.bots + (sc.raid?.bots ?? 0),
       sent: bots.sent,
       acks: bots.acks,
-      rejected: Object.values(bots.rejects).reduce((a, b) => a + b, 0),
+      rejected,
       'delivery p50 ms': p(bots.latencies, 0.5),
       'delivery p95 ms': lat95,
       'accepted/s p95': acceptedP95,
@@ -263,7 +265,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
       'tunnel in-flight calm/run': `${inflightBase}/${inflightRun}`,
       protection: [...protectStates].join(' '),
       'skipped (observers)': bots.skipped,
-      rejects: Object.entries(bots.rejects)
+      rejects: bots.rejects
         .map(([k, v]) => `${k.replace(/^(chat\.err|text)\./, '')} ${v}`)
         .join(', '),
     };
