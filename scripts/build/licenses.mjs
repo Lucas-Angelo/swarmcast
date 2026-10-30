@@ -4,7 +4,6 @@
 // (crate-licenses.mjs) and what its installers carry, instead of the Go tray helper.
 import fs from 'node:fs';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { crateLicenses } from './crate-licenses.mjs';
 
@@ -13,14 +12,29 @@ const root = path.resolve(here, '..', '..');
 /** The Fredoka licence next to the font files the panel and viewer pages bundle. */
 export const FREDOKA_OFL = path.join(root, 'packages', 'shared', 'web', 'fonts', 'OFL-Fredoka.txt');
 
-function prodPackages() {
-  const out = execFileSync('npm', ['ls', '--omit=dev', '--all', '--parseable', '--workspaces'], {
-    cwd: root,
-    encoding: 'utf8',
-    shell: process.platform === 'win32',
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  return [...new Set(String(out).split(/\r?\n/).filter((p) => p.includes(`${path.sep}node_modules${path.sep}`)))];
+/**
+ * The folders of the npm packages SwarmCast runs with, from a package-lock.json: every workspace's
+ * production dependencies, nested copies included (not dev-only, not a link to a workspace or a
+ * local shim), that are installed (their package.json is there).
+ */
+export function prodPackageDirs(lock, rootDir, exists = (file) => fs.existsSync(file)) {
+  return Object.entries(lock?.packages ?? {})
+    .filter(([key, p]) => key.includes('node_modules/') && !p.dev && !p.link)
+    .map(([key]) => path.join(rootDir, key))
+    .filter((dir) => exists(path.join(dir, 'package.json')));
+}
+
+/**
+ * prodPackageDirs of the repository's package-lock.json; throws when there are none, so a
+ * THIRD_PARTY_LICENSES.txt is never written without them. Read from the lock, not from
+ * `npm ls --parseable`: npm prints a path segment that looks like a UUID as ***, none of those
+ * paths existed, and the error was swallowed: the list shipped with zero npm packages.
+ */
+export function shippedNpmPackages(rootDir = root) {
+  const lockFile = path.join(rootDir, 'package-lock.json');
+  const dirs = prodPackageDirs(JSON.parse(fs.readFileSync(lockFile, 'utf8')), rootDir);
+  if (dirs.length === 0) throw new Error(`no installed production npm package in ${lockFile} (run npm ci first): the licence list would name none`);
+  return dirs;
 }
 
 function licenseText(dir) {
@@ -82,20 +96,9 @@ export function thirdPartyLicenses({ desktop } = {}) {
     'Copyright © 1991-2025 Unicode, Inc. The emoji themselves are drawn by the operating system, not shipped.',
     '',
   ];
-  let pkgs = [];
-  try {
-    pkgs = prodPackages();
-  } catch {
-    pkgs = [];
-  }
   const seen = new Set();
-  for (const dir of pkgs.sort()) {
-    let pj;
-    try {
-      pj = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
-    } catch {
-      continue;
-    }
+  for (const dir of shippedNpmPackages().sort()) {
+    const pj = JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
     const id = `${pj.name}@${pj.version}`;
     if (seen.has(id) || pj.name?.startsWith('@swarmcast/') || pj.private) continue;
     seen.add(id);
