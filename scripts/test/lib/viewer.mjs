@@ -96,19 +96,26 @@ export function playlistSeconds(page) {
 }
 
 /**
- * Waits until a viewer who joins now starts on segments the viewers already watching have
- * played (and can share over P2P): the live's playlist covers the player's live sync distance
- * (hls.js liveSyncDuration, 20 s in the Stable profile) plus two segments. A new playlist is
- * shorter than that, and a viewer joining then starts at its live edge, beside the others.
+ * Seconds of video the live's playlist holds before a viewer who joins starts at the Stable
+ * profile's full live sync distance: 20 s (PLAYER_LIVE_DELAYS.stable, packages/shared/src/
+ * constants.ts) plus four 2 s segments, below which latencyFor (apps/viewer/src/player-config.ts)
+ * shortens the distance to fit the window. Not the page's current liveSyncDuration: that is the
+ * shortened one, and a viewer who joined a young live with it started beside the others, played
+ * in step with them and never got a segment over P2P (preflight on a real Mac, 3 of 3).
  */
-export async function waitPlaylistCoversSync(page, timeoutMs = 120_000) {
-  const syncS = await page.evaluate(() => window.__hls?.config?.liveSyncDuration ?? 20);
-  const need = syncS + 4;
+export const LATE_JOINER_WINDOW_S = 28;
+
+/**
+ * Waits until a viewer who joins now starts well behind the viewers already watching (they
+ * started near the live edge of a young live), on segments they have played and can share over
+ * P2P: the live's playlist, read from `page`, holds LATE_JOINER_WINDOW_S.
+ */
+export async function waitPlaylistForLateJoiners(page, timeoutMs = 120_000) {
   let held = 0;
-  await poll(async () => (held = await playlistSeconds(page)) >= need, {
+  await poll(async () => (held = await playlistSeconds(page)) >= LATE_JOINER_WINDOW_S, {
     timeoutMs,
     everyMs: 1000,
-    what: `the live's playlist to cover ${need} s (live sync ${syncS} s + two segments)`,
+    what: `the live's playlist to hold ${LATE_JOINER_WINDOW_S} s`,
     detail: () => `it holds ${held.toFixed(1)} s`,
   });
   return held;

@@ -17,7 +17,7 @@ import {
   ART, appLog, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
   killTree, killUnder, launchBrowser, listening, must, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, powershellExe, probe, processes, processesUnder,
   ps, pushStream, quitAndVerify, readText, record, renderedTwice, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, socketsOf, startApp, stats, ui, until,
-  waitLiveLink, waitPhase, waitPlaying, waitPlaylistCoversSync, bareEnv,
+  waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners, bareEnv,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -115,7 +115,7 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   await uploadCapCheck(app, 'panel with one viewer');
 
   // Edge + Chrome P2P (Firefox not joined yet): Edge must start on segments Chrome already played.
-  await waitPlaylistCoversSync(early.page);
+  await waitPlaylistForLateJoiners(early.page);
   const e = await joinAndPlay(edge, s0.liveLink, 'edge');
   check('viewer plays in Microsoft Edge', true, edge.version());
   await early.page.check('#p2p');

@@ -30,7 +30,7 @@ import { formatExit, orTimeout, poll } from '../lib/wait.mjs';
 
 export { barePath, bareEnv } from '../lib/app.mjs';
 export { ffmpegBin } from '../lib/ffmpeg.mjs';
-export { renderedTwice, waitPlaylistCoversSync } from '../lib/viewer.mjs';
+export { renderedTwice, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 export { orTimeout } from '../lib/wait.mjs';
 
 export const isWin = process.platform === 'win32';

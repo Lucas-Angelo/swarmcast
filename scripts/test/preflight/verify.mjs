@@ -25,7 +25,7 @@ import { writeJunit } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
 import { serveDir } from '../lib/release-server.mjs';
-import { joinIn, pageState, playerStats, probeHealth, waitPlaying, waitPlaylistCoversSync } from '../lib/viewer.mjs';
+import { joinIn, pageState, playerStats, probeHealth, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 import { orTimeout, poll } from '../lib/wait.mjs';
 
 const args = process.argv.slice(2);
@@ -139,7 +139,7 @@ async function runSession({ releaseUrl, tunnel, browser }) {
 
     if (!tunnel) {
       // Bob must start on segments Alice already played, so peers can share them.
-      await waitPlaylistCoversSync(a.page);
+      await waitPlaylistForLateJoiners(a.page);
       const b = await joinAndPlay(browser, s0.liveLink, 'bob');
       await a.page.check('#p2p');
       await b.page.check('#p2p');
