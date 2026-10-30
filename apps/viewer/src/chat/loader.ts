@@ -14,6 +14,8 @@ export interface ChatRouter {
   /** Every JSON frame whose t starts with "chat."; returns true when it was a chat frame. */
   frame(msg: { t: string }): boolean;
   connection(open: boolean): void;
+  /** The /control URL to (re)connect to: with ?chatAfter=<seq> once chat items are shown. */
+  controlUrl(base: string): string;
 }
 
 export function createChatRouter(opts: { root: HTMLElement; showButton: HTMLButtonElement; nickname: () => string; send(msg: ClientFrame): boolean; debug?: (msg: string) => void }): ChatRouter {
@@ -75,6 +77,13 @@ export function createChatRouter(opts: { root: HTMLElement; showButton: HTMLButt
     connection(o) {
       open = o;
       if (controller) run((c) => c.connection(o));
+    },
+    controlUrl(base) {
+      const seq = controller?.lastSeq() ?? 0;
+      if (!(seq > 0)) return base;
+      const u = new URL(base, location.href);
+      u.searchParams.set('chatAfter', String(seq));
+      return u.toString();
     },
   };
 }

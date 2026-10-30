@@ -18,7 +18,7 @@ const MAX_PENDING = 500;
 /** A batch may wait this long for upload budget before viewer messages are dropped. */
 const MAX_HOLD_MS = 1000;
 /** Seconds of budget one batch may borrow (paid back before the next batch is sent). */
-const BUDGET_DEBT_S = 4;
+const BUDGET_DEBT_S = 2;
 const OPEN = 1;
 
 interface Pending {
@@ -115,6 +115,17 @@ export class ChatBatcher {
       this.flush();
     }, delay);
     this.timer.unref?.();
+  }
+
+  /** Bytes sent outside the batches (hello snapshots): charged to the budget like everything else. */
+  charge(bytes: number): void {
+    this.budget.force(this.now(), bytes);
+    this.account(bytes);
+  }
+
+  /** The budget is in debt (recent sends used more than it refills): snapshots shrink. */
+  inDebt(): boolean {
+    return this.budget.available(this.now()) < 0;
   }
 
   /** Account bytes that left (batches, acks, snapshots). */

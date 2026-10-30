@@ -313,7 +313,7 @@ describe('batcher', () => {
     }
     const sent = socks.reduce((n, s) => n + s.sent.reduce((m, x) => m + x.length, 0), 0);
     // Average over the run: at most the budget, plus one second of capacity and the debt bound.
-    expect(sent).toBeLessThanOrEqual(budget * seconds + budget + 4 * budget);
+    expect(sent).toBeLessThanOrEqual(budget * seconds + budget + 2 * budget);
     expect(sent).toBeGreaterThan(budget * seconds * 0.5);
     expect(b.droppedForBudget).toBeGreaterThan(0);
     const deletes = socks[0]!.sent.flatMap((x) => (JSON.parse(x) as { items: Array<{ k: string }> }).items).filter((i) => i.k === 'd');

@@ -288,6 +288,77 @@ describe('ChatHub: moderation', () => {
 });
 
 describe('ChatHub: snapshots, resume, history', () => {
+  it('reconnect: a viewer that already has items gets only the delta', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 8; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    const b = join('Bia');
+    const delta = hub.snapshot(b.s, { after: 5 })!;
+    expect(delta.delta).toBe(true);
+    expect(delta.items.map((i) => i.k === 'm' && i.s)).toEqual([6, 7, 8]);
+    expect(delta.lastSeq).toBe(8);
+    expect(delta.roster.map((r) => r.n).sort()).toEqual(['Ana', 'Bia']);
+    expect(hub.snapshot(b.s, { after: 8 })).toMatchObject({ delta: true, items: [] });
+    // From another live (seq beyond ours) or never connected: a full snapshot.
+    expect(hub.snapshot(b.s, { after: 99 })!.delta).toBeUndefined();
+    expect(hub.snapshot(b.s, {})!.items).toHaveLength(8);
+  });
+
+  it('reconnect: a delete or clear since the viewer last saw the chat forces a full snapshot', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 6; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    hub.delete([2]);
+    const snap = hub.snapshot(a.s, { after: 4 })!;
+    expect(snap.delta).toBeUndefined();
+    expect(snap.items.map((i) => i.k === 'm' && i.s)).toEqual([1, 3, 4, 5, 6]);
+    advance(2100);
+    send(a, 'later', 7);
+    expect(hub.snapshot(a.s, { after: 7 })!.delta).toBe(true);
+  });
+
+  it('reconnect: items evicted from the ring, or a gap longer than a fresh history, give a full snapshot', () => {
+    const { hub, join, send, advance, settings } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    settings.historyOnJoin = 5;
+    hub.refresh();
+    const a = join('Ana');
+    for (let i = 1; i <= 230; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    expect(hub.snapshot(a.s, { after: 3 })!.delta).toBeUndefined(); // evicted
+    const long = hub.snapshot(a.s, { after: 200 })!;
+    expect(long.delta).toBeUndefined(); // 30 new items > history 5 (and > 10)
+    expect(long.items).toHaveLength(5);
+    expect(hub.snapshot(a.s, { after: 225 })!.delta).toBe(true); // 5 new items
+  });
+
+  it('hello snapshots are charged to the budget; in debt, history shrinks to 10 items', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 60; i++) {
+      advance(2100);
+      send(a, `message number ${i}`, i);
+    }
+    const full = hub.snapshot(a.s)!;
+    expect(full.items).toHaveLength(50);
+    // A reconnect storm: 120 hellos within a second (4 % of 10 Mbps = 50 KB/s).
+    const bytes = JSON.stringify({ t: 'hello', chat: full }).length;
+    for (let i = 0; i < 120; i++) hub.accountSent(bytes);
+    const shrunk = hub.snapshot(a.s)!;
+    expect(shrunk.items).toHaveLength(10);
+    expect(shrunk.items.at(-1)).toEqual(full.items.at(-1));
+    // The budget refills: back to the full history.
+    advance(5 * 60_000);
+    expect(hub.snapshot(a.s)!.items).toHaveLength(50);
+  });
+
   it('hello snapshot: the last N items, my identity, roster for the authors shown', () => {
     const { hub, join, send, advance, settings } = setup({ slowModeS: 0, duplicateWindowS: 0 });
     settings.historyOnJoin = 3;
