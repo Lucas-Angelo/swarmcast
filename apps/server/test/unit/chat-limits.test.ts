@@ -4,11 +4,12 @@ import { ChatBatcher, type ChatSocket } from '../../src/chat/batcher.js';
 import { KeyedBuckets, RateWindow, TokenBucket } from '../../src/chat/buckets.js';
 import { AdaptiveSlowMode, ChatDetector, protectState } from '../../src/chat/detector.js';
 import { EventLoopGuard, GUARD } from '../../src/chat/guard.js';
-import { effectiveChat } from '../../src/chat/settings.js';
+import { Coalescer, effectiveChat } from '../../src/chat/settings.js';
 
 // The chat's limits (docs/CHAT.md): token buckets, the flood detector, adaptive slow mode, the
-// protection levels, the event-loop guard and the batcher that keeps the chat within its upload
-// budget (B_chat). Times are explicit numbers (ms): every class here takes `now` per call.
+// protection levels, the event-loop guard, the coalescing of settings pushes and the batcher that
+// keeps the chat within its upload budget (B_chat). Times are explicit numbers (ms): most classes
+// here take `now` per call; the coalescer's timer runs on fake timers.
 
 describe('buckets', () => {
   it('token bucket: capacity, refill, refund, wait', () => {
@@ -249,6 +250,80 @@ describe('protection and effective settings', () => {
     const e = effectiveChat({ settings: s, protect: 'off', autoSlowS: 0, guard: 'ok', broken: true });
     // Assert
     expect(e.enabled).toBe(false);
+  });
+});
+
+describe('settings push coalescer', () => {
+  /**
+   * A coalescer pushing the state of the moment, at most once a second, on fake timers (setTimeout
+   * and Date: its clock is the fake Date).
+   */
+  function coalescer() {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    onTestFinished(() => void vi.useRealTimers());
+    const pushed: string[] = [];
+    let state = 'a';
+    const c = new Coalescer(() => pushed.push(state), 1000, () => Date.now());
+    return { c, pushed, set: (next: string) => void (state = next) };
+  }
+
+  it('the first request is pushed at once', () => {
+    // Arrange
+    const { c, pushed } = coalescer();
+    // Act
+    c.request();
+    vi.advanceTimersByTime(0);
+    // Assert
+    expect(pushed).toEqual(['a']);
+  });
+
+  it('requests within the interval make one push at its end, with the last state', () => {
+    // Arrange
+    const { c, pushed, set } = coalescer();
+    c.request();
+    vi.advanceTimersByTime(0);
+    // Act
+    for (const next of ['b', 'c', 'd']) {
+      set(next);
+      c.request();
+      vi.advanceTimersByTime(300);
+    }
+    // Assert
+    expect(pushed).toEqual(['a']);
+    // Act
+    vi.advanceTimersByTime(99);
+    // Assert
+    expect(pushed).toEqual(['a']);
+    // Act
+    vi.advanceTimersByTime(1);
+    // Assert
+    expect(pushed).toEqual(['a', 'd']);
+  });
+
+  it('a request after a quiet interval is pushed at once again', () => {
+    // Arrange
+    const { c, pushed, set } = coalescer();
+    c.request();
+    vi.advanceTimersByTime(5000);
+    set('b');
+    // Act
+    c.request();
+    vi.advanceTimersByTime(0);
+    // Assert
+    expect(pushed).toEqual(['a', 'b']);
+  });
+
+  it('cancel() drops a pending push', () => {
+    // Arrange
+    const { c, pushed } = coalescer();
+    c.request();
+    vi.advanceTimersByTime(0);
+    c.request();
+    // Act
+    c.cancel();
+    vi.advanceTimersByTime(5000);
+    // Assert
+    expect(pushed).toEqual(['a']);
   });
 });
 
