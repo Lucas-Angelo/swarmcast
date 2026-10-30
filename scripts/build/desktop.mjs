@@ -18,8 +18,9 @@
 //
 //   --package           run package.mjs first (needs `npm run build`)
 //   --bundles           which bundles to make (default: all of the target's). macOS: the .dmg is
-//                       made by its own `tauri bundle` step after the .app, retried when hdiutil
-//                       reports "Resource busy", so a busy disk costs seconds, not a rebuild
+//                       made by its own `tauri bundle` step after the .app, retried only when
+//                       hdiutil reports "Resource busy", so a busy disk costs seconds, not a
+//                       rebuild; any other failure fails at once
 //   --fast              throwaway test builds (the update test's A and B): no LTO, 16 codegen
 //                       units (CARGO_PROFILE_RELEASE_* environment overrides, so `tauri bundle`
 //                       still finds target/<triple>/release) and an uncompressed NSIS installer.
@@ -296,14 +297,15 @@ if (dmg) {
       if (i > 1) console.log(`::notice title=hdiutil::the .dmg succeeded on try ${i} of ${tries}`);
       break;
     }
+    // Only a busy disk is the runner's: any other failure is the build's, and fails at once.
     const busy = /Resource busy/i.test(r.out);
     const why = busy ? 'hdiutil: Resource busy' : `exit ${r.status}`;
-    if (i >= tries) {
-      console.log(`::error title=hdiutil::the .dmg failed ${tries} times (${why})`);
+    if (!busy || i >= tries) {
+      console.log(`::error title=hdiutil::the .dmg failed${busy ? ` ${tries} times` : ''} (${why})`);
       process.exit(r.status || 1);
     }
     const wait = backoff[i - 1];
-    console.log(`::warning title=hdiutil::the .dmg failed after ${Math.round((Date.now() - t0) / 1000)} s (${why}, try ${i} of ${tries}); retrying in ${wait} s`);
+    console.log(`::warning title=hdiutil::infra recovery: the .dmg failed after ${Math.round((Date.now() - t0) / 1000)} s (${why}, try ${i} of ${tries}); retrying in ${wait} s`);
     await sleep(wait * 1000);
   }
 }
