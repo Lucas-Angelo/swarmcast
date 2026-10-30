@@ -130,9 +130,8 @@ const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMP
 /** Starts the installed app (without waiting for it). */
 function spawnApp(exe, env = {}, argv = []) {
   fs.rmSync(loginFile, { force: true });
-  const log = path.join(work, 'app-output.log');
-  childLogStart = fs.existsSync(log) ? fs.statSync(log).size : 0;
-  const out = fs.openSync(log, 'a');
+  const out = fs.openSync(path.join(work, 'app-output.log'), 'a');
+  childLogStart = fs.fstatSync(out).size;
   child = spawn(exe, argv, { stdio: ['ignore', out, out], env: { ...process.env, ...testEnv(), ...env } });
   child.on('error', (err) => console.log(`spawn error: ${err.message}`));
 }
@@ -215,6 +214,30 @@ function childExit() {
 /** What a crashing app leaves in its output (macOS / Rust / glibc). */
 const CRASH_MARKERS = /uncaught exception|libc\+\+abi: terminating|panicked at|fatal runtime error|Segmentation fault|Abort trap|EXC_BAD_ACCESS/;
 
+/** What this start of the app wrote to app-output.log (one descriptor: no check-then-read). */
+function appOutputSinceStart() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(work, 'app-output.log'), 'r');
+  } catch (err) {
+    if (err.code === 'ENOENT') return '';
+    throw err;
+  }
+  try {
+    const length = Math.max(0, fs.fstatSync(fd).size - childLogStart);
+    const buf = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const n = fs.readSync(fd, buf, read, length - read, childLogStart + read);
+      if (n === 0) break;
+      read += n;
+    }
+    return buf.subarray(0, read).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /**
  * Called when the app is already gone before this test killed it. That is fine only if it
  * demonstrably did not crash (exit code 0, nothing crash-like in its output); otherwise the
@@ -222,8 +245,7 @@ const CRASH_MARKERS = /uncaught exception|libc\+\+abi: terminating|panicked at|f
  */
 async function checkGoneBeforeKill() {
   await until(() => childExit() !== null, 10_000, 'the exit status of the app').catch(() => {});
-  const log = path.join(work, 'app-output.log');
-  const output = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').slice(childLogStart) : '';
+  const output = appOutputSinceStart();
   const crash = output.match(CRASH_MARKERS);
   if (child.exitCode !== 0 || child.signalCode !== null || crash) {
     throw new Error(`the app crashed before the test killed it (${childExit() ?? 'exit status unknown'}${crash ? `, output: "${crash[0]}"` : ''}): see app-output.log below`);
