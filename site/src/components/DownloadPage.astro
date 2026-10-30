@@ -50,7 +50,7 @@ const systems: { id: 'windows' | 'macos' | 'linux'; name: string; req: string; o
 ];
 ---
 
-<div class="sc-dlp" data-lang={lang} data-releases={links.releases} data-stats={`${BASE}/stats.json`} data-version-template={d.leadVersion}>
+<div class="sc-dlp" data-testid="download-page" data-lang={lang} data-releases={links.releases} data-stats={`${BASE}/stats.json`} data-version-template={d.leadVersion}>
   <header class="sc-container sc-dlp-head">
     <h1>{d.title}</h1>
     <p class="sc-lead">
@@ -203,24 +203,28 @@ const systems: { id: 'windows' | 'macos' | 'linux'; name: string; req: string; o
       // Phones: the visitor's own system first. On wide screens the order stays.
       mine.parentElement?.prepend(mine);
     }
-    void loadUsage(root.dataset.stats ?? '').then((u) => {
-      if (!u.latest) return;
-      if (u.latest.version) {
-        const v = root.querySelector<HTMLElement>('[data-version]')!;
-        v.textContent = (root.dataset.versionTemplate ?? '').replace('{version}', u.latest.version);
-        v.hidden = false;
-      }
-      for (const a of root.querySelectorAll<HTMLAnchorElement>('[data-choice]')) {
-        const c = choice(a.dataset.choice as ChoiceKey, u.latest, releases);
-        a.href = c.href;
-        a.dataset.direct = String(c.direct);
-        const file = root.querySelector<HTMLElement>(`[data-file="${c.key}"]`);
-        if (file && c.fileName) {
-          file.textContent = c.size ? `${c.fileName} · ${formatSize(c.size, lang)}` : c.fileName;
-          file.classList.add('is-file');
+    // Busy while stats.json is read: the buttons may then point at the files themselves.
+    root.setAttribute('aria-busy', 'true');
+    void loadUsage(root.dataset.stats ?? '')
+      .then((u) => {
+        if (!u.latest) return;
+        if (u.latest.version) {
+          const v = root.querySelector<HTMLElement>('[data-version]')!;
+          v.textContent = (root.dataset.versionTemplate ?? '').replace('{version}', u.latest.version);
+          v.hidden = false;
         }
-      }
-    });
+        for (const a of root.querySelectorAll<HTMLAnchorElement>('[data-choice]')) {
+          const c = choice(a.dataset.choice as ChoiceKey, u.latest, releases);
+          a.href = c.href;
+          a.dataset.direct = String(c.direct);
+          const file = root.querySelector<HTMLElement>(`[data-file="${c.key}"]`);
+          if (file && c.fileName) {
+            file.textContent = c.size ? `${c.fileName} · ${formatSize(c.size, lang)}` : c.fileName;
+            file.classList.add('is-file');
+          }
+        }
+      })
+      .finally(() => root.setAttribute('aria-busy', 'false'));
   }
 </script>
 
