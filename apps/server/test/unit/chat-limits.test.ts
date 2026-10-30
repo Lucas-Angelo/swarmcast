@@ -86,6 +86,38 @@ describe('chat detector', () => {
     expect(e.signals(t, 100).level).toBe(1);
   });
 
+  it('the start of a live is an audience arriving, not a raid: 30 viewers who joined in the first minute chat normally', () => {
+    const d = new ChatDetector();
+    const start = 10_000_000;
+    d.start(start);
+    const joined = Array.from({ length: 30 }, (_, i) => start + 2000 * i); // all within the first minute
+    let t = start + 65_000;
+    for (let s = 0; s < 120; s++, t += 1000) {
+      // Every viewer says something about once every 15 s (2 messages per second overall).
+      for (let i = s % 15; i < 30; i += 15) d.accepted(t, `dev${i}`, `hello ${i} ${s}`, joined[i]!);
+      d.frame(t);
+      d.frame(t);
+      d.tick(t, 30);
+    }
+    expect(d.level).toBe(0);
+  });
+
+  it('a real raid later in the live (fresh joiners against an established audience) still triggers', () => {
+    const d = new ChatDetector();
+    const start = 10_000_000;
+    d.start(start);
+    let t = start + 30 * 60_000;
+    // An established audience of 8 chatters from the first minutes…
+    for (let i = 0; i < 8; i++) d.accepted(t, `old${i}`, `hi ${i}`, start + 1000 * i);
+    // …and 40 accounts that joined in the last 30 seconds, all chatting at once.
+    for (let s = 0; s < 4; s++, t += 1000) {
+      for (let i = 0; i < 40; i++) d.accepted(t, `new${i}`, `raid ${i} ${s}`, t - 30_000);
+      d.tick(t, 48);
+    }
+    expect(d.signals(t, 48)).toMatchObject({ level: 2 });
+    expect(d.level).toBe(2);
+  });
+
   it('honest slow-mode retries are not counted as rejects', () => {
     const d = new ChatDetector();
     const t = 5_000_000;
