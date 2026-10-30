@@ -1,3 +1,4 @@
+import '../zod-config.js';
 import { z } from 'zod';
 import { isMessageKey, translate, type MessageKey, type MessageParams } from '../i18n/index.js';
 import { hexColorSchema } from '../chat/schemas.js';
