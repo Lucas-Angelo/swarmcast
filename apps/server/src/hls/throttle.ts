@@ -58,6 +58,11 @@ export class BandwidthLimiter {
     return (this.reserveBps * 8) / 1_000_000;
   }
 
+  /** What video may use now, Mbps: the cap minus the chat's reserve, never below half the cap. */
+  get videoMbps(): number {
+    return (this.rate * 8) / 1_000_000;
+  }
+
   setMbps(mbps: number): void {
     this.refill();
     this.bytesPerSecond = (mbps * 1_000_000) / 8;

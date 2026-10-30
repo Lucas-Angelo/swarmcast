@@ -293,6 +293,9 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   };
   o.desktop?.on('changed', onDesktop);
   app.addHook('onClose', async () => {
+    // A push still due would read the live's state after the panel is gone.
+    if (pending) clearTimeout(pending);
+    pending = null;
     L.off('state', push);
     L.activity.off('entry', onEntry);
     L.activity.off('clear', onClear);

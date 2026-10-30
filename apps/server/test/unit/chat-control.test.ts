@@ -1,16 +1,48 @@
+import { EventEmitter } from 'node:events';
+import type { IncomingMessage } from 'node:http';
 import fc from 'fast-check';
-import { describe, expect, it, vi } from 'vitest';
+import type { WebSocket } from 'ws';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defaultChatSettings, validateNickname, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl } from '../../src/access/access.js';
 import { ChatHub } from '../../src/chat/hub.js';
 import { ControlChannel } from '../../src/control/control.js';
 import { ActivityLog } from '../../src/core/activity.js';
-import { silentLog } from './helpers.js';
+import { manualClock, silentLog } from './helpers.js';
 
+// The chat rides on the viewer's /control WebSocket (control/control.ts). Chat frames have a
+// budget of their own (20 per 10 s, CHAT_MAX_FRAMES_PER_10S) next to the control budget (30 per
+// 10 s): a socket over either is terminated, and nothing else terminates it but binary frames.
+
+/**
+ * A viewer's WebSocket as ControlChannel.attach takes it: frames arrive through the 'message'
+ * event (as `ws` emits them), and whatever the channel sends, closes or terminates is recorded.
+ */
+class FakeControlSocket extends EventEmitter {
+  readonly OPEN = 1;
+  readyState = 1;
+  bufferedAmount = 0;
+  sent: string[] = [];
+  terminate = vi.fn();
+  close = vi.fn();
+  ping(): void {}
+  send(d: string): void {
+    this.sent.push(d);
+  }
+  /** A frame from the viewer. */
+  receive(data: string | Buffer, isBinary = false): void {
+    this.emit('message', typeof data === 'string' ? Buffer.from(data) : data, isBinary);
+  }
+}
+
+const REQ = { url: '/control' } as IncomingMessage;
+
+/** A live access, its control channel and chat on one manual clock, and a viewer (10 min in) on it. */
 function setup(over: Partial<ChatSettings> = {}) {
-  const access = new AccessControl();
+  const clock = manualClock(Date.UTC(2026, 9, 26));
+  const access = new AccessControl(clock.now);
   access.begin();
-  const control = new ControlChannel(access, silentLog);
+  const control = new ControlChannel(access, silentLog, clock.now);
   const settings = { ...defaultChatSettings(), ...over };
   const hub = new ChatHub({
     access,
@@ -20,151 +52,219 @@ function setup(over: Partial<ChatSettings> = {}) {
     viewers: () => 2,
     activity: new ActivityLog(),
     log: silentLog,
+    now: clock.now,
     guard: { sample: () => ({ p99Ms: 0, elu: 0 }), intervalMs: 3_600_000 },
   });
   hub.begin();
   control.chat = hub;
-  const s = access.createSession({ nickname: 'Ana', deviceId: 'dev', device: 'desktop', ip: '198.51.100.7' });
-  s.joinedAt = Date.now() - 600_000;
-  const sock = {
-    sessionId: s.id,
-    msgs: { n: 0, at: Date.now() },
-    frames: { n: 0, at: Date.now() },
-    chatFrames: { n: 0, at: Date.now() },
-    opens: { n: 0, at: Date.now() },
-    channels: new Map(),
-    readyState: 1,
-    OPEN: 1,
-    bufferedAmount: 0,
-    sent: [] as string[],
-    send(d: string) {
-      this.sent.push(d);
-    },
-    terminate: vi.fn(),
-    close: vi.fn(),
-  };
-  const onMessage = (control as unknown as { onMessage(s: unknown, t: Buffer | string, b: boolean): void }).onMessage.bind(control);
-  const close = () => {
+  onTestFinished(() => {
     hub.reset();
     control.close();
+  });
+  const s = access.createSession({ nickname: 'Ana', deviceId: 'dev', device: 'desktop', ip: '198.51.100.7' });
+  s.joinedAt = clock.now() - 600_000;
+  /** A new control socket of the viewer, attached like an accepted upgrade. */
+  const connect = (): FakeControlSocket => {
+    const sock = new FakeControlSocket();
+    control.attach(sock as unknown as WebSocket, s, REQ);
+    return sock;
   };
-  return { access, control, hub, s, sock, onMessage, settings, close };
+  return { access, control, hub, s, settings, clock, connect };
+}
+
+/** Random text, hostile chat frames, odd JSON, prototype tricks, tracker frames and raw bytes. */
+const fuzzFrame = fc.oneof(
+  fc.string({ maxLength: 300 }),
+  fc.string({ unit: 'binary', maxLength: 300 }).map((x) => `{"t":"chat.send","n":1,"text":${JSON.stringify(x)}}`),
+  fc.json().map((j) => `{"t":"chat.${['send', 'color', 'resume', 'x'][j.length % 4]}",${j.startsWith('{') ? j.slice(1) : `"v":${j}}`}`),
+  fc.constantFrom('{"t":"chat.send","n":1,"text":{"__proto__":{"x":1}}}', '{"t":"chat.send","constructor":{"prototype":{}}}', '{"t":"chat.color","color":"#zzzzzz"}', '{"t":"chat.resume","after":1e308}', '{"t":"chat.send"', '~o1', '~d1 x'),
+  fc.uint8Array({ maxLength: 64 }).map((u) => Buffer.from(u)),
+);
+
+/**
+ * The fuzz property over up to 30 frames. Each run is a fresh socket of the viewer, 11 s after the
+ * previous run, so every run starts with full budgets. No frame throws; 20 chat frames or fewer
+ * (with at most 30 frames in all) stay within both budgets, so the socket is not terminated; the
+ * ring stays capped and the chat healthy.
+ */
+function frameFuzz({ hub, clock, connect }: ReturnType<typeof setup>) {
+  return fc.property(fc.array(fuzzFrame, { maxLength: 30 }), (frames) => {
+    clock.advance(11_000);
+    const sock = connect();
+    const chat = frames.filter((f) => (typeof f === 'string' ? f : f.toString('latin1')).startsWith('{"t":"chat.')).length;
+    for (const f of frames) expect(() => sock.receive(f)).not.toThrow();
+    if (chat <= 20) expect(sock.terminate).not.toHaveBeenCalled();
+    expect(hub.ringSize.items).toBeLessThanOrEqual(200);
+    expect(hub.isBroken).toBe(false);
+    sock.emit('close');
+    return true;
+  });
 }
 
 describe('chat on /control', () => {
   it('chat frames have their own budget: 20 per 10 s never cost the control budget, 21 terminate', () => {
-    const { sock, onMessage, close } = setup({ slowModeS: 0 });
-    for (let i = 1; i <= 20; i++) onMessage(sock, `{"t":"chat.send","n":${i},"text":"m${i}"}`, false);
-    // The control budget (30 per 10 s) is untouched: 29 pongs still pass.
-    for (let i = 0; i < 29; i++) onMessage(sock, '{"t":"pong"}', false);
+    // Arrange
+    const { connect } = setup({ slowModeS: 0 });
+    const sock = connect();
+    // Act
+    for (let i = 1; i <= 20; i++) sock.receive(`{"t":"chat.send","n":${i},"text":"m${i}"}`);
+    for (let i = 0; i < 29; i++) sock.receive('{"t":"pong"}');
+    // Assert
     expect(sock.terminate).not.toHaveBeenCalled();
-    onMessage(sock, '{"t":"chat.send","n":21,"text":"x"}', false);
-    expect(sock.terminate).toHaveBeenCalledTimes(1);
-    close();
+    // Act
+    sock.receive('{"t":"chat.send","n":21,"text":"x"}');
+    // Assert
+    expect(sock.terminate).toHaveBeenCalledOnce();
   });
 
   it('a raw frame over 2 KB is refused before it is decoded, without closing the socket', () => {
-    const { sock, onMessage, close } = setup();
+    // Arrange
+    const { connect } = setup();
+    const sock = connect();
     const big = Buffer.from(`{"t":"chat.send","n":1,"text":"${'a'.repeat(3000)}"}`);
     const toString = vi.spyOn(big, 'toString');
-    onMessage(sock, big, false);
+    // Act
+    sock.receive(big);
+    // Assert
     expect(toString).not.toHaveBeenCalled();
     expect(JSON.parse(sock.sent.at(-1)!)).toMatchObject({ t: 'chat.reject', code: 'text.tooLong' });
     expect(sock.terminate).not.toHaveBeenCalled();
     expect(sock.close).not.toHaveBeenCalled();
-    close();
   });
 
-  it('binary frames still terminate; frames of an ended session close it', () => {
-    const { sock, onMessage, access, s, close } = setup();
+  it('frames of an ended session close the socket', () => {
+    // Arrange
+    const { access, s, connect } = setup();
+    const sock = connect();
     access.sessions.delete(s.id);
-    onMessage(sock, '{"t":"chat.send","n":1,"text":"hi"}', false);
+    // Act
+    sock.receive('{"t":"chat.send","n":1,"text":"hi"}');
+    // Assert
     expect(sock.close).toHaveBeenCalledWith(4001, 'session ended');
-    onMessage(sock, Buffer.from([1, 2, 3]), true);
-    expect(sock.terminate).toHaveBeenCalled();
-    close();
+  });
+
+  it('binary frames still terminate', () => {
+    // Arrange
+    const { connect } = setup();
+    const sock = connect();
+    // Act
+    sock.receive(Buffer.from([1, 2, 3]), true);
+    // Assert
+    expect(sock.terminate).toHaveBeenCalledOnce();
   });
 
   it('fuzz: random and hostile frames never throw, terminate only for the documented reasons, and caps hold', () => {
-    const { sock, onMessage, hub, close } = setup({ slowModeS: 0, duplicateWindowS: 0 });
-    const frame = fc.oneof(
-      fc.string({ maxLength: 300 }),
-      fc.string({ unit: 'binary', maxLength: 300 }).map((x) => `{"t":"chat.send","n":1,"text":${JSON.stringify(x)}}`),
-      fc.json().map((j) => `{"t":"chat.${['send', 'color', 'resume', 'x'][j.length % 4]}",${j.startsWith('{') ? j.slice(1) : `"v":${j}}`}`),
-      fc.constantFrom('{"t":"chat.send","n":1,"text":{"__proto__":{"x":1}}}', '{"t":"chat.send","constructor":{"prototype":{}}}', '{"t":"chat.color","color":"#zzzzzz"}', '{"t":"chat.resume","after":1e308}', '{"t":"chat.send"', '~o1', '~d1 x'),
-      fc.uint8Array({ maxLength: 64 }).map((u) => Buffer.from(u)),
-    );
-    fc.assert(
-      fc.property(fc.array(frame, { maxLength: 30 }), (frames) => {
-        sock.chatFrames = { n: 0, at: Date.now() };
-        sock.frames = { n: 0, at: Date.now() };
-        sock.msgs = { n: 0, at: Date.now() };
-        sock.opens = { n: 0, at: Date.now() };
-        sock.terminate.mockClear();
-        let chat = 0;
-        for (const f of frames) {
-          const isChat = (typeof f === 'string' ? f : f.toString('latin1')).startsWith('{"t":"chat.');
-          if (isChat) chat++;
-          expect(() => onMessage(sock, f, false)).not.toThrow();
-        }
-        if (chat <= 20 && frames.length <= 30) {
-          // Non-chat garbage may hit the 30-per-10 s control budget; chat alone never terminates below 21.
-          const controlFrames = frames.length - chat;
-          if (controlFrames <= 30) expect(sock.terminate).not.toHaveBeenCalled();
-        }
-        expect(hub.ringSize.items).toBeLessThanOrEqual(200);
-        expect(hub.isBroken).toBe(false);
-        return true;
-      }),
-      { numRuns: 300, seed: 42 },
-    );
-    close();
+    // Arrange
+    const property = frameFuzz(setup({ slowModeS: 0, duplicateWindowS: 0 }));
+    // Act
+    const run = () => fc.assert(property, { numRuns: 300, seed: 42 });
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('the hello snapshot is there while the chat is on, and absent while it is off', () => {
-    const { s, hub, settings, close } = setup();
-    expect(hub.snapshot(s)).toMatchObject({ v: 1, lastSeq: 0, you: { mutedUntil: null } });
+    // Arrange
+    const { s, hub, settings } = setup();
+    // Act
+    const on = hub.snapshot(s);
     settings.enabled = false;
     hub.refresh();
-    expect(hub.snapshot(s)).toBeUndefined();
-    close();
+    const off = hub.snapshot(s);
+    // Assert
+    expect(on).toMatchObject({ v: 1, lastSeq: 0, you: { mutedUntil: null } });
+    expect(off).toBeUndefined();
+  });
+
+  it('the hello an attached socket gets carries the chat snapshot', () => {
+    // Arrange
+    const { connect } = setup();
+    // Act
+    const sock = connect();
+    // Assert
+    expect(JSON.parse(sock.sent[0]!)).toMatchObject({ t: 'hello', nickname: 'Ana', chat: { v: 1, lastSeq: 0 } });
   });
 });
 
 describe('nickname uniqueness and reserved names', () => {
-  it('refuses look-alikes of someone watching (case, Cyrillic, I/l) with a suggestion; the same device may rejoin', () => {
+  /** A live access with "ana" (device d1) and "lucas" (d2) watching. */
+  function watching() {
     const a = new AccessControl();
     a.begin();
-    const ana = a.createSession({ nickname: 'ana', deviceId: 'd1', device: 'desktop', ip: 'x' });
-    ana.connections = 1;
+    a.createSession({ nickname: 'ana', deviceId: 'd1', device: 'desktop', ip: 'x' }).connections = 1;
     a.createSession({ nickname: 'lucas', deviceId: 'd2', device: 'desktop', ip: 'x' }).connections = 1;
-    expect(a.nicknameProblem('Ana', 'd9')).toBe('taken');
-    expect(a.nicknameProblem('\u{430}na', 'd9')).toBe('taken');
-    expect(a.nicknameProblem('Iucas', 'd9')).toBe('taken');
-    expect(a.nicknameProblem('ana_', 'd9')).toBe('taken');
-    expect(a.nicknameProblem('Ana', 'd1')).toBeNull();
-    expect(a.nicknameProblem('Bia', 'd9')).toBeNull();
+    return a;
+  }
+
+  it.each([
+    ['another case', 'Ana'],
+    ['a Cyrillic а', '\u{430}na'],
+    ['I for l', 'Iucas'],
+    ['a trailing underscore', 'ana_'],
+  ])('refuses a look-alike of someone watching (%s: %s)', (_what, nickname) => {
+    // Arrange
+    const a = watching();
+    // Act
+    const problem = a.nicknameProblem(nickname, 'd9');
+    // Assert
+    expect(problem).toBe('taken');
+  });
+
+  it('the same device may rejoin with its name; a new name is free', () => {
+    // Arrange
+    const a = watching();
+    // Act
+    const rejoin = a.nicknameProblem('Ana', 'd1');
+    const fresh = a.nicknameProblem('Bia', 'd9');
+    // Assert
+    expect(rejoin).toBeNull();
+    expect(fresh).toBeNull();
+  });
+
+  it('suggests a free, valid name; a suggestion never grows past the length limit', () => {
+    // Arrange
+    const a = watching();
+    // Act
     const suggestion = a.suggestNickname('Ana', 'd9');
+    const long = a.suggestNickname('a'.repeat(24), 'd9');
+    // Assert
     expect(suggestion).toBe('Ana2');
     expect(validateNickname(suggestion).ok).toBe(true);
-    expect(a.suggestNickname('a'.repeat(24), 'd9')).toHaveLength(24);
+    expect(long).toHaveLength(24);
   });
 
   it('a session gone for 30 s frees its name', () => {
-    let t = 1_000_000;
-    const a = new AccessControl(() => t);
+    // Arrange
+    const clock = manualClock();
+    const a = new AccessControl(clock.now);
     a.begin();
     a.createSession({ nickname: 'ana', deviceId: 'd1', device: 'desktop', ip: 'x' });
-    expect(a.nicknameProblem('Ana', 'd2')).toBe('taken');
-    t += 31_000;
+    const before = a.nicknameProblem('Ana', 'd2');
+    // Act
+    clock.advance(31_000);
+    // Assert
+    expect(before).toBe('taken');
     expect(a.nicknameProblem('Ana', 'd2')).toBeNull();
   });
 
-  it('reserved names and the streamer chat name, also as look-alikes', () => {
+  it.each(['Streamer', 'STREAMER', 'Moderador', 'Swarm Cast', 'admin'])('%s is reserved', (nickname) => {
+    // Arrange
     const a = new AccessControl();
     a.begin();
-    for (const n of ['Streamer', 'STREAMER', 'Moderador', 'Swarm Cast', 'admin']) expect(a.nicknameProblem(n, 'd'), n).toBe('reserved');
-    expect(a.nicknameProblem('Lucas Live', 'd', ['lucas-live'])).toBe('reserved');
-    expect(a.nicknameProblem('Lucas', 'd', [''])).toBeNull();
+    // Act
+    const problem = a.nicknameProblem(nickname, 'd');
+    // Assert
+    expect(problem).toBe('reserved');
+  });
+
+  it("the streamer's chat name is reserved, also as a look-alike; an empty one reserves nothing", () => {
+    // Arrange
+    const a = new AccessControl();
+    a.begin();
+    // Act
+    const lookAlike = a.nicknameProblem('Lucas Live', 'd', ['lucas-live']);
+    const none = a.nicknameProblem('Lucas', 'd', ['']);
+    // Assert
+    expect(lookAlike).toBe('reserved');
+    expect(none).toBeNull();
   });
 });

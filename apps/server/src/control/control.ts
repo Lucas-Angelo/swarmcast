@@ -77,6 +77,8 @@ export class ControlChannel implements ChatHost {
   constructor(
     private readonly access: AccessControl,
     private readonly log: Logger,
+    /** Clock of the per-socket frame budgets (tests inject one). */
+    private readonly now: () => number = Date.now,
   ) {
     // Tracker frames (WebRTC offers) are bigger than control messages; control frames are
     // still held to CONTROL_MAX_MESSAGE in onMessage.
@@ -86,56 +88,64 @@ export class ControlChannel implements ChatHost {
   }
 
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer, session: Session): void {
-    this.wss.handleUpgrade(req, socket, head, (ws) => {
-      const s = ws as ControlSocket;
-      s.sessionId = session.id;
-      s.alive = true;
-      s.msgs = { n: 0, at: Date.now() };
-      s.frames = { n: 0, at: Date.now() };
-      s.opens = { n: 0, at: Date.now() };
-      s.chatFrames = { n: 0, at: Date.now() };
-      s.upgradeReq = req;
-      s.channels = new Map();
-      let set = this.conns.get(session.id);
-      if (!set) this.conns.set(session.id, (set = new Set()));
-      set.add(s);
-      session.connections = set.size;
-      if (set.size === 1) this.onPresence(session, true);
-      s.on('pong', () => (s.alive = true));
-      s.on('close', () => {
-        for (const ch of s.channels.values()) ch.remoteClosed();
-        s.channels.clear();
-        set.delete(s);
-        const current = this.access.sessions.get(session.id);
-        if (current) current.connections = set.size;
-        if (set.size === 0) this.onPresence(session, false);
-      });
-      s.on('message', (data, isBinary) => this.onMessage(s, toBuffer(data), isBinary));
-      const block = this.access.p2pBlock(session);
-      // A reconnecting page says which chat items it already has: it then gets only the delta.
-      const after = new URL(req.url ?? '/', 'http://x').searchParams.get('chatAfter');
-      const chat = this.chat?.snapshot(session, after && /^\d{1,15}$/.test(after) ? { after: Number(after) } : {});
-      const hello = JSON.stringify({
-        t: 'hello',
-        sessionId: session.id,
-        nickname: session.nickname,
-        p2pAllowed: this.access.p2pAllowed(session),
-        p2pForAll: this.access.p2pForAll,
-        ...(block ? { p2pBlock: block } : {}),
-        blockedPeers: [...this.blockedPeers],
-        viewerCount: this.viewerCount(),
-        ...(chat ? { chat } : {}),
-        ...(this.brandRev() !== undefined ? { brandRev: this.brandRev() } : {}),
-      } satisfies ServerMessage);
-      if (s.readyState === s.OPEN) s.send(hello);
-      // The history in hello counts against the chat's upload budget.
-      if (chat) this.chat?.helloSent(s, chat, hello.length);
+    this.wss.handleUpgrade(req, socket, head, (ws) => this.attach(ws, session, req));
+  }
+
+  /**
+   * Take over an accepted WebSocket of `session`: its frame budgets, the hello, and its message
+   * and close handling. handleUpgrade calls it for every upgrade; tests hand it a fake socket and
+   * drive it through the socket's own events.
+   */
+  attach(ws: WebSocket, session: Session, req: IncomingMessage): void {
+    const s = ws as ControlSocket;
+    const at = this.now();
+    s.sessionId = session.id;
+    s.alive = true;
+    s.msgs = { n: 0, at };
+    s.frames = { n: 0, at };
+    s.opens = { n: 0, at };
+    s.chatFrames = { n: 0, at };
+    s.upgradeReq = req;
+    s.channels = new Map();
+    let set = this.conns.get(session.id);
+    if (!set) this.conns.set(session.id, (set = new Set()));
+    set.add(s);
+    session.connections = set.size;
+    if (set.size === 1) this.onPresence(session, true);
+    s.on('pong', () => (s.alive = true));
+    s.on('close', () => {
+      for (const ch of s.channels.values()) ch.remoteClosed();
+      s.channels.clear();
+      set.delete(s);
+      const current = this.access.sessions.get(session.id);
+      if (current) current.connections = set.size;
+      if (set.size === 0) this.onPresence(session, false);
     });
+    s.on('message', (data, isBinary) => this.onMessage(s, toBuffer(data), isBinary));
+    const block = this.access.p2pBlock(session);
+    // A reconnecting page says which chat items it already has: it then gets only the delta.
+    const after = new URL(req.url ?? '/', 'http://x').searchParams.get('chatAfter');
+    const chat = this.chat?.snapshot(session, after && /^\d{1,15}$/.test(after) ? { after: Number(after) } : {});
+    const hello = JSON.stringify({
+      t: 'hello',
+      sessionId: session.id,
+      nickname: session.nickname,
+      p2pAllowed: this.access.p2pAllowed(session),
+      p2pForAll: this.access.p2pForAll,
+      ...(block ? { p2pBlock: block } : {}),
+      blockedPeers: [...this.blockedPeers],
+      viewerCount: this.viewerCount(),
+      ...(chat ? { chat } : {}),
+      ...(this.brandRev() !== undefined ? { brandRev: this.brandRev() } : {}),
+    } satisfies ServerMessage);
+    if (s.readyState === s.OPEN) s.send(hello);
+    // The history in hello counts against the chat's upload budget.
+    if (chat) this.chat?.helloSent(s, chat, hello.length);
   }
 
   private onMessage(s: ControlSocket, frame: Buffer | string, isBinary: boolean): void {
     const data = typeof frame === 'string' ? Buffer.from(frame) : frame;
-    const now = Date.now();
+    const now = this.now();
     if (now - s.frames.at > 10_000) s.frames = { n: 0, at: now };
     if (++s.frames.n > MAX_FRAMES_PER_10S || isBinary) {
       s.terminate();
