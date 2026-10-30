@@ -31,7 +31,7 @@ export const SUITES = {
   preflight: { job: 'preflight', setup: 15, run: 15 },
   scripts: { job: 'scripts', setup: 5, run: 10 },
   'desktop-test': { job: 'desktop_test', setup: 10, run: 20 },
-  'desktop-dmg': { job: 'desktop_dmg', setup: 30, run: 10 },
+  'desktop-dmg': { job: 'desktop_dmg', setup: 50, run: 10 },
   apt: { job: 'apt', setup: 5, run: 15 },
 };
 export const JOBS = [...new Set(Object.values(SUITES).map((s) => s.job))];

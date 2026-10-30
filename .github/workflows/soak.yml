@@ -385,11 +385,14 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           cache-key: ${{ matrix.target }}
-      # As _desktop.yml; every soaked run is then one `tauri build --bundles app,dmg` (the Rust
-      # build is cached after the first one), which is where hdiutil reports "Resource busy".
+      # As _desktop.yml; every soaked run is then one `tauri build --bundles app,dmg`, which is
+      # where hdiutil reports "Resource busy". The app is built once before them: a cold Rust
+      # build (over 10 minutes on macos-15-intel) is setup, not the bundling the runs measure.
       - run: npm run build
       - name: Assemble release/staging/${{ matrix.target }}
         run: node scripts/build/package.mjs --target "${{ matrix.target }}" --no-archive
+      - name: Build the app once (the soaked runs then only bundle)
+        run: node scripts/build/desktop.mjs --target "${{ matrix.target }}" --bundles app
       - *soak-run
       - *soak-upload
 
