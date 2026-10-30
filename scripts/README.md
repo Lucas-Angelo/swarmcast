@@ -35,5 +35,28 @@ Tests: `bash scripts/test/run.sh` (macOS/Linux) and `scripts\test\run.ps1` (Wind
 - `archive.mjs`: creates the `.zip` or `.tar.gz`.
 - `checksums.mjs`: writes `SHA256SUMS.txt`.
 - `guide-html.mjs`: renders the website's guide pages (`site/src/content/docs/`, list in `site/offline-guide.json`) to the self-contained HTML guides shipped in the installer zips (no dependencies). Edit the site pages, never the generated HTML.
+- `desktop.mjs` (`npm run desktop:build`): the desktop installers of one target from a staged package ([apps/desktop/README.md](../apps/desktop/README.md)); `updater-manifest.mjs` (`npm run desktop:manifest`): the updater's `latest.json`; `deb-version.mjs`: the `X.Y.Z~beta.N` Version field of a pre-release `.deb`.
+- `licenses.mjs`: `THIRD_PARTY_LICENSES.txt` of a package (npm production dependencies, MediaMTX, cloudflared, the tray helper, fonts); `crate-licenses.mjs`: the Rust crates of the desktop app, with a licence allowlist (`licenses/` holds the standard texts).
+- `update-binaries.mjs`: newer MediaMTX / cloudflared releases within the same major (`--check` reports, without it rewrites `versions.json`); `gen-unicode-tables.mjs`: the chat's Unicode tables (`packages/shared/src/chat/*.generated.ts`) from the data pinned in `unicode-data.json` (`--check` compares); `strip-tags.mjs`: a linear tag stripper used by `guide-html.mjs` and `crate-licenses.mjs`.
+
+**Release, stats and CI scripts** (used by the workflows):
+- `releases/`: `version.mjs` (classifies a release version for `release.yml`: channel, pre-release, Latest; `--on-branch` checks where the tag is), `semver.mjs`, `notes.mjs` (one `CHANGELOG.md` section as release notes), `beta-manifest.mjs` (the beta update feed `updates/beta.json`, built with the website).
+- `stats/`: `stats.mjs` and `update.mjs`, the usage numbers from GitHub's public download counters (no telemetry), written to the `stats` branch by `stats.yml`.
+- `ci/`: `soak-plan.mjs`, `soak-run.mjs` and `soak-report.mjs`, the stability soak of `soak.yml` (plan in `.github/soak-plan.json`).
+
+**Test harnesses and tools** (`test/`; how to run the suites: [docs/TESTING.md](../docs/TESTING.md)). Some change the machine they run on, so they run only on CI runners or a throwaway VM:
+
+| Path | What | Where it may run |
+|---|---|---|
+| `run.sh`, `run.ps1`, `uninstall.sh`, `uninstall.ps1` (+ `make-fake-release.mjs`, `serve.mjs`) | the start and uninstall scripts against a fake release on 127.0.0.1 | anywhere (temp folders, fake HOME for the uninstallers) |
+| `lib/` | shared helpers: ports (`ports.mjs`), processes, waits, ffmpeg, loopback | used by the tests |
+| `chat/` | chat load bench (`bench.ts`, `bots.ts`, `scenarios.ts`) | anywhere (port 0, no data folder) |
+| `quality/` | quality experiments: `server.ts` + `bench.ts`, `simulate-controller.ts`, and by hand `debug-ladder.ts`, `probe-encoders.ts`, `install-ffmpeg.ts <dataDir>`, `menu-check.ts` | anywhere (own ports, temp data folders) |
+| `docker/` | Linux suites in Docker ([docker/README.md](test/docker/README.md)) | anywhere with Docker |
+| `tunnel-limit/` | measures a real quick tunnel's in-flight limit ([tunnel-limit/README.md](test/tunnel-limit/README.md)) | by hand (uses a real Cloudflare tunnel) |
+| `windows/` | Windows installer, app, Direct mode, quality and OBS suites (`app.mjs` installs into the real `%LOCALAPPDATA%\SwarmCast`) | CI only |
+| `desktop/verify.mjs` | desktop installers on a clean machine: installs, autostart, deletes the data folder | CI only |
+| `preflight/verify.mjs` | pre-release check of a real release on a fresh OS | CI or a throwaway VM |
+| `obs-e2e/` | real OBS + real tunnel + real browsers on macOS ([obs-e2e/README.md](test/obs-e2e/README.md)); writes OBS's own settings | a machine whose OBS you may change |
 
 **Docs screenshots** (`docs/`): `screenshots.mjs` (`node scripts/docs/screenshots.mjs`, after `npm run fetch-bins` and `npm run build`; needs ffmpeg and Google Chrome) starts the e2e test server on the ports moved by `SWARMCAST_E2E_PORT_OFFSET` (default 1500), joins a few viewers and regenerates `docs/img/*-en.png` and `*-pt-BR.png` (panel overview, quality, protection, activity; viewer page on desktop and phone; join and "link not valid" pages) for the website (`site/`) and the README. The live link is replaced by a placeholder and the stream key is never shown.

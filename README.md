@@ -20,6 +20,7 @@ Get the SwarmCast app for your system from the [download page](https://lucas-ang
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, configuration, version policy and the website.
 - [docs/](docs/README.md): architecture, threat model, security research, the [chat](docs/CHAT.md), the [streamer's page](docs/BRANDING.md), quality, the desktop app and the [release guide](docs/RELEASING.md).
 - [CONTRIBUTING.md](CONTRIBUTING.md): bug reports, questions, pull requests and the [Code of Conduct](CODE_OF_CONDUCT.md).
+- [AGENTS.md](AGENTS.md): the rules, commands and safety limits for coding agents (and the people who work with them).
 - [CHANGELOG.md](CHANGELOG.md) and [SECURITY.md](SECURITY.md) (reporting a vulnerability).
 
 ## License
