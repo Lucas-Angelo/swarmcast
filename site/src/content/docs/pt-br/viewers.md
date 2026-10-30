@@ -34,7 +34,7 @@ Embaixo do vídeo (ao lado dele no computador) fica o chat da live. Digite uma m
 - **Ocultar chat** esconde o chat neste aparelho (a escolha fica lembrada); **Mostrar chat** traz de volta.
 - **Configurações do chat** deixa escolher a cor do seu nome, mostrar os horários e aumentar o texto. A sua cor sempre aparece legível para todo mundo.
 - Se uma mensagem for recusada, um aviso curto diz o motivo (modo lento, silenciado, longa demais…). Quem transmite pode apagar mensagens e silenciar pessoas.
-- **GIFs**, se quem transmite ligou, vêm do KLIPY, um serviço de fora. O seu navegador só acessa o KLIPY depois que você toca em **Carregar GIFs**; aí o KLIPY vê o seu endereço IP. Sem esse toque, nada é carregado de fora.
+- **GIFs**, se quem transmite ligou, vêm do KLIPY, um serviço de fora. Um GIF aparece primeiro como "GIF do KLIPY. Toque para mostrar GIFs…": o seu navegador só acessa o KLIPY depois que você toca nele (ou em **Permitir GIFs do KLIPY** no seletor de GIFs); aí o KLIPY vê o seu endereço IP. Dá para desfazer nas **Configurações do chat** (**Mostrar GIFs**). Sem esse toque, nada é carregado de fora.
 
 ## Ajudar a transmissão (P2P)
 

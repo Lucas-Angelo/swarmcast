@@ -261,7 +261,7 @@ async function toWebp(png, out) {
  * One guide picture: `target` (a locator) with `pad` px of page around it, each callout target
  * outlined in amber with its number in a badge (CSSOM styles: allowed by every CSP here).
  */
-async function guideShot(page, target, section, lang, name, { pad = 24, callouts = [] } = {}) {
+async function guideShot(page, target, section, lang, name, { pad = 24, callouts = [], area = null } = {}) {
   await target.scrollIntoViewIfNeeded();
   const boxes = [];
   for (const [n, loc] of callouts.entries()) {
@@ -280,7 +280,14 @@ async function guideShot(page, target, section, lang, name, { pad = 24, callouts
       document.body.append(ring, badge);
     }
   }, boxes);
-  const box = await target.boundingBox();
+  // `area`: crop to the union of these locators instead of the whole target.
+  let box = await target.boundingBox();
+  if (area) {
+    const bs = (await Promise.all(area.map((l) => l.boundingBox()))).filter(Boolean);
+    const x0 = Math.min(...bs.map((b) => b.x));
+    const y0 = Math.min(...bs.map((b) => b.y));
+    box = { x: x0, y: y0, width: Math.max(...bs.map((b) => b.x + b.width)) - x0, height: Math.max(...bs.map((b) => b.y + b.height)) - y0 };
+  }
   const vp = page.viewportSize();
   const x = Math.max(0, Math.floor(box.x - pad));
   const y = Math.max(0, Math.floor(box.y - pad));
@@ -309,33 +316,33 @@ async function say(page, text) {
 }
 
 
-/** A raw image upload to the panel's "Your page" image route. */
-async function adminUpload(slot, file, type) {
-  const res = await fetch(new URL(`/api/branding/image/${slot}`, admin.base), {
-    method: 'PUT',
-    headers: { cookie, origin: admin.base.origin, 'content-type': type },
-    body: fs.readFileSync(path.join(ROOT, 'scripts', 'docs', 'brand-sample', file)),
-  });
-  if (!res.ok) throw new Error(`upload ${slot}: HTTP ${res.status} ${await res.text()}`);
-}
-
 /** A made-up streamer page (pictures made from the mascot, scripts/docs/brand-sample/). */
 const BRAND_TEXT = {
   en: { tagline: 'Cosy games and a chat every Friday 🎮', about: 'Hi! I stream cosy indie games.\nGrab a tea and make yourself at home.\nLive every Friday at 8 pm.', ended: 'Thanks! Back on Friday at 8 pm 💙' },
   'pt-BR': { tagline: 'Jogos tranquilos e papo toda sexta 🎮', about: 'Oi! Eu transmito jogos indie e aconchegantes.\nPega um chá e fica à vontade.\nAs lives são toda sexta às 20h.', ended: 'Valeu! Volto sexta às 20h 💙' },
 };
 
-async function brandOn(lang) {
-  for (const [slot, file, type] of [
-    ['avatar', 'avatar.jpg', 'image/jpeg'],
-    ['avatar128', 'avatar128.png', 'image/png'],
-    ['fav32', 'fav32.png', 'image/png'],
-    ['fav180', 'fav180.jpg', 'image/jpeg'],
-    ['banner', 'banner.jpg', 'image/jpeg'],
-    ['banner640', 'banner640.jpg', 'image/jpeg'],
+async function brandOn(browser, lang) {
+  // The pictures go in through the panel's own picture fields, as a streamer adds them: the
+  // panel crops and re-encodes them in the browser and uploads every size it needs.
+  const ctx = await browser.newContext({ ...DESKTOP, locale: lang });
+  const panel = await ctx.newPage();
+  await panel.goto(admin.loginUrl.href);
+  await panel.waitForSelector('[data-testid="live-link"]');
+  for (const [field, file] of [
+    ['avatar', 'avatar.jpg'],
+    ['banner', 'banner.jpg'],
   ]) {
-    await adminUpload(slot, file, type);
+    const input = panel.getByTestId(`brand-file-${field}`);
+    if ((await input.count()) === 0) {
+      log(`no ${field} picture field in the panel: the page shows no ${field}`);
+      continue;
+    }
+    await input.setInputFiles(path.join(ROOT, 'scripts', 'docs', 'brand-sample', file));
+    await panel.getByTestId(`brand-use-${field}`).click();
+    await panel.getByTestId(`brand-thumb-${field}`).waitFor({ timeout: 15_000 });
   }
+  await ctx.close();
   const text = BRAND_TEXT[lang];
   await adminApi('PUT', '/api/branding', {
     enabled: true,
@@ -357,7 +364,7 @@ async function brandOn(lang) {
 
 /** "Your page" and GIFs on the viewer side, for the "Customise your page" and "Get a GIF key" guides. */
 async function captureBranding(browser, lang) {
-  await brandOn(lang);
+  await brandOn(browser, lang);
   const chatBefore = (await adminApi('GET', '/api/chat')).settings;
   await adminApi('PUT', '/api/chat/settings', { ...chatBefore, content: { text: true, emotes: true, gifs: true }, gif: { provider: 'klipy', key: 'guide_screenshot_key', rating: 'pg', consent: 'ask' } });
   try {
@@ -422,6 +429,8 @@ async function capturePanelGuides(browser, lang) {
     await sanitize(panel, s);
     // 1 on/off, 2 the messages, 3 send as the streamer, 4 flood protection, 5 clear.
     await guideShot(panel, card, 'live', lang, 'chat-panel', {
+      pad: 20,
+      area: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-protect'), panel.getByTestId('chat-feed'), panel.getByTestId('chat-send')],
       callouts: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-feed'), panel.getByTestId('chat-send'), panel.getByTestId('chat-protect'), panel.getByTestId('chat-clear')],
     });
     await panel.getByTestId('chat-input').fill('');
@@ -444,7 +453,7 @@ async function capturePanelGuides(browser, lang) {
 
   const brandCard = panel.getByTestId('brand-card');
   if ((await brandCard.count()) > 0) {
-    await brandOn(lang);
+    await brandOn(browser, lang);
     await panel.reload();
     await panel.getByTestId('brand-name').waitFor({ timeout: 15_000 });
     await sleep(1000);

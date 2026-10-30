@@ -34,7 +34,7 @@ Under the video (next to it on a computer) is the live's chat. Type a message an
 - **Hide chat** hides it on this device (your choice is remembered); **Show chat** brings it back.
 - **Chat settings** lets you pick your name colour, show the times and make the text larger. Your colour is always shown readable for everyone.
 - If a message is refused, a short note says why (slow mode, muted, too long…). The streamer can delete messages and mute people.
-- **GIFs**, if the streamer turned them on, come from KLIPY, an outside service. Your browser contacts it only after you tap **Load GIFs**; KLIPY then sees your IP address. Without that tap, nothing is loaded from outside.
+- **GIFs**, if the streamer turned them on, come from KLIPY, an outside service. A GIF first shows as "GIF from KLIPY. Tap to show GIFs…": your browser contacts KLIPY only after you tap it (or **Allow GIFs from KLIPY** in the GIF picker); KLIPY then sees your IP address. You can undo it in **Chat settings** (**Show GIFs**). Without that tap, nothing is loaded from outside.
 
 ## Help the stream (P2P)
 
