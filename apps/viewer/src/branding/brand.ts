@@ -191,8 +191,16 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
     const slot = byId('brand-banner');
     if (!slot) return;
     const b = data?.banner;
-    if (!b || data?.lite || !framed) {
+    if (!b || data?.lite) {
       slot.hidden = true;
+      slot.replaceChildren();
+      return;
+    }
+    // The slot shows as soon as the branding is known (its 4:1 box, brand.css), so the player under
+    // it does not move when the picture comes; the picture waits for the first fragment, so it
+    // never delays the first frame.
+    slot.hidden = false;
+    if (!framed) {
       slot.replaceChildren();
       return;
     }
@@ -210,7 +218,6 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
     }
     img.src = b.s1280;
     slot.replaceChildren(img);
-    slot.hidden = false;
   };
 
   const endedScreen = (): void => {

@@ -168,3 +168,51 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
   expect(errors).toEqual([]);
   return { joins };
 }
+
+/** The one built file of `dir` (under DIST) whose name matches `pattern`, as a URL path. */
+function builtFile(dir: string, pattern: RegExp): string {
+  const found = fs.readdirSync(path.join(DIST, dir)).filter((f) => pattern.test(f));
+  if (found.length !== 1) throw new Error(`expected one ${pattern} in ${dir}, found ${found.join(', ') || 'none'}`);
+  return `/${dir}/${found[0]}`;
+}
+
+/**
+ * Opens /watch with only its branding running: the page's markup and styles, the real branding
+ * chunk and stylesheet, and /api/brand answered by `brand`. The player stays as the markup and
+ * styles make it (no stream behind the mock), and the test plays the player's part: the page's
+ * `window.__stage.firstFrame()` is what the player calls on its first fragment (watch.ts). The
+ * streamer's pictures are a small real WebP.
+ */
+export async function openBrandedStage(page: Page, o: { brand: unknown }): Promise<void> {
+  const html = fs.readFileSync(path.join(DIST, 'watch.html'), 'utf8');
+  const entry = /<script type="module"[^>]*src="(\/assets\/watch-[^"]+\.js)"/.exec(html)?.[1];
+  if (!entry) throw new Error('no watch entry script in dist/watch.html');
+  const brandJs = builtFile('assets', /^brand-[\w-]+\.js$/);
+  const brandCss = builtFile('assets', /^brand-[\w-]+\.css$/);
+  const picture = fs.readFileSync(path.resolve(DIST, '..', '..', '..', 'assets', 'brand', 'emotes', 'bee@2x.webp'));
+  const driver = `
+    const css = document.createElement('link');
+    css.rel = 'stylesheet';
+    css.href = ${JSON.stringify(brandCss)};
+    const loaded = new Promise((resolve) => css.addEventListener('load', resolve, { once: true }));
+    document.head.append(css);
+    await loaded;
+    const { startBrand } = await import(${JSON.stringify(brandJs)});
+    const brand = startBrand('watch');
+    await brand.refresh();
+    window.__stage = { firstFrame: () => brand.firstFrame() };
+    document.body.dataset.stage = 'branded';
+  `;
+  await serveViewer(page, (route, url) => {
+    if (url.pathname === entry) return route.fulfill({ body: driver, contentType: 'text/javascript' });
+    if (url.pathname === '/api/brand') return route.fulfill({ json: o.brand });
+    if (url.pathname === '/brand/theme.css') return route.fulfill({ body: '/* */', contentType: 'text/css' });
+    if (/^\/brand\/[0-9a-f]{64}\.webp$/.test(url.pathname)) return route.fulfill({ body: picture, contentType: 'image/webp' });
+    return false;
+  });
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  await page.goto(`${ORIGIN}/watch?lang=en`);
+  await expect(page.locator('body')).toHaveAttribute('data-stage', 'branded');
+  expect(errors).toEqual([]);
+}

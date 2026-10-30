@@ -140,12 +140,21 @@ describe('watch page branding', () => {
     expect(document.querySelector('link[rel=apple-touch-icon]')!.getAttribute('href')).toBe(IMG('d'));
   });
 
-  it('loads no banner before the first fragment (it never delays the first frame)', async () => {
+  it('shows the banner slot as soon as the branding is known, empty until the first fragment (it never delays the first frame)', async () => {
     // Act
     await branded('watch');
 
     // Assert
+    expect(byId('brand-banner').hidden).toBe(false);
     expect(document.querySelector('#brand-banner img')).toBeNull();
+  });
+
+  it('no banner in the branding: no slot', async () => {
+    // Act
+    await branded('watch', brand({ banner: undefined }));
+
+    // Assert
+    expect(byId('brand-banner').hidden).toBe(true);
   });
 
   it('loads the banner after the first fragment, lazily and responsive', async () => {
@@ -162,7 +171,7 @@ describe('watch page branding', () => {
     expect(img.getAttribute('loading')).toBe('lazy');
   });
 
-  it('lite mode: no banner, even after the first fragment', async () => {
+  it('lite mode: no banner and no slot, even after the first fragment', async () => {
     // Arrange
     const { c } = await branded('watch', brand({ lite: true }));
 
@@ -171,6 +180,7 @@ describe('watch page branding', () => {
 
     // Assert
     expect(document.querySelector('#brand-banner img')).toBeNull();
+    expect(byId('brand-banner').hidden).toBe(true);
   });
 
   it('skips a refresh for the revision it already has', async () => {
