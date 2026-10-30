@@ -70,7 +70,7 @@ Since v0.2.1 the delay behind live is no longer fixed per profile: each viewer's
 **Inputs** (one tick per second, statistics over the last 60 s):
 - **Segment load time / segment duration** (hls.js `FRAG_LOADED`; for segments p2p-media-loader fetched ahead, its own download time from `onSegmentStart` → `onSegmentLoaded`). Only HTTP segments count: a slow peer says nothing about the viewer's own link, and the urgent ones always come over HTTP anyway.
 - **Bandwidth headroom** = hls.js bandwidth estimate / bitrate of the rendition playing (from the playlist, else measured from segment sizes), capped at 4× before its coefficient of variation is computed (on a fast link a jittery 50–500 Mbps estimate is still "plenty").
-- **Stalls**: `waiting` events after the first frame, not caused by a seek or a pause, and their length.
+- **Stalls**: `waiting` events after the first frame, not caused by a seek or a pause, and their length. Only when the media ran out: a `waiting` with 1 s or more buffered ahead (`STARVED_BELOW_S`) is the browser's decoder or renderer falling behind on a busy machine, which neither a hold nor a longer delay helps (Chrome on the 3-vCPU macOS CI runners: each such hiccup became the full 3 s hold).
 - **Buffer trend**: least-squares slope, over 30 s, of the gap between the end of the buffer and the live edge (latency − forward buffer). It grows when downloads fall behind the live edge, and does not move when playbackRate changes.
 - **HTTP vs P2P**: p2p-media-loader's `downloadSource` per segment.
 
