@@ -23,6 +23,7 @@
     "coverage:unit": "vitest run --coverage",
     "coverage:integration": "vitest run --config vitest.integration.config.ts --coverage",
     "coverage:e2e": "node scripts/coverage/e2e-server.mjs --run",
+    "coverage:desktop": "node scripts/coverage/desktop.mjs",
     "dev": "npm run dev -w @swarmcast/server",
     "package": "node scripts/build/package.mjs",
     "fetch-bins": "node scripts/build/fetch-binaries.mjs",
