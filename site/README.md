@@ -21,7 +21,7 @@ npm run dev        # http://localhost:4321/swarmcast/ (live reload)
 npm run check      # astro check: types of the components, lib/ and the unit tests
 npm run build      # site/dist/; fails on a broken internal link (starlight-links-validator)
 npm run preview    # serves the build
-npm run test:e2e   # Playwright (Chromium) against the BUILT site; SITE_E2E_PORT moves its port (default 43210)
+npm run test:e2e   # Playwright (Google Chrome) against the BUILT site; SITE_E2E_PORT moves its port (default 43210)
 npm run og         # re-render the social preview cards (public/og/), see "Link previews and SEO"
 ```
 
@@ -32,7 +32,9 @@ npm run og         # re-render the social preview cards (public/og/), see "Link 
   GitHub Pages; the tests cover the landing pages, light and dark mode, the language redirect and
   switcher, the download button and page per OS (with and without stats), the usage numbers, phone
   widths, alt text and keyboard focus. `test/e2e/seo.spec.ts` covers the link-preview and search tags
-  (see below). Run `npx playwright install chromium` once.
+  (see below). They run in the installed Google Chrome (as on GitHub's runners), never retried;
+  with `PW_CHROMIUM_CHANNEL=''` they use Playwright's own Chromium instead (`npx playwright install
+  chromium` once).
 
 ## Where things live
 
