@@ -20,6 +20,7 @@ import type { MessageKey } from '@swarmcast/shared/i18n';
 import type { ActivityLog } from '../core/activity.js';
 import type { Logger } from '../core/logger.js';
 import { ensurePrivateDir } from '../core/paths.js';
+import { readSmallBinary } from '../core/small-file.js';
 import { normalizeBrandImage, type ImgError } from './image.js';
 
 const EXT = { png: 'png', jpeg: 'jpg', webp: 'webp' } as const;
@@ -68,15 +69,12 @@ export class BrandingStore {
       let ok = false;
       if (this.o.dir) {
         try {
-          const file = path.join(this.o.dir, name);
-          const st = fs.statSync(file);
-          if (st.isFile() && st.size <= BRAND_SLOTS[slot].maxBytes) {
-            const bytes = fs.readFileSync(file);
-            const r = normalizeBrandImage(bytes, slot);
-            if (r.ok && r.bytes.equals(bytes) && sha256(bytes) === ref.sha) {
-              this.files.set(ref.sha, { bytes, type: r.type, mime: MIME[r.type] });
-              ok = true;
-            }
+          // One open file descriptor for the size check and the read (no check-then-use on the path).
+          const bytes = readSmallBinary(path.join(this.o.dir, name), BRAND_SLOTS[slot].maxBytes);
+          const r = bytes ? normalizeBrandImage(bytes, slot) : null;
+          if (bytes && r?.ok && r.bytes.equals(bytes) && sha256(bytes) === ref.sha) {
+            this.files.set(ref.sha, { bytes, type: r.type, mime: MIME[r.type] });
+            ok = true;
           }
         } catch {
           /* missing or unreadable: dropped below */
@@ -147,10 +145,11 @@ export class BrandingStore {
     if (this.o.dir) {
       ensurePrivateDir(this.o.dir);
       const file = path.join(this.o.dir, `${sha}.${EXT[r.type]}`);
-      const tmp = `${file}.${process.pid}.tmp`;
-      fs.writeFileSync(tmp, r.bytes, { mode: 0o600 });
+      // Written to a fresh temp file created with mode 0600 ('wx': never an existing path), then
+      // renamed into place atomically.
+      const tmp = `${file}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`;
+      fs.writeFileSync(tmp, r.bytes, { mode: 0o600, flag: 'wx' });
       fs.renameSync(tmp, file);
-      if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
     }
     this.files.set(sha, { bytes: r.bytes, type: r.type, mime: MIME[r.type] });
     const ref: BrandImageRef = { sha, type: r.type, w: r.w, h: r.h, bytes: r.bytes.length };
