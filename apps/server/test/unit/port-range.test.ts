@@ -1,49 +1,46 @@
 import https from 'node:https';
 import net from 'node:net';
-import pino from 'pino';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { reservePort } from '../../src/core/ports.js';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { reservePort, type PortReservation } from '../../src/core/ports.js';
 import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, type DirectDeps } from '../../src/direct/direct.js';
-import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
+import { UpnpGateway } from '../../src/direct/upnp.js';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
-import { MockIgd } from './mock-igd.js';
+import { silentLog } from './helpers.js';
+import { captureLog, gatewayOf, mockRouter } from './helpers-b.js';
+import type { MockIgd } from './mock-igd.js';
 
 // B6: Direct mode's port stays below Windows' dynamic range (49152–65535, where Hyper-V, WSL and
 // Docker reserve blocks), and a port the OS refuses at listen time is retried with another one
-// before anything is mapped on the router.
+// before anything is mapped on the router: nothing may be mapped before a listen succeeded, and the
+// mapping is made while the port is still held, then the server takes it over. Ports Direct mode
+// really listens on come from this worker's block (allocPorts): a fixed `random` would give the same
+// port in every run and every file, so a test running next to this one (or another copy of the
+// suite) could hold it. Everything listens on 127.0.0.1 (the app binds all interfaces; a test must
+// not, nor trigger a firewall prompt).
 
-let igd: MockIgd;
-const closers: Array<() => Promise<void>> = [];
-/**
- * Ports Direct mode really listens on come from this worker's block (allocPorts): a fixed
- * `random` gives the same port in every run and every file, so a test running next to this one
- * (or another copy of the suite) could hold it. `randomFor(port)` makes pickPort() return `port`.
- */
+/** The `random` value that makes pickPort() return `port`. */
 const randomFor = (port: number): number => (port - DIRECT_PORT_MIN + 0.5) / (DIRECT_PORT_MAX - DIRECT_PORT_MIN + 1);
-let directPort: number;
-beforeEach(async () => {
-  igd = new MockIgd('203.0.113.7');
-  await igd.start();
-  [directPort] = (await allocPorts(1)) as [number];
-});
-afterEach(async () => {
-  for (const c of closers.splice(0)) await c();
-  await igd.stop();
-});
 
-function capture(): { log: pino.Logger; lines: () => Array<Record<string, unknown>> } {
-  const out: string[] = [];
-  const log = pino({ level: 'debug' }, { write: (l: string) => void out.push(l) });
-  return { log, lines: () => out.map((l) => JSON.parse(l) as Record<string, unknown>) };
-}
+/** What `netsh int ipv4 show excludedportrange protocol=tcp` prints on a Windows with Hyper-V. */
+const EXCLUDED_RANGES = 'Start Port    End Port\n----------    --------\n     49709       49808';
 
-function deps(over: Partial<DirectDeps> = {}): DirectDeps {
+const listenError = (code: string, port: number): Error => Object.assign(new Error(`listen ${code}: 0.0.0.0:${port}`), { code });
+
+/** A real exclusive listen on 127.0.0.1 instead of the wildcard address the app uses. */
+const reserveOnLoopback = (port: number, host: string): Promise<PortReservation> => reservePort(port, host === '0.0.0.0' ? '127.0.0.1' : host);
+
+/**
+ * Direct mode's dependencies around the mock router `igd` (none: no router found); HTTPS servers it
+ * starts are closed when the test finishes. `random` must be given: a port Direct mode really
+ * listens on comes from allocPorts.
+ */
+function deps(igd: MockIgd | null, over: Partial<DirectDeps> = {}): DirectDeps {
   return {
-    log: pino({ level: 'silent' }),
+    log: silentLog,
     state: new MemoryStateStore(),
-    discoverMapper: () => discoverUpnp({ address: '127.0.0.1', port: igd.ssdpPort, timeoutMs: 400 }),
+    discoverMapper: async () => (igd ? gatewayOf(igd) : null),
     mapperFromId: (_k, id) => UpnpGateway.fromId(id),
     publicIps: async () => ({ v4: '203.0.113.7' }),
     localAddress: async () => '127.0.0.1',
@@ -56,53 +53,72 @@ function deps(over: Partial<DirectDeps> = {}): DirectDeps {
         srv.listen(port, '127.0.0.1', () => resolve());
       });
       const h = { close: () => new Promise<void>((r) => srv.close(() => r())) };
-      closers.push(h.close);
+      onTestFinished(h.close);
       return h;
     },
     probe: async () => false,
-    random: () => randomFor(directPort),
-    excludedPortRanges: async () => 'Start Port    End Port\n----------    --------\n     49709       49808',
+    random: () => {
+      throw new Error('this test gives Direct mode no random source: pick its port from allocPorts');
+    },
+    excludedPortRanges: async () => EXCLUDED_RANGES,
     ...over,
   };
 }
 
-const listenError = (code: string, port: number): Error => Object.assign(new Error(`listen ${code}: 0.0.0.0:${port}`), { code });
+/** A `random` that returns the values for `ports` in turn (then the last one again). */
+function pickInTurn(ports: number[]): () => number {
+  let i = 0;
+  return () => randomFor(ports[Math.min(i++, ports.length - 1)]!);
+}
 
 describe('Direct mode port range', () => {
-  it('stays within 20000–49151, both ends included', () => {
+  it('is 20000–49151, below the dynamic range', () => {
+    // Assert
     expect([DIRECT_PORT_MIN, DIRECT_PORT_MAX]).toEqual([20000, 49151]);
-    const at = (r: number): number => new DirectMode(deps({ random: () => r })).pickPort();
-    expect(at(0)).toBe(20000);
-    expect(at(0.999999999)).toBe(49151);
-    // Even a random source returning 1 (out of contract) cannot reach the dynamic range.
-    expect(at(1)).toBe(49151);
-    const d = new DirectMode(deps({ random: Math.random }));
-    for (let i = 0; i < 20_000; i++) {
-      const p = d.pickPort();
-      expect(p).toBeGreaterThanOrEqual(20000);
-      expect(p).toBeLessThan(49152);
-    }
+  });
+
+  it.each([
+    ['the lowest random value', 0, 20000],
+    ['the highest random value', 0.999999999, 49151],
+    ['a random source returning 1 (out of contract)', 1, 49151],
+  ])('picks both ends included: %s (%d) gives %i', (_what, r, port) => {
+    // Arrange
+    const d = new DirectMode(deps(null, { random: () => r }));
+    // Act
+    const picked = d.pickPort();
+    // Assert
+    expect(picked).toBe(port);
+  });
+
+  it('never picks a port in the dynamic range', () => {
+    // Arrange
+    const d = new DirectMode(deps(null, { random: Math.random }));
+    // Act
+    const picked = Array.from({ length: 20_000 }, () => d.pickPort());
+    // Assert
+    expect(Math.min(...picked)).toBeGreaterThanOrEqual(20000);
+    expect(Math.max(...picked)).toBeLessThan(49152);
   });
 });
 
 describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the router mapping', () => {
-  it('retries after an injected EACCES on the first listen, logs it as "reserved by Windows" with the excluded ranges, then maps the port it holds', async () => {
-    const { log, lines } = capture();
+  /** Direct mode whose first listen fails with EACCES (an excluded range) and whose second one really listens; `log` keeps its lines. */
+  async function refusedOnceThenListens() {
+    const igd = await mockRouter();
+    const { log, lines } = captureLog();
     const [refusedPort, freePort] = (await allocPorts(2)) as [number, number];
-    const seq = [randomFor(refusedPort), randomFor(freePort)];
-    let i = 0;
-    const calls: number[] = [];
+    const tried: number[] = [];
+    const mappedAtListen: number[] = [];
     let mappedWhileHeld: number[] | null = null;
     const d = new DirectMode(
-      deps({
+      deps(igd, {
         log,
-        random: () => seq[Math.min(i++, seq.length - 1)]!,
+        random: pickInTurn([refusedPort, freePort]),
         reservePort: async (port, host) => {
-          calls.push(port);
-          // Nothing may be mapped on the router before a listen succeeded.
-          expect(igd.mappings.size).toBe(0);
-          if (calls.length === 1) throw listenError('EACCES', port);
-          const r = await reservePort(port, host === '0.0.0.0' ? '127.0.0.1' : host);
+          tried.push(port);
+          mappedAtListen.push(igd.mappings.size);
+          if (tried.length === 1) throw listenError('EACCES', port);
+          const r = await reserveOnLoopback(port, host);
           return {
             port,
             release: async () => {
@@ -113,55 +129,79 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
         },
       }),
     );
-    const url = await d.enable();
-    const [first, second] = calls;
-    expect(calls).toHaveLength(2);
-    expect(first).toBe(refusedPort);
-    expect(second).toBe(freePort);
-    expect(url).toBe(`https://203.0.113.7:${second}`);
-    // The router mapping was created while the port was still held, then the server took it over.
-    expect(mappedWhileHeld).toEqual([second]);
-    expect([...igd.mappings.keys()]).toEqual([second]);
-    await expect.poll(() => lines().map((l) => l.msg)).toContain('direct mode: ports Windows keeps for itself');
-    const reserved = lines().find((l) => String(l.msg).includes('reserved by Windows'));
-    expect(reserved?.ports).toEqual([first]);
-    expect(lines().find((l) => l.msg === 'direct mode: ports Windows keeps for itself')?.excludedPortRanges).toContain('49709');
-    expect(lines().some((l) => String(l.msg).includes('used by another program'))).toBe(false);
-    await d.disable();
+    onTestFinished(async () => void (await d.disable()));
+    return { igd, d, lines, refusedPort, freePort, tried, mappedAtListen, mappedWhileHeld: () => mappedWhileHeld };
+  }
+
+  it('retries after an EACCES on the first listen, and maps the port it holds', async () => {
+    // Arrange
+    const t = await refusedOnceThenListens();
+    // Act
+    const url = await t.d.enable();
+    // Assert
+    expect(t.tried).toEqual([t.refusedPort, t.freePort]);
+    expect(t.mappedAtListen).toEqual([0, 0]);
+    expect(url).toBe(`https://203.0.113.7:${t.freePort}`);
+    expect(t.mappedWhileHeld()).toEqual([t.freePort]);
+    expect([...t.igd.mappings.keys()]).toEqual([t.freePort]);
+  });
+
+  it('logs the refused port as "reserved by Windows", with the excluded ranges', async () => {
+    // Arrange
+    const t = await refusedOnceThenListens();
+    // Act
+    await t.d.enable();
+    // Assert
+    await expect.poll(() => t.lines().map((l) => l.msg)).toContain('direct mode: ports Windows keeps for itself');
+    expect(t.lines().find((l) => l.msg.includes('reserved by Windows'))?.ports).toEqual([t.refusedPort]);
+    expect(t.lines().find((l) => l.msg === 'direct mode: ports Windows keeps for itself')?.excludedPortRanges).toContain('49709');
+    expect(t.lines().some((l) => l.msg.includes('used by another program'))).toBe(false);
+  });
+
+  it('a real listen on a port another program holds fails with EADDRINUSE', async () => {
+    // Arrange
+    const holder = net.createServer();
+    await new Promise<void>((r) => holder.listen(0, '127.0.0.1', () => r()));
+    onTestFinished(() => new Promise<void>((r) => holder.close(() => r())));
+    const busy = (holder.address() as net.AddressInfo).port;
+    // Act
+    const reserving = reservePort(busy, '127.0.0.1');
+    // Assert
+    await expect(reserving).rejects.toMatchObject({ code: 'EADDRINUSE' });
   });
 
   it('tells "used by another program" (EADDRINUSE) apart from "reserved by Windows" (EACCES)', async () => {
-    const { log, lines } = capture();
-    const holder = net.createServer();
-    await new Promise<void>((r) => holder.listen(0, '127.0.0.1', () => r()));
-    closers.push(() => new Promise<void>((r) => holder.close(() => r())));
-    const busy = (holder.address() as net.AddressInfo).port;
-    // A real EADDRINUSE from a real listen on a port this test holds.
-    await expect(reservePort(busy, '127.0.0.1')).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    // Arrange
+    const igd = await mockRouter();
+    const { log, lines } = captureLog();
     const [inUse, refused, listened] = (await allocPorts(3)) as [number, number, number];
-    let n = 0;
+    const errors = [listenError('EADDRINUSE', inUse), listenError('EACCES', refused)];
     const d = new DirectMode(
-      deps({
+      deps(igd, {
         log,
-        random: () => randomFor([inUse, refused, listened][n++]!),
+        random: pickInTurn([inUse, refused, listened]),
         reservePort: async (port) => {
-          if (n === 1) throw listenError('EADDRINUSE', port);
-          if (n === 2) throw listenError('EACCES', port);
+          const err = errors.shift();
+          if (err) throw err;
           return { port, release: async () => {} };
         },
       }),
     );
+    onTestFinished(async () => void (await d.disable()));
+    // Act
     await d.enable();
-    expect(lines().find((l) => String(l.msg).includes('used by another program'))?.ports).toEqual([inUse]);
-    expect(lines().find((l) => String(l.msg).includes('reserved by Windows'))?.ports).toEqual([refused]);
-    await d.disable();
+    // Assert
+    expect(lines().find((l) => l.msg.includes('used by another program'))?.ports).toEqual([inUse]);
+    expect(lines().find((l) => l.msg.includes('reserved by Windows'))?.ports).toEqual([refused]);
   });
 
   it('gives up with the translated error after 25 refused ports, and maps nothing', async () => {
+    // Arrange
+    const igd = await mockRouter();
     let n = 0;
     const tried = new Set<number>();
     const d = new DirectMode(
-      deps({
+      deps(igd, {
         random: () => (n++ % 1000) / 1000,
         reservePort: async (port) => {
           tried.add(port);
@@ -169,35 +209,56 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
         },
       }),
     );
-    await expect(d.enable()).rejects.toMatchObject({ code: 'err.directNoPort' });
+    // Act
+    const enabling = d.enable();
+    // Assert
+    await expect(enabling).rejects.toMatchObject({ code: 'err.directNoPort' });
     expect(tried.size).toBe(25);
     expect(igd.mappings.size).toBe(0);
     expect(d.active).toBe(false);
   });
 
   it('a lost race between the release and the server listen is reported plainly and cleaned up', async () => {
+    // Arrange
+    const igd = await mockRouter();
+    const [port] = (await allocPorts(1)) as [number];
     const d = new DirectMode(
-      deps({
-        reservePort: async (port) => ({ port, release: async () => {} }),
-        startServer: async (port) => Promise.reject(listenError('EADDRINUSE', port)),
+      deps(igd, {
+        random: () => randomFor(port),
+        reservePort: async (p) => ({ port: p, release: async () => {} }),
+        startServer: async (p) => Promise.reject(listenError('EADDRINUSE', p)),
       }),
     );
-    await expect(d.enable()).rejects.toMatchObject({ code: 'err.directNoPort' });
+    // Act
+    const enabling = d.enable();
+    // Assert
+    await expect(enabling).rejects.toMatchObject({ code: 'err.directNoPort' });
     expect(igd.mappings.size).toBe(0);
     expect(d.active).toBe(false);
   });
 
-  it('reservePort really holds the port until released', async () => {
-    const probe = net.createServer();
-    await new Promise<void>((res) => probe.listen(0, '127.0.0.1', () => res()));
-    const free = (probe.address() as net.AddressInfo).port;
-    await new Promise<void>((res) => probe.close(() => res()));
+  it('reservePort really holds the port: another listen on it fails', async () => {
+    // Arrange
+    const [free] = (await allocPorts(1)) as [number];
     const held = await reservePort(free, '127.0.0.1');
+    onTestFinished(() => held.release());
+    // Act
+    const second = reservePort(free, '127.0.0.1');
+    // Assert
     expect(held.port).toBe(free);
-    await expect(reservePort(free, '127.0.0.1')).rejects.toMatchObject({ code: 'EADDRINUSE' });
+    await expect(second).rejects.toMatchObject({ code: 'EADDRINUSE' });
+  });
+
+  it('reservePort gives the port back on release (twice is harmless)', async () => {
+    // Arrange
+    const [free] = (await allocPorts(1)) as [number];
+    const held = await reservePort(free, '127.0.0.1');
+    // Act
     await held.release();
-    await held.release(); // idempotent
+    await held.release();
     const again = await reservePort(free, '127.0.0.1');
-    await again.release();
+    onTestFinished(() => again.release());
+    // Assert
+    expect(again.port).toBe(free);
   });
 });

@@ -1,54 +1,89 @@
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readSmallFile } from '../../src/core/small-file.js';
+import { tempDir } from './helpers-b.js';
 
-const dirs: string[] = [];
-function tmp(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-small-file-'));
-  dirs.push(d);
-  return d;
-}
+// readSmallFile reads a small regular file whole, or gives null: missing, a folder, a FIFO (at
+// once, without waiting for a writer: POSIX only, Windows has no mkfifo), or bigger than the limit.
+// The size is checked on the opened file and the read stops after limit + 1 bytes, so a file that
+// grows (or is swapped) between the check and the read is never returned whole. That race cannot
+// be timed from a test: the size the check sees is stubbed instead.
+
 afterEach(() => {
-  for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
+  vi.restoreAllMocks();
 });
+
+/** A file holding `content`, in a temp folder of this test. */
+function fileWith(content: string): string {
+  const f = path.join(tempDir('sc-small-file-'), 'a.json');
+  fs.writeFileSync(f, content);
+  return f;
+}
+
+/** 8 two-byte characters: 16 bytes. */
+const SIXTEEN_BYTES = 'é'.repeat(8);
 
 describe('readSmallFile', () => {
   it('reads a file up to the limit, byte for byte', () => {
-    const f = path.join(tmp(), 'a.json');
-    fs.writeFileSync(f, 'é'.repeat(8)); // 16 bytes
-    expect(readSmallFile(f, 16)).toBe('é'.repeat(8));
-    expect(readSmallFile(f, 15)).toBeNull();
-    fs.writeFileSync(f, '');
-    expect(readSmallFile(f, 16)).toBe('');
+    // Arrange
+    const f = fileWith(SIXTEEN_BYTES);
+    // Act
+    const text = readSmallFile(f, 16);
+    // Assert
+    expect(text).toBe(SIXTEEN_BYTES);
   });
 
-  it('gives null for a missing path or a folder', () => {
-    const d = tmp();
-    expect(readSmallFile(path.join(d, 'missing'), 100)).toBeNull();
-    expect(readSmallFile(d, 100)).toBeNull();
+  it('gives null for a file one byte over the limit', () => {
+    // Arrange
+    const f = fileWith(SIXTEEN_BYTES);
+    // Act
+    const text = readSmallFile(f, 15);
+    // Assert
+    expect(text).toBeNull();
+  });
+
+  it('reads an empty file as an empty string', () => {
+    // Arrange
+    const f = fileWith('');
+    // Act
+    const text = readSmallFile(f, 16);
+    // Assert
+    expect(text).toBe('');
+  });
+
+  it.each([
+    ['a missing path', (d: string) => path.join(d, 'missing')],
+    ['a folder', (d: string) => d],
+  ])('gives null for %s', (_what, at) => {
+    // Arrange
+    const target = at(tempDir('sc-small-file-'));
+    // Act
+    const text = readSmallFile(target, 100);
+    // Assert
+    expect(text).toBeNull();
   });
 
   it.skipIf(process.platform === 'win32')('gives null for a FIFO at once instead of waiting for a writer', () => {
-    const f = path.join(tmp(), 'fifo');
+    // Arrange
+    const f = path.join(tempDir('sc-small-file-'), 'fifo');
     execFileSync('mkfifo', [f]);
-    expect(readSmallFile(f, 100)).toBeNull();
+    // Act
+    const text = readSmallFile(f, 100);
+    // Assert
+    expect(text).toBeNull();
   });
 
-  it('never returns more than the limit when the file grows after the check', () => {
-    const f = path.join(tmp(), 'grow');
-    fs.writeFileSync(f, 'x'.repeat(10));
-    const realFstat = fs.fstatSync;
-    // The size seen by the check is 10; the content read is far larger (a file swapped in between).
-    fs.writeFileSync(f, 'x'.repeat(1000));
-    const fstat = (fd: number): fs.Stats => Object.assign(realFstat(fd), { size: 10 });
-    (fs as { fstatSync: unknown }).fstatSync = fstat;
-    try {
-      expect(readSmallFile(f, 64)).toBeNull();
-    } finally {
-      (fs as { fstatSync: unknown }).fstatSync = realFstat;
-    }
+  it('never returns more than the limit when the file grows after the size check', () => {
+    // Arrange
+    const f = fileWith('x'.repeat(1000));
+    const realFstat = fs.fstatSync.bind(fs);
+    const check = vi.spyOn(fs, 'fstatSync').mockImplementation(((fd: number) => Object.assign(realFstat(fd), { size: 10 })) as typeof fs.fstatSync);
+    // Act
+    const text = readSmallFile(f, 64);
+    // Assert
+    expect(check).toHaveBeenCalled();
+    expect(text).toBeNull();
   });
 });
