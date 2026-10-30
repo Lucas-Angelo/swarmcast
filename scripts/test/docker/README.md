@@ -114,8 +114,10 @@ test's own display and session tools (`xvfb xauth dbus`). There is no curl, Pyth
 quietly borrow. The container has no network (`--network none`) and no FUSE device, so the AppImage
 runs with `APPIMAGE_EXTRACT_AND_RUN=1`. Under `xvfb-run` and `dbus-run-session` it checks: the
 server starts (login URL), panel login, the panel page, `/api/desktop` (version), the shell logs
-"ready, opening the panel", the app and a `WebKitWebProcess` are still running 5 s later, no
-"error while loading shared libraries" or panic, and Quit in the panel leaves no process.
+"ready, opening the panel", a `WebKitWebProcess` starts (the window has a webview), the app is
+still running 5 s after opening the panel (a measured window: a crash while the webview loads
+shows there), no "error while loading shared libraries" or panic, and Quit in the panel leaves
+no process. Every other wait in these scripts is for its condition with a deadline (`lib.sh`).
 When a base fails with a missing library, the list (here and on the website, both languages) is
 what needs fixing. `libharfbuzz0b` and `libfribidi0` were found that way: AppImages leave them to
 the host (the AppImage exclude list), and the v0.2.1 AppImage does not start without them.

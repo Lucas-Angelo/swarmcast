@@ -34,6 +34,8 @@ set -o pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=pull.sh
 . "$DIR/pull.sh"
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$DIR/lib.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 
 RELEASE="${RELEASE_DIR:-}"
@@ -193,7 +195,7 @@ run_target() {
 
 # tunnel_test TARGET LOGFILE RESULTFILE
 tunnel_test() {
-  local target="$1" log="$2" res="$3" plat tag c link base i code hdr r=PASS
+  local target="$1" log="$2" res="$3" plat tag c link base t0 code hdr r=PASS
   plat="$(platform_of "$target")"
   tag="$(tag_of "$target")"
   c="sc-test-tunnel-$tag-$ID"
@@ -209,24 +211,25 @@ tunnel_test() {
   docker exec -d -e "SWARMCAST_RELEASE_URL=$RELEASE_URL" -e SWARMCAST_HOME=/tmp/sc-home -e NO_COLOR=1 "$c" \
     bash -c 'echo $$ >/tmp/app.pid; exec bash /release/start-linux.sh --yes --skip-speedtest >/tmp/app.log 2>&1 </dev/null'
   link=""
-  for i in $(seq 1 90); do
-    link="$(docker exec "$c" grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com/join/[A-Za-z0-9_-]+' /tmp/app.log 2>/dev/null | head -n1)"
-    [ -n "$link" ] && break
-    sleep 2
-  done
-  if [ -z "$link" ]; then
+  code=""
+  # The live link, which the app prints once its tunnel works.
+  tunnel_link() { link="$(docker exec "$c" grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com/join/[A-Za-z0-9_-]+' /tmp/app.log 2>/dev/null | head -n1)"; [ -n "$link" ]; }
+  # /healthz through the tunnel from this host: 200 (headers in $hdr, status in $code).
+  healthz_ok() { hdr="$(curl -sS -D - -o /dev/null --max-time 15 "$base/healthz" 2>&1)"; code="$(printf '%s' "$hdr" | awk 'toupper($1) ~ /^HTTP/ { c = $2 } END { print c }')"; [ "$code" = 200 ]; }
+  tunnel_down() { code="$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' "$base/healthz")"; [ "$code" != 200 ]; }
+  app_gone() { ! docker exec "$c" bash -c 'kill -0 "$(cat /tmp/app.pid)" 2>/dev/null'; }
+  t0=$SECONDS
+  if ! wait_for 180 tunnel_link; then
     echo "FAIL no trycloudflare link after 180 s"; docker exec "$c" cat /tmp/app.log | sed 's/^/  | /'
     echo "$target|d. quick tunnel|FAIL" >>"$res"; docker rm -f "$c" >/dev/null; return
   fi
   base="${link%/join/*}"
-  echo "link printed after ~$((i * 2)) s: $base/join/<secret>"
-  code=""
-  for i in $(seq 1 30); do
-    hdr="$(curl -sS -D - -o /dev/null --max-time 15 "$base/healthz" 2>&1)"
-    code="$(printf '%s' "$hdr" | awk 'toupper($1) ~ /^HTTP/ { c = $2 } END { print c }')"
-    [ "$code" = 200 ] && break
-    sleep 2
-  done
+  echo "link printed after ~$((SECONDS - t0)) s: $base/join/<secret>"
+  # Infra recovery: this host's resolver may not know the brand-new name yet (the zone's NXDOMAIN
+  # is cached for its 60 s negative TTL); the check is the answer once the name resolves here.
+  t0=$SECONDS
+  wait_for 180 healthz_ok
+  [ $((SECONDS - t0)) -gt 1 ] && echo "infra recovery: $base answered from this host after ~$((SECONDS - t0)) s"
   echo "host: GET $base/healthz -> ${code:-no answer}"
   printf '%s\n' "$hdr" | grep -iE '^(HTTP|x-swarmcast|server|cf-ray)' | sed 's/^/  < /'
   if [ "$code" = 200 ] && printf '%s' "$hdr" | grep -qi '^x-swarmcast:'; then echo "ok: 200 + x-swarmcast header from the host"; else echo "FAIL: expected 200 + x-swarmcast"; r=FAIL; fi
@@ -235,20 +238,13 @@ tunnel_test() {
   case "$code" in "303 $base/join") echo "ok: live link redirects to /join through the tunnel" ;; *) echo "FAIL: live link"; r=FAIL ;; esac
 
   docker exec "$c" bash -c 'kill -INT "$(cat /tmp/app.pid)"'
-  for i in $(seq 1 45); do
-    docker exec "$c" bash -c 'kill -0 "$(cat /tmp/app.pid)" 2>/dev/null' || break
-    sleep 1
-  done
+  wait_for 45 app_gone || { echo "FAIL: the app still runs 45 s after Ctrl+C"; r=FAIL; }
   docker exec "$c" cat /tmp/app.log | sed 's/^/  | /'
   if docker exec "$c" grep -qF "Off: nothing on your computer is reachable" /tmp/app.log; then echo "ok: printed Off line"; else echo "FAIL: no Off line"; r=FAIL; fi
   if docker exec "$c" pgrep -a -f '/app/current/(swarmcast|bin/mediamtx|bin/cloudflared)'; then echo "FAIL: processes left"; r=FAIL; else echo "ok: no mediamtx/cloudflared/swarmcast left"; fi
-  code=""
-  for i in $(seq 1 30); do
-    code="$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' "$base/healthz")"
-    [ "$code" != 200 ] && break
-    sleep 2
-  done
-  echo "host after stop: GET $base/healthz -> $code (after ~$((i * 2)) s)"
+  t0=$SECONDS
+  wait_for 60 tunnel_down
+  echo "host after stop: GET $base/healthz -> $code (after ~$((SECONDS - t0)) s)"
   if [ "$code" != 200 ]; then echo "ok: the tunnel URL stopped answering"; else echo "FAIL: still answering 60 s after stop"; r=FAIL; fi
   docker rm -f "$c" >/dev/null
   echo "$r d. quick tunnel"
