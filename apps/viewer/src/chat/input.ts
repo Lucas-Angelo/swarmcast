@@ -63,6 +63,8 @@ export class ChatInput {
   /** Where chat.ts puts the emoji/emote picker button. */
   readonly tools: HTMLDivElement;
   private cooldownUntil = 0;
+  /** When the slow-mode wait of the last message the server took ends (counted from its ack). */
+  private slowUntil = 0;
   private errorText: string | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
   private readonly sent = new Map<number, string>();
@@ -159,6 +161,16 @@ export class ChatInput {
 
   acked(n: number): void {
     this.sent.delete(n);
+    // The server's slow-mode wait starts when it took the message, a moment after this page sent
+    // it: counted again from the ack, the next send never reaches the server before that wait is
+    // over (it was refused with chat.err.slow right as this page's countdown ended). A GIF counts
+    // too: the server paces every message.
+    const slowS = this.deps.settings()?.slowS ?? 0;
+    if (slowS > 0) {
+      this.slowUntil = Math.max(this.slowUntil, this.now() + slowS * 1000);
+      this.cooldownUntil = Math.max(this.cooldownUntil, this.slowUntil);
+      this.update();
+    }
   }
 
   rejected(n: number | undefined, code: MessageKey, params: MessageParams | undefined, retryMs: number | undefined): void {
@@ -166,7 +178,11 @@ export class ChatInput {
     const text = n === undefined ? undefined : this.sent.get(n);
     if (n !== undefined) this.sent.delete(n);
     if (text !== undefined && this.textarea.value.trim() === '') this.textarea.value = text;
-    this.cooldownUntil = typeof retryMs === 'number' && retryMs > 0 ? this.now() + Math.min(retryMs, 3_600_000) : 0;
+    // retryMs counts from now, a moment after the server measured it, so a retry never comes early.
+    // A refused message starts no wait (the guard submit() set for it goes), nor does it end the
+    // wait of a message the server took: a GIF refused during that wait (lockdown, busy) ended it.
+    const retryUntil = typeof retryMs === 'number' && retryMs > 0 ? this.now() + Math.min(retryMs, 3_600_000) : 0;
+    this.cooldownUntil = Math.max(this.slowUntil, retryUntil);
     this.update();
   }
 

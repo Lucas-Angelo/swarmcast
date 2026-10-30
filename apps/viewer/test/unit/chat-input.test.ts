@@ -242,6 +242,92 @@ describe('ChatInput', () => {
     expect(input.sendButton.disabled).toBe(false);
   });
 
+  it("slow mode counts from the server's ack: a send that took a while to arrive does not end the wait early", () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    tick(300);
+    input.acked(1);
+    type('dois');
+
+    // Act
+    tick(4999);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(true);
+  });
+
+  it('slow mode: Send comes back slowS after the ack', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    tick(300);
+    input.acked(1);
+    type('dois');
+
+    // Act
+    tick(5000);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(false);
+  });
+
+  it('a GIF the server took starts the slow-mode wait too', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    input.noteSent(7);
+    tick(200);
+    input.acked(7);
+    type('oi');
+
+    // Act
+    tick(4999);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(true);
+  });
+
+  it('slow mode: a message the server refused starts no wait, so it can be fixed and sent again', () => {
+    // Arrange
+    const { input, type } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+
+    // Act
+    input.rejected(1, 'chat.err.blocked', undefined, undefined);
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(false);
+  });
+
+  it.each([
+    ['without retryMs (lockdown)', 'chat.err.protect', undefined],
+    ['with a shorter retryMs (busy)', 'chat.err.busy', 3000],
+  ] as const)('a GIF refused %s does not end the wait of a message the server took', (_case, code, retryMs) => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    tick(300);
+    input.acked(1);
+    input.noteSent(2);
+    tick(700);
+    input.rejected(2, code, undefined, retryMs);
+    type('dois');
+
+    // Act
+    tick(4299);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(true);
+  });
+
   it('retryMs from a reject holds Send', () => {
     // Arrange
     const { input, type } = makeInput();
