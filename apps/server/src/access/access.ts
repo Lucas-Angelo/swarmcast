@@ -36,6 +36,8 @@ export interface Session {
   lastSeenAt: number;
   /** Look-alike keys of the nickname (skeleton.ts): two live viewers never share one. */
   nameKeys: [string, string];
+  /** This session already opened a WebSocket once (reconnects are not counted by the shield). */
+  upgraded?: boolean;
 }
 
 /** A session counts as present for name uniqueness while connected or seen this recently. */

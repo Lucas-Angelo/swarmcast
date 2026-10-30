@@ -31,8 +31,8 @@ async function startLive(chat: Partial<ReturnType<typeof defaultConfig>['chat']>
 
 type Viewer = { ws: WebSocket; messages: ServerMessage[]; closed: Promise<number>; send: (m: object) => void; items: () => ChatItem[] };
 
-async function openControl(base: string, jar: Jar): Promise<Viewer> {
-  const ws = new WebSocket(`${base.replace('http', 'ws')}/control`, { origin: base, headers: { cookie: jar.header() } });
+async function openControl(base: string, jar: Jar, query = ''): Promise<Viewer> {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/control${query}`, { origin: base, headers: { cookie: jar.header() } });
   sockets.push(ws);
   const messages: ServerMessage[] = [];
   ws.on('message', (d) => {
@@ -178,6 +178,33 @@ describe('chat over /control', () => {
     await vi.waitFor(() => expect(target.messages.some((m) => m.t === 'kicked')).toBe(true), { timeout: 2000, interval: 5 });
     clearInterval(flood);
     expect(Date.now() - t0).toBeLessThanOrEqual(1000);
+  });
+
+  it('a reconnect with ?chatAfter gets only the delta, and does not count as an upgrade for the shield', async () => {
+    const { live, base, link } = await startLive({ slowModeS: 0, duplicateWindowS: 0 });
+    const jar = await joinAs(base, link, 'Ana');
+    const upgrade = vi.spyOn(live.shield, 'upgrade');
+    let a = await openControl(base, jar);
+    expect(upgrade).toHaveBeenCalledTimes(1);
+    for (let i = 1; i <= 3; i++) {
+      a.send({ t: 'chat.send', n: i, text: `m${i}` });
+      await vi.waitFor(() => expect(lastOf(a, 'chat.ack')).toMatchObject({ n: i }));
+    }
+    a.ws.close();
+    await a.closed;
+    live.chat.sendAsStreamer({ text: 'while you were away' });
+    a = await openControl(base, jar, '?chatAfter=3');
+    const chat = hello(a).chat!;
+    expect(chat.delta).toBe(true);
+    expect(chat.items.map((i) => (i.k === 'm' ? i.x : i.k))).toEqual(['while you were away']);
+    expect(chat.lastSeq).toBe(4);
+    // The reconnect of a known session is not an attack signal.
+    expect(upgrade).toHaveBeenCalledTimes(1);
+    // A refused upgrade (no session) still counts.
+    const stranger = new WebSocket(`${base.replace('http', 'ws')}/control`, { origin: base });
+    sockets.push(stranger);
+    await new Promise((r) => stranger.once('error', r));
+    expect(upgrade).toHaveBeenCalledTimes(2);
   });
 
   it('Stop wipes the chat; the next live starts at seq 1', async () => {
