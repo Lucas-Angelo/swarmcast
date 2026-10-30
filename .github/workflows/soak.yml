@@ -12,7 +12,9 @@ name: Soak
 # - on a pull request: add the `soak` label (workflow_dispatch only works once this file is on
 #   the default branch). Remove and add the label again for another soak;
 # - once on main: `gh workflow run soak.yml [-f plan='<inline JSON or another plan file>']`.
-# It has no schedule: it is a measurement you start, not a gate.
+# It has no schedule: it is a measurement you start, not a gate. It reads as a gate all the same:
+# the report fails on any single failed (or flaky) run of any check, since a failure is never
+# acceptable, however rare (the soak only tells how much evidence the passes give).
 on:
   pull_request:
     types: [labeled]
@@ -40,7 +42,7 @@ jobs:
     name: Plan
     if: github.event_name == 'workflow_dispatch' || github.event.label.name == 'soak'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       actions: read # find the pipeline.yml run whose installers desktop-test uses
@@ -109,6 +111,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           ffmpeg: ${{ matrix.suite != 'unit' }}
           apt-debs: ${{ matrix.suite == 'e2e' && runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
@@ -135,10 +138,14 @@ jobs:
         env:
           SOAK: ${{ toJSON(matrix) }}
         run: node scripts/ci/soak-run.mjs
+      # A run whose results never arrive counts as failed in the report, so a failed upload is
+      # never a hidden pass.
       - &soak-upload
         name: Upload the soak results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: soak-${{ matrix.id }}
           path: soak-results/
@@ -165,11 +172,13 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       # The pinned toolchain, _node.yml's cache and the Linux build dependencies.
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
         with:
           cache-key: checks
       # Compile once, so the soaked runs time the tests only.
@@ -201,6 +210,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           go: 'true'
           ffmpeg: 'true'
@@ -253,6 +263,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           go: 'true'
           ffmpeg: 'true'
@@ -294,6 +305,7 @@ jobs:
           persist-credentials: false
       # The scripts and their tests need only Node.js (like _node.yml).
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
       - *soak-run
@@ -322,15 +334,18 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
       - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
       - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
@@ -375,6 +390,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           downloads: 'true'
       # The test-build profile of _desktop.yml (no LTO, 16 codegen units): what pull requests build.
@@ -383,6 +399,7 @@ jobs:
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
         with:
           cache-key: ${{ matrix.target }}
       # As _desktop.yml; every soaked run is then one `tauri build --bundles app,dmg`, which is
@@ -417,6 +434,7 @@ jobs:
           persist-credentials: false
       # The setup action's apt settings, without its npm cache or ffmpeg.
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
       - *soak-run
@@ -428,12 +446,13 @@ jobs:
     needs: [plan, node, rust, windows, preflight, scripts, desktop_test, desktop_dmg, apt]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           pattern: soak-*
           path: soak-results
@@ -443,6 +462,8 @@ jobs:
       - name: Upload the report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: soak-report
           path: |

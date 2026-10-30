@@ -28,7 +28,7 @@ jobs:
   web:
     name: web + windows-x64 packages
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     env:
       RETENTION: ${{ github.event_name == 'pull_request' && 3 || 14 }}
     steps:
@@ -36,7 +36,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
-        timeout-minutes: 4
+        timeout-minutes: 8
         with:
           go: 'true'
           downloads: 'true'
@@ -78,4 +78,6 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ env.RETENTION }}
       - uses: ./.github/actions/setup/save
-        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
