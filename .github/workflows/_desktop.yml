@@ -30,6 +30,10 @@ name: desktop
 #   libraries the install guide lists (scripts/test/docker/appimage.sh, also run weekly on more
 #   bases by linux-docker.yml). The runner image has Mesa, fonts and X already, so the desktop
 #   step cannot show a missing one.
+# Each check's PASS/FAIL lines go to the job summary (.github/scripts/test-summary.mjs).
+#
+# What ships carries no development dependency and no test code (.github/scripts/no-dev-deps.mjs):
+# the build checks this target's package and its real installers before uploading them.
 on:
   workflow_call:
     inputs:
@@ -136,6 +140,10 @@ jobs:
         run: |
           node scripts/build/package.mjs --target "$TARGET" --version "$VERSION"
           tar -cf "$RUNNER_TEMP/pkg-$TARGET.tar" "release/staging/$TARGET" "release/SwarmCast-v$VERSION-$TARGET.tar.gz"
+      # The bundle package.mjs just rebuilt (meta.json), the executable's snapshot, web/ = web-dist.
+      - name: No development dependencies in the ${{ matrix.target }} package (macOS, Linux)
+        if: runner.os != 'Windows'
+        run: node .github/scripts/no-dev-deps.mjs --server --staging "release/staging/$TARGET"
       - name: Upload pkg-${{ matrix.target }}
         if: runner.os != 'Windows'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -185,6 +193,10 @@ jobs:
       - name: Remove the throwaway key
         if: always()
         run: rm -f "$RUNNER_TEMP/update-test.key" "$RUNNER_TEMP/update-test.key.pub"
+      # Each installer unpacked: no node_modules, the sidecar's snapshot (and the same one as the
+      # staged server's), web/ the same as the staged one.
+      - name: No development dependencies in the installers
+        run: node .github/scripts/no-dev-deps.mjs --staging "release/staging/$TARGET" --installers "release/desktop/$TARGET"
 
       # The .app bundle stays out: the .dmg and the updater's .app.tar.gz carry it.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

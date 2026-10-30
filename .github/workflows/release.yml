@@ -310,6 +310,14 @@ jobs:
 
       - name: Archive
         run: node scripts/build/archive.mjs --target "$TARGET" --version "$VERSION"
+      # What ships, after signing: the package and the archive made from it carry no development
+      # dependency and no test code (.github/scripts/no-dev-deps.mjs; the pipeline checked the
+      # same package, its bundles and the desktop installers when it built them).
+      - name: No development dependencies in the package and its archive
+        run: |
+          ext=tar.gz
+          if [ "$RUNNER_OS" = Windows ]; then ext=zip; fi
+          node .github/scripts/no-dev-deps.mjs --staging "$STAGING" --archive "release/SwarmCast-v$VERSION-$TARGET.$ext"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
