@@ -25,6 +25,7 @@ import {
   GIF_ID_RE,
   GIF_KEY_RE,
 } from './limits.js';
+import { GIF_PATH_MAX, gifMediaUrl } from './gif.js';
 
 /**
  * Zod schemas of the chat (plan §4.3 and §5.2). Only plain regexes here (no `v` flag): this
@@ -42,13 +43,21 @@ export type ChatContentKind = z.infer<typeof chatContentKindSchema>;
 export const gifProviderSchema = z.enum(['klipy', 'giphy']);
 export type GifProvider = z.infer<typeof gifProviderSchema>;
 
-/** A GIF reference: provider + id + rendition size. Never a URL (clients build it from a fixed template). */
-export const gifRefSchema = z.strictObject({
-  p: gifProviderSchema,
-  id: z.string().regex(GIF_ID_RE),
-  w: z.number().int().min(GIF_DIM_MIN).max(GIF_DIM_MAX),
-  h: z.number().int().min(GIF_DIM_MIN).max(GIF_DIM_MAX),
-});
+/**
+ * A GIF reference: provider + id + rendition size + the provider's media path (host-relative) and
+ * which of its media hosts (index into GIF_PROVIDERS[p].media). Never a URL: clients build it from
+ * an allowed host and a path that passed the provider's strict shape (gif.ts isGifMediaPath).
+ */
+export const gifRefSchema = z
+  .strictObject({
+    p: gifProviderSchema,
+    id: z.string().regex(GIF_ID_RE),
+    w: z.number().int().min(GIF_DIM_MIN).max(GIF_DIM_MAX),
+    h: z.number().int().min(GIF_DIM_MIN).max(GIF_DIM_MAX),
+    m: z.string().max(GIF_PATH_MAX),
+    hi: z.number().int().min(0).max(7).optional(),
+  })
+  .refine((g) => gifMediaUrl(g) !== null, 'not a media path of this provider');
 export type GifRef = z.infer<typeof gifRefSchema>;
 
 /** Client nonce, echoed in chat.ack / chat.reject. */
