@@ -604,7 +604,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
   let attempts = 0;
   const open = (): void => {
     if (ended) return;
-    const ws = new WebSocket(cfg.controlUrl);
+    const ws = new WebSocket(chat.controlUrl(cfg.controlUrl));
     control = ws;
     ws.onopen = () => {
       attempts = 0;

@@ -66,7 +66,7 @@ describe('chat admin API', () => {
     const state = (await call('GET', '/api/chat')).json() as AdminChatState;
     expect(state.settings.enabled).toBe(true);
     expect(state.items.every((i) => i.k === 'sys')).toBe(true);
-    expect(state.counters).toMatchObject({ guard: 'ok', protect: 'off', broken: false, budgetKbps: 768 });
+    expect(state.counters).toMatchObject({ guard: 'ok', protect: 'off', broken: false, budgetKbps: 960 });
   });
 
   it('mute, unmute and colour act on a live session; unknown sessions are refused', async () => {

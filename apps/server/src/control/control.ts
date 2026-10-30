@@ -112,7 +112,9 @@ export class ControlChannel implements ChatHost {
       });
       s.on('message', (data, isBinary) => this.onMessage(s, toBuffer(data), isBinary));
       const block = this.access.p2pBlock(session);
-      const chat = this.chat?.snapshot(session);
+      // A reconnecting page says which chat items it already has: it then gets only the delta.
+      const after = new URL(req.url ?? '/', 'http://x').searchParams.get('chatAfter');
+      const chat = this.chat?.snapshot(session, after && /^\d{1,15}$/.test(after) ? { after: Number(after) } : {});
       const hello = JSON.stringify({
         t: 'hello',
         sessionId: session.id,
@@ -127,7 +129,7 @@ export class ControlChannel implements ChatHost {
       } satisfies ServerMessage);
       if (s.readyState === s.OPEN) s.send(hello);
       // The history in hello counts against the chat's upload budget.
-      if (chat) this.chat?.accountSent(hello.length);
+      if (chat) this.chat?.helloSent(s, chat, hello.length);
     });
   }
 

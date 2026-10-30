@@ -121,6 +121,11 @@ export interface ChatSnapshot {
   items: ChatItem[];
   /** Highest seq so far in this live (0 = none). */
   lastSeq: number;
+  /**
+   * A reconnect delta: `items` are only those after the seq the viewer said it already has
+   * (`/control?chatAfter=<seq>`); keep what is shown and add them. Absent: a full snapshot.
+   */
+  delta?: true;
 }
 
 /** Reject codes (each is a message key in en.ts / pt-BR.ts). */
