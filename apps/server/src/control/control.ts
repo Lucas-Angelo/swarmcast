@@ -129,7 +129,7 @@ export class ControlChannel implements ChatHost {
       } satisfies ServerMessage);
       if (s.readyState === s.OPEN) s.send(hello);
       // The history in hello counts against the chat's upload budget.
-      if (chat) this.chat?.accountSent(hello.length);
+      if (chat) this.chat?.helloSent(s, chat, hello.length);
     });
   }
 

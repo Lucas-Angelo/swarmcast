@@ -164,6 +164,7 @@ export class ChatHub {
       budgetBps: () => this.budgetBps(),
       slow: () => this.guard.state !== 'ok' || this.protect !== 'off',
       resync: (s) => this.resyncSocket(s),
+      authorOf: (a) => this.moderation.authorOf(a),
       now: this.now,
     });
     this.eff = this.computeEffective();
@@ -539,7 +540,9 @@ export class ChatHub {
     const oldest = this.ring[0]?.item.s ?? this.seq + 1;
     if (after + 1 < oldest || after > this.seq) return this.resyncSocket(socket, session);
     const items = this.ring.filter((e) => e.item.s > after).map((e) => e.item);
-    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...this.rosterFor(items).map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
+    const roster = this.rosterFor(items);
+    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
+    this.batcher.markKnown(socket, roster.map((r) => r.a));
   }
 
   /** Full snapshot for one socket (missed moderation items while slow, or an evicted resume). */
@@ -547,7 +550,10 @@ export class ChatHub {
     const sid = session?.id ?? (socket as ChatSocket & { sessionId?: string }).sessionId;
     const s = sid ? this.d.access.sessions.get(sid) : undefined;
     const snap = s ? this.snapshot(s) : undefined;
-    if (snap) this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.reset', ...snap } satisfies ChatServerMessage));
+    if (snap) {
+      this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.reset', ...snap } satisfies ChatServerMessage));
+      this.batcher.markKnown(socket, snap.roster.map((r) => r.a));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -675,7 +681,13 @@ export class ChatHub {
     });
   }
 
-  /** Bytes of a snapshot sent outside the batcher (hello): charged to the budget. */
+  /** A hello carrying `snapshot` went to `socket` (`bytes` long): charged to the budget, roster noted. */
+  helloSent(socket: ChatSocket, snapshot: ChatSnapshot, bytes: number): void {
+    this.batcher.charge(bytes);
+    this.batcher.markKnown(socket, snapshot.roster.map((r) => r.a));
+  }
+
+  /** Bytes of a snapshot sent outside the batcher: charged to the budget. */
   accountSent(bytes: number): void {
     this.batcher.charge(bytes);
   }
