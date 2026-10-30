@@ -24,7 +24,7 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 const OUT_DIR = path.join(ROOT, 'docs', 'img');
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 1500);
 // Keep in sync with apps/server/test/e2e/server.ts.
-const PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, control: 38082 + OFFSET, mediamtxHls: 38888 + OFFSET };
+const PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, control: 38082 + OFFSET, mediamtxHls: 38083 + OFFSET };
 const BASE = `http://127.0.0.1:${PORTS.public}`;
 // The e2e server's test control port: GET /env gives the panel's address and login path.
 const CONTROL = loopbackBase(`http://127.0.0.1:${PORTS.control}`);

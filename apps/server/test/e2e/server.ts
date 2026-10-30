@@ -8,6 +8,7 @@ import type { ChildProcess } from 'node:child_process';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
+import { RESERVED } from '../../../../scripts/test/lib/ports.mjs';
 import { startFeed } from '../integration/helpers.js';
 
 // Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
@@ -44,15 +45,14 @@ process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
 
 // SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
-export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
+export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38083 + OFFSET };
 /** The test control port below (fixtures.ts computes it the same way: no URL read from a file). */
 const CONTROL_PORT = 38082 + OFFSET;
 
-// Ports of the demo SwarmCast the maintainer keeps running (scripts/test/lib/ports.mjs reserves them
-// for the other suites): an offset of 100, for example, would put the panel on 38181. Stop before
-// binding anything.
-const DEMO_PORTS = new Set([31935, 38180, 38181]);
-const clashes = Object.entries({ ...E2E_PORTS, control: CONTROL_PORT }).filter(([, port]) => DEMO_PORTS.has(port));
+// SwarmCast's default ports and those of the demo SwarmCast the maintainer keeps running
+// (scripts/test/lib/ports.mjs RESERVED, which the other suites never hand out either): an offset
+// of 100, for example, would put the panel on 38181. Stop before binding anything.
+const clashes = Object.entries({ ...E2E_PORTS, control: CONTROL_PORT }).filter(([, port]) => RESERVED.has(port));
 if (!Number.isInteger(OFFSET) || clashes.length > 0) {
   const why = clashes.length > 0 ? clashes.map(([name, port]) => `${name} would be ${port}`).join(', ') : 'it is not a whole number';
   throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: ${why}. Pick another offset.`);
