@@ -131,6 +131,8 @@ export class PublicBlocklists {
   private lists = new Map<string, { ranges: CidrRange[]; fetchedAt?: number; error?: string }>();
   private timer: NodeJS.Timeout | null = null;
   private refreshing: Promise<void> | null = null;
+  /** Aborted by stop(): a download in flight ends, and writes nothing to the data folder. */
+  private aborts = new AbortController();
   enabled = false;
 
   constructor(private readonly d: BlocklistDeps) {}
@@ -153,6 +155,10 @@ export class PublicBlocklists {
     this.enabled = false;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.aborts.abort(new Error('stopped'));
+    this.aborts = new AbortController();
+    // The stopped refresh writes and records nothing more; a new start() refreshes at once.
+    this.refreshing = null;
   }
 
   /** True when `ip` is public and listed. Never blocks loopback/private/CGNAT addresses. */
@@ -193,30 +199,37 @@ export class PublicBlocklists {
 
   /** Download every list older than 24 h (or all with `force`). Failures keep the cached copy. */
   refresh(force = false): Promise<void> {
-    // `.finally` always runs asynchronously, so `refreshing` is cleared after it was assigned.
-    this.refreshing ??= this.refreshStale(force).finally(() => {
-      this.refreshing = null;
+    if (this.refreshing) return this.refreshing;
+    // `.finally` always runs asynchronously, so `p` is assigned by then; a refresh that stop()
+    // left behind never clears a newer one.
+    const p: Promise<void> = this.refreshStale(force).finally(() => {
+      if (this.refreshing === p) this.refreshing = null;
     });
-    return this.refreshing;
+    this.refreshing = p;
+    return p;
   }
 
   private async refreshStale(force: boolean): Promise<void> {
+    const stopped = this.aborts.signal;
     for (const s of this.d.sources()) {
+      if (stopped.aborted) break;
       const cur = this.lists.get(s.id);
       if (!force && cur?.fetchedAt && this.now() - cur.fetchedAt < BLOCKLIST_REFRESH_MS) continue;
-      await this.download(s);
+      await this.download(s, stopped);
     }
-    this.rebuild();
+    if (!stopped.aborted) this.rebuild();
   }
 
-  private async download(s: BlocklistSource): Promise<void> {
+  private async download(s: BlocklistSource, stopped: AbortSignal): Promise<void> {
     const prev = this.lists.get(s.id);
     try {
       // A plain GET: no cookies, no identifiers, nothing about the stream or its viewers.
-      const res = await (this.d.fetch ?? fetch)(s.url, { redirect: 'follow', signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
+      const res = await (this.d.fetch ?? fetch)(s.url, { redirect: 'follow', signal: AbortSignal.any([stopped, AbortSignal.timeout(FETCH_TIMEOUT_MS)]) });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const ranges = parseBlocklist(await readBodyCapped(res, MAX_BYTES));
       if (ranges.length === 0) throw new Error('no entries');
+      // Stopped while the body arrived: the data folder may be going away (the app closes).
+      stopped.throwIfAborted();
       const fetchedAt = this.now();
       ensurePrivateDir(this.d.dir);
       // Only the parsed networks are kept, never the downloaded bytes as they came.
@@ -225,6 +238,7 @@ export class PublicBlocklists {
       this.lists.set(s.id, { ranges, fetchedAt });
       this.d.log.info({ list: s.id, entries: ranges.length }, 'blocklist updated');
     } catch (err) {
+      if (stopped.aborted) return;
       const error = (err as Error).message;
       this.lists.set(s.id, { ranges: prev?.ranges ?? [], ...(prev?.fetchedAt ? { fetchedAt: prev.fetchedAt } : {}), error });
       this.d.log.info({ list: s.id, err: error }, 'blocklist download failed; using the cached copy if any');

@@ -1,4 +1,6 @@
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { BLOCKLIST_REFRESH_MS, DEFAULT_BLOCKLISTS, PublicBlocklists, blocklistCacheText, blocklistSources, parseBlocklist, readBodyCapped } from '../../src/security/blocklists.js';
@@ -7,6 +9,7 @@ import { manualClock, silentLog, tempDir } from './helpers.js';
 // Public IP blocklists (Spamhaus DROP, FireHOL level 1): parsed, cached in the data folder with
 // their fetch date, refreshed every 24 h. A list that fails keeps its cached copy, and bogons
 // (loopback, LAN, CGNAT) are never applied: our own clients legitimately come from them.
+// stop() (the app closes) ends a download in flight: nothing reaches the data folder after it.
 
 const SPAMHAUS_JSON = [
   '{"cidr":"1.10.16.0/20","sblid":"SBL256894","rir":"apnic"}',
@@ -54,6 +57,48 @@ function blocklists(dir: string, fetchImpl: typeof fetch, now: () => number): Pu
   bl.enabled = true;
   onTestFinished(() => bl.stop());
   return bl;
+}
+
+/**
+ * A list server on 127.0.0.1 that answers with headers and a first line, then never finishes the
+ * body: a download stays in flight until the client gives up. `requested` resolves once it has
+ * the request, `abandoned` once the client closed the connection. Closed when the test finishes.
+ */
+async function hangingListServer(): Promise<{ url: string; requested: Promise<void>; abandoned: Promise<void> }> {
+  let gotRequest!: () => void;
+  let lost!: () => void;
+  const requested = new Promise<void>((r) => (gotRequest = r));
+  const abandoned = new Promise<void>((r) => (lost = r));
+  const server = http.createServer((req, res) => {
+    res.on('close', lost);
+    res.writeHead(200, { 'content-type': 'text/plain' });
+    res.write('1.2.3.0/24\n');
+    gotRequest();
+  });
+  await new Promise<void>((r) => server.listen(0, '127.0.0.1', () => r()));
+  onTestFinished(() => {
+    server.closeAllConnections();
+    return new Promise<void>((r) => server.close(() => r()));
+  });
+  return { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}/list.txt`, requested, abandoned };
+}
+
+/** A fetch whose first call waits for `release()` (whatever the signal says), and records its calls. */
+function gatedFetch(body: string): { fetch: typeof fetch; called: Promise<void>; release: () => void; calls: () => number } {
+  let n = 0;
+  let wasCalled!: () => void;
+  let open!: () => void;
+  const called = new Promise<void>((r) => (wasCalled = r));
+  const gate = new Promise<void>((r) => (open = r));
+  const impl = (async () => {
+    n++;
+    if (n === 1) {
+      wasCalled();
+      await gate;
+    }
+    return new Response(body, { status: 200 });
+  }) as unknown as typeof fetch;
+  return { fetch: impl, called, release: open, calls: () => n };
 }
 
 describe('blocklist parsing', () => {
@@ -241,5 +286,56 @@ describe('PublicBlocklists', () => {
     // Assert
     expect(bl.isBlocked('1.10.16.1')).toBe(false);
     expect(bl.info()).toMatchObject({ enabled: true, networks: 0 });
+  });
+
+  it('stop() ends a download in flight at once, and nothing reaches the data folder', async () => {
+    // Arrange
+    const dir = tempDir('sc-bl-');
+    const server = await hangingListServer();
+    const bl = new PublicBlocklists({ dir, log: silentLog, sources: () => [{ id: 'slow', url: server.url }] });
+    bl.enabled = true;
+    const refresh = bl.refresh();
+    await server.requested;
+    // Act
+    bl.stop();
+    await refresh;
+    // Assert
+    await server.abandoned;
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(bl.info().lists).toEqual([{ id: 'slow', entries: 0 }]);
+  });
+
+  it('a list that arrives after stop() is not written either', async () => {
+    // Arrange
+    const dir = tempDir('sc-bl-');
+    const gated = gatedFetch('1.2.3.0/24\n');
+    const bl = new PublicBlocklists({ dir, log: silentLog, sources: () => [{ id: 'late', url: 'https://lists.example.org/late.txt' }], fetch: gated.fetch });
+    bl.enabled = true;
+    const refresh = bl.refresh();
+    await gated.called;
+    // Act
+    bl.stop();
+    gated.release();
+    await refresh;
+    // Assert
+    expect(fs.readdirSync(dir)).toEqual([]);
+    expect(bl.info().lists).toEqual([{ id: 'late', entries: 0 }]);
+  });
+
+  it('start() after stop() downloads again at once, without waiting for the stopped download', async () => {
+    // Arrange
+    const gated = gatedFetch('1.2.3.0/24\n');
+    const bl = new PublicBlocklists({ dir: tempDir('sc-bl-'), log: silentLog, sources: () => [{ id: 'list', url: 'https://lists.example.org/list.txt' }], fetch: gated.fetch });
+    onTestFinished(() => bl.stop());
+    bl.enabled = true;
+    void bl.refresh();
+    await gated.called;
+    bl.stop();
+    // Act
+    bl.start();
+    await bl.refresh();
+    // Assert
+    expect(gated.calls()).toBe(2);
+    expect(bl.isBlocked('1.2.3.4')).toBe(true);
   });
 });
