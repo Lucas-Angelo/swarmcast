@@ -1,243 +1,212 @@
-// Chat moderation end to end through the panel API (chat plan §10.3): what the streamer does in the
-// panel (its chat API, apps/server/src/admin/chat-routes.ts) reaches real viewer pages
-// in every engine: delete, clear, mute for a time and until the end of the live, unmute, a colour
-// set and locked by the streamer, content presets (text only also refuses emoji), blocked words.
-// Every test restores the chat settings it changed: the e2e server is shared by the whole run.
-import type { Page } from '@playwright/test';
-import type { AdminChatState, ChatMessageItem, ChatSettings } from '@swarmcast/shared';
-import { adminApi, expect, join, test, uid } from './fixtures.js';
+// Chat moderation end to end through the panel API (chat plan §10.3): what the streamer does in
+// the panel (its chat API, apps/server/src/admin/chat-routes.ts) reaches real viewer pages in
+// every engine: delete, clear (a viewer who joins later gets no history from before it), mute
+// for a time and until the end of the live (a reload on the same device does not lift it),
+// unmute, a colour set and locked by the streamer (the viewer's colour chooser is gone and says
+// why; the server also ignores chat.color while locked: chat-hub.test.ts), content presets
+// (text only also refuses emoji), blocked words matched through look-alikes (fullwidth letters
+// and capitals: the comparison key folds them). The `chat` fixture puts the settings back.
+//
+// What a viewer must never see is proven with a marker the streamer posts after it (fixtures.ts
+// neverSees): the chat delivers in order, so once the marker shows, the refused text would too.
+// A viewer types once its page shows the new content mode (the box's placeholder).
+// Slow mode is off where one viewer sends several messages (FAST_CHAT): its client wait and its
+// server reject are chat.spec.ts's subject.
+import type { ChatMessageItem } from '@swarmcast/shared';
+import { translate } from '@swarmcast/shared/i18n';
+import { admin, adminApi, chatMessage, chatReady, expect, FAST_CHAT, neverSees, say, sees, test, uid, type ChatControl } from './fixtures.js';
 
-/** Send a message that must go through: waits until the server took it (the "sending…" row settles). */
-async function say(page: Page, text: string): Promise<void> {
-  const input = page.getByTestId('chat-input');
-  await input.fill(text);
-  await expect(page.getByTestId('chat-send')).toBeEnabled({ timeout: 10_000 });
-  await input.press('Enter');
-  const own = page.getByTestId('chat-list').locator('li.msg', { hasText: text }).last();
-  await expect(own, 'the sender\'s own row').not.toHaveClass(/\bpending\b/, { timeout: 10_000 });
-  if (/\bfailed\b/.test((await own.getAttribute('class')) ?? '')) throw new Error(`"${text}" was refused: ${await page.getByTestId('chat-status').textContent()}`);
-}
-
-/**
- * Another viewer's page shows the message within 5 s. When it does not, the error says what that
- * page was doing (the list renders on animation frames, and only while the page is visible).
- */
-async function sees(page: Page, text: string): Promise<void> {
-  const row = page.getByTestId('chat-list').locator('li.msg', { hasText: text });
-  try {
-    await expect(row).toBeVisible({ timeout: 5_000 });
-  } catch (e) {
-    const state = await page
-      .evaluate(() => ({
-        visibility: document.visibilityState,
-        focus: document.hasFocus(),
-        last: [...document.querySelectorAll('[data-testid=chat-list] li')].slice(-5).map((li) => `${li.className}: ${li.textContent?.slice(0, 60)}`),
-        unread: document.querySelector('[data-testid=chat-list]')?.parentElement?.querySelector('.pill')?.textContent ?? null,
-      }))
-      .catch((err: Error) => ({ unavailable: err.message }));
-    throw new Error(`${(e as Error).message}\nthe receiving page: ${JSON.stringify(state)}`, { cause: e });
-  }
-}
-
-const chatState = (): Promise<AdminChatState> => adminApi<AdminChatState>('GET', '/api/chat');
-
-async function sessionOf(nickname: string): Promise<string> {
+async function sessionOf(chat: ChatControl, nickname: string): Promise<string> {
   let id: string | undefined;
   await expect
     .poll(async () => {
-      id = (await chatState()).sessions.find((s) => s.nickname === nickname)?.sessionId;
+      id = (await chat.state()).sessions.find((s) => s.nickname === nickname)?.sessionId;
       return id;
     })
     .toBeTruthy();
   return id!;
 }
 
-async function seqOf(text: string): Promise<number> {
+async function seqOf(chat: ChatControl, text: string): Promise<number> {
   let seq: number | undefined;
   await expect
     .poll(async () => {
-      seq = (await chatState()).items.find((i): i is ChatMessageItem => i.k === 'm' && i.x === text)?.s;
+      seq = (await chat.state()).items.find((i): i is ChatMessageItem => i.k === 'm' && i.x === text)?.s;
       return seq;
     })
     .toBeTruthy();
   return seq!;
 }
 
-/** Applies `change` to the chat settings for the duration of `fn`, then puts them back. */
-async function withSettings(change: (s: ChatSettings) => ChatSettings, fn: () => Promise<void>): Promise<void> {
-  const before = (await chatState()).settings;
-  await adminApi('PUT', '/api/chat/settings', change(structuredClone(before)));
-  try {
-    await fn();
-  } finally {
-    await adminApi('PUT', '/api/chat/settings', before);
+test('delete one message and clear the chat: gone for everyone', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const a = await viewers.join(uid('delA'));
+  const b = await viewers.join(uid('delB'));
+  await chatReady(a.page, b.page);
+  const gone = `apaga isso ${uid('d')}`;
+  const stays = `isso fica ${uid('s')}`;
+  await say(a.page, gone);
+  await sees(b.page, gone);
+  await say(a.page, stays);
+  await sees(b.page, stays);
+
+  // Act
+  await admin('/api/chat/delete', { seqs: [await seqOf(chat, gone)] });
+
+  // Assert
+  for (const p of [a.page, b.page]) {
+    await expect(chatMessage(p, gone)).toHaveCount(0, { timeout: 5_000 });
+    await expect(chatMessage(p, stays)).toBeVisible();
   }
-}
 
-async function chatReady(...pages: Page[]): Promise<void> {
-  for (const p of pages) await expect(p.getByTestId('chat')).toBeVisible({ timeout: 15_000 });
-}
+  // Act
+  await chat.clear();
 
-test('delete one message and clear the chat: gone for everyone', { tag: '@ui' }, async ({ browser }) => {
-  const a = await join(browser, uid('delA'));
-  const b = await join(browser, uid('delB'));
-  try {
-    await chatReady(a.page, b.page);
-    const gone = `apaga isso ${uid('d')}`;
-    const stays = `isso fica ${uid('s')}`;
-    await say(a.page, gone);
-    await sees(b.page, gone);
-    await say(a.page, stays);
-    await sees(b.page, stays);
+  // Assert
+  for (const p of [a.page, b.page]) await expect(p.getByTestId('chat-list').locator('li.msg:not(.sys)')).toHaveCount(0, { timeout: 5_000 });
 
-    await adminApi('POST', '/api/chat/delete', { seqs: [await seqOf(gone)] });
-    for (const p of [a.page, b.page]) {
-      await expect(p.getByTestId('chat-list').locator('li.msg', { hasText: gone })).toHaveCount(0, { timeout: 5_000 });
-      await expect(p.getByTestId('chat-list').locator('li.msg', { hasText: stays })).toBeVisible();
-    }
+  // Act
+  const c = await viewers.join(uid('delC'));
+  await chatReady(c.page);
 
-    await adminApi('POST', '/api/chat/clear', {});
-    for (const p of [a.page, b.page]) await expect(p.getByTestId('chat-list').locator('li.msg:not(.sys)')).toHaveCount(0, { timeout: 5_000 });
-    // A viewer who joins now gets no history from before the clear.
-    const c = await join(browser, uid('delC'));
-    try {
-      await chatReady(c.page);
-      await expect(c.page.getByTestId('chat-list').locator('li.msg', { hasText: stays })).toHaveCount(0);
-    } finally {
-      await c.context.close();
-    }
-  } finally {
-    await a.context.close();
-    await b.context.close();
-  }
+  // Assert
+  await neverSees(c.page, stays, `depois da limpeza ${uid('m')}`);
 });
 
-test('mute for a time, then unmute; mute until the stream ends', { tag: '@ui' }, async ({ browser }) => {
+test('mute for a time, then unmute; mute until the stream ends', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
   const nick = uid('muted');
-  const a = await join(browser, nick);
-  const b = await join(browser, uid('watcher'));
-  try {
-    await chatReady(a.page, b.page);
-    const sessionId = await sessionOf(nick);
-    const status = a.page.getByTestId('chat-status');
+  const a = await viewers.join(nick);
+  const b = await viewers.join(uid('watcher'));
+  await chatReady(a.page, b.page);
+  const sessionId = await sessionOf(chat, nick);
+  const status = a.page.getByTestId('chat-status');
+  const back = `voltei ${uid('u')}`;
 
-    await adminApi('POST', '/api/chat/mute', { sessionId, minutes: 10 });
-    await expect(status).toHaveText(/muted until/i, { timeout: 5_000 });
-    await expect(a.page.getByTestId('chat-send')).toBeDisabled();
+  // Act
+  await admin('/api/chat/mute', { sessionId, minutes: 10 });
 
-    await adminApi('POST', '/api/chat/unmute', { sessionId });
-    const back = `voltei ${uid('u')}`;
-    await say(a.page, back);
-    await sees(b.page, back);
+  // Assert
+  await expect(status).toHaveText(/muted until/i, { timeout: 5_000 });
+  await expect(a.page.getByTestId('chat-send')).toBeDisabled();
 
-    await adminApi('POST', '/api/chat/mute', { sessionId, minutes: null });
-    await expect(status).toHaveText('You are muted until the stream ends.', { timeout: 5_000 });
-    // A reload (same device) does not lift it.
-    await a.page.reload();
-    await chatReady(a.page);
-    await expect(a.page.getByTestId('chat-status')).toHaveText('You are muted until the stream ends.', { timeout: 10_000 });
-    await adminApi('POST', '/api/chat/unmute', { sessionId });
-  } finally {
-    await a.context.close();
-    await b.context.close();
-  }
+  // Act
+  await admin('/api/chat/unmute', { sessionId });
+  await say(a.page, back);
+
+  // Assert
+  await sees(b.page, back);
+
+  // Act
+  await admin('/api/chat/mute', { sessionId, minutes: null });
+
+  // Assert
+  await expect(status).toHaveText('You are muted until the stream ends.', { timeout: 5_000 });
+
+  // Act
+  await a.page.reload();
+  await chatReady(a.page);
+
+  // Assert
+  await expect(a.page.getByTestId('chat-status')).toHaveText('You are muted until the stream ends.', { timeout: 10_000 });
 });
 
-test('the streamer sets and locks a colour: everyone sees it, the viewer cannot change it', { tag: '@ui' }, async ({ browser }) => {
+test('the streamer sets and locks a colour: everyone sees it, the viewer cannot change it', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
   const nick = uid('painted');
-  const a = await join(browser, nick);
-  const b = await join(browser, uid('looker'));
-  try {
-    await chatReady(a.page, b.page);
-    const sessionId = await sessionOf(nick);
-    await adminApi('PUT', '/api/chat/color', { sessionId, color: '#e5484d', lock: true });
-    await expect.poll(async () => (await chatState()).sessions.find((s) => s.sessionId === sessionId)?.colorLocked).toBe(true);
-    const first = `vermelho ${uid('r')}`;
-    await say(a.page, first);
-    const nickEl = b.page.getByTestId('chat-list').locator('li.msg', { hasText: first }).locator('.nick');
-    await expect(nickEl).toBeVisible({ timeout: 5_000 });
-    const color = await nickEl.evaluate((el) => getComputedStyle(el).color);
+  const a = await viewers.join(nick);
+  const b = await viewers.join(uid('looker'));
+  await chatReady(a.page, b.page);
+  const sessionId = await sessionOf(chat, nick);
+  const first = `vermelho ${uid('r')}`;
+  const second = `ainda vermelho ${uid('r2')}`;
+  const nickOf = (text: string) => chatMessage(b.page, text).locator('.nick');
 
-    // The viewer's colour chooser is gone and says why (the server also ignores chat.color
-    // while locked: chat-hub.test.ts).
-    await a.page.getByTestId('chat-settings-button').click();
-    await expect(a.page.getByTestId('chat-settings').getByText('The streamer chose your colour.')).toBeVisible();
-    await expect(a.page.getByTestId('chat-settings').locator('button.swatch').first()).toBeHidden();
-    await a.page.keyboard.press('Escape');
-    await a.page.waitForTimeout(2100); // the slow-mode wait before the next message
-    const second = `ainda vermelho ${uid('r2')}`;
-    await say(a.page, second);
-    const nick2 = b.page.getByTestId('chat-list').locator('li.msg', { hasText: second }).locator('.nick');
-    await expect(nick2).toBeVisible({ timeout: 5_000 });
-    expect(await nick2.evaluate((el) => getComputedStyle(el).color)).toBe(color);
-    expect((await chatState()).sessions.find((s) => s.sessionId === sessionId)?.color).toBe('#e5484d');
-  } finally {
-    await a.context.close();
-    await b.context.close();
-  }
+  // Act
+  await adminApi('PUT', '/api/chat/color', { sessionId, color: '#e5484d', lock: true });
+
+  // Assert
+  await expect.poll(async () => (await chat.state()).sessions.find((s) => s.sessionId === sessionId)?.colorLocked).toBe(true);
+
+  // Act
+  await say(a.page, first);
+
+  // Assert
+  await expect(nickOf(first)).toBeVisible({ timeout: 5_000 });
+  const color = await nickOf(first).evaluate((el) => getComputedStyle(el).color);
+
+  // Act
+  await a.page.getByTestId('chat-settings-button').click();
+
+  // Assert
+  await expect(a.page.getByTestId('chat-settings').getByText('The streamer chose your colour.')).toBeVisible();
+  await expect(a.page.getByTestId('chat-settings').locator('button.swatch').first()).toBeHidden();
+
+  // Act
+  await a.page.keyboard.press('Escape');
+  await say(a.page, second);
+
+  // Assert
+  await expect(nickOf(second)).toBeVisible({ timeout: 5_000 });
+  expect(await nickOf(second).evaluate((el) => getComputedStyle(el).color)).toBe(color);
+  expect((await chat.state()).sessions.find((s) => s.sessionId === sessionId)?.color).toBe('#e5484d');
 });
 
-test('content presets: emotes only refuses text, text only refuses emoji', { tag: '@ui' }, async ({ browser }) => {
-  const a = await join(browser, uid('modeA'));
-  const b = await join(browser, uid('modeB'));
-  try {
-    await chatReady(a.page, b.page);
-    await withSettings(
-      (s) => ({ ...s, content: { text: false, emotes: true, gifs: false } }),
-      async () => {
-        await expect(a.page.getByTestId('chat-mode')).not.toBeEmpty({ timeout: 5_000 });
-        const text = `só texto ${uid('t')}`;
-        await a.page.getByTestId('chat-input').fill(text);
-        await a.page.getByTestId('chat-input').press('Enter');
-        await expect(a.page.getByTestId('chat-status')).not.toBeEmpty({ timeout: 5_000 });
-        await a.page.waitForTimeout(1000);
-        await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: text })).toHaveCount(0);
-      },
-    );
-    await a.page.getByTestId('chat-input').fill('');
-    await withSettings(
-      (s) => ({ ...s, content: { text: true, emotes: false, gifs: false } }),
-      async () => {
-        const marker = uid('e');
-        await a.page.waitForTimeout(2100); // slow mode
-        await a.page.getByTestId('chat-input').fill(`oi 😀 ${marker}`);
-        await a.page.getByTestId('chat-input').press('Enter');
-        await expect(a.page.getByTestId('chat-status')).not.toBeEmpty({ timeout: 5_000 });
-        await a.page.waitForTimeout(1000);
-        await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: marker })).toHaveCount(0);
-        // Plain text still goes through.
-        await a.page.getByTestId('chat-input').fill('');
-        await a.page.waitForTimeout(2100);
-        const plain = `sem emoji ${uid('p')}`;
-        await say(a.page, plain);
-        await sees(b.page, plain);
-      },
-    );
-  } finally {
-    await a.context.close();
-    await b.context.close();
-  }
+test('content presets: emotes only refuses text, text only refuses emoji', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const a = await viewers.join(uid('modeA'));
+  const b = await viewers.join(uid('modeB'));
+  await chatReady(a.page, b.page);
+  const input = a.page.getByTestId('chat-input');
+  const status = a.page.getByTestId('chat-status');
+  const text = `só texto ${uid('t')}`;
+  const emoji = uid('e');
+  const plain = `sem emoji ${uid('p')}`;
+
+  // Act
+  await chat.change({ content: { text: false, emotes: true, gifs: false } });
+  await expect(input).toHaveAttribute('placeholder', translate('en', 'chat.viewer.placeholder.emotes'), { timeout: 5_000 });
+  await input.fill(text);
+  await input.press('Enter');
+
+  // Assert
+  await expect(status).toHaveText(translate('en', 'chat.err.mode', { allowedKey: 'chat.content.e' }), { timeout: 5_000 });
+  await neverSees(b.page, text, `só emotes ${uid('m1')}`);
+
+  // Act
+  await chat.change({ content: { text: true, emotes: false, gifs: false } });
+  await expect(input).toHaveAttribute('placeholder', translate('en', 'chat.viewer.placeholder'), { timeout: 5_000 });
+  await input.fill(`oi 😀 ${emoji}`);
+  await input.press('Enter');
+
+  // Assert
+  await expect(status).toHaveText(translate('en', 'chat.err.mode', { allowedKey: 'chat.content.t' }), { timeout: 5_000 });
+  await neverSees(b.page, emoji, `só texto ${uid('m2')}`);
+
+  // Act
+  await input.fill('');
+  await say(a.page, plain);
+
+  // Assert
+  await sees(b.page, plain);
 });
 
-test('blocked words match look-alikes and never reach other viewers', { tag: '@ui' }, async ({ browser }) => {
-  const a = await join(browser, uid('blkA'));
-  const b = await join(browser, uid('blkB'));
-  try {
-    await chatReady(a.page, b.page);
-    await withSettings(
-      (s) => ({ ...s, blockedWords: [...s.blockedWords, 'abacaxi'] }),
-      async () => {
-        const marker = uid('w');
-        // Fullwidth letters and capitals: the comparison key folds them.
-        await a.page.getByTestId('chat-input').fill(`ＡＢＡＣＡＸＩ ${marker}`);
-        await a.page.getByTestId('chat-input').press('Enter');
-        await expect(a.page.getByTestId('chat-status')).toHaveText('This message has a word the streamer blocked.', { timeout: 5_000 });
-        await a.page.waitForTimeout(1000);
-        await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: marker })).toHaveCount(0);
-      },
-    );
-  } finally {
-    await a.context.close();
-    await b.context.close();
-  }
+test('blocked words match look-alikes and never reach other viewers', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  const a = await viewers.join(uid('blkA'));
+  const b = await viewers.join(uid('blkB'));
+  await chatReady(a.page, b.page);
+  const marker = uid('w');
+
+  // Act
+  await chat.change((s) => ({ ...s, blockedWords: [...s.blockedWords, 'abacaxi'] }));
+  await a.page.getByTestId('chat-input').fill(`ＡＢＡＣＡＸＩ ${marker}`);
+  await a.page.getByTestId('chat-input').press('Enter');
+
+  // Assert
+  await expect(a.page.getByTestId('chat-status')).toHaveText('This message has a word the streamer blocked.', { timeout: 5_000 });
+  await neverSees(b.page, marker, `sem abacaxi ${uid('m')}`);
 });
