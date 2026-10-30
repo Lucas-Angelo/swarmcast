@@ -7,11 +7,36 @@ import type { Page } from '@playwright/test';
 import type { AdminChatState, ChatMessageItem, ChatSettings } from '@swarmcast/shared';
 import { adminApi, expect, join, test, uid } from './fixtures.js';
 
+/** Send a message that must go through: waits until the server took it (the "sending…" row settles). */
 async function say(page: Page, text: string): Promise<void> {
   const input = page.getByTestId('chat-input');
   await input.fill(text);
   await expect(page.getByTestId('chat-send')).toBeEnabled({ timeout: 10_000 });
   await input.press('Enter');
+  const own = page.getByTestId('chat-list').locator('li.msg', { hasText: text }).last();
+  await expect(own, 'the sender\'s own row').not.toHaveClass(/\bpending\b/, { timeout: 10_000 });
+  if (/\bfailed\b/.test((await own.getAttribute('class')) ?? '')) throw new Error(`"${text}" was refused: ${await page.getByTestId('chat-status').textContent()}`);
+}
+
+/**
+ * Another viewer's page shows the message within 5 s. When it does not, the error says what that
+ * page was doing (the list renders on animation frames, and only while the page is visible).
+ */
+async function sees(page: Page, text: string): Promise<void> {
+  const row = page.getByTestId('chat-list').locator('li.msg', { hasText: text });
+  try {
+    await expect(row).toBeVisible({ timeout: 5_000 });
+  } catch (e) {
+    const state = await page
+      .evaluate(() => ({
+        visibility: document.visibilityState,
+        focus: document.hasFocus(),
+        last: [...document.querySelectorAll('[data-testid=chat-list] li')].slice(-5).map((li) => `${li.className}: ${li.textContent?.slice(0, 60)}`),
+        unread: document.querySelector('[data-testid=chat-list]')?.parentElement?.querySelector('.pill')?.textContent ?? null,
+      }))
+      .catch((err: Error) => ({ unavailable: err.message }));
+    throw new Error(`${(e as Error).message}\nthe receiving page: ${JSON.stringify(state)}`, { cause: e });
+  }
 }
 
 const chatState = (): Promise<AdminChatState> => adminApi<AdminChatState>('GET', '/api/chat');
@@ -61,9 +86,9 @@ test('delete one message and clear the chat: gone for everyone', { tag: '@ui' },
     const gone = `apaga isso ${uid('d')}`;
     const stays = `isso fica ${uid('s')}`;
     await say(a.page, gone);
-    await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: gone })).toBeVisible({ timeout: 5_000 });
+    await sees(b.page, gone);
     await say(a.page, stays);
-    await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: stays })).toBeVisible({ timeout: 5_000 });
+    await sees(b.page, stays);
 
     await adminApi('POST', '/api/chat/delete', { seqs: [await seqOf(gone)] });
     for (const p of [a.page, b.page]) {
@@ -103,7 +128,7 @@ test('mute for a time, then unmute; mute until the stream ends', { tag: '@ui' },
     await adminApi('POST', '/api/chat/unmute', { sessionId });
     const back = `voltei ${uid('u')}`;
     await say(a.page, back);
-    await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: back })).toBeVisible({ timeout: 5_000 });
+    await sees(b.page, back);
 
     await adminApi('POST', '/api/chat/mute', { sessionId, minutes: null });
     await expect(status).toHaveText('You are muted until the stream ends.', { timeout: 5_000 });
@@ -185,7 +210,7 @@ test('content presets: emotes only refuses text, text only refuses emoji', { tag
         await a.page.waitForTimeout(2100);
         const plain = `sem emoji ${uid('p')}`;
         await say(a.page, plain);
-        await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: plain })).toBeVisible({ timeout: 5_000 });
+        await sees(b.page, plain);
       },
     );
   } finally {
