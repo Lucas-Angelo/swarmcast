@@ -60,6 +60,13 @@ export function delayTestFlags(search: string, allowed: boolean): { speed: numbe
 /** One-second latency samples whose median is the delay everyone uses. */
 const LATENCY_SAMPLES = 5;
 
+/**
+ * A `waiting` with at least this much media buffered ahead is not the network: the browser's
+ * decoder or renderer fell behind (a busy machine). Holding playback there, and raising the
+ * delay, would only stretch its hiccup into a freeze of several seconds.
+ */
+export const STARVED_BELOW_S = 1;
+
 function forwardBuffer(video: HTMLVideoElement): number {
   const b = video.buffered;
   const t = video.currentTime;
@@ -171,9 +178,11 @@ export function attachAdaptiveDelay(
   });
   video.addEventListener('waiting', () => {
     const now = clock();
-    // Not a network stall: before the first frame, while seeking (Go live, profile switch), or
-    // while paused / already held.
+    // Not a network stall: before the first frame, while seeking (Go live, profile switch), while
+    // paused / already held, or with media still buffered ahead (Chrome on the 3-vCPU macOS CI
+    // runners froze about 3 s every few minutes of playback with ~20 s buffered: this hold).
     if (!started || holding || stallAt !== null || video.paused || video.seeking || now - lastSeekAt < 1.5) return;
+    if (forwardBuffer(video) >= STARVED_BELOW_S) return;
     stallAt = now;
     counters.stalls += 1;
     const d = ctl.onStallStart(now, latency());
