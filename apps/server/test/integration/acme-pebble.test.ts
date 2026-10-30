@@ -19,8 +19,9 @@
  *   badNonce handling is covered by the unit tests; set PEBBLE_WFE_NONCEREJECT=<percent> in the
  *   environment to exercise it against Pebble).
  *
- * The container is created without `--rm` and removed by afterAll alone (`docker rm -f`): two
- * removers (the daemon's auto-remove on stop and ours) race, and that error would be noise.
+ * The container is created without `--rm` and removed by afterAll alone (`docker rm -f`): with
+ * two removers (the daemon's auto-remove on stop, and ours) the second one can fail, and a
+ * cleanup error must mean something.
  * Readiness is the directory answering, polled with a deadline.
  *
  * The whole suite is skipped when `docker info` fails.
