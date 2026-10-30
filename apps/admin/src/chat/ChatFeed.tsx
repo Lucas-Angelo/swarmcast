@@ -114,10 +114,10 @@ function MessageRow({
             {t('chat.badge.streamer')}
           </span>
         )}
-        <bdi class="chat-nick" style={author ? { color: readableName(author.c, dark) } : undefined}>
+        {/* The look-alike tag tells apart two similar names: shown on hover, not in every row. */}
+        <bdi class="chat-nick" title={author?.tag && !streamer ? `#${author.tag}` : undefined} style={author ? { color: readableName(author.c, dark) } : undefined}>
           {nickname}
         </bdi>
-        {author?.tag && !streamer && <span class="chat-tag muted small">#{author.tag}</span>}
         <span class="chat-sep">: </span>
         <bdi class="chat-text" dir="auto">
           {item.g ? (
@@ -180,7 +180,7 @@ function SendBox({ maxGraphemes, streamerName, enabled }: { maxGraphemes: number
       <div class="row tight">
         <input
           type="text"
-          class="chat-input"
+          class="text-input chat-input"
           data-testid="chat-input"
           placeholder={t('admin.chat.send.placeholder', { name })}
           aria-label={t('admin.chat.send.placeholder', { name })}

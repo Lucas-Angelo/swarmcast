@@ -106,7 +106,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.slowMode')}{' '}
-            <select
+            <select class="text-input"
               data-testid="chat-slow-preset"
               value={(CHAT_SLOW_MODE_PRESETS_S as readonly number[]).includes(v.slowModeS) ? String(v.slowModeS) : 'custom'}
               onChange={(e) => {
@@ -142,7 +142,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
             <span>
               {t('admin.chat.blockedWords')} <Info text={t('admin.chat.blockedWords.tip')} />
             </span>
-            <textarea
+            <textarea class="text-input"
               rows={4}
               data-testid="chat-blocked"
               placeholder={t('admin.chat.blockedWords.placeholder')}
@@ -159,7 +159,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.links')}{' '}
-            <select data-testid="chat-links" value={v.links} onChange={(e) => patch({ links: (e.target as HTMLSelectElement).value as Settings['links'] })}>
+            <select class="text-input" data-testid="chat-links" value={v.links} onChange={(e) => patch({ links: (e.target as HTMLSelectElement).value as Settings['links'] })}>
               <option value="text">{t('admin.chat.links.text')}</option>
               <option value="block">{t('admin.chat.links.block')}</option>
             </select>
@@ -169,7 +169,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.scripts')}{' '}
-            <select data-testid="chat-scripts" value={v.scripts} onChange={(e) => patch({ scripts: (e.target as HTMLSelectElement).value as Settings['scripts'] })}>
+            <select class="text-input" data-testid="chat-scripts" value={v.scripts} onChange={(e) => patch({ scripts: (e.target as HTMLSelectElement).value as Settings['scripts'] })}>
               <option value="any">{t('admin.chat.scripts.any')}</option>
               <option value="latin">{t('admin.chat.scripts.latin')}</option>
             </select>
@@ -186,7 +186,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.streamerName')}{' '}
-            <input
+            <input class="text-input"
               type="text"
               data-testid="chat-streamer-name"
               maxLength={100}
@@ -211,7 +211,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.gif.key')}{' '}
-            <input
+            <input class="text-input"
               type="text"
               data-testid="chat-gif-key"
               autocomplete="off"
@@ -237,7 +237,7 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
         <div class="field">
           <label>
             {t('admin.chat.gif.rating')}{' '}
-            <select data-testid="chat-gif-rating" value={v.gif.rating} onChange={(e) => patch({ gif: { ...v.gif, rating: (e.target as HTMLSelectElement).value as Settings['gif']['rating'] } })}>
+            <select class="text-input" data-testid="chat-gif-rating" value={v.gif.rating} onChange={(e) => patch({ gif: { ...v.gif, rating: (e.target as HTMLSelectElement).value as Settings['gif']['rating'] } })}>
               {(['g', 'pg', 'pg-13'] as const).map((r) => (
                 <option key={r} value={r}>
                   {t(`admin.chat.gif.rating.${r}` as MessageKey)}
