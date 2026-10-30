@@ -95,12 +95,51 @@ export function reaperCommand(): { command: string; args: string[] } {
   return { command: process.execPath, args: [...process.execArgv, entry, '--reaper', String(process.pid)] };
 }
 
+/** What a start has set up so far, undone newest first when the start fails. */
+class StartupSteps {
+  private readonly steps: Array<() => unknown> = [];
+  /** Where a step that cannot be undone is reported (once the logger exists). */
+  log: Logger | null = null;
+
+  add(step: () => unknown): void {
+    this.steps.push(step);
+  }
+
+  /** Every step runs, also after one that fails (that one is logged): the start's own error is what the caller gets. */
+  async undo(): Promise<void> {
+    for (const step of this.steps.splice(0).reverse()) {
+      try {
+        await step();
+      } catch (err) {
+        this.log?.warn({ err: (err as Error).message }, 'could not undo a step of the failed start');
+      }
+    }
+  }
+}
+
+/**
+ * Starts SwarmCast (everything but the live itself). When the start fails part-way (ports busy,
+ * the panel cannot listen), everything it already started is stopped before the error comes out:
+ * the reaper, the panel, the timers, the live's channels and the log file.
+ */
 export async function createApp(opts: AppOptions = {}): Promise<App> {
+  const started = new StartupSteps();
+  try {
+    return await assembleApp(opts, started);
+  } catch (err) {
+    await started.undo();
+    throw err;
+  }
+}
+
+async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App> {
   const paths = resolvePaths(opts.dataDir);
   // In-memory activity log for the panel; warnings/errors from the logger feed it too.
   const activity = new ActivityLog();
   let logFile: RotatingLogFile | undefined;
   const log = createLogger({ logsDir: paths.logsDir, stdout: opts.logToStdout ?? true, sink: activity.logStream(), onFile: (f) => (logFile = f) });
+  started.add(() => logFile?.end());
+  started.log = log;
   const config = { ...loadConfig(paths.configFile), ...opts.configOverrides };
   if (opts.noTunnel) config.tunnel = { provider: 'none' };
   if (opts.desktop) await desktopPreflight(config.ports);
@@ -113,6 +152,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     const rc = reaperCommand();
     reaper = new Reaper(rc.command, rc.args, log);
     reaper.start();
+    started.add(() => reaper?.stop());
   }
 
   const mediamtx = new MediaMtx(
@@ -147,6 +187,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     sources: () => blocklistSources(config.security.blocklists, config.security.extraBlocklistUrls),
   });
   if (config.security.blockKnownBadIps) blocklists.start();
+  started.add(() => blocklists.stop());
 
   const stateStore = new FileStateStore(paths.stateFile);
   // eslint-disable-next-line prefer-const
@@ -185,11 +226,13 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper, ...(opts.loadGuard ? { loadGuard: opts.loadGuard } : {}) },
     brandingDir: path.join(paths.dataDir, 'branding'),
   });
+  started.add(() => live.shutdown());
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
   const encoderProbe = setTimeout(() => {
     if (live.phase === 'off') void live.quality.probe();
   }, ENCODER_PROBE_DELAY_MS);
   encoderProbe.unref();
+  started.add(() => clearTimeout(encoderProbe));
 
   // The panel and the local public server can live on any free port (the tunnel and the
   // browser follow them); only RTMP must stay fixed because OBS is configured with it.
@@ -214,6 +257,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     currentLogFile: () => logFile?.file,
   });
   diagnostics.start();
+  started.add(() => diagnostics.stop());
   // Desktop app: "Get beta versions" lives in config.json (`updates.channel`).
   opts.desktop?.useUpdateChannel({
     get: () => config.updates.channel,
@@ -273,6 +317,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     desktop: opts.desktop,
     diagnostics,
   });
+  started.add(() => app.admin.close());
   await app.admin.listen({ host: '127.0.0.1', port: config.ports.admin });
   app.adminPort = (app.admin.server.address() as AddressInfo).port;
   config.ports = { ...config.ports, admin: app.adminPort };
