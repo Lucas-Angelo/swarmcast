@@ -2,7 +2,7 @@ name: quick
 
 # The fast checks of the pipeline (pipeline.yml), on one Ubuntu runner: lint, typecheck, unit tests
 # (macOS and Windows run them in _node.yml), npm audit, the upstream-binaries check, the streamer
-# guides, the tray helper (Linux and Windows cross-builds, go vet) and cargo fmt.
+# guides, the tray helper (Linux and Windows cross-builds, go vet, go test, gofmt) and cargo fmt.
 on:
   workflow_call:
 
@@ -101,13 +101,18 @@ jobs:
 
       # Windows and Linux are pure Go and cross-compile from here; macOS needs cgo and is built
       # (and vetted) by the macOS desktop builds in _desktop.yml, which package it.
-      - name: Tray helper (Linux x64/arm64, Windows x64) and go vet
+      - name: Tray helper (Linux x64/arm64, Windows x64), go vet, go test, gofmt
         if: ${{ !cancelled() }}
+        timeout-minutes: 6
         run: |
           for t in linux-x64 linux-arm64 windows-x64; do node apps/tray/build.mjs --target "$t"; done
           cd apps/tray
           go vet ./...
           GOOS=windows go vet ./...
+          # The helper's own tests, including the start without a D-Bus session bus (Linux only).
+          go test ./...
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then echo "::error title=gofmt::run gofmt -w on: $unformatted"; exit 1; fi
 
       - name: cargo fmt
         if: ${{ !cancelled() }}
