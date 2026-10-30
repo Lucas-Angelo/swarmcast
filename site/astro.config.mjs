@@ -123,6 +123,9 @@ export default defineConfig({
           ...t('Going live', 'Na live'),
           items: [
             { slug: 'live/go-live' },
+            { slug: 'live/chat' },
+            { slug: 'live/gif-key' },
+            { slug: 'live/your-page' },
             { slug: 'live/kick-and-new-link' },
             { slug: 'live/quality' },
             { slug: 'live/p2p' },

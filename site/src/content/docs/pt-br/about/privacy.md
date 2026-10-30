@@ -6,7 +6,7 @@ description: O SwarmCast não tem telemetria. Como os números da página inicia
 ## O SwarmCast não manda nada para casa
 
 - O app **não tem telemetria, nem estatísticas de uso, nem relatório de erros automático**. Ele nunca manda para o projeto SwarmCast nada sobre você, o seu computador, a sua live ou quem assiste.
-- A sua chave de transmissão, os seus links e os apelidos e IPs de quem assiste ficam no seu computador, na memória ou na pasta de configurações.
+- A sua chave de transmissão, os seus links e os apelidos e IPs de quem assiste ficam no seu computador, na memória ou na pasta de configurações. As mensagens do chat ficam só na memória e são apagadas quando você desliga; os textos e as imagens da sua página ficam na pasta de configurações.
 - A página de quem assiste não tem anúncios, rastreadores nem estatísticas.
 - Este site **não tem rastreadores nem cookies** e não carrega fontes nem scripts de outras empresas. Ele só guarda no seu próprio navegador (armazenamento local) o idioma e o tema claro/escuro que você escolheu.
 
@@ -17,6 +17,7 @@ Com quem o app fala, e por quê:
 - **Quem publica o ffmpeg:** baixar o conversor de vídeo, na primeira vez.
 - **Listas públicas de bloqueio** (Spamhaus, FireHOL): baixadas uma vez por dia, sem conta.
 - **Let's Encrypt:** só no modo direto, para o certificado HTTPS.
+- **KLIPY:** só se você ligar os GIFs no chat, com a sua própria chave. Aí o navegador de quem assiste (depois que cada pessoa aceita) acessa o KLIPY para buscar e mostrar GIFs; o seu computador só acessa se você buscar GIFs no painel. Veja [Como conseguir uma chave de GIFs](/swarmcast/pt-br/live/gif-key/).
 
 ## Como os números da página inicial são contados
 
