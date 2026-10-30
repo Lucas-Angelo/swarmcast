@@ -324,7 +324,10 @@ test('GIFs need the streamer\'s own key, show the privacy text, and the card is 
   await card.getByTestId('chat-gif-key').fill('test_key_0123456789');
   await card.getByTestId('chat-gif-enable').check();
   await card.getByTestId('chat-save').click();
-  await expect.poll(async () => (await adminApi<AdminChatState>('GET', '/api/chat')).settings).toMatchObject({ content: { gifs: true }, gif: { provider: 'klipy', key: 'test_key_0123456789', consent: 'ask' } });
+  await expect.poll(async () => (await adminApi<AdminChatState>('GET', '/api/chat')).settings).toMatchObject({ content: { gifs: true }, gif: { provider: 'klipy', key: 'test_key_0123456789' } });
+  // Consent is always required: the panel offers no switch for it.
+  await expect(card.getByTestId('chat-gif-consent')).toHaveText(translate('pt-BR', 'admin.chat.gif.consent.tip'));
+  await expect(card.locator('input[data-testid="chat-gif-consent"]')).toHaveCount(0);
 });
 
 // ---------------------------------------------------------------------------------------------

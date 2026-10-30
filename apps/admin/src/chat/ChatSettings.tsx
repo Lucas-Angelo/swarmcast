@@ -247,15 +247,10 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
           </label>{' '}
           <Info text={t('admin.chat.gif.rating.tip')} />
         </div>
-        <div class="field">
-          <Check
-            label="admin.chat.gif.consent"
-            checked={v.gif.consent === 'ask'}
-            testid="chat-gif-consent"
-            onChange={(c) => patch({ gif: { ...v.gif, consent: c ? 'ask' : 'auto' } })}
-          />{' '}
-          <Info text={t('admin.chat.gif.consent.tip')} />
-        </div>
+        {/* Viewer consent is always required (no switch): no viewer's browser contacts KLIPY before they agree. */}
+        <p class="muted small" data-testid="chat-gif-consent">
+          {t('admin.chat.gif.consent.tip')}
+        </p>
       </fieldset>
 
       <fieldset class="chat-group">
