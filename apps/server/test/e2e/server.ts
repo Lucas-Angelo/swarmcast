@@ -84,11 +84,13 @@ let ffmpeg: ChildProcess | null = null;
 let stopping = false;
 // What the fake OBS sends; quality.spec.ts changes it (POST /obs) to make OBS reconnect with a
 // bigger picture, which is when a new rendition plan applies. Kept in a file so a restarted
-// fake OBS (it restarts by itself one second after it exits) uses the same options.
+// fake OBS (it restarts by itself, like OBS's own reconnect) uses the same options.
 const PUSH_FILE = path.join('test-results', 'e2e-push.json');
 type PushOptions = { size?: string; kbps?: number };
 /** The 720p feed the ladder scenarios ask for (quality.spec, barely-delivers). */
 export const HD_FEED = { size: '1280x720', kbps: 2500 } as const;
+/** How long the fake OBS waits before it publishes again after its ffmpeg exited, like OBS's reconnect delay. */
+const OBS_RECONNECT_MS = 1000;
 const pushOptions = (): PushOptions => {
   try {
     return JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')) as PushOptions;
@@ -104,7 +106,7 @@ const push = (): void => {
   const { child } = startFeed(`rtmp://127.0.0.1:${E2E_PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, pushOptions());
   ffmpeg = child;
   child.on('exit', () => {
-    if (!stopping && ffmpeg === child) setTimeout(push, 1000);
+    if (!stopping && ffmpeg === child) setTimeout(push, OBS_RECONNECT_MS);
   });
 };
 fs.mkdirSync('test-results', { recursive: true });
@@ -164,6 +166,11 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
   if (shield.detector.state !== 'normal') {
     L.clearAttackAlert();
     did.push('attack alert ended');
+  }
+  // The panel's warnings last for the live: a test that checks one sees its own, not an earlier test's.
+  if (L.warnings.length > 0) {
+    L.warnings = [];
+    did.push('panel warnings');
   }
   if (!same(L.securitySettings(), initial.security)) {
     L.updateSecurity(structuredClone(initial.security));
@@ -292,13 +299,36 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
   };
 }
 
+/**
+ * Resolves at the next change that can make the stream healthy, or after `ms`: every problem
+ * healthNow() reports ends with a playlist update, a change of availability or of the live's
+ * state (a new segment, a new variant, the live started).
+ */
+function nextStreamChange(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const { origin } = app.live;
+    const done = (): void => {
+      clearTimeout(deadline);
+      origin.off('updated', done);
+      origin.off('available', done);
+      app.live.off('state', done);
+      resolve();
+    };
+    const deadline = setTimeout(done, ms);
+    origin.on('updated', done);
+    origin.on('available', done);
+    app.live.on('state', done);
+  });
+}
+
 /** Waits up to `waitMs` for a healthy stream; answers with the last state seen. */
 async function health(waitMs: number, minPlaylistS: number, qualities: number): Promise<Health> {
   const end = Date.now() + waitMs;
   for (;;) {
     const h = healthNow(minPlaylistS, qualities);
-    if (h.ok || Date.now() >= end) return h;
-    await new Promise((r) => setTimeout(r, 200));
+    const left = end - Date.now();
+    if (h.ok || left <= 0) return h;
+    await nextStreamChange(left);
   }
 }
 
@@ -371,6 +401,8 @@ const shutdown = async (): Promise<void> => {
   control.close();
   ffmpeg?.kill('SIGKILL');
   await app.close();
+  // The data folder is this run's only (mkdtemp above); the app has closed every file in it.
+  fs.rmSync(dataDir, { recursive: true, force: true });
   process.exit(0);
 };
 process.on('SIGTERM', () => void shutdown());
