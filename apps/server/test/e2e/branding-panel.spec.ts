@@ -4,7 +4,7 @@ import path from 'node:path';
 import type { Page, Route } from '@playwright/test';
 import { contrastRatio } from '@swarmcast/shared';
 import { buildPixPayload, defaultBranding, deriveTheme, qrMatrix, type AdminBrandingState, type Branding, type BrandSlot } from '@swarmcast/shared/branding';
-import { expect, test } from './fixtures.js';
+import { adminApi, expect, test } from './fixtures.js';
 
 // "Your page" card in the panel (BR5) and its Pix part (BR6). The panel's branding API is
 // mocked with page.route, following docs/BRANDING.md (GET/PUT /api/branding, PUT/DELETE
@@ -42,15 +42,15 @@ async function mockBranding(page: Page): Promise<{ puts: unknown[]; uploads: Upl
   const images: Partial<Record<BrandSlot, string>> = {};
   const puts: unknown[] = [];
   const uploads: Upload[] = [];
-  const answer = (route: Route): Promise<void> => {
-    const body: AdminBrandingState = {
+  const answer = (route: Route, wrap?: (s: AdminBrandingState) => unknown): Promise<void> => {
+    const state: AdminBrandingState = {
       branding,
       derived: deriveTheme(branding.theme),
       images,
       public: { rev: branding.rev, tags: branding.tags, links: [], theme: { preset: branding.theme.preset, corners: branding.theme.corners }, showCredit: branding.showCredit },
       disk: { files: files.size, bytes: [...files.values()].reduce((n, f) => n + f.bytes.length, 0) },
     };
-    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(wrap ? wrap(state) : state) });
   };
   await page.route(/\/api\/branding(\/.*)?$/, async (route) => {
     const req = route.request();
@@ -72,7 +72,8 @@ async function mockBranding(page: Page): Promise<{ puts: unknown[]; uploads: Upl
       const ext = type === 'image/png' ? 'png' : type === 'image/jpeg' ? 'jpg' : 'webp';
       files.set(`${sha}.${ext}`, { type, bytes });
       images[slot] = `/api/branding/file/${sha}.${ext}`;
-      return answer(route);
+      // Like apps/server/src/branding/admin-routes.ts: the stored reference and the new state.
+      return answer(route, (state) => ({ ref: { sha, bytes: bytes.length }, state }));
     }
     if (img && req.method() === 'DELETE') {
       delete images[img[1] as BrandSlot];
@@ -397,6 +398,25 @@ test('Your page is translated to pt-BR (support button "Apoiar")', { tag: '@ui' 
   await card.getByTestId('brand-section-identity').click();
   await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
   await expect(card.getByTestId('brand-image-error-avatar')).toHaveText('SVG não é aceito. Exporte seu logo como PNG.');
+});
+
+test('Your page against the real server routes: the name and a picture are saved, then reset', { tag: '@ui' }, async ({ page }) => {
+  // No mock: the panel's calls must match apps/server/src/branding/admin-routes.ts.
+  await adminApi('POST', '/api/branding/reset', {});
+  await openPanel(page);
+  const card = page.getByTestId('brand-card');
+  await card.getByTestId('brand-name').fill('Ana Plays');
+  await card.getByTestId('brand-save').click();
+  await expect(card.getByTestId('brand-saved')).toBeVisible();
+  await expect.poll(async () => (await adminApi<AdminBrandingState>('GET', '/api/branding')).branding.name).toBe('Ana Plays');
+  await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'me.jpg', mimeType: 'image/jpeg', buffer: await photoWithGps(page, 600, 600) });
+  await card.getByTestId('brand-use-avatar').click();
+  await expect.poll(async () => Object.keys((await adminApi<AdminBrandingState>('GET', '/api/branding')).images).sort()).toEqual(['avatar', 'avatar128', 'fav180', 'fav32']);
+  await expect(card.getByTestId('brand-preview').locator('img.sc-brand-avatar')).toHaveAttribute('src', /^\/api\/branding\/file\/[0-9a-f]{64}\.(webp|png|jpg)$/);
+  // The preview's picture is served by the panel's own file route.
+  const src = (await card.getByTestId('brand-preview').locator('img.sc-brand-avatar').getAttribute('src'))!;
+  expect((await page.request.get(new URL(src, page.url()).href)).status()).toBe(200);
+  await adminApi('POST', '/api/branding/reset', {});
 });
 
 test('Your page without branding routes on the server: defaults, a note, nothing breaks', { tag: '@ui' }, async ({ page }) => {
