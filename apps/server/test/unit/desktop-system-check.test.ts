@@ -66,14 +66,14 @@ describe('operating system (same rules as the start scripts)', () => {
   });
 
   it.each([
-    ['Ubuntu 20.04', { ...UBUNTU, VERSION_ID: '20.04' }, '5.4', { status: 'warn', note: 'Ubuntu 22.04 or newer is recommended' }],
-    ['Debian 11', { ID: 'debian', VERSION_ID: '11' }, '5.10', { status: 'warn', note: 'Debian 12 or newer is recommended' }],
+    ['Ubuntu 20.04', { ...UBUNTU, VERSION_ID: '20.04' }, '5.4', expect.objectContaining({ status: 'warn', note: 'Ubuntu 22.04 or newer is recommended' })],
+    ['Debian 11', { ID: 'debian', VERSION_ID: '11' }, '5.10', expect.objectContaining({ status: 'warn', note: 'Debian 12 or newer is recommended' })],
     ['Fedora', { ID: 'fedora' }, '6.9', { desc: 'Linux 6.9', status: 'warn', note: 'not a tested distribution (tested: Ubuntu 22.04/24.04, Debian 12); it will probably work' }],
   ])("Linux: %s warns with the scripts' note", (_what, rel, kernel, info) => {
     // Act
     const i = linuxOsInfo(rel, kernel);
     // Assert
-    expect(i).toMatchObject(info);
+    expect(i).toEqual(info);
   });
 
   it('Linux: a derivative of Ubuntu/Debian warns as such; no os-release falls back to the kernel', () => {
@@ -88,24 +88,24 @@ describe('operating system (same rules as the start scripts)', () => {
   it.each([
     ['15.1\n', { desc: 'macOS 15.1', status: 'ok', note: '' }],
     ['11.7', { desc: 'macOS 11.7', status: 'bad', note: 'macOS 12 or newer is required' }],
-    ['', { desc: 'macOS unknown', status: 'warn' }],
+    ['', expect.objectContaining({ desc: 'macOS unknown', status: 'warn' })],
   ])('macOS 12+ ok, older fails (below the minimum), unreadable warns: %j', (version, info) => {
     // Act
     const i = macOsInfo(version);
     // Assert
-    expect(i).toMatchObject(info);
+    expect(i).toEqual(info);
   });
 
   it.each([
     ['10.0.22631', 'Windows 10 Pro', { desc: 'Windows 11 Pro (build 22631)', status: 'ok', note: '' }],
     ['10.0.19045', 'Windows 10 Home', { desc: 'Windows 10 Home (build 19045)', status: 'ok', note: '' }],
-    ['10.0.20348', 'Windows Server 2022 Datacenter', { status: 'warn', note: expect.stringMatching(/Windows Server is not a tested edition/) }],
-    ['6.3.9600', 'Windows 8.1', { status: 'bad', note: 'Windows 10 or 11 is required' }],
+    ['10.0.20348', 'Windows Server 2022 Datacenter', expect.objectContaining({ status: 'warn', note: expect.stringMatching(/Windows Server is not a tested edition/) })],
+    ['6.3.9600', 'Windows 8.1', expect.objectContaining({ status: 'bad', note: 'Windows 10 or 11 is required' })],
   ])('Windows %s %s: caption + build, Windows 11 by build number, Server warns', (release, caption, info) => {
     // Act
     const i = windowsOsInfo(release, caption);
     // Assert
-    expect(i).toMatchObject(info);
+    expect(i).toEqual(info);
   });
 });
 
