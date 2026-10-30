@@ -214,6 +214,19 @@ export function serverEnv(): { adminLoginUrl: string; dataDir: string; downloads
   return e2eEnv();
 }
 
+/**
+ * Opens the panel through its login URL (/auth/<token>) and waits until it lands on `/`.
+ * That page sets the cookie and moves on to `/` by itself (a meta refresh, admin/gate.ts), so
+ * the goto waits only for the answer ("commit"), not for the `load` of a page that is replaced
+ * at once: WebKit sometimes never reports that load, and the goto then hung until the test
+ * timeout (calibration soak, diagnostics on ubuntu-24.04 WebKit: 150 s, 1.5 s on the retry).
+ * Where it lands is what the tests check, web-first.
+ */
+export async function loginPanel(page: Page, login = e2eEnv().adminLoginUrl): Promise<void> {
+  await page.goto(login, { waitUntil: 'commit' });
+  await expect(page).toHaveURL(new URL('/', login).toString());
+}
+
 /** Wait until OBS (ffmpeg) is live, then return the current link. */
 export async function liveLink(): Promise<string> {
   await expect.poll(async () => (await adminState()).phase, { timeout: 60_000 }).toBe('live');

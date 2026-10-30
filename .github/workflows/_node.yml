@@ -32,7 +32,7 @@ jobs:
         # moves to 26.04 from 2026-10-19). The monthly run adds ubuntu-latest as a canary.
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     defaults:
       run:
         shell: bash
@@ -41,10 +41,12 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           ffmpeg: 'true'
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       - uses: ./.github/actions/get-build
+        timeout-minutes: 5
         with:
           names: web-dist
       # MediaMTX and cloudflared for the host into vendor/<target>/, verified against the SHA-256
@@ -86,6 +88,7 @@ jobs:
 
       # ---- apps/desktop/src-tauri ----
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
         if: ${{ !cancelled() }}
         with:
           components: clippy
