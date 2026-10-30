@@ -1,7 +1,9 @@
 // The viewer on a real phone browser (Chrome on Android, Mobile Safari on iOS), the checks the
 // owner did by hand on a phone (docs/CHAT.md "Rendering checks", the real-phone check):
-// - the live link, a nickname, the browser check, the video starting muted by itself
-//   (browsers allow only muted autoplay) and Unmute turning the sound on with a tap;
+// - the live link, a nickname typed with Watch still in sight above the keyboard (join.html
+//   resizes the page for it: interactive-widget=resizes-content; Gboard covered half of Watch
+//   without), the browser check, the video starting muted by itself (browsers allow only muted
+//   autoplay) and Unmute turning the sound on with a tap;
 // - the chat under the player on a phone screen, a message from the phone reaching a second
 //   viewer (a desktop browser: a phone browser hosts one automation session) and back, and the
 //   on-screen keyboard leaving the input and Send in sight: the visual viewport (what the
@@ -12,7 +14,7 @@
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, say, sees, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, goLive, inSight, isShown, joinOnPhone, keyboardUp, lifecycle, ownMessage, playedSince, recordLifecycle, videoState, viewport } from './phone.js';
+import { box, chatShows, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, recordLifecycle, tapToType, videoState, viewport } from './phone.js';
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
 const WATCHING_S = 1.5;
@@ -26,13 +28,14 @@ const AWAY_SEGMENTS = 5;
 /** Go live lands within this many seconds of the live point (as in the e2e viewer spec). */
 const AT_LIVE_S = 4;
 
-test('a phone viewer joins with the link: the video starts muted by itself, Unmute turns the sound on, playback goes on', async ({ phone }) => {
+test('a phone viewer joins with the link, Watch in sight while typing: the video starts muted by itself, Unmute turns the sound on, playback goes on', async ({ phone }) => {
   // Arrange
   const nick = uid('join');
   const link = await liveLink();
   // Act
-  await joinOnPhone(phone, nick, link);
+  const joined = await joinOnPhone(phone, nick, link);
   // Assert
+  expect(joined).toEqual({ nicknameInSight: true, watchInSight: true });
   await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
   expect(await videoState(phone)).toMatchObject({ muted: true, paused: false });
   await expect.poll(() => isShown(phone, '#unmute')).toBe(true);
@@ -61,9 +64,8 @@ test('the chat sits under the player; a message goes from the phone to another v
   expect(chat!.y).toBeGreaterThanOrEqual(player!.y + player!.height - 1);
   expect(chat!.x + chat!.width).toBeLessThanOrEqual((await viewport(phone)).innerWidth);
   // Act
-  await phone.tap('[data-testid="chat-input"]');
+  await tapToType(phone, '[data-testid="chat-input"]');
   // Assert
-  await keyboardUp(phone);
   await expect.poll(() => inSight(phone, '[data-testid="chat-input"]')).toBe(true);
   expect(await inSight(phone, '[data-testid="chat-send"]')).toBe(true);
   // Act

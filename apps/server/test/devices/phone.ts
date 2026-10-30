@@ -29,6 +29,8 @@ export interface Phone {
   foreground(): Promise<void>;
   /** The whole screen (system bars and keyboard included), as a PNG. */
   screenshot(): Promise<Buffer>;
+  /** What the system says about the on-screen keyboard, for a failure message (Android: the input method service). */
+  keyboardState(): Promise<string>;
   /** Ends the test's browser session. */
   close(): Promise<void>;
 }
@@ -84,16 +86,23 @@ function joinPageState(phone: Phone): Promise<string> {
     .catch((e: Error) => `unavailable (${e.message})`);
 }
 
+/** What the join page showed once the nickname was typed, the on-screen keyboard still up. */
+export interface Joined {
+  nicknameInSight: boolean;
+  watchInSight: boolean;
+}
+
 /**
  * Opens the live link on the phone, picks the nickname with the on-screen keyboard and taps
- * Join, then waits for the watch page. A join page that shows an error fails at once with it.
+ * Watch, then waits for the watch page. A join page that shows an error fails at once with it.
  */
-export async function joinOnPhone(phone: Phone, nickname: string, link: string): Promise<void> {
+export async function joinOnPhone(phone: Phone, nickname: string, link: string): Promise<Joined> {
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
-  await phone.tap('#nickname');
-  await keyboardUp(phone);
+  await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
+  await still(phone);
+  const seen = { nicknameInSight: await inSight(phone, '#nickname'), watchInSight: await inSight(phone, '#join') };
   await phone.tap('#join');
   // Polled until the watch page or a refusal (which fails at once); while neither, the value
   // is the join page's state, so a timeout says which step the page never finished.
@@ -110,6 +119,7 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
     )
     .toMatch(/^(watch|refused)/);
   expect(outcome, `join as "${nickname}"`).toBe('watch');
+  return seen;
 }
 
 /** The rectangles the layout checks compare, in CSS pixels of the page (layout viewport). */
@@ -133,6 +143,8 @@ export function box(phone: Phone, selector: string): Promise<Box | null> {
 export interface Viewport {
   innerWidth: number;
   innerHeight: number;
+  /** How far the page is scrolled (the layout viewport's top). */
+  scrollY: number;
   top: number;
   height: number;
   scale: number;
@@ -142,33 +154,59 @@ export interface Viewport {
 export function viewport(phone: Phone): Promise<Viewport> {
   return phone.evaluate(() => {
     const vv = window.visualViewport!;
-    return { innerWidth, innerHeight, top: vv.offsetTop, height: vv.height, scale: vv.scale, landscape: matchMedia('(orientation: landscape)').matches };
+    return { innerWidth, innerHeight, scrollY, top: vv.offsetTop, height: vv.height, scale: vv.scale, landscape: matchMedia('(orientation: landscape)').matches };
   });
+}
+
+/**
+ * Waits until the page has stopped moving: two viewport readings in a row alike (size, scroll,
+ * zoom). Typing moves it too: Chrome scrolls and zooms to keep the caret readable.
+ */
+export async function still(phone: Phone): Promise<void> {
+  let previous = '';
+  await expect
+    .poll(
+      async () => {
+        const now = JSON.stringify(await viewport(phone));
+        const same = now === previous;
+        previous = now;
+        return same;
+      },
+      { message: 'the page has stopped moving' },
+    )
+    .toBe(true);
 }
 
 /** CSS pixels an on-screen keyboard takes at least (Gboard on the Pixel 7 emulator: 312). */
 export const KEYBOARD_MIN_PX = 150;
 
 /**
- * Waits until the on-screen keyboard a tap raised is up and the page has stopped moving: the
- * keyboard slides in after the tap and Chrome then zooms and scrolls the field into view, so
- * the viewer types and taps once it settles (a tap computed while it moves lands off target:
- * the join page's Watch button was missed that way). Settled = two reads in a row alike.
+ * Taps a text field and waits until the on-screen keyboard it raised is up and the page has
+ * stopped moving. Up: the visible part of the page (the visual viewport) is at least a keyboard
+ * shorter than before the tap. That holds whether the browser only covers the page (Chrome's
+ * default, Safari) or resizes it (join.html: interactive-widget=resizes-content, where the
+ * layout viewport shrinks with it). The keyboard slides in after the tap and the browser then
+ * scrolls (Chrome also zooms) the field into view, and a tap computed while that moves lands off
+ * target (it missed Watch once), so this also waits for two readings in a row alike. While
+ * waiting, the polled value says what the page and the system show.
  */
-export async function keyboardUp(phone: Phone): Promise<void> {
+export async function tapToType(phone: Phone, selector: string): Promise<void> {
+  const before = await viewport(phone);
+  await phone.tap(selector);
   let previous = '';
   await expect
     .poll(
       async () => {
         const v = await viewport(phone);
         const now = JSON.stringify(v);
-        const settled = v.innerHeight - v.height > KEYBOARD_MIN_PX && now === previous;
+        const settled = before.height - v.height > KEYBOARD_MIN_PX && now === previous;
         previous = now;
-        return settled;
+        if (settled) return 'up';
+        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; keyboard: ${await phone.keyboardState()}`;
       },
-      { message: 'the on-screen keyboard is up and the page has stopped moving' },
+      { message: `the on-screen keyboard is up for ${selector} and the page has stopped moving` },
     )
-    .toBe(true);
+    .toBe('up');
 }
 
 /**
