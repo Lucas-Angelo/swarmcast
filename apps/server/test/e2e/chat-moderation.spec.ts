@@ -136,6 +136,13 @@ test.beforeEach(async () => {
   await adminApi('POST', '/api/chat/clear', {});
 });
 
+// Leave the chat as the next spec expects it: default settings, calm, empty.
+test.afterEach(async () => {
+  await adminApi('PUT', '/api/chat/settings', defaultChatSettings());
+  await adminApi('POST', '/api/chat/protect', { mode: 'off' });
+  await adminApi('POST', '/api/chat/clear', {});
+});
+
 async function openPanel(page: Page, lang?: string): Promise<Locator> {
   const url = serverEnv().adminLoginUrl;
   const origin = new URL(url).origin;
@@ -193,17 +200,18 @@ test('the streamer posts with a badge from the role; links are never clickable; 
 });
 
 test('a viewer who joins after the streamer was first announced still gets the streamer\'s roster entry (badge)', { tag: '@ui' }, async () => {
-  // Known server bug (lane A, apps/server/src/chat/hub.ts announce()): an author's roster entry
-  // ('u') goes out once per live. A viewer whose join history does not hold that author's
-  // earlier lines (after a clear, or beyond historyOnJoin) then gets their messages with no
-  // roster entry, so no name, colour or Streamer badge. Remove fixme when the hub re-announces.
-  test.fixme(true, 'hub announces each author once per live; late joiners miss the roster entry');
+  // An author's roster entry ('u') goes out once per live; a viewer whose join history does not
+  // hold the streamer's earlier lines (here: after a clear) must still learn who the streamer
+  // is, from the roster in their join snapshot (apps/server/src/chat/hub.ts rosterFor).
   await adminApi('POST', '/api/chat/send', { text: 'announced before the viewer joins' });
   await adminApi('POST', '/api/chat/clear', {});
   const fay = await chatViewer('fay');
   await adminApi('POST', '/api/chat/send', { text: 'after the clear' });
   await expect.poll(() => fay.items().some((i) => i.k === 'm' && i.x === 'after the clear')).toBe(true);
-  await expect.poll(() => fay.items().some((i) => i.k === 'u' && i.au.r === 'streamer')).toBe(true);
+  const msg = fay.items().find((i) => i.k === 'm' && i.x === 'after the clear');
+  const hello = fay.messages.find((m): m is Extract<ServerMessage, { t: 'hello' }> => m.t === 'hello')!;
+  const known = [...(hello.chat?.roster ?? []), ...fay.items().flatMap((i) => (i.k === 'u' ? [i.au] : []))];
+  expect(known.find((au) => msg?.k === 'm' && au.a === msg.a)?.r).toBe('streamer');
 });
 
 test('mute tells the viewer until when and refuses their messages; unmute and "until the stream ends" from the viewers table', { tag: '@ui' }, async ({ page }) => {
