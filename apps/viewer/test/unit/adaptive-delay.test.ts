@@ -5,46 +5,18 @@
 // "Lower delay" came a few ms later, and nothing else resumes a paused video). Time is Vitest's
 // fake clock (timers and performance.now), so the hold lasts exactly its fake seconds.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type Hls from 'hls.js';
-import { attachAdaptiveDelay } from '../../src/adaptive-delay.js';
+import { playingAdaptiveDelay } from './player-doubles.js';
 
 /** Seconds behind live in the setup: well under the stable profile's target, so a stall holds. */
 const LOW_LATENCY_S = 5;
 /** Longer than any hold of the stable profile. */
 const LONGER_THAN_A_HOLD_MS = 5000;
 
-/** The parts of <video> the adaptive delay reads and drives. */
-class FakeVideo extends EventTarget {
-  paused = true;
-  ended = false;
-  seeking = false;
-  readyState = 4;
-  currentTime = 0;
-  playbackRate = 1;
-  buffered = { length: 0, start: () => 0, end: () => 0 };
-  readonly play = vi.fn(async () => {
-    this.paused = false;
-    this.dispatchEvent(new Event('play'));
-  });
-  readonly pause = vi.fn(() => {
-    this.paused = true;
-    this.dispatchEvent(new Event('pause'));
-  });
-}
-
-/** The adaptive delay on a video that is playing (stable profile, no P2P), `play` calls not yet counted. */
-function playing(): { video: FakeVideo; delay: ReturnType<typeof attachAdaptiveDelay> } {
-  const hls = { on: () => {}, latency: LOW_LATENCY_S, bandwidthEstimate: 0, levels: [], currentLevel: -1, config: { liveSyncDuration: 20 }, targetLatency: 20 };
-  const video = new FakeVideo();
-  const delay = attachAdaptiveDelay(hls as unknown as Parameters<typeof attachAdaptiveDelay>[0], null, video as unknown as HTMLVideoElement, {
-    profile: 'stable',
-    events: { FRAG_LOADED: 'hlsFragLoaded' } as unknown as typeof Hls.Events,
-    p2pEnabled: () => false,
-  });
-  void video.play();
-  video.dispatchEvent(new Event('playing'));
-  video.play.mockClear();
-  return { video, delay };
+/** The adaptive delay on a playing video (stable profile, no P2P, nothing buffered ahead), its play() calls not yet counted. */
+function playing() {
+  const s = playingAdaptiveDelay(LOW_LATENCY_S);
+  s.video.play.mockClear();
+  return s;
 }
 
 /** playing(), then a stall: the controller holds playback. */
