@@ -23,11 +23,13 @@ O site do KLIPY é em inglês e pode estar diferente destes passos; procure por 
 
 ## 2. Ligue os GIFs no painel
 
-1. No cartão **Chat**, abra **Configurações do chat**.
+1. No cartão **Chat**, ache **Configurações do chat** (à direita) e o grupo **GIFs**.
 2. Marque **Permitir GIFs do KLIPY** e cole a chave em **Sua chave de API**.
 3. Escolha um **Filtro de conteúdo**: **Rígido (livre para todos)**, **Moderado** (o padrão) ou **Leve (adolescentes e adultos)**. O Partner Panel do KLIPY também deixa bloquear palavras de busca.
-4. Deixe **Espectadores precisam permitir GIFs** ligado (recomendado).
+4. Cada espectador continua tendo que aceitar antes de o navegador dele acessar o KLIPY: isso fica sempre ligado e não dá para desligar.
 5. Confira se **GIFs** está marcado em **O que dá para mandar** e clique em **Salvar configurações do chat**.
+
+![O grupo GIFs das Configurações do chat: o que ligar os GIFs muda na privacidade de quem assiste, 1 Sua chave de API, Permitir GIFs do KLIPY e o Filtro de conteúdo.](../../../../assets/guides/live/pt-br/gif-settings.webp)
 
 ## O que quem assiste vê
 

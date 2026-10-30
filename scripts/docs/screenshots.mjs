@@ -493,20 +493,20 @@ async function captureLocale(browser, lang) {
   // (1) Overview: the top of the panel (status, OBS pill, live link) and the viewers list
   // (Phone/PC, P2P), with the cards in between left out of this one picture.
   await sanitize(panel, s);
-  await panel.evaluate(() => {
-    for (const sel of OVERVIEW_HIDDEN) {
+  await panel.evaluate((hidden) => {
+    for (const sel of hidden) {
       const el = document.querySelector(sel);
       if (el) el.style.display = 'none';
     }
-  });
+  }, OVERVIEW_HIDDEN);
   await panel.screenshot({ path: path.join(OUT_DIR, `panel-overview-${lang}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   log(`captured panel-overview-${lang}.png`);
-  await panel.evaluate(() => {
-    for (const sel of OVERVIEW_HIDDEN) {
+  await panel.evaluate((hidden) => {
+    for (const sel of hidden) {
       const el = document.querySelector(sel);
       if (el) el.style.display = '';
     }
-  });
+  }, OVERVIEW_HIDDEN);
 
   // (2) Quality card ("Your PC"), (3) protection, (4) activity console.
   for (const [testid, name] of [

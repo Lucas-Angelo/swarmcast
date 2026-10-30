@@ -9,6 +9,8 @@ Your live has a chat. Viewers write under the video, you read and answer in the 
 Everyone watching sees the nicknames in the chat. The join page says so before people type theirs.
 :::
 
+![The panel's Chat card: 1 the chat on/off switch, 2 the messages, with the Streamer badge on yours, 3 Send, to write as the streamer, 4 Flood protection, 5 Clear chat. Chat settings are on the right.](../../../assets/guides/live/en/chat-panel.webp)
+
 ## What viewers can send
 
 - **Text:** one line, up to 200 characters by default. Links show as plain text: they can never be clicked and never show a preview.
@@ -24,6 +26,8 @@ Each message in the Chat card has an **Actions** menu:
 - **Delete:** removes that message for everyone.
 - **Mute:** for 1 min, 10 min, 1 hour, or **until the stream ends**. The person keeps watching but cannot write. **Unmute** lets them write again right away. Leaving and coming back does not undo a mute.
 - **Change colour…:** sets the colour of their name for everyone. Tick **Lock** so they cannot change it back.
+
+![The menu of a viewer's message: 1 Delete, Mute for 1 min, 10 min, 1 hour or until the stream ends, and Change colour… with Lock, Apply and Back to their own colour.](../../../assets/guides/live/en/chat-moderation.webp)
 
 You can also mute someone from the **Viewers** card.
 
@@ -62,6 +66,8 @@ Open **Chat settings** in the Chat card, change what you want and click **Save c
 - **Allowed alphabets:** **Any**, or **Latin only** for a local audience.
 - **Viewers choose their name colour**, **Your name in the chat** and **Tell the chat when someone is muted**.
 - **SwarmCast emotes:** turns the bee emotes on or off.
+
+![Chat settings: what viewers can send, pace (slow mode, length, emoji, new viewers, repeats, history), safety (automatic flood protection, blocked words, links, alphabets), looks, GIFs, emotes, and Save chat settings.](../../../assets/guides/live/en/chat-settings.webp)
 
 To turn the chat off for everyone, use the switch at the top of the Chat card. Viewers then do not see the chat at all.
 

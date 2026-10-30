@@ -7,6 +7,8 @@ The panel's **Your page** card changes what your viewers see: your name, picture
 
 ![A viewer's watch page with a streamer page: 1 the name and picture at the top, 2 the support button (here Pix), 3 the banner, 4 the About card with the bio, tags and links.](../../../assets/guides/live/en/your-page-watch.webp)
 
+![The Your page card: the Preview (watch page, join page or stream ended; computer or phone; light or dark) on the left, and on the right the steps 1 Name and picture, 2 About you, 3 Links and support, 4 Colours, 5 When the stream is shared or ends, then Save and Reset to SwarmCast defaults.](../../../assets/guides/live/en/your-page-card.webp)
+
 Change what you want, check the **Preview** (watch page, join page and stream ended; computer or phone; light or dark), then click **Save**. Open viewer pages update within a few seconds. The switch at the top of the card turns your page off without losing anything; **Reset to SwarmCast defaults** removes it all.
 
 ## Name and picture

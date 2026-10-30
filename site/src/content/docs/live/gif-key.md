@@ -23,11 +23,13 @@ The KLIPY site may look different from these steps; look for "API Keys" in its P
 
 ## 2. Turn GIFs on in the panel
 
-1. In the **Chat** card, open **Chat settings**.
+1. In the **Chat** card, find **Chat settings** (on the right) and its **GIFs** group.
 2. Tick **Allow GIFs from KLIPY** and paste the key in **Your API key**.
 3. Pick a **Content filter**: **Strict (everyone)**, **Moderate** (default) or **Relaxed (teens and up)**. KLIPY's Partner Panel can also block search words.
-4. Keep **Viewers must allow GIFs first** on (recommended).
+4. Each viewer still agrees before their browser contacts KLIPY: this is always on and cannot be turned off.
 5. Make sure **GIFs** is ticked in **What viewers can send**, then click **Save chat settings**.
+
+![The GIFs group of Chat settings: what turning GIFs on means for viewers' privacy, 1 Your API key, Allow GIFs from KLIPY and the Content filter.](../../../assets/guides/live/en/gif-settings.webp)
 
 ## What viewers see
 

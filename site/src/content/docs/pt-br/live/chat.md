@@ -9,6 +9,8 @@ A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e respond
 Todo mundo que está assistindo vê os apelidos no chat. A página de entrada avisa isso antes de a pessoa digitar o dela.
 :::
 
+![O cartão Chat do painel: 1 a chave para ligar e desligar o chat, 2 as mensagens, com o selo Transmissão nas suas, 3 Enviar, para escrever como transmissão, 4 Proteção contra flood, 5 Limpar chat. As configurações do chat ficam à direita.](../../../../assets/guides/live/pt-br/chat-panel.webp)
+
 ## O que dá para mandar
 
 - **Texto:** uma linha, até 200 caracteres por padrão. Links aparecem como texto simples: nunca dá para clicar e nunca geram prévia.
@@ -24,6 +26,8 @@ Cada mensagem no cartão Chat tem um menu **Ações**:
 - **Apagar:** some com a mensagem para todo mundo.
 - **Silenciar:** por 1 min, 10 min, 1 hora ou **até o fim da live**. A pessoa continua assistindo, mas não consegue escrever. **Tirar silêncio** libera na hora. Sair e entrar de novo não desfaz o silêncio.
 - **Mudar cor…:** muda a cor do nome da pessoa para todo mundo. Marque **Travar** para ela não conseguir trocar.
+
+![O menu da mensagem de um espectador: 1 Apagar, Silenciar por 1 min, 10 min, 1 hora ou até o fim da live, e Mudar cor… com Travar, Aplicar e Voltar à cor da pessoa.](../../../../assets/guides/live/pt-br/chat-moderation.webp)
 
 Também dá para silenciar alguém pelo cartão **Espectadores**.
 
@@ -62,6 +66,8 @@ Abra **Configurações do chat** no cartão Chat, mude o que quiser e clique em 
 - **Alfabetos permitidos:** **Qualquer**, ou **Só latino** para um público local.
 - **Espectadores escolhem a cor do nome**, **Seu nome no chat** e **Avisar no chat quando alguém for silenciado**.
 - **Emotes do SwarmCast:** liga ou desliga os emotes de abelha.
+
+![Configurações do chat: o que dá para mandar, ritmo (modo lento, tamanho, emojis, novos espectadores, repetidas, histórico), segurança (proteção automática contra flood, palavras bloqueadas, links, alfabetos), aparência, GIFs, emotes e Salvar configurações do chat.](../../../../assets/guides/live/pt-br/chat-settings.webp)
 
 Para desligar o chat para todo mundo, use a chave no topo do cartão Chat. Aí quem assiste nem vê o chat.
 

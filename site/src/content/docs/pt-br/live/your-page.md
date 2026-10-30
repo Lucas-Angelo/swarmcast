@@ -7,6 +7,8 @@ O cartão **Sua página** do painel muda o que quem assiste vê: seu nome, foto,
 
 ![A página da live de quem assiste com uma página do streamer: 1 o nome e a foto no topo, 2 o botão de apoio (aqui Pix), 3 o banner, 4 o cartão Sobre com a bio, as tags e os links.](../../../../assets/guides/live/pt-br/your-page-watch.webp)
 
+![O cartão Sua página: a Prévia (página da live, página de entrada ou fim da live; computador ou celular; claro ou escuro) à esquerda e, à direita, os passos 1 Nome e foto, 2 Sobre você, 3 Links e apoio, 4 Cores, 5 Quando a live é compartilhada ou acaba, depois Salvar e Voltar ao padrão do SwarmCast.](../../../../assets/guides/live/pt-br/your-page-card.webp)
+
 Mude o que quiser, confira a **Prévia** (página da live, página de entrada e fim da live; computador ou celular; claro ou escuro) e clique em **Salvar**. As páginas abertas de quem assiste se atualizam em poucos segundos. A chave no topo do cartão desliga a sua página sem perder nada; **Voltar ao padrão do SwarmCast** apaga tudo.
 
 ## Nome e foto
