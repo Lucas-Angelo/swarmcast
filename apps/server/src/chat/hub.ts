@@ -174,6 +174,7 @@ export class ChatHub {
   begin(): void {
     this.reset();
     this.running = true;
+    this.detector.start(this.now());
     this.guard.start();
     this.tickTimer = setInterval(() => this.safe(() => this.tick()), 1000);
     this.tickTimer.unref();

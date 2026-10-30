@@ -9,8 +9,15 @@
     <link rel="icon" href="../../assets/brand/favicon/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
+    <!-- branding: theme (in the body on purpose: it must come after the bundled stylesheets, which
+         Vite adds at the end of the head, so the streamer's colours win at equal specificity) -->
+    <link rel="stylesheet" href="/brand/theme.css" data-brand-theme />
+    <!-- end branding: theme -->
     <header class="site-head">
       <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
+      <!-- branding: header -->
+      <div id="brand-head" class="brand-head" hidden></div>
+      <!-- end branding: header -->
     </header>
     <main class="card">
       <h1 data-i18n="join.title">Join the stream</h1>
@@ -41,5 +48,8 @@
       </form>
     </main>
     <script type="module" src="/src/join.ts"></script>
+      <!-- branding: join -->
+    <script type="module" src="/src/branding/join-brand.ts"></script>
+    <!-- end branding: join -->
   </body>
 </html>

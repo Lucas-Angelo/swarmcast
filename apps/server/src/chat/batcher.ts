@@ -17,6 +17,8 @@ export interface ChatTransport {
 const MAX_PENDING = 500;
 /** A batch may wait this long for upload budget before viewer messages are dropped. */
 const MAX_HOLD_MS = 1000;
+/** Seconds of budget one batch may borrow (paid back before the next batch is sent). */
+const BUDGET_DEBT_S = 4;
 const OPEN = 1;
 
 interface Pending {
@@ -153,20 +155,28 @@ export class ChatBatcher {
     this.budget.ratePerS = b;
     let payload = JSON.stringify({ t: 'chat.batch', items: this.queue.map((p) => p.item) });
     const cost = payload.length * sockets.length;
-    if (sockets.length > 0 && this.budget.available(now) < cost) {
+    // The bucket holds one second of budget, which a single batch to a big audience can exceed
+    // even when chat is quiet (120 viewers × 500 B > 50 KB). So a batch goes out whenever the
+    // bucket is not in debt, and its full cost is charged afterwards: the debt it leaves (at most
+    // BUDGET_DEBT_S seconds of budget) is paid back before the next batch, which keeps the average
+    // at or below B_chat. In debt, a batch waits up to 1 s, then sheds the oldest viewer messages.
+    const avail = this.budget.available(now);
+    const allowance = avail + BUDGET_DEBT_S * b;
+    if (sockets.length > 0 && (avail < 0 || cost > allowance)) {
       const oldest = this.queue.find((p) => !p.prio)?.at ?? now;
       if (now - oldest < MAX_HOLD_MS) {
         this.schedule(Math.min(250, MAX_HOLD_MS - (now - oldest)));
         return;
       }
-      // Drop the oldest viewer messages until the batch fits (priority items always go). Sizes
-      // are estimated per item, so this stays linear; the batch is serialised once afterwards.
-      const avail = this.budget.available(now) / sockets.length;
+      // Drop the oldest viewer messages until the batch fits the allowance (priority items
+      // always go). Sizes are estimated per item, so this stays linear; the batch is serialised
+      // once afterwards.
+      const perSocket = Math.max(0, allowance) / sockets.length;
       let size = payload.length + 24;
       let dropped = 0;
       const keep: Pending[] = [];
       for (const p of this.queue) {
-        if (size > avail && !p.prio && p.item.k === 'm') {
+        if (size > perSocket && !p.prio && p.item.k === 'm') {
           size -= JSON.stringify(p.item).length + 1;
           dropped++;
         } else keep.push(p);

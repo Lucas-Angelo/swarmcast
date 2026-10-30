@@ -21,8 +21,8 @@ export default tseslint.config(
     },
   },
   {
-    // Chat renders untrusted text: DOM only through createElement + textContent (plan §2.4.1).
-    files: ['apps/viewer/src/chat/**', 'apps/admin/src/chat/**'],
+    // Chat and the streamer's page render untrusted text: DOM only through createElement + textContent (plan §2.4.1).
+    files: ['apps/viewer/src/chat/**', 'apps/admin/src/chat/**', 'apps/viewer/src/branding/**'],
     rules: {
       'no-restricted-properties': [
         'error',

@@ -1,0 +1,305 @@
+/*
+ * The streamer's page on the viewer (branding plan 2.4, 2.8). Brand tokens only; the accent comes
+ * from /brand/theme.css. Every streamer string sits in a box that wraps and clips.
+ */
+.sc-brand-header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-width: 0;
+}
+.sc-brand-avatar {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--sc-surface-2);
+}
+.sc-brand-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.sc-brand-name {
+  font-family: var(--sc-font-display);
+  font-weight: var(--sc-weight-semibold);
+  font-size: 1.125rem;
+  color: var(--sc-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  unicode-bidi: isolate;
+}
+.site-head .sc-brand-tagline {
+  display: none;
+}
+.brand-head {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.brand-support {
+  margin-left: auto;
+  flex: none;
+}
+
+/* Support button: a link or (Pix) a button, in the accent colour. */
+.sc-brand-support {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 0 var(--sp-4);
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-accent);
+  color: var(--sc-on-accent);
+  font-weight: var(--sc-weight-semibold);
+  font-size: var(--fs-md);
+  text-decoration: none;
+  border: 1px solid transparent;
+}
+.sc-brand-support:hover {
+  background: var(--sc-accent-strong);
+  color: var(--sc-on-accent);
+}
+.sc-brand-support:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: 2px;
+}
+
+/* Banner above the player: stage width, at most a quarter of the screen tall. */
+.brand-banner {
+  margin-bottom: var(--sp-4);
+  border-radius: var(--sc-radius-lg);
+  overflow: hidden;
+  max-height: 25vh;
+  background: var(--sc-surface-2);
+}
+.sc-brand-banner-img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 25vh;
+  object-fit: cover;
+}
+
+/* About card under the player bar. */
+.sc-brand-about {
+  contain: content;
+  overflow: hidden;
+  overflow: clip;
+  overflow-wrap: anywhere;
+  padding: var(--sp-4) var(--sp-5);
+  margin-bottom: var(--sp-4);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+}
+.sc-brand-about-title {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-base);
+  font-weight: var(--sc-weight-semibold);
+  color: var(--sc-ink);
+}
+.sc-brand-about .sc-brand-tagline {
+  display: block;
+  margin-bottom: var(--sp-2);
+  font-weight: var(--sc-weight-medium);
+  color: var(--sc-text);
+}
+.sc-brand-about-text {
+  display: block;
+  white-space: pre-line;
+  line-height: 1.55;
+  color: var(--sc-text);
+  max-height: calc(1.55em * 6);
+  overflow: hidden;
+}
+.sc-brand-about-text.open {
+  max-height: none;
+}
+button.sc-brand-more {
+  min-height: 30px;
+  margin-top: var(--sp-1);
+  padding: 0 var(--sp-3);
+  font-size: var(--fs-sm);
+}
+.sc-brand-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-brand-tag {
+  max-width: 100%;
+  padding: 2px var(--sp-3);
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-accent-soft);
+  color: var(--sc-ink);
+  font-size: var(--fs-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-brand-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: var(--sp-2);
+  margin: var(--sp-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.sc-brand-link {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: var(--sp-2) var(--sp-3);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  text-decoration: none;
+  color: var(--sc-accent-strong);
+}
+.sc-brand-link:hover {
+  background: var(--hover);
+}
+.sc-brand-link:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: 2px;
+}
+.sc-brand-link-label {
+  font-weight: var(--sc-weight-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sc-brand-link-host {
+  font-size: var(--fs-sm);
+  color: var(--sc-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* "on SwarmCast" credit. */
+.brand-credit {
+  width: var(--stage-w);
+  margin: 0 auto var(--sp-8);
+  text-align: center;
+  font-size: var(--fs-sm);
+  color: var(--sc-muted);
+}
+.brand-credit a {
+  color: var(--sc-muted);
+}
+
+/* Ended screen extras. */
+.sc-brand-ended-avatar {
+  display: block;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto var(--sp-4);
+}
+.sc-brand-ended-extra {
+  margin-top: var(--sp-4);
+}
+
+/* Join page: the streamer above the card. */
+body:not(.watch) .brand-head .sc-brand-header {
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+body:not(.watch) .brand-head .sc-brand-avatar {
+  width: 64px;
+  height: 64px;
+}
+body:not(.watch) .brand-head {
+  flex: none;
+  text-align: center;
+}
+
+/* Pix sheet (modal). */
+.pix-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--sp-4);
+  background: var(--scrim);
+}
+.pix-sheet {
+  width: min(100%, 420px);
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: var(--sp-6);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+  box-shadow: var(--sc-shadow-float);
+}
+.pix-sheet h2 {
+  margin: 0 0 var(--sp-2);
+  font-size: var(--fs-xl);
+  color: var(--sc-ink);
+}
+.pix-receiver {
+  margin: 0 0 var(--sp-3);
+  font-weight: var(--sc-weight-semibold);
+  overflow-wrap: anywhere;
+}
+.pix-qr {
+  display: block;
+  width: min(100%, 240px);
+  height: auto;
+  margin: 0 auto var(--sp-4);
+  image-rendering: pixelated;
+  border-radius: var(--sc-radius-sm);
+}
+.pix-field {
+  margin-bottom: var(--sp-3);
+}
+.pix-field label {
+  margin-bottom: var(--sp-1);
+  font-size: var(--fs-sm);
+}
+.pix-row {
+  display: flex;
+  gap: var(--sp-2);
+  align-items: flex-start;
+}
+.pix-row input,
+.pix-row textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: auto;
+  min-height: 40px;
+  padding: var(--sp-2) var(--sp-3);
+  font-family: var(--sc-font-mono);
+  font-size: var(--fs-sm);
+  color: var(--sc-ink);
+  background: var(--sc-surface-2);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  resize: none;
+  overflow-wrap: anywhere;
+}
+.pix-row button {
+  flex: none;
+}
+.pix-copied {
+  color: var(--sc-success);
+}
+.pix-check {
+  margin: var(--sp-2) 0 var(--sp-4);
+}
+button.pix-close {
+  width: 100%;
+}
+/* The streamer's name inside a translated sentence ("Join Ana's stream"): same font as the sentence. */
+.sc-brand-inline {
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
