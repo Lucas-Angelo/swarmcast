@@ -115,8 +115,10 @@ install_android() {
 
   make_dir "$sdk"
   # ~/.android (sdkmanager's cache, the AVDs, adb's key) is created by the first Android tool
-  # that runs: recorded here when it does not exist yet.
+  # that runs, and the emulator's console token by the first emulator: recorded here when they do
+  # not exist yet.
   make_dir "$HOME/.android"
+  [ -e "$HOME/.emulator_console_auth_token" ] || record file "$HOME/.emulator_console_auth_token"
   if [ ! -x "$sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
     zip="commandlinetools-$host-${CMDLINE_BUILD}_latest.zip"
     url="https://dl.google.com/android/repository/$zip"
@@ -347,10 +349,17 @@ remove_windows() {
   fi
 }
 
-# ---- folders (last: they may hold what the steps above removed) ----
+# ---- folders and files (last: they may hold what the steps above removed) ----
 
 remove_dirs() {
-  local d
+  local d f
+  while IFS= read -r f; do
+    case "$f" in
+      "$HOME"/?*) rm -f "${f:?}" ;;
+      *) die "refusing to remove $f (not inside $HOME)" ;;
+    esac
+    forget file "$f"
+  done < <(recorded file)
   while IFS= read -r d; do
     case "$d" in
       "$HOME"/?*) ;;
