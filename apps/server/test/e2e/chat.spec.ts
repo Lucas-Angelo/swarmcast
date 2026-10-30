@@ -33,12 +33,16 @@ test('two viewers chat both ways; "sending…" then the server copy', { tag: '@u
   try {
     await chatOrSkip(a.page);
     await chatOrSkip(b.page);
-    await say(a.page, 'oi do A :hi:');
-    await expect(b.page.getByTestId('chat-list').locator('li.msg', { hasText: 'oi do A' })).toBeVisible({ timeout: 5_000 });
-    await expect(b.page.getByTestId('chat-list').locator('li.msg img.emote[alt=":hi:"]')).toHaveCount(1);
+    // History outlives a test (and the other browsers' runs): every text is unique.
+    const fromA = `oi do A ${uid('a')}`;
+    const fromB = `oi do B ${uid('b')}`;
+    await say(a.page, `${fromA} :hi:`);
+    const rowA = b.page.getByTestId('chat-list').locator('li.msg', { hasText: fromA });
+    await expect(rowA).toBeVisible({ timeout: 5_000 });
+    await expect(rowA.locator('img.emote[alt=":hi:"]')).toHaveCount(1);
     await expect(a.page.getByTestId('chat-list').locator('li.pending')).toHaveCount(0);
-    await say(b.page, 'oi do B');
-    await expect(a.page.getByTestId('chat-list').locator('li.msg', { hasText: 'oi do B' })).toBeVisible({ timeout: 5_000 });
+    await say(b.page, fromB);
+    await expect(a.page.getByTestId('chat-list').locator('li.msg', { hasText: fromB })).toBeVisible({ timeout: 5_000 });
   } finally {
     await a.context.close();
     await b.context.close();
@@ -120,8 +124,9 @@ test('a streamer message carries the badge; links are never clickable', { tag: '
   const v = await join(browser, uid('badge'));
   try {
     await chatOrSkip(v.page);
-    await adminApi('POST', '/api/chat/send', { text: 'bem-vindos https://example.com' });
-    const row = v.page.getByTestId('chat-list').locator('li.from-streamer', { hasText: 'bem-vindos' });
+    const text = `bem-vindos ${uid('st')} https://example.com`;
+    await adminApi('POST', '/api/chat/send', { text });
+    const row = v.page.getByTestId('chat-list').locator('li.from-streamer', { hasText: text });
     await expect(row.locator('.badge')).toBeVisible({ timeout: 5_000 });
     await expect(v.page.getByTestId('chat-list').locator('a')).toHaveCount(0);
   } finally {
