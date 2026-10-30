@@ -76,6 +76,7 @@ Real time that a test measures, on purpose:
 |---|---|---|
 | `BASELINE_SAMPLES` (5 s) and `SAMPLE_MS` (1 s) | [scripts/test/chat/bench.ts](../scripts/test/chat/bench.ts) | the server at rest with everyone connected, then during the run, sampled every second |
 | a scenario's length, rates, raid and reconnect times | [scripts/test/chat/scenarios.ts](../scripts/test/chat/scenarios.ts), [bots.ts](../scripts/test/chat/bots.ts) | the load itself |
+| `measuredWindow()` | the e2e fixtures (apps/server/test/e2e) | the windows an e2e test measures (playback, stalls); the only real-time wait there |
 | `ALIVE_AFTER_PANEL_S` (5 s) | [scripts/test/docker/appimage-test.sh](../scripts/test/docker/appimage-test.sh) | the AppImage still runs after opening its panel (a crash while the webview loads) |
 | `ClickHoldMs` (120 ms) | [scripts/test/windows/console-ctl.ps1](../scripts/test/windows/console-ctl.ps1) | not a wait: how long the simulated left button stays down in a real click |
 
@@ -85,7 +86,7 @@ Real time that a test measures, on purpose:
 |---|---|---|---|
 | Unit | `apps/*/test/unit`, `packages/*/test`, `scripts/*/test`, `site/test/unit` | Vitest | `npm test` |
 | Integration | `apps/server/test/integration` | Vitest | `npm run test:integration` (needs `ffmpeg`, `npm run fetch-bins`) |
-| End to end | `apps/server/test/e2e`, `apps/viewer/test` | Playwright | `npm run test:e2e` (`SWARMCAST_E2E_PORT_OFFSET=N` moves its ports) |
+| End to end | `apps/server/test/e2e`, `apps/viewer/test` | Playwright | `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test` |
 | Desktop shell | `#[cfg(test)]` modules of `apps/desktop/src-tauri/src` | cargo test | `npm run desktop:test` |
 | Start and uninstall scripts | `scripts/test/run.sh`, `uninstall.sh`, `run.ps1`, `uninstall.ps1` | their own | `bash scripts/test/run.sh` (macOS, Linux); `powershell -File scripts\test\run.ps1` |
 | System (real installers and packages) | `scripts/test/windows`, `preflight`, `desktop`, `docker` | their own (below) | CI only: they install and start the real app on a clean machine |
@@ -111,6 +112,16 @@ provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hang
 `ControlClient`, whose waits are on the arriving messages. `tmpDir()` folders are deleted after the
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
 `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `NODE_EXTRA_CA_CERTS`.
+
+### End-to-end tests
+
+E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each test, and
+fixtures put back what a test changes. Get browsers, scripted viewers, chat and branding from the
+fixtures. Test bodies hold only Arrange/Act/Assert comments. The only real-time wait is
+`measuredWindow()`, for measured windows. Names come from `uid()`, which is unique per test. Never
+retry. Run with `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e HLS
+port is 38083 + offset; the server refuses any offset that hits a reserved port
+([scripts/test/lib/ports.mjs](../scripts/test/lib/ports.mjs) `RESERVED`).
 
 ### Desktop shell (Rust)
 
