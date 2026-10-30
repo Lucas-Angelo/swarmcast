@@ -6,6 +6,7 @@ import { chatReserveMbps } from '../../src/quality/upload-controller.js';
 import { SecurityShield } from '../../src/security/shield.js';
 import { ActivityLog } from '../../src/core/activity.js';
 import { manualClock, silentLog } from './helpers.js';
+import { joinViewer } from './helpers-b.js';
 import { makeController, panelServer } from './live-helpers.js';
 
 // The chat in the panel (docs/CHAT.md): the panel API, the shield's reaction to a chat flood, and
@@ -98,7 +99,7 @@ describe('chat admin API', () => {
   it('mute, unmute and colour act on a live session', async () => {
     // Arrange
     const { live, call } = await chatPanel();
-    const s = live.access.createSession({ nickname: 'Ana', deviceId: 'dev1', device: 'desktop', ip: '1.1.1.1' });
+    const s = joinViewer(live.access, 'Ana');
     // Act
     const muted = await call('POST', '/api/chat/mute', { sessionId: s.id, minutes: null });
     // Assert

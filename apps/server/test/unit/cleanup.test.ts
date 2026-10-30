@@ -5,7 +5,7 @@ import { FileStateStore, MemoryStateStore, type LocalState } from '../../src/cor
 import { cleanupStaleMapping, runCleanupCommand } from '../../src/direct/cleanup.js';
 import type { PortMapper } from '../../src/direct/mapper.js';
 import { tempDir } from './helpers.js';
-import { MockIgd } from './mock-igd.js';
+import { mockRouter } from './helpers-b.js';
 
 // `swarmcast --cleanup` (run by the uninstallers): removes a router port mapping that a crash
 // left open, from state.json, through the router.
@@ -35,14 +35,6 @@ function fakeMapper(over: Partial<PortMapper> = {}): PortMapper {
   };
 }
 
-/** The mock router, listening on 127.0.0.1 until the test finishes. */
-async function router(): Promise<MockIgd> {
-  const igd = new MockIgd('203.0.113.7');
-  await igd.start();
-  onTestFinished(() => igd.stop());
-  return igd;
-}
-
 describe('swarmcast --cleanup', () => {
   it('with no data folder: nothing to do, exit 0, creates nothing', async () => {
     // Arrange
@@ -58,7 +50,7 @@ describe('swarmcast --cleanup', () => {
 
   it('removes the mapping saved in state.json through the router (real UPnP client, mock router), keeping the rest', async () => {
     // Arrange
-    const igd = await router();
+    const igd = await mockRouter();
     igd.mappings.set(PORT, { internalPort: PORT, client: '192.168.1.5', description: 'SwarmCast direct mode', lease: 3600 });
     const dir = tempDir('swarmcast-cleanup-');
     const store = new FileStateStore(path.join(dir, 'state.json'));

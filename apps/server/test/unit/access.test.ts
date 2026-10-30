@@ -1,18 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import { JOIN_TICKET_TTL_S, SESSION_TTL_S } from '@swarmcast/shared';
-import { AccessControl, type Session } from '../../src/access/access.js';
+import { AccessControl } from '../../src/access/access.js';
 import { manualClock } from './helpers.js';
+import { joinViewer } from './helpers-b.js';
 
 /** An AccessControl whose live has begun, with its first secret. */
 function liveAccess(now?: () => number): { a: AccessControl; secret: string } {
   const a = new AccessControl(now);
   const secret = a.begin();
   return { a, secret };
-}
-
-/** A viewer session on `a` (every field but the nickname and device has a fixed value). */
-function join(a: AccessControl, nickname: string, deviceId = `dev-${nickname}`, ip = '1.2.3.4'): Session {
-  return a.createSession({ nickname, deviceId, device: 'desktop', ip });
 }
 
 /**
@@ -63,7 +59,7 @@ describe('AccessControl: live link', () => {
     // Arrange
     const { a, secret: old } = liveAccess();
     const ticket = await a.issueTicket();
-    const s = join(a, 'ana');
+    const s = joinViewer(a, 'ana');
     const token = await a.issueSessionToken(s);
     // Act
     const fresh = a.rotateLink();
@@ -88,7 +84,7 @@ describe('AccessControl: sessions (JWT)', () => {
   it('issues and verifies session tokens bound to the live', async () => {
     // Arrange
     const { a } = liveAccess();
-    const s = join(a, 'bob');
+    const s = joinViewer(a, 'bob');
     // Act
     const res = await a.verifySessionToken(await a.issueSessionToken(s));
     // Assert
@@ -99,7 +95,7 @@ describe('AccessControl: sessions (JWT)', () => {
   it('rejects a tampered token and no token at all', async () => {
     // Arrange
     const { a } = liveAccess();
-    const token = await a.issueSessionToken(join(a, 'c'));
+    const token = await a.issueSessionToken(joinViewer(a, 'c'));
     // Act
     const tampered = await a.verifySessionToken(tamperSignature(token));
     const missing = await a.verifySessionToken(undefined);
@@ -111,7 +107,7 @@ describe('AccessControl: sessions (JWT)', () => {
   it('rejects tokens after stop, and from another live', async () => {
     // Arrange
     const { a } = liveAccess();
-    const token = await a.issueSessionToken(join(a, 'c'));
+    const token = await a.issueSessionToken(joinViewer(a, 'c'));
     // Act
     a.reset();
     // Assert
@@ -126,7 +122,7 @@ describe('AccessControl: sessions (JWT)', () => {
     // Arrange
     const clock = manualClock(Date.UTC(2026, 9, 26));
     const { a } = liveAccess(clock.now);
-    const token = await a.issueSessionToken(join(a, 'd'));
+    const token = await a.issueSessionToken(joinViewer(a, 'd'));
     // Act
     clock.advance(6 * 60_000);
     // Assert
@@ -137,7 +133,7 @@ describe('AccessControl: sessions (JWT)', () => {
     // Arrange
     const clock = manualClock(Date.UTC(2026, 9, 26));
     const { a } = liveAccess(clock.now);
-    const token = await a.issueSessionToken(join(a, 'd'));
+    const token = await a.issueSessionToken(joinViewer(a, 'd'));
     const ticket = await a.issueTicket();
     // Act
     clock.advance(Math.max(SESSION_TTL_S, JOIN_TICKET_TTL_S) * 1000 + 1000);
@@ -163,7 +159,7 @@ describe('AccessControl: kick and P2P', () => {
     const { a } = liveAccess();
     const onKick = vi.fn();
     a.on('kicked', onKick);
-    const s = join(a, 'e', 'dev-x', '9.9.9.9');
+    const s = joinViewer(a, 'e', { deviceId: 'dev-x', ip: '9.9.9.9' });
     const token = await a.issueSessionToken(s);
     // Act
     a.kick(s.id);
@@ -181,7 +177,7 @@ describe('AccessControl: kick and P2P', () => {
   it('disconnectAll drops sessions without banning', () => {
     // Arrange
     const { a } = liveAccess();
-    const s = join(a, 'f');
+    const s = joinViewer(a, 'f');
     // Act
     a.disconnectAll();
     // Assert
@@ -192,7 +188,7 @@ describe('AccessControl: kick and P2P', () => {
   it('setP2PAllowed toggles and records auto removal', () => {
     // Arrange
     const { a } = liveAccess();
-    const s = join(a, 'g');
+    const s = joinViewer(a, 'g');
     s.hashFailures = 3;
     // Act
     a.setP2PAllowed(s.id, false, true);
@@ -209,7 +205,7 @@ describe('AccessControl: kick and P2P', () => {
   it('finds sessions by peer id', () => {
     // Arrange
     const { a } = liveAccess();
-    const s = join(a, 'h');
+    const s = joinViewer(a, 'h');
     s.peerIds.add('ab'.repeat(20));
     // Act
     const found = a.sessionByPeerId('ab'.repeat(20));
@@ -224,8 +220,8 @@ describe('AccessControl: admission limits', () => {
   it('refuses new sessions when the stream is full', () => {
     // Arrange
     const { a } = liveAccess();
-    join(a, 'a', 'd1');
-    join(a, 'b', 'd2');
+    joinViewer(a, 'a', { deviceId: 'd1' });
+    joinViewer(a, 'b', { deviceId: 'd2' });
     // Act
     const atTwo = a.admit('d3', 2, 3);
     const atThree = a.admit('d3', 3, 3);
@@ -238,8 +234,8 @@ describe('AccessControl: admission limits', () => {
     // Arrange
     let t = 1000;
     const { a } = liveAccess(() => t++);
-    const first = join(a, 'a', 'dev');
-    join(a, 'a', 'dev');
+    const first = joinViewer(a, 'a', { deviceId: 'dev' });
+    joinViewer(a, 'a', { deviceId: 'dev' });
     // Act
     const verdict = a.admit('dev', 100, 2);
     // Assert

@@ -4,6 +4,7 @@ import { AccessControl, type Session } from '../../src/access/access.js';
 import { ChatHub, type ChatHost } from '../../src/chat/hub.js';
 import { ActivityLog } from '../../src/core/activity.js';
 import { manualClock, silentLog } from './helpers.js';
+import { joinViewer } from './helpers-b.js';
 
 // The chat hub (docs/CHAT.md) on a manual clock, with fake viewer sockets.
 //
@@ -59,7 +60,7 @@ function setup(over: Partial<ChatSettings> = {}, viewers = 2) {
   });
   hub.begin();
   const join = (nickname: string, deviceId = nickname, ip = '203.0.113.1'): Viewer => {
-    const s = access.createSession({ nickname, deviceId, device: 'desktop', ip });
+    const s = joinViewer(access, nickname, { deviceId, ip });
     s.joinedAt = clock.now() - 10 * 60_000;
     const sock = new FakeSocket(s.id);
     sockets.push(sock);
