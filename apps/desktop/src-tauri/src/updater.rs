@@ -23,7 +23,7 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, Me
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use url::Url;
 
-use crate::i18n::{t, tr};
+use crate::i18n::{self, t, tr, tr_in, Lang};
 use crate::logs;
 use crate::protocol::{Channel, UpdateInfo, UpdateStatus};
 use crate::shell::{Mode, Shell, Splash};
@@ -330,14 +330,19 @@ fn message(shell: &Shell, text: String, kind: MessageDialogKind) {
 
 /// The text of the "update available" dialog.
 pub fn prompt_text(version: &str, current: &str, notes: Option<&str>, live: bool) -> String {
-    let mut text = tr("update.available", &[("version", version), ("current", current)]);
+    prompt_text_in(i18n::lang(), version, current, notes, live)
+}
+
+/// [`prompt_text`] in `lang`.
+fn prompt_text_in(lang: Lang, version: &str, current: &str, notes: Option<&str>, live: bool) -> String {
+    let mut text = tr_in(lang, "update.available", &[("version", version), ("current", current)]);
     if live {
         text.push_str("\n\n");
-        text.push_str(&t("update.live_warning"));
+        text.push_str(&tr_in(lang, "update.live_warning", &[]));
     }
     if let Some(notes) = notes.map(str::trim).filter(|n| !n.is_empty()) {
         text.push_str("\n\n");
-        text.push_str(&t("update.notes"));
+        text.push_str(&tr_in(lang, "update.notes", &[]));
         text.push('\n');
         if notes.chars().count() > NOTES_IN_DIALOG {
             text.extend(notes.chars().take(NOTES_IN_DIALOG));
@@ -574,76 +579,179 @@ fn relaunch(shell: &Arc<Shell>) {
 mod tests {
     use super::*;
 
+    const LOCAL_A: &str = "http://127.0.0.1:1/a.json";
+    const LOCAL_B: &str = "http://127.0.0.1:1/b.json";
+
     #[test]
     fn default_endpoint_is_github_latest() {
+        // Act
+        let stable = Url::parse(UPDATE_ENDPOINT).unwrap();
+        let beta = Url::parse(BETA_ENDPOINT).unwrap();
+
+        // Assert
         assert!(UPDATE_ENDPOINT.starts_with("https://github.com/Lucas-Angelo/swarmcast/releases/latest/"));
-        assert_eq!(Url::parse(UPDATE_ENDPOINT).unwrap().scheme(), "https");
-        assert_eq!(Url::parse(BETA_ENDPOINT).unwrap().scheme(), "https");
-        assert_eq!(Url::parse(BETA_ENDPOINT).unwrap().host_str(), Some("lucas-angelo.github.io"));
+        assert_eq!(stable.scheme(), "https");
+        assert_eq!(beta.scheme(), "https");
+        assert_eq!(beta.host_str(), Some("lucas-angelo.github.io"));
     }
 
     #[test]
     fn channel_is_the_choice_else_beta_for_a_prerelease() {
-        assert_eq!(resolve(None, "0.2.2"), Channel::Stable);
-        assert_eq!(resolve(None, "0.3.0-beta.1"), Channel::Beta);
-        assert_eq!(resolve(None, "0.3.0-rc.2"), Channel::Beta);
-        assert_eq!(resolve(None, "0.3.0"), Channel::Stable);
-        assert_eq!(resolve(Some(Channel::Stable), "0.3.0-beta.1"), Channel::Stable);
-        assert_eq!(resolve(Some(Channel::Beta), "0.2.2"), Channel::Beta);
-        // Not SemVer (never shipped): stable.
-        assert_eq!(resolve(None, "dev"), Channel::Stable);
+        // Arrange
+        let cases = [
+            (None, "0.2.2", Channel::Stable),
+            (None, "0.3.0-beta.1", Channel::Beta),
+            (None, "0.3.0-rc.2", Channel::Beta),
+            (None, "0.3.0", Channel::Stable),
+            (Some(Channel::Stable), "0.3.0-beta.1", Channel::Stable),
+            (Some(Channel::Beta), "0.2.2", Channel::Beta),
+        ];
+
+        // Act
+        let resolved = cases.map(|(choice, current, _)| (choice, current, resolve(choice, current)));
+
+        // Assert
+        assert_eq!(resolved, cases);
+    }
+
+    /// Not SemVer (a dev build, never shipped): stable.
+    #[test]
+    fn a_version_that_is_not_semver_follows_stable() {
+        // Act
+        let channel = resolve(None, "dev");
+
+        // Assert
+        assert_eq!(channel, Channel::Stable);
     }
 
     #[test]
     fn stable_reads_one_feed_beta_reads_both() {
-        assert_eq!(feeds(Channel::Stable, None, None), vec![UPDATE_ENDPOINT]);
-        assert_eq!(feeds(Channel::Beta, None, None), vec![UPDATE_ENDPOINT, BETA_ENDPOINT]);
-        // SWARMCAST_UPDATE_URL alone overrides everything (the existing update tests).
-        assert_eq!(feeds(Channel::Beta, Some("http://127.0.0.1:1/latest.json"), None), vec!["http://127.0.0.1:1/latest.json"]);
-        assert_eq!(
-            feeds(Channel::Stable, Some("http://127.0.0.1:1/a.json"), Some("http://127.0.0.1:1/b.json")),
-            vec!["http://127.0.0.1:1/a.json"]
-        );
-        assert_eq!(
-            feeds(Channel::Beta, Some("http://127.0.0.1:1/a.json"), Some("http://127.0.0.1:1/b.json")),
-            vec!["http://127.0.0.1:1/a.json", "http://127.0.0.1:1/b.json"]
-        );
-        assert_eq!(feeds(Channel::Beta, None, Some("http://127.0.0.1:1/b.json")), vec![UPDATE_ENDPOINT, "http://127.0.0.1:1/b.json"]);
+        // Act
+        let stable = feeds(Channel::Stable, None, None);
+        let beta = feeds(Channel::Beta, None, None);
+        let beta_with_a_local_beta_feed = feeds(Channel::Beta, None, Some(LOCAL_B));
+
+        // Assert
+        assert_eq!(stable, vec![UPDATE_ENDPOINT]);
+        assert_eq!(beta, vec![UPDATE_ENDPOINT, BETA_ENDPOINT]);
+        assert_eq!(beta_with_a_local_beta_feed, vec![UPDATE_ENDPOINT, LOCAL_B]);
     }
 
+    /// SWARMCAST_UPDATE_URL alone overrides everything: it is the only feed of the update tests,
+    /// whatever the channel; with SWARMCAST_BETA_UPDATE_URL too, beta reads both test feeds.
+    #[test]
+    fn the_test_feeds_replace_the_real_ones() {
+        // Act
+        let beta_with_the_update_url_alone = feeds(Channel::Beta, Some(LOCAL_A), None);
+        let stable_with_both = feeds(Channel::Stable, Some(LOCAL_A), Some(LOCAL_B));
+        let beta_with_both = feeds(Channel::Beta, Some(LOCAL_A), Some(LOCAL_B));
+
+        // Assert
+        assert_eq!(beta_with_the_update_url_alone, vec![LOCAL_A]);
+        assert_eq!(stable_with_both, vec![LOCAL_A]);
+        assert_eq!(beta_with_both, vec![LOCAL_A, LOCAL_B]);
+    }
+
+    /// A stale beta feed never keeps beta users behind stable.
+    #[test]
+    fn a_stable_release_newer_than_the_beta_wins() {
+        // Act
+        let index = newest(["0.3.0", "0.3.0-beta.2"]);
+
+        // Assert
+        assert_eq!(index, Some(0));
+    }
+
+    /// Pre-release numbers compare as numbers (beta.11 > beta.2), and rc comes after beta.
     #[test]
     fn the_highest_version_wins() {
-        // Stable newer than a stale beta feed: the stable one.
-        assert_eq!(newest(["0.3.0", "0.3.0-beta.2"]), Some(0));
-        assert_eq!(newest(["0.2.2", "0.3.0-beta.2"]), Some(1));
-        assert_eq!(newest(["0.3.0-beta.11", "0.3.0-beta.2"]), Some(0));
-        assert_eq!(newest(["0.3.0-beta.2", "0.3.0-rc.1"]), Some(1));
-        // Same version on both feeds: the first (stable) one.
-        assert_eq!(newest(["0.3.0", "0.3.0"]), Some(0));
-        assert_eq!(newest(["garbage", "0.3.0-beta.1"]), Some(1));
-        assert_eq!(newest(Vec::<&str>::new()), None);
+        // Act
+        let beta_over_older_stable = newest(["0.2.2", "0.3.0-beta.2"]);
+        let beta_11_over_beta_2 = newest(["0.3.0-beta.11", "0.3.0-beta.2"]);
+        let rc_over_beta = newest(["0.3.0-beta.2", "0.3.0-rc.1"]);
+
+        // Assert
+        assert_eq!([beta_over_older_stable, beta_11_over_beta_2, rc_over_beta], [Some(1), Some(0), Some(1)]);
     }
 
+    /// The same version on both feeds: the first one, the stable feed's.
+    #[test]
+    fn a_tie_goes_to_the_first_feed() {
+        // Act
+        let index = newest(["0.3.0", "0.3.0"]);
+
+        // Assert
+        assert_eq!(index, Some(0));
+    }
+
+    #[test]
+    fn unparsable_versions_lose_and_no_version_is_no_update() {
+        // Act
+        let garbage_first = newest(["garbage", "0.3.0-beta.1"]);
+        let none = newest(Vec::<&str>::new());
+
+        // Assert
+        assert_eq!(garbage_first, Some(1));
+        assert_eq!(none, None);
+    }
+
+    /// What tauri-plugin-updater offers with its default comparator: `release.version > current`
+    /// (semver::Version). This pins down the assumption the channels rely on: nothing is ever
+    /// downgraded.
     #[test]
     fn no_downgrade_with_the_default_comparator() {
-        // What tauri-plugin-updater offers: release.version > current (semver::Version).
+        // Arrange
         let offered = |release: &str, current: &str| semver::Version::parse(release).unwrap() > semver::Version::parse(current).unwrap();
-        assert!(!offered("0.3.0-beta.2", "0.3.0"), "stable 0.3.0 is never offered its own beta");
-        assert!(!offered("0.2.2", "0.3.0-beta.1"), "back on stable, the beta stays until a higher stable");
-        assert!(offered("0.3.0", "0.3.0-beta.2"));
-        assert!(offered("0.3.0-beta.1", "0.2.2"));
-        assert!(offered("0.3.0-beta.11", "0.3.0-beta.2"));
+
+        // Act
+        let own_beta_after_stable = offered("0.3.0-beta.2", "0.3.0");
+        let older_stable_after_beta = offered("0.2.2", "0.3.0-beta.1");
+        let upgrades = [offered("0.3.0", "0.3.0-beta.2"), offered("0.3.0-beta.1", "0.2.2"), offered("0.3.0-beta.11", "0.3.0-beta.2")];
+
+        // Assert
+        assert!(!own_beta_after_stable, "stable 0.3.0 is never offered its own beta");
+        assert!(!older_stable_after_beta, "back on stable, the beta stays until a higher stable");
+        assert_eq!(upgrades, [true, true, true]);
+    }
+
+    /// Trimmed notes after the versions and, during a live, the warning that updating stops it.
+    #[test]
+    fn the_prompt_has_the_versions_the_live_warning_and_the_notes() {
+        // Act
+        let text = prompt_text_in(Lang::En, "0.3.0", "0.2.0", Some("  Faster start  "), true);
+
+        // Assert
+        assert_eq!(text, "SwarmCast 0.3.0 is available (you have 0.2.0).\n\nThe live is on: updating stops it for everyone.\n\nWhat's new:\nFaster start");
     }
 
     #[test]
-    fn prompt_text_has_versions_warning_and_notes() {
-        let text = prompt_text("0.3.0", "0.2.0", Some("  Faster start  "), true);
-        assert!(text.contains("0.3.0") && text.contains("0.2.0"));
-        assert!(text.contains(&t("update.live_warning")));
-        assert!(text.ends_with("Faster start"));
-        let text = prompt_text("0.3.0", "0.2.0", Some(""), false);
-        assert!(!text.contains(&t("update.notes")));
+    fn empty_notes_leave_out_whats_new() {
+        // Act
+        let text = prompt_text_in(Lang::En, "0.3.0", "0.2.0", Some(""), false);
+
+        // Assert
+        assert_eq!(text, "SwarmCast 0.3.0 is available (you have 0.2.0).");
+    }
+
+    /// The native dialog cuts long notes (the panel shows them all).
+    #[test]
+    fn long_notes_are_cut_in_the_dialog() {
+        // Arrange
         let long = "x".repeat(NOTES_IN_DIALOG + 50);
-        assert!(prompt_text("1", "0", Some(&long), false).ends_with("x…"));
+
+        // Act
+        let text = prompt_text_in(Lang::En, "1", "0", Some(&long), false);
+
+        // Assert
+        assert!(text.ends_with(&format!("What's new:\n{}…", "x".repeat(NOTES_IN_DIALOG))), "{text}");
+    }
+
+    #[test]
+    fn the_prompt_is_in_the_streamers_language() {
+        // Act
+        let text = prompt_text_in(Lang::PtBr, "0.3.0", "0.2.0", None, true);
+
+        // Assert
+        assert_eq!(text, "O SwarmCast 0.3.0 está disponível (você tem a versão 0.2.0).\n\nA live está no ar: atualizar agora encerra a live para todo mundo.");
     }
 }
