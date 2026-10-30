@@ -9,8 +9,9 @@ import { goLive, openControl, stopViewerLives, viewerLive } from './viewers.js';
 // "Your page" on the real public server: the member gate, caching headers, the limiter, live
 // updates, link previews and /healthz (a LiveController in this process, see viewers.ts).
 //
-// A save reaches open pages once: the server pushes {t:"branding"} 2 s after the last save,
-// and a chat round trip after that push proves no second one was on its way.
+// Saves reach open pages once: the server pushes {t:"branding"} 2 s after the first save of a
+// burst, with the revision of that moment, and a chat round trip after that push proves no
+// second one was on its way.
 // "Under attack" is the shield detector's own state, set the way its tick sets it under a
 // flood (the detector's escalation has its own unit tests: detector.test.ts).
 

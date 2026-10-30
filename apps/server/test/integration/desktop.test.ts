@@ -11,7 +11,7 @@ import { allocAppPorts, hangingServer, isAlive, POSIX, ServerProcess, signIn, st
 // The real server started like the desktop shell does (`--desktop`), driven over stdio by this
 // test acting as the shell. Its own data folder, HOME and ports (never the user's SwarmCast data,
 // LaunchAgents or a SwarmCast already running on this computer). The process-tree checks need
-// `ps` (POSIX); Windows runs the desktop shell's own tests (apps/desktop).
+// `ps`, and the autostart entries are the macOS and Linux ones: POSIX only.
 // Logging in like the webview: /auth/<token> answers 200 with the cookie and a page that opens /
 // itself (no redirect: the cookie is SameSite=Strict), and the token never shows in that page.
 // Unknown or broken stdin lines are ignored: the first test sends some mid-way and carries on.
