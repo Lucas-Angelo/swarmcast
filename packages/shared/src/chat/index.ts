@@ -12,3 +12,4 @@ export { countGraphemes, graphemes, isWellFormedString, utf8Length } from './ucd
 export * from './tokens.js';
 export * from './color.js';
 export { AhoCorasick } from './ahocorasick.js';
+export * from './gif.js';

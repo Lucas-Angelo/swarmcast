@@ -24,6 +24,7 @@ import {
   type ViewerConfig,
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
+import type { GifProvider } from '@swarmcast/shared/chat';
 import { isPreviewAgent, previewPage } from '../branding/og.js';
 import { registerBrandingPublicRoutes } from '../branding/public-routes.js';
 import type { BrandingStore } from '../branding/store.js';
@@ -90,6 +91,8 @@ export interface PublicDeps {
   clientSeen?: (session: Session, ip: string) => void;
   /** Names nobody may join with besides the built-in reserved ones (the streamer's chat name). */
   reservedNames?: () => string[];
+  /** The GIF provider while chat GIFs are on (the CSP then lists its hosts), else undefined. */
+  gifProvider?: () => GifProvider | undefined;
   // ---- branding: deps ----
   /** "Your page" (docs/BRANDING.md); its routes are registered only when present. */
   branding?: BrandingStore;
@@ -194,7 +197,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     notePeak(deps.stats);
     sec.request(ip(req));
     const host = req.headers.host ?? '';
-    applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers()), opts.secureCookies);
+    applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers(), deps.gifProvider?.()), opts.secureCookies);
     reply.header('Cache-Control', 'private, no-store');
   });
   app.addHook('onResponse', async () => {

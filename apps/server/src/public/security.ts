@@ -1,19 +1,23 @@
+import { GIF_PROVIDERS, type GifProvider } from '@swarmcast/shared/chat';
 import net from 'node:net';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 
 /** Strict CSP for viewer pages: no inline scripts, connections only to ourselves (+ STUN for WebRTC). */
-export function viewerCsp(host: string, secure: boolean, _stunServers: string[] = []): string {
+export function viewerCsp(host: string, secure: boolean, _stunServers: string[] = [], gif?: GifProvider): string {
   const wsScheme = secure ? 'wss' : 'ws';
+  // GIFs (chat, opt-in): only while the streamer has them on, and only that provider's documented
+  // hosts. Viewers' browsers still contact them only after each viewer agrees (consent in the page).
+  const g = gif ? GIF_PROVIDERS[gif] : null;
   // STUN is not governed by connect-src (WebRTC ICE is outside CSP), and browsers reject
   // stun: URLs as invalid sources, so they are deliberately not listed.
   return [
     "default-src 'none'",
     "script-src 'self'",
     "style-src 'self'",
-    "img-src 'self' data:",
+    `img-src 'self' data:${g ? ` ${g.media.join(' ')}` : ''}`,
     "media-src 'self' blob:",
     "worker-src 'self' blob:",
-    `connect-src 'self' ${wsScheme}://${host}`,
+    `connect-src 'self' ${wsScheme}://${host}${g ? ` ${g.api}` : ''}`,
     "font-src 'self'",
     "manifest-src 'self'",
     "base-uri 'none'",

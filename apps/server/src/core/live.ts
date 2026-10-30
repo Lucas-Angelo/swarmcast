@@ -560,6 +560,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       security: this.shield,
       clientSeen: (s, ip) => this.clientSeen(s, ip),
       reservedNames: () => [this.d.config.chat.streamerName],
+      gifProvider: () => this.chat.effective.public.gif?.provider,
       branding: this.branding,
       brandingLite: () => this.shield.detector.state !== 'normal' || this.limiter.throttledWithin(10_000),
     };
