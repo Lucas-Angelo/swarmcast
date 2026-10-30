@@ -4,7 +4,7 @@
 // set and locked by the streamer, content presets (text only also refuses emoji), blocked words.
 // Every test restores the chat settings it changed: the e2e server is shared by the whole run.
 import type { Page } from '@playwright/test';
-import type { AdminChatState, ChatSettings } from '@swarmcast/shared';
+import type { AdminChatState, ChatMessageItem, ChatSettings } from '@swarmcast/shared';
 import { adminApi, expect, join, test, uid } from './fixtures.js';
 
 async function say(page: Page, text: string): Promise<void> {
@@ -31,8 +31,7 @@ async function seqOf(text: string): Promise<number> {
   let seq: number | undefined;
   await expect
     .poll(async () => {
-      const it = (await chatState()).items.find((i) => i.k === 'm' && i.x === text);
-      seq = it && 's' in it ? it.s : undefined;
+      seq = (await chatState()).items.find((i): i is ChatMessageItem => i.k === 'm' && i.x === text)?.s;
       return seq;
     })
     .toBeTruthy();
