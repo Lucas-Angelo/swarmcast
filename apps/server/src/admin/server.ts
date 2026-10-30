@@ -27,6 +27,7 @@ import { codeOf, coded } from '../core/messages.js';
 import { resettableRateLimits } from '../public/rate-limit-store.js';
 import { applySecurityHeaders } from '../public/security.js';
 import { registerChatRoutes } from './chat-routes.js';
+import { BRAND_IMAGE_ROUTE, BRAND_IMAGE_TYPES, registerBrandingAdminRoutes } from '../branding/admin-routes.js';
 import { registerDesktopRoutes } from './desktop-routes.js';
 import { registerDiagnosticsRoutes } from './diagnostics-routes.js';
 import { gateHead, notAuthorizedPage, signedInPage } from './gate.js';
@@ -108,7 +109,17 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       if (!origin) return reply.code(403).send('Missing origin');
       // JSON only: a cross-site form cannot send it without a CORS preflight (which we never allow).
-      if (!String(req.headers['content-type'] ?? '').startsWith('application/json')) return reply.code(415).send('JSON required');
+      // ---- branding: raw image uploads ----
+      // One exception: PNG/JPEG/WebP bodies on PUT /api/branding/image/:slot. Those types are not
+      // CORS-safelisted either, so a cross-site page cannot send them without a preflight; the
+      // Origin check above still applies.
+      const type = String(req.headers['content-type'] ?? '').split(';')[0]!.trim().toLowerCase();
+      const imageUpload = req.method === 'PUT' && BRAND_IMAGE_ROUTE.test(req.url.split('?')[0]!) && (BRAND_IMAGE_TYPES as readonly string[]).includes(type);
+      // DELETE /api/branding/image/:slot carries no body; DELETE is never a CORS "simple" method,
+      // so a cross-site page cannot send it without a preflight either.
+      const bodylessDelete = req.method === 'DELETE' && BRAND_IMAGE_ROUTE.test(req.url.split('?')[0]!) && !req.headers['content-type'] && (req.headers['content-length'] ?? '0') === '0';
+      // ---- end branding ----
+      if (!imageUpload && !bodylessDelete && !String(req.headers['content-type'] ?? '').startsWith('application/json')) return reply.code(415).send('JSON required');
     }
   });
 
@@ -218,6 +229,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
   }));
   registerQualityRoutes(app, L, auth, wrap);
   registerChatRoutes(app, L, auth, wrap);
+  // ---- branding: panel routes ----
+  registerBrandingAdminRoutes(app, { store: L.branding, changed: () => L.brandingChanged() }, auth, wrap);
   registerOnboardingRoutes(app, L, auth, wrap);
   registerSystemCheckRoutes(app, o.systemCheckFile, auth);
   registerDesktopRoutes(app, o.desktop, auth, wrap);

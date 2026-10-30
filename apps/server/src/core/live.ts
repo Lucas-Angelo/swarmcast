@@ -21,6 +21,7 @@ import { chatSettingsSchema, countGraphemes, type AdminChatMessage, type ChatSet
 import { AccessControl, type Session } from '../access/access.js';
 import { EgressWatch, type EgressWatchOptions } from '../access/own-connection.js';
 import { ChatHub } from '../chat/hub.js';
+import { BrandingStore } from '../branding/store.js';
 import { ControlChannel } from '../control/control.js';
 import { DirectMode, ipChangeNotice } from '../direct/direct.js';
 import { lookupPublicIps } from '../direct/publicip.js';
@@ -70,6 +71,8 @@ export interface LiveDeps {
   blocklists?: PublicBlocklists;
   /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
   browserCheckKey?: string;
+  /** `<data>/branding` (docs/BRANDING.md); omitted in logic tests: images kept in memory only. */
+  brandingDir?: string;
   /** Replaces parts of the own-public-address watch (tests: a fake lookup, fast ticks). */
   egress?: Partial<Omit<EgressWatchOptions, 'log'>>;
 }
@@ -107,6 +110,9 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   readonly control: ControlChannel;
   /** The chat of the live (docs/CHAT.md); rides on the control channel. */
   readonly chat: ChatHub;
+  /** The streamer's page (docs/BRANDING.md). */
+  readonly branding: BrandingStore;
+  private brandingPush: NodeJS.Timeout | null = null;
   readonly limiter: BandwidthLimiter;
   readonly quality: QualityManager;
   private publicServer: FastifyInstance | null = null;
@@ -231,6 +237,20 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       },
     });
     this.control.chat = this.chat;
+    // ---- branding: store ----
+    this.branding = new BrandingStore({
+      dir: d.brandingDir,
+      get: () => this.d.config.branding,
+      save: (b) => {
+        this.d.config.branding = b;
+        this.d.saveConfig(this.d.config);
+      },
+      activity: this.activity,
+      log: d.log,
+    });
+    this.branding.load();
+    this.control.brandRev = () => (this.d.config.branding.enabled ? this.d.config.branding.rev : undefined);
+    // ---- end branding ----
 
     this.access.on('kicked', (s) => {
       this.activity.action('log.kicked', { nickname: s.nickname });
@@ -502,7 +522,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
       const url = await abortable(this.d.tunnel.start(this.d.config.ports.public), signal);
       if (this.d.tunnel.name === 'none') return url;
-      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal })) return url;
+      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal, probe: this.access.probeToken() })) return url;
       this.d.log.warn({ attempt }, 'tunnel address not reachable yet, retrying with a new tunnel');
       await this.d.tunnel.stop();
     }
@@ -511,7 +531,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private async onTunnelUrl(url: string): Promise<void> {
     if (this.mode !== 'secure' || !this.access.live) return;
-    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal }).catch(() => false);
+    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal, probe: this.access.probeToken() }).catch(() => false);
     if (this.quitting.signal.aborted) return;
     this.baseUrl = url;
     this.tunnelUrlChangedAt = this.now();
@@ -540,6 +560,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       security: this.shield,
       clientSeen: (s, ip) => this.clientSeen(s, ip),
       reservedNames: () => [this.d.config.chat.streamerName],
+      branding: this.branding,
+      brandingLite: () => this.shield.detector.state !== 'normal' || this.limiter.throttledWithin(10_000),
     };
     return createPublicServer(deps, {
       mode,
@@ -825,6 +847,19 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.d.saveConfig(this.d.config);
     this.activity.action('log.securitySaved');
     this.changed();
+  }
+
+  // ---- branding ----
+
+  /** The page changed (panel): tell open viewer pages, at most once every 2 s. */
+  brandingChanged(): void {
+    this.changed();
+    if (this.brandingPush) return;
+    this.brandingPush = setTimeout(() => {
+      this.brandingPush = null;
+      this.control.broadcast({ t: 'branding', rev: this.d.config.branding.rev });
+    }, 2000);
+    this.brandingPush.unref();
   }
 
   // ---- chat ----

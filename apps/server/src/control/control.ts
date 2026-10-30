@@ -61,6 +61,8 @@ export class ControlChannel implements ChatHost {
   tracker: TrackerChannelHost | null = null;
   /** Set by the live: chat frames are ignored until then. */
   chat: ChatHub | null = null;
+  /** Revision of the streamer's page (undefined while branding is off), sent in hello. */
+  brandRev: () => number | undefined = () => undefined;
   private readonly wss: WebSocketServer;
   private readonly conns = new Map<string, Set<ControlSocket>>();
   /** Peer ids every viewer must refuse to talk to. */
@@ -121,6 +123,7 @@ export class ControlChannel implements ChatHost {
         blockedPeers: [...this.blockedPeers],
         viewerCount: this.viewerCount(),
         ...(chat ? { chat } : {}),
+        ...(this.brandRev() !== undefined ? { brandRev: this.brandRev() } : {}),
       } satisfies ServerMessage);
       if (s.readyState === s.OPEN) s.send(hello);
       // The history in hello counts against the chat's upload budget.

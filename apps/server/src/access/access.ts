@@ -302,10 +302,41 @@ export class AccessControl extends EventEmitter<AccessEvents> {
     return nickname;
   }
 
+  // ---- branding: tokens derived from this live's key ----
+
+  private hmac(label: string): string {
+    return crypto.createHmac('sha256', this.jwtKey).update(label).digest('base64url').slice(0, 22);
+  }
+
+  /** Sent by our own reachability checks (X-SwarmCast-Probe): only then does /healthz say which live is on. */
+  probeToken(): string {
+    return this.hmac('probe');
+  }
+
+  checkProbeToken(candidate: string | undefined): boolean {
+    return typeof candidate === 'string' && safeEqual(candidate, this.probeToken());
+  }
+
+  /** Token in the link-preview card URL: derived from the current link, so it dies with "New link". Empty when off. */
+  previewToken(): string {
+    return this.live && this.linkSecret ? this.hmac(`preview:${this.linkSecret}`) : '';
+  }
+
+  checkPreviewToken(candidate: string): boolean {
+    const t = this.previewToken();
+    return t !== '' && safeEqual(candidate, t);
+  }
+
   sessionByPeerId(peerId: string): Session | undefined {
     for (const s of this.sessions.values()) if (s.peerIds.has(peerId)) return s;
     return undefined;
   }
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const x = sha256(a);
+  const y = sha256(b);
+  return crypto.timingSafeEqual(x, y);
 }
 
 function sha256(s: string): Buffer {

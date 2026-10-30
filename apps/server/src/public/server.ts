@@ -24,6 +24,9 @@ import {
   type ViewerConfig,
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
+import { isPreviewAgent, previewPage } from '../branding/og.js';
+import { registerBrandingPublicRoutes } from '../branding/public-routes.js';
+import type { BrandingStore } from '../branding/store.js';
 import type { AccessControl, Session } from '../access/access.js';
 import type { ControlChannel } from '../control/control.js';
 import type { HlsOrigin } from '../hls/origin.js';
@@ -87,6 +90,12 @@ export interface PublicDeps {
   clientSeen?: (session: Session, ip: string) => void;
   /** Names nobody may join with besides the built-in reserved ones (the streamer's chat name). */
   reservedNames?: () => string[];
+  // ---- branding: deps ----
+  /** "Your page" (docs/BRANDING.md); its routes are registered only when present. */
+  branding?: BrandingStore;
+  /** Serve the light version of the page (no banner): attack or a saturated uplink. */
+  brandingLite?: () => boolean;
+  // ---- end branding: deps ----
 }
 
 export interface PublicServerOptions {
@@ -233,8 +242,14 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   };
 
   // ---- health (used to confirm the tunnel reaches this process) ----
-  app.get('/healthz', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (_req, reply) => {
-    reply.header('X-SwarmCast', access.live ? access.liveId : 'off');
+  app.get('/healthz', { config: { rateLimit: { max: 60, timeWindow: '1 minute' } } }, async (req, reply) => {
+    // ---- branding: no live status for strangers ----
+    // Only our own checks (X-SwarmCast-Probe, derived from this live's key) learn which live is on
+    // or that it is off. Anyone else gets a constant marker, so polling the address never tells
+    // when the streamer is live (docs/BRANDING.md, threat T10).
+    const probe = req.headers['x-swarmcast-probe'];
+    const own = access.checkProbeToken(typeof probe === 'string' ? probe : undefined);
+    reply.header('X-SwarmCast', own ? (access.live ? access.liveId : 'off') : '1');
     return { ok: true };
   });
 
@@ -250,6 +265,24 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
         sec.joinFailed();
         return sendInvalid(reply);
       }
+      // ---- branding: link previews ----
+      // A messaging app building a preview gets a small Open Graph page: no cookie, no ticket.
+      if (deps.branding && isPreviewAgent(req.headers['user-agent'])) {
+        const b = deps.branding.branding;
+        const card = b.images.card;
+        const base = `${opts.secureCookies ? 'https' : 'http'}://${req.headers.host ?? ''}`;
+        const token = access.previewToken();
+        const ext = card ? ({ png: 'png', jpeg: 'jpg', webp: 'webp' } as const)[card.type] : 'jpg';
+        return reply.type('text/html; charset=utf-8').send(
+          previewPage({
+            branding: b,
+            url: `${base}${req.url.split('?')[0]}`,
+            ...(card && token ? { imageUrl: `${base}/p/${token}/card.${ext}`, imageType: { png: 'image/png', jpeg: 'image/jpeg', webp: 'image/webp' }[card.type] } : {}),
+            acceptLanguage: typeof req.headers['accept-language'] === 'string' ? req.headers['accept-language'] : undefined,
+          }),
+        );
+      }
+      // ---- end branding ----
       if (access.isBanned(deviceId)) {
         sec.joinFailed();
         return sendInvalid(reply, 403);
@@ -403,6 +436,33 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     index: false,
     setHeaders: (reply) => void reply.header('Cache-Control', 'public, max-age=31536000, immutable'),
   });
+
+  // ---- branding: viewer routes ----
+  if (deps.branding) {
+    const store = deps.branding;
+    // The preview card: anyone holding the current link's preview token (it dies with "New link").
+    app.get<{ Params: { token: string; file: string } }>('/p/:token/:file', { config: { rateLimit: { max: 30, timeWindow: '1 minute', keyGenerator: ip } } }, async (req, reply) => {
+      const b = store.branding;
+      const card = b.images.card;
+      const ext = card ? ({ png: 'png', jpeg: 'jpg', webp: 'webp' } as const)[card.type] : '';
+      if (!card || !b.enabled || !b.preview.enabled || req.params.file !== `card.${ext}` || !access.checkPreviewToken(req.params.token)) return sendInvalid(reply);
+      const f = store.file(card.sha);
+      if (!f) return sendInvalid(reply);
+      reply.header('Cache-Control', 'private, max-age=600');
+      reply.header('Content-Length', f.bytes.length);
+      reply.type(f.mime);
+      return reply.send(deps.limiter.stream(f.bytes));
+    });
+    registerBrandingPublicRoutes(app, {
+      store: deps.branding,
+      limiter: deps.limiter,
+      member: async (req, reply) => (await access.verifyTicket(req.cookies[TICKET_COOKIE])) || (await sessionOf(req, reply)) !== null,
+      liveId: () => access.liveId,
+      lite: () => deps.brandingLite?.() ?? false,
+      notFound: (reply) => sendInvalid(reply),
+    });
+  }
+  // ---- end branding ----
 
   app.setNotFoundHandler((_req, reply) => sendInvalid(reply));
 

@@ -34,7 +34,34 @@ export function sanitizeConfig(config: unknown, anon: Anonymizer): unknown {
     if (v && typeof v === 'object') return Object.fromEntries(Object.entries(v).map(([k, x]) => [k, walk(x, k)]));
     return v;
   };
-  return walk(config);
+  const out = walk(config);
+  // ---- branding: summary only ----
+  // The streamer's page is personal data (name, bio, links, Pix key): the export says what is set,
+  // never the values.
+  if (out && typeof out === 'object' && !Array.isArray(out) && config && typeof config === 'object' && 'branding' in config) {
+    (out as Record<string, unknown>).branding = brandingSummary((config as { branding?: unknown }).branding);
+  }
+  // ---- end branding ----
+  return out;
+}
+
+function brandingSummary(b: unknown): unknown {
+  if (!b || typeof b !== 'object') return b === undefined ? undefined : '[redacted]';
+  const x = b as Record<string, unknown>;
+  const has = (k: string): boolean => typeof x[k] === 'string' && x[k] !== '';
+  const images = x.images && typeof x.images === 'object' ? Object.keys(x.images as object) : [];
+  const support = x.support && typeof x.support === 'object' ? (x.support as Record<string, unknown>) : {};
+  const theme = x.theme && typeof x.theme === 'object' ? (x.theme as Record<string, unknown>) : {};
+  return {
+    enabled: x.enabled === true,
+    has: { name: has('name'), tagline: has('tagline'), about: has('about'), endedMessage: has('endedMessage') },
+    images,
+    links: Array.isArray(x.links) ? x.links.length : 0,
+    tags: Array.isArray(x.tags) ? x.tags.length : 0,
+    support: { enabled: support.enabled === true, mode: support.mode === 'pix' ? 'pix' : 'link' },
+    preset: typeof theme.preset === 'string' ? theme.preset : undefined,
+    preview: !!(x.preview && typeof x.preview === 'object' && (x.preview as Record<string, unknown>).enabled === true),
+  };
 }
 
 export interface LogExportInput {
