@@ -25,5 +25,8 @@ export default defineConfig({
     { name: 'firefox', use: { ...devices['Desktop Firefox'] }, grepInvert: /@mobile/ },
     { name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: /@mobile/ },
     { name: 'mobile-webkit', use: { ...devices['iPhone 14'] }, grep: /@mobile|@render|screenshots/ },
+    { name: 'mobile-chromium', use: { ...devices['Pixel 7'], ...(process.env.CI ? { channel: 'chrome' } : {}) }, grep: /@mobile|@render/ },
+    // Microsoft Edge where it is installed (rendering.yml on Windows sets CHAT_EDGE=1).
+    ...(process.env.CHAT_EDGE ? [{ name: 'edge', use: { ...devices['Desktop Edge'], channel: 'msedge' }, grepInvert: /@mobile/ }] : []),
   ],
 });
