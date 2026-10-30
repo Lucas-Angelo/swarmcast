@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { AdminChatState, AdminState, ChatProtect, ChatSettings } from '@swarmcast/shared';
 import { t } from '@swarmcast/shared/i18n';
 import { chatApi, errorText } from '../api.js';
@@ -7,6 +7,7 @@ import { ChatFeed } from './ChatFeed.js';
 import { ChatSettingsForm } from './ChatSettings.js';
 import { useChatView, useDark } from './hooks.js';
 import { chatStatus } from './logic.js';
+import { chatStore } from './store.js';
 import './chat.css';
 
 /** Sessions (mutes, colours) and effective settings are refreshed this often while live; messages come over /ws. */
@@ -23,6 +24,7 @@ export function ChatCard({ state }: { state: AdminState }) {
   const [err, setErr] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [confirmClear, setConfirmClear] = useState(false);
+  const [pending, setPending] = useState<boolean | null>(null);
   const live = state.phase === 'live';
   const viewerKey = state.viewers.map((v) => v.sessionId).join(',');
 
@@ -36,6 +38,13 @@ export function ChatCard({ state }: { state: AdminState }) {
   useEffect(() => void reload(true), []);
   // Someone joined or left: their mute and colour state changes with them.
   useEffect(() => void reload(), [viewerKey, state.phase]);
+  // A message whose author the panel never got (announced before this panel opened): fetch the roster.
+  const lastFill = useRef(0);
+  useEffect(() => {
+    if (!chatStore.missingAuthors || Date.now() - lastFill.current < 5000) return;
+    lastFill.current = Date.now();
+    void reload(true);
+  }, [view.rev]);
   useEffect(() => {
     if (!live) return;
     const id = window.setInterval(() => void reload(), REFRESH_MS);
@@ -74,7 +83,13 @@ export function ChatCard({ state }: { state: AdminState }) {
   const counters = view.counters ?? chat.counters;
   const status = chatStatus(enabled, chat.effective, counters);
   const protect: ChatProtect = counters.protect;
-  const toggle = (on: boolean): Promise<void> => act(() => saveSettings({ ...chat.settings, enabled: on }));
+  // The switch shows the new position at once; it settles on the saved value (or back, on an error).
+  const toggle = async (on: boolean): Promise<void> => {
+    setPending(on);
+    await act(() => saveSettings({ ...chat.settings, enabled: on }));
+    setPending(null);
+  };
+  const switchOn = pending ?? enabled;
 
   return (
     <section class="card mt chat-card" data-testid="chat-card">
@@ -83,8 +98,8 @@ export function ChatCard({ state }: { state: AdminState }) {
           {t('admin.chat.title')} <Info text={t('admin.chat.tip')} />
         </h2>
         <label class="switch" title={t('admin.chat.switch.tip')}>
-          <input type="checkbox" role="switch" data-testid="chat-enabled" checked={enabled} disabled={busy} onChange={(e) => void toggle((e.target as HTMLInputElement).checked)} />
-          <span>{enabled ? t('admin.chat.switch.on') : t('admin.chat.switch.off')}</span>
+          <input type="checkbox" role="switch" data-testid="chat-enabled" checked={switchOn} disabled={busy} onChange={(e) => void toggle((e.target as HTMLInputElement).checked)} />
+          <span>{switchOn ? t('admin.chat.switch.on') : t('admin.chat.switch.off')}</span>
         </label>
         <Info text={t('admin.chat.switch.tip')} />
         <span class={`pill ${status.tone === 'ok' ? 'pill-ok' : status.tone === 'bad' ? 'pill-bad' : status.tone === 'wait' ? 'pill-wait' : ''}`} data-testid="chat-status">

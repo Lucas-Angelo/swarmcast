@@ -48,6 +48,17 @@ describe('panel chat store', () => {
     expect(st.view().roster.get('k1')?.c).toBe('#0090ff');
   });
 
+  it('flags a message whose author was announced before the panel opened, until the roster arrives', () => {
+    const st = new ChatStore();
+    st.apply(msg([m(1, 'k0')]));
+    expect(st.missingAuthors).toBe(true);
+    st.apply(msg([{ k: 'u', au: host }]));
+    expect(st.missingAuthors).toBe(false);
+    st.apply(msg([m(2, 'k9')]));
+    st.applyState({ settings: {} as AdminChatState['settings'], effective: {} as AdminChatState['effective'], roster: [{ ...ana, a: 'k9' }], items: [m(2, 'k9')], lastSeq: 2, sessions: [], counters });
+    expect(st.missingAuthors).toBe(false);
+  });
+
   it('keeps at most `keep` messages', () => {
     const st = new ChatStore(3);
     st.apply(msg([m(1), m(2), m(3), m(4), m(5)]));

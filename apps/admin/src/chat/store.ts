@@ -37,6 +37,12 @@ export class ChatStore {
   private rev = 0;
   private listeners = new Set<Listener>();
   private cached: ChatView | null = null;
+  /**
+   * Authors of messages in the feed whose roster entry the panel never got. The server
+   * announces an author once per live, and a panel opened after a clear (or a reconnect whose
+   * ring no longer holds their earlier lines) can miss it: GET /api/chat fills it in.
+   */
+  private unknown = new Set<string>();
 
   constructor(private readonly keep = PANEL_CHAT_KEEP) {}
 
@@ -46,6 +52,7 @@ export class ChatStore {
       this.items = [];
       this.roster.clear();
       this.sessions.clear();
+      this.unknown.clear();
       this.lastSeq = 0;
     }
     for (const [a, sid] of Object.entries(msg.sessions ?? {})) {
@@ -60,23 +67,29 @@ export class ChatStore {
   applyState(s: AdminChatState): void {
     this.items = [];
     this.roster.clear();
+    this.unknown.clear();
     this.lastSeq = 0;
     for (const au of s.roster) this.roster.set(au.a, au);
     this.applyItems(s.items);
     this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
-    this.setSessions(s.sessions, false);
+    this.fillSessions(s.sessions);
     this.counters = s.counters;
     this.changed();
   }
 
-  /** Per-session state only (after a moderation action, or a periodic refresh). */
-  setSessions(list: readonly ChatSessionInfo[], notify = true): void {
+  /** Per-session state and counters only (after a moderation action, or a periodic refresh); the feed stays as the socket built it. */
+  setSessions(list: readonly ChatSessionInfo[], counters?: ChatCounters): void {
+    this.fillSessions(list);
+    if (counters) this.counters = counters;
+    this.changed();
+  }
+
+  private fillSessions(list: readonly ChatSessionInfo[]): void {
     this.info.clear();
     for (const si of list) {
       this.info.set(si.sessionId, si);
       this.sessions.set(si.a, si.sessionId);
     }
-    if (notify) this.changed();
   }
 
   private applyItems(items: readonly ChatItem[]): void {
@@ -84,8 +97,11 @@ export class ChatStore {
       switch (it.k) {
         case 'u':
           this.roster.set(it.au.a, it.au);
+          this.unknown.delete(it.au.a);
           break;
         case 'm':
+          if (!this.roster.has(it.a)) this.unknown.add(it.a);
+        // falls through
         case 'sys':
           if (it.s <= this.lastSeq && this.items.some((x) => x.s === it.s)) break;
           this.items.push(it);
@@ -134,6 +150,11 @@ export class ChatStore {
   subscribe(fn: Listener): () => void {
     this.listeners.add(fn);
     return () => this.listeners.delete(fn);
+  }
+
+  /** Some message in the feed has an author the panel does not know yet (see `unknown`). */
+  get missingAuthors(): boolean {
+    return this.unknown.size > 0;
   }
 
   /** The session behind a message author (undefined for the streamer or someone gone). */

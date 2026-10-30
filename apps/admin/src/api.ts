@@ -127,10 +127,10 @@ export const chatApi = {
     chatStore.applyState(s);
     return s;
   },
-  /** Sessions only (mutes and colours), keeping the feed as the socket built it. */
+  /** Sessions (mutes and colours) and counters, keeping the feed as the socket built it. */
   async refreshSessions(): Promise<AdminChatState> {
     const s = await api<AdminChatState>('/api/chat', 'GET');
-    chatStore.setSessions(s.sessions);
+    chatStore.setSessions(s.sessions, s.counters);
     return s;
   },
   saveSettings(settings: ChatSettings): Promise<{ settings: ChatSettings; effective: ChatPublicSettings }> {
