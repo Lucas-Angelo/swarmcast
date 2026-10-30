@@ -67,6 +67,8 @@ export async function runDesktopFirstRun(
         return live.phase === 'off' ? [p.admin] : [p.admin, p.rtmp, p.public, p.mediamtxHls];
       },
       speed: () => speedForCheck(app, signal),
+      // Where "is github.com reachable" asks (tests only: a local server instead of GitHub).
+      ...(env.SWARMCAST_GITHUB_URL ? { githubUrl: env.SWARMCAST_GITHUB_URL } : {}),
       signal,
     });
     log.info({ below: c.belowMinimum }, 'desktop first run: system check saved');

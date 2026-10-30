@@ -36,96 +36,146 @@ const counters = (o: Partial<ChatCounters> = {}): ChatCounters => ({ acceptedPer
 
 describe('content presets (modes)', () => {
   it('every preset is recognised from its own mix; other mixes are "custom"', () => {
-    for (const p of CONTENT_PRESETS) expect(presetOf(p.content)).toBe(p.id);
-    expect(presetOf({ text: true, emotes: false, gifs: true })).toBeNull();
+    // Act
+    const recognised = CONTENT_PRESETS.map((p) => presetOf(p.content));
+    const custom = presetOf({ text: true, emotes: false, gifs: true });
+    // Assert
+    expect(recognised).toEqual(CONTENT_PRESETS.map((p) => p.id));
+    expect(custom).toBeNull();
   });
+
   it('the default settings are "text + emotes" (GIFs off by default)', () => {
-    expect(presetOf(defaultChatSettings().content)).toBe('textEmotes');
+    // Act
+    const preset = presetOf(defaultChatSettings().content);
+    // Assert
+    expect(preset).toBe('textEmotes');
   });
+
   it('only presets with GIFs need a key', () => {
-    expect(CONTENT_PRESETS.filter((p) => presetNeedsGifs(p.id)).map((p) => p.id)).toEqual(['all', 'gifs']);
+    // Act
+    const needKey = CONTENT_PRESETS.filter((p) => presetNeedsGifs(p.id)).map((p) => p.id);
+    // Assert
+    expect(needKey).toEqual(['all', 'gifs']);
   });
 });
 
 describe('status pill', () => {
   it('off, on, slow mode, automatic slow mode, lockdown and broken', () => {
-    expect(chatStatus(false, eff(), counters()).key).toBe('admin.chat.status.off');
-    expect(chatStatus(true, eff({ slowS: 0 }), counters())).toMatchObject({ key: 'admin.chat.status.on', tone: 'ok' });
-    expect(chatStatus(true, eff({ slowS: 2 }), counters())).toMatchObject({ key: 'admin.chat.status.slow', params: { count: 2 } });
-    expect(chatStatus(true, eff({ slowS: 10, autoSlow: true }), counters())).toMatchObject({ key: 'admin.chat.status.autoSlow', params: { count: 10 }, tone: 'wait' });
-    expect(chatStatus(true, eff(), counters({ protect: 'lockdown' }))).toMatchObject({ key: 'admin.chat.status.lockdown', tone: 'wait' });
-    expect(chatStatus(true, eff(), counters({ broken: true }))).toMatchObject({ key: 'admin.chat.status.broken', tone: 'bad' });
+    // Act
+    const pills = [
+      chatStatus(false, eff(), counters()),
+      chatStatus(true, eff({ slowS: 0 }), counters()),
+      chatStatus(true, eff({ slowS: 2 }), counters()),
+      chatStatus(true, eff({ slowS: 10, autoSlow: true }), counters()),
+      chatStatus(true, eff(), counters({ protect: 'lockdown' })),
+      chatStatus(true, eff(), counters({ broken: true })),
+    ];
+    // Assert
+    expect(pills).toMatchObject([
+      { key: 'admin.chat.status.off' },
+      { key: 'admin.chat.status.on', tone: 'ok' },
+      { key: 'admin.chat.status.slow', params: { count: 2 } },
+      { key: 'admin.chat.status.autoSlow', params: { count: 10 }, tone: 'wait' },
+      { key: 'admin.chat.status.lockdown', tone: 'wait' },
+      { key: 'admin.chat.status.broken', tone: 'bad' },
+    ]);
   });
 });
 
 describe('mutes', () => {
   const clock = (at: number) => `@${at}`;
+
   it('"live" is muted until the stream ends; a past time is not muted', () => {
-    expect(isMuted('live')).toBe(true);
-    expect(isMuted(2000, 1000)).toBe(true);
-    expect(isMuted(1000, 2000)).toBe(false);
-    expect(isMuted(null)).toBe(false);
-    expect(mutedText('live', clock)).toEqual({ key: 'admin.chat.mutedLive' });
-    expect(mutedText(5000, clock, 1000)).toEqual({ key: 'admin.chat.mutedUntil', params: { clock: '@5000' } });
-    expect(mutedText(500, clock, 1000)).toBeNull();
+    // Act
+    const muted = [isMuted('live'), isMuted(2000, 1000), isMuted(1000, 2000), isMuted(null)];
+    const texts = [mutedText('live', clock), mutedText(5000, clock, 1000), mutedText(500, clock, 1000)];
+    // Assert
+    expect(muted).toEqual([true, true, false, false]);
+    expect(texts).toEqual([{ key: 'admin.chat.mutedLive' }, { key: 'admin.chat.mutedUntil', params: { clock: '@5000' } }, null]);
   });
 });
 
 describe('blocked words', () => {
   it('one per line, trimmed, empty lines and repeats (any case) dropped', () => {
-    expect(parseBlockedWords('  spam \n\nSPAM\r\nscam\n')).toEqual({ words: ['spam', 'scam'], tooLong: [] });
+    // Act
+    const parsed = parseBlockedWords('  spam \n\nSPAM\r\nscam\n');
+    // Assert
+    expect(parsed).toEqual({ words: ['spam', 'scam'], tooLong: [] });
   });
+
   it('flags entries over 40 graphemes; an emoji flag counts as one', () => {
+    // Arrange
     const long = 'a'.repeat(41);
-    expect(parseBlockedWords(`${long}\nok`).tooLong).toEqual([long]);
-    expect(parseBlockedWords('🇧🇷'.repeat(40)).tooLong).toEqual([]);
+    // Act
+    const flagged = parseBlockedWords(`${long}\nok`).tooLong;
+    const flags = parseBlockedWords('🇧🇷'.repeat(40)).tooLong;
+    // Assert
+    expect(flagged).toEqual([long]);
+    expect(flags).toEqual([]);
   });
+
   it('keeps at most 200 entries', () => {
+    // Arrange
     const text = Array.from({ length: 250 }, (_, i) => `w${i}`).join('\n');
-    expect(parseBlockedWords(text).words).toHaveLength(200);
+    // Act
+    const { words } = parseBlockedWords(text);
+    // Assert
+    expect(words).toHaveLength(200);
   });
 });
 
 describe('name colours on the panel feed', () => {
   it('any colour is readable (≥ 4.5:1) on the light and the dark feed', () => {
-    fc.assert(
-      fc.property(fc.integer({ min: 0, max: 0xffffff }), fc.boolean(), (n, dark) => {
-        const hex = `#${n.toString(16).padStart(6, '0')}`;
-        return contrastRatio(readableName(hex, dark), feedBackground(dark)) >= 4.5;
-      }),
-      { numRuns: 2000, seed: 0x5c }
-    );
-    expect(feedBackground(false)).toBe(CHAT_BG_LIGHT);
-    expect(feedBackground(true)).toBe(CHAT_BG_DARK);
+    // Act
+    const run = () =>
+      fc.assert(
+        fc.property(fc.integer({ min: 0, max: 0xffffff }), fc.boolean(), (n, dark) => {
+          const hex = `#${n.toString(16).padStart(6, '0')}`;
+          return contrastRatio(readableName(hex, dark), feedBackground(dark)) >= 4.5;
+        }),
+        { numRuns: 2000, seed: 0x5c },
+      );
+    // Assert
+    expect(run).not.toThrow();
+    expect([feedBackground(false), feedBackground(true)]).toEqual([CHAT_BG_LIGHT, CHAT_BG_DARK]);
   });
 });
 
 describe('message tokens (render safety)', () => {
-  it('plain text, emoji and :emote: codes; links stay plain text', () => {
-    // The whole token list: the address is a plain text token (never a link token), next to an emoji and an emote.
-    expect(messageTokens('oi https://x.example 😀 :gg:')).toEqual([
+  it('plain text, emoji and :emote: codes; an address stays a plain text token, never a link', () => {
+    // Act
+    const tokens = messageTokens('oi https://x.example 😀 :gg:');
+    // Assert
+    expect(tokens).toEqual([
       { k: 't', v: 'oi https://x.example ' },
       { k: 'j', v: '😀' },
       { k: 't', v: ' ' },
       { k: 'e', code: 'gg' },
     ]);
   });
-  it('text that breaks the safety invariants is not rendered (bidi override, newline, zalgo)', () => {
-    expect(messageTokens('abc‮def')).toBeNull();
-    expect(messageTokens('a\nb')).toBeNull();
-    expect(messageTokens(`Z${'́̀̂̃̄'}`)).toBeNull();
-    expect(messageTokens('\uD800')).toBeNull();
+
+  it('text that breaks the safety invariants is not rendered (bidi override, newline, zalgo, lone surrogate)', () => {
+    // Act
+    const rendered = ['abc\u202Edef', 'a\nb', `Z${'\u0301\u0300\u0302\u0303\u0304'}`, '\uD800'].map(messageTokens);
+    // Assert
+    expect(rendered).toEqual([null, null, null, null]);
   });
 });
 
 describe('draft length and settings equality', () => {
   it('counts graphemes like the server', () => {
-    expect(draftLength('🇧🇷👍🏽', 2)).toEqual({ count: 2, over: false });
-    expect(draftLength('abc', 2)).toEqual({ count: 3, over: true });
+    // Act
+    const lengths = [draftLength('🇧🇷👍🏽', 2), draftLength('abc', 2)];
+    // Assert
+    expect(lengths).toEqual([{ count: 2, over: false }, { count: 3, over: true }]);
   });
+
   it('sameSettings', () => {
+    // Arrange
     const a = defaultChatSettings();
-    expect(sameSettings(a, defaultChatSettings())).toBe(true);
-    expect(sameSettings(a, { ...a, slowModeS: 5 })).toBe(false);
+    // Act
+    const same = [sameSettings(a, defaultChatSettings()), sameSettings(a, { ...a, slowModeS: 5 })];
+    // Assert
+    expect(same).toEqual([true, false]);
   });
 });

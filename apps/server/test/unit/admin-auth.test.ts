@@ -1,67 +1,101 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { FastifyInstance } from 'fastify';
-import pino from 'pino';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ADMIN_COOKIE } from '@swarmcast/shared';
-import { createAdminServer } from '../../src/admin/server.js';
-import type { DirectMode } from '../../src/direct/direct.js';
-import { makeController } from './live-helpers.js';
+import { captureLog, tempDir } from './helpers.js';
+import { makeController, PANEL_TOKEN, panelServer } from './live-helpers.js';
 
-const PORT = 39399;
-const TOKEN = 'per-run-token_ABC123';
-const host = `127.0.0.1:${PORT}`;
+// The panel's sign-in (GET /auth/<token>) and its "not authorized" page, through app.inject():
+// the panel never listens in these tests.
+//
+// The sign-in page: no redirect, no script (the panel's CSP allows no inline script, and the URL
+// holds the token, so the page is never cached, never sent as a referrer, and never repeats it).
+//
+// The panel pushes the live's state to its WebSocket at most every 250 ms: a change schedules one
+// push. A push still due when the panel closes must not run (it read the state of a live that
+// may be gone: a TypeError under load, found by the coverage runs).
+
+/** A panel build: index.html only, or with the hashed assets and gate.html the admin build writes. */
+function panelBuild(withAssets = false): string {
+  const dir = tempDir('sc-admin-');
+  if (!withAssets) {
+    fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><div id="app"></div>');
+    return dir;
+  }
+  fs.writeFileSync(path.join(dir, 'index.html'), '<!doctype html><div id="app"></div><script type="module" src="/assets/index-AbC123.js"></script>');
+  fs.mkdirSync(path.join(dir, 'assets'));
+  fs.writeFileSync(path.join(dir, 'assets', 'index-AbC123.js'), 'export {};');
+  fs.writeFileSync(path.join(dir, 'assets', 'gate-Xy_9.css'), 'body{}');
+  // What apps/admin/gate.html builds to, plus a foreign stylesheet the server must not copy.
+  fs.writeFileSync(
+    path.join(dir, 'gate.html'),
+    '<!doctype html><html><head><link rel="icon" href="/assets/favicon-Q1.svg" type="image/svg+xml" />' +
+      '<link rel="stylesheet" crossorigin href="/assets/gate-Xy_9.css"><link rel="stylesheet" href="https://evil.example/x.css"></head></html>',
+  );
+  return dir;
+}
+
+async function panel(o: { withAssets?: boolean; log?: ReturnType<typeof captureLog>['log'] } = {}) {
+  const { live } = makeController();
+  return panelServer({ live, adminDir: panelBuild(o.withAssets), ...(o.log ? { log: o.log } : {}) });
+}
 
 describe('panel login: GET /auth/<token>', () => {
-  let app: FastifyInstance;
-  const logged: string[] = [];
-  const log = pino({ level: 'debug' }, { write: (line: string) => void logged.push(line) });
-  beforeAll(async () => {
-    const adminDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-admin-'));
-    fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html><div id="app"></div>');
-    const { live } = makeController({} as DirectMode);
-    app = await createAdminServer({ port: PORT, adminDir, live, log, token: TOKEN, onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn() });
-  });
-  afterAll(() => app.close());
-
   it('sets the SameSite=Strict cookie and answers 200 with a page that opens / from this origin (no redirect)', async () => {
-    const res = await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host } });
+    // Arrange
+    const { app, headers } = await panel();
+    // Act
+    const res = await app.inject({ method: 'GET', url: `/auth/${PANEL_TOKEN}`, headers: { host: headers.host } });
+    // Assert
     expect(res.statusCode).toBe(200);
     expect(res.headers.location).toBeUndefined();
     expect(res.headers['content-type']).toMatch(/^text\/html/);
     const cookie = String(res.headers['set-cookie']);
-    expect(cookie).toContain(`${ADMIN_COOKIE}=${TOKEN}`);
+    expect(cookie).toContain(`${ADMIN_COOKIE}=${PANEL_TOKEN}`);
     expect(cookie).toMatch(/HttpOnly/i);
     expect(cookie).toMatch(/SameSite=Strict/i);
     expect(cookie).toMatch(/Path=\//);
-    // Never cached, never sent as a referrer (the URL holds the token).
     expect(res.headers['cache-control']).toBe('no-store');
     expect(res.headers['referrer-policy']).toBe('no-referrer');
-    // Works with the panel's CSP as it is: no script at all (none inline is allowed).
     const csp = String(res.headers['content-security-policy']);
     expect(csp).toContain("script-src 'self'");
     expect(csp).not.toContain('unsafe-inline');
     expect(res.body).not.toMatch(/<script/i);
     expect(res.body).toContain('<meta http-equiv="refresh" content="0;url=/">');
     expect(res.body).toContain('<a href="/">Open the panel</a>');
-    // The token is not repeated in the page.
-    expect(res.body).not.toContain(TOKEN);
+    expect(res.body).not.toContain(PANEL_TOKEN);
   });
 
-  it('the cookie then opens the panel; the page follows the browser language', async () => {
-    const res = await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host, 'accept-language': 'pt-BR,pt;q=0.9' } });
+  it('the page follows the browser language', async () => {
+    // Arrange
+    const { app, headers } = await panel();
+    // Act
+    const res = await app.inject({ method: 'GET', url: `/auth/${PANEL_TOKEN}`, headers: { host: headers.host, 'accept-language': 'pt-BR,pt;q=0.9' } });
+    // Assert
     expect(res.body).toContain('lang="pt-BR"');
     expect(res.body).toContain('Abrir o painel');
-    const cookie = String(res.headers['set-cookie']).split(';')[0]!;
-    const panel = await app.inject({ method: 'GET', url: '/', headers: { host, cookie } });
-    expect(panel.statusCode).toBe(200);
-    expect(panel.body).toContain('id="app"');
-    expect((await app.inject({ method: 'GET', url: '/', headers: { host } })).statusCode).toBe(401);
+  });
+
+  it('the cookie it sets opens the panel; without it the panel is refused', async () => {
+    // Arrange
+    const { app, headers } = await panel();
+    const signIn = await app.inject({ method: 'GET', url: `/auth/${PANEL_TOKEN}`, headers: { host: headers.host } });
+    const cookie = String(signIn.headers['set-cookie']).split(';')[0]!;
+    // Act
+    const withCookie = await app.inject({ method: 'GET', url: '/', headers: { host: headers.host, cookie } });
+    const without = await app.inject({ method: 'GET', url: '/', headers: { host: headers.host } });
+    // Assert
+    expect(withCookie.statusCode).toBe(200);
+    expect(withCookie.body).toContain('id="app"');
+    expect(without.statusCode).toBe(401);
   });
 
   it('a wrong token gets the "not authorized" page and no cookie', async () => {
-    const res = await app.inject({ method: 'GET', url: '/auth/wrong', headers: { host } });
+    // Arrange
+    const { app, headers } = await panel();
+    // Act
+    const res = await app.inject({ method: 'GET', url: '/auth/wrong', headers: { host: headers.host } });
+    // Assert
     expect(res.statusCode).toBe(401);
     expect(res.headers['set-cookie']).toBeUndefined();
     expect(res.body).toContain('SwarmCast');
@@ -69,38 +103,29 @@ describe('panel login: GET /auth/<token>', () => {
   });
 
   it('debug log: one line per request, never the token', async () => {
-    // Its own requests: the test must not depend on which tests ran before it (shuffled runs).
-    expect((await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host } })).statusCode).toBe(200);
-    expect((await app.inject({ method: 'GET', url: '/', headers: { host } })).statusCode).toBe(401);
-    expect(logged.some((l) => l.includes('"path":"/auth/…"') && l.includes('"status":200'))).toBe(true);
-    expect(logged.some((l) => l.includes('"path":"/"') && l.includes('"status":401'))).toBe(true);
-    expect(logged.join('\n')).not.toContain(TOKEN);
+    // Arrange
+    const capture = captureLog('debug');
+    const { app, headers } = await panel({ log: capture.log });
+    // Act
+    const signIn = await app.inject({ method: 'GET', url: `/auth/${PANEL_TOKEN}`, headers: { host: headers.host } });
+    const refused = await app.inject({ method: 'GET', url: '/', headers: { host: headers.host } });
+    // Assert
+    expect([signIn.statusCode, refused.statusCode]).toEqual([200, 401]);
+    expect(capture.lines().filter((l) => l.msg === 'panel request')).toEqual([
+      expect.objectContaining({ method: 'GET', path: '/auth/…', status: 200 }),
+      expect.objectContaining({ method: 'GET', path: '/', status: 401 }),
+    ]);
+    expect(JSON.stringify(capture.lines())).not.toContain(PANEL_TOKEN);
   });
 });
 
 describe('panel pages: brand styling and caching', () => {
-  let app: FastifyInstance;
-  const port = PORT + 1;
-  const h = `127.0.0.1:${port}`;
-  beforeAll(async () => {
-    const adminDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-admin-'));
-    fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html><div id="app"></div><script type="module" src="/assets/index-AbC123.js"></script>');
-    fs.mkdirSync(path.join(adminDir, 'assets'));
-    fs.writeFileSync(path.join(adminDir, 'assets', 'index-AbC123.js'), 'export {};');
-    fs.writeFileSync(path.join(adminDir, 'assets', 'gate-Xy_9.css'), 'body{}');
-    // What the admin build writes (apps/admin/gate.html), plus a link the server must not copy.
-    fs.writeFileSync(
-      path.join(adminDir, 'gate.html'),
-      '<!doctype html><html><head><link rel="icon" href="/assets/favicon-Q1.svg" type="image/svg+xml" />' +
-        '<link rel="stylesheet" crossorigin href="/assets/gate-Xy_9.css"><link rel="stylesheet" href="https://evil.example/x.css"></head></html>',
-    );
-    const { live } = makeController({} as DirectMode);
-    app = await createAdminServer({ port, adminDir, live, log: pino({ level: 'silent' }), token: TOKEN, onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn() });
-  });
-  afterAll(() => app.close());
-
   it('"not authorized": branded page with how to reopen the panel, no inline style or script', async () => {
-    const res = await app.inject({ method: 'GET', url: '/', headers: { host: h } });
+    // Arrange
+    const { app, headers } = await panel({ withAssets: true });
+    // Act
+    const res = await app.inject({ method: 'GET', url: '/', headers: { host: headers.host } });
+    // Assert
     expect(res.statusCode).toBe(401);
     expect(res.headers['content-type']).toBe('text/html; charset=utf-8');
     expect(res.headers['cache-control']).toBe('no-store');
@@ -114,12 +139,23 @@ describe('panel pages: brand styling and caching', () => {
     expect(res.body).toMatch(/Open SwarmCast/);
     expect(res.body).toMatch(/run the start script again/);
     expect(res.body).not.toMatch(/<script|<style|style=/i);
-    // The stylesheet itself loads without the cookie.
-    expect((await app.inject({ method: 'GET', url: '/assets/gate-Xy_9.css', headers: { host: h } })).statusCode).toBe(200);
+  });
+
+  it('the stylesheet of that page loads without the cookie', async () => {
+    // Arrange
+    const { app, headers } = await panel({ withAssets: true });
+    // Act
+    const res = await app.inject({ method: 'GET', url: '/assets/gate-Xy_9.css', headers: { host: headers.host } });
+    // Assert
+    expect(res.statusCode).toBe(200);
   });
 
   it('"not authorized" follows Accept-Language (pt-BR), also for a wrong /auth token', async () => {
-    const res = await app.inject({ method: 'GET', url: '/auth/nope', headers: { host: h, 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' } });
+    // Arrange
+    const { app, headers } = await panel({ withAssets: true });
+    // Act
+    const res = await app.inject({ method: 'GET', url: '/auth/nope', headers: { host: headers.host, 'accept-language': 'pt-BR,pt;q=0.9,en;q=0.8' } });
+    // Assert
     expect(res.statusCode).toBe(401);
     expect(res.body).toContain('lang="pt-BR"');
     expect(res.body).toContain('Abra o painel pelo aplicativo SwarmCast');
@@ -128,20 +164,61 @@ describe('panel pages: brand styling and caching', () => {
   });
 
   it('the sign-in page uses the same stylesheet', async () => {
-    const res = await app.inject({ method: 'GET', url: `/auth/${TOKEN}`, headers: { host: h } });
+    // Arrange
+    const { app, headers } = await panel({ withAssets: true });
+    // Act
+    const res = await app.inject({ method: 'GET', url: `/auth/${PANEL_TOKEN}`, headers: { host: headers.host } });
+    // Assert
     expect(res.statusCode).toBe(200);
     expect(res.body).toContain('<link rel="stylesheet" href="/assets/gate-Xy_9.css">');
     expect(res.body).toContain('<a href="/">Open the panel</a>');
   });
 
   it('index.html is never cached; hashed assets are cached for a long time', async () => {
-    const cookie = `${ADMIN_COOKIE}=${TOKEN}`;
-    const index = await app.inject({ method: 'GET', url: '/', headers: { host: h, cookie } });
+    // Arrange
+    const { app, headers } = await panel({ withAssets: true });
+    // Act
+    const index = await app.inject({ method: 'GET', url: '/', headers: headers.get });
+    const asset = await app.inject({ method: 'GET', url: '/assets/index-AbC123.js', headers: { host: headers.host } });
+    // Assert
     expect(index.statusCode).toBe(200);
     expect(index.body).toContain('id="app"');
     expect(index.headers['cache-control']).toBe('no-store');
-    const asset = await app.inject({ method: 'GET', url: '/assets/index-AbC123.js', headers: { host: h } });
     expect(asset.statusCode).toBe(200);
     expect(asset.headers['cache-control']).toBe('public, max-age=31536000, immutable');
+  });
+});
+
+describe('panel server lifecycle', () => {
+  it('a state push that was due when the panel closed never runs', async () => {
+    // Arrange
+    const { live } = makeController();
+    const { app } = await panelServer({ live });
+    await app.ready();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => void vi.useRealTimers());
+    const snapshot = vi.spyOn(live, 'snapshot');
+    live.disconnectAll();
+    // Act
+    await app.close();
+    vi.advanceTimersByTime(1000);
+    // Assert
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it('while open, a change is pushed once within 250 ms', async () => {
+    // Arrange
+    const { live } = makeController();
+    const { app } = await panelServer({ live });
+    await app.ready();
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => void vi.useRealTimers());
+    const snapshot = vi.spyOn(live, 'snapshot');
+    // Act
+    live.disconnectAll();
+    live.disconnectAll();
+    vi.advanceTimersByTime(250);
+    // Assert
+    expect(snapshot).toHaveBeenCalledOnce();
   });
 });

@@ -23,36 +23,49 @@ function parseCase(line: string): number[][] {
   return out;
 }
 
+/** The graphemes graphemeBounds() cuts `cps` into. */
+function split(cps: number[]): number[][] {
+  const b = graphemeBounds(cps);
+  const got: number[][] = [];
+  for (let i = 0; i + 1 < b.length; i++) got.push(cps.slice(b[i], b[i + 1]));
+  return got;
+}
+
 describe('grapheme clusters (UAX #29, pure TypeScript)', () => {
   it(`passes every case of GraphemeBreakTest.txt (${GRAPHEME_BREAK_TESTS.length})`, () => {
-    expect(GRAPHEME_BREAK_TESTS.length).toBeGreaterThan(700);
-    const failures: string[] = [];
-    for (const line of GRAPHEME_BREAK_TESTS) {
+    // Act
+    const failures = GRAPHEME_BREAK_TESTS.filter((line) => {
       const expected = parseCase(line);
-      const cps = expected.flat();
-      const b = graphemeBounds(cps);
-      const got: number[][] = [];
-      for (let i = 0; i + 1 < b.length; i++) got.push(cps.slice(b[i], b[i + 1]));
-      if (JSON.stringify(got) !== JSON.stringify(expected)) failures.push(line);
-    }
+      return JSON.stringify(split(expected.flat())) !== JSON.stringify(expected);
+    });
+    // Assert
+    expect(GRAPHEME_BREAK_TESTS.length).toBeGreaterThan(700);
     expect(failures).toEqual([]);
   });
 
   it('agrees with Intl.Segmenter of this Node (same Unicode version) on hostile input', () => {
+    // Arrange
     const seg = new Intl.Segmenter('und', { granularity: 'grapheme' });
-    fc.assert(
-      fc.property(hostile, (s) => {
-        const w = s.toWellFormed();
-        expect(graphemes(w)).toEqual(Array.from(seg.segment(w), (x) => x.segment));
-        return true;
-      }),
-      { numRuns: Number(process.env.CHAT_FUZZ_RUNS ?? 2000), seed: 0x5ca7 },
-    );
+    // Act
+    const run = () =>
+      fc.assert(
+        fc.property(hostile, (s) => {
+          const w = s.toWellFormed();
+          expect(graphemes(w)).toEqual(Array.from(seg.segment(w), (x) => x.segment));
+          return true;
+        }),
+        { numRuns: Number(process.env.CHAT_FUZZ_RUNS ?? 2000), seed: 0x5ca7 },
+      );
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('handles the empty string and lone code points', () => {
-    expect(graphemeBounds([])).toEqual([0]);
-    expect(graphemes('')).toEqual([]);
-    expect(codePoints('a\u{D800}b')).toEqual([0x61, 0xd800, 0x62]);
+    // Act
+    const empty = { bounds: graphemeBounds([]), graphemes: graphemes('') };
+    const lone = codePoints('a\u{D800}b');
+    // Assert
+    expect(empty).toEqual({ bounds: [0], graphemes: [] });
+    expect(lone).toEqual([0x61, 0xd800, 0x62]);
   });
 });
