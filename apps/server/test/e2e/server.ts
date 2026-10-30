@@ -141,7 +141,7 @@ const initial = {
   chat: structuredClone(app.live.chatSettings()),
 };
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-const shield = app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void; detector: { state: string } };
+const shield = app.live.shield;
 /** The test that ran before the current one (an unhealthy stream names it). */
 let previousTest = '(none: first test on this server)';
 let currentTest = previousTest;
