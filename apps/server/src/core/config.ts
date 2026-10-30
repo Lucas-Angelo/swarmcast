@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import { z } from 'zod';
 import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, chatSettingsSchema, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
+import { brandingSchema } from '@swarmcast/shared/branding';
 import { writePrivateFile } from './paths.js';
 
 export const tunnelProviderSchema = z.enum(['cloudflare-quick', 'none', 'external']);
@@ -89,6 +90,10 @@ export const configSchema = z.object({
   onboardingDone: z.boolean().default(false),
   /** Chat settings (docs/CHAT.md; panel: Chat card). */
   chat: chatSettingsSchema.prefault({}),
+  // ---- branding: config ----
+  /** The streamer's page ("Your page", docs/BRANDING.md); images live in <data>/branding/. */
+  branding: brandingSchema.prefault({}),
+  // ---- end branding: config ----
   /** Log files and old log exports are deleted after this many days (panel: Diagnostics). */
   diagnostics: z
     .object({ logRetentionDays: z.number().int().min(3).max(90).default(14) })

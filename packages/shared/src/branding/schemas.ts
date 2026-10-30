@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { translate } from '../i18n/index.js';
+import { isMessageKey, translate, type MessageKey, type MessageParams } from '../i18n/index.js';
 import { hexColorSchema } from '../chat/schemas.js';
 import { BRAND_CORNERS, BRAND_MAX_LINKS, BRAND_MAX_TAGS, BRAND_PRESETS, BRAND_SLOTS, BRAND_SUPPORT_LABELS, BRAND_TEXT, BRAND_URL_MAX, type BrandTextProfile } from './limits.js';
 import { normalizePixKey, type PixKeyType } from './pix.js';
@@ -13,12 +13,24 @@ import { parseBrandUrl, type BrandPlatform } from './url.js';
  * Validation messages are the English texts of the error codes (brandingError maps them back).
  */
 
+/**
+ * The message code (and params) of the first branding validation issue, for the panel's plain-words
+ * error; undefined for structural problems (wrong types, unknown enum values).
+ */
+export function brandingIssue(error: z.ZodError): { code: MessageKey; params?: MessageParams; path: PropertyKey[] } | undefined {
+  for (const issue of error.issues) {
+    const p = (issue as { params?: { msgCode?: unknown; msgParams?: MessageParams } }).params;
+    if (issue.code === 'custom' && isMessageKey(p?.msgCode)) return { code: p.msgCode, ...(p.msgParams ? { params: p.msgParams } : {}), path: issue.path };
+  }
+  return undefined;
+}
+
 /** A text field with a profile; '' (nothing visible) becomes undefined. */
 export function brandText(profile: BrandTextProfile) {
   return z.string().transform((s, ctx) => {
     const r = canonicalizeBrandText(s, profile);
     if (!r.ok) {
-      ctx.addIssue({ code: 'custom', message: translate('en', r.code, r.params) });
+      ctx.addIssue({ code: 'custom', message: translate('en', r.code, r.params), params: { msgCode: r.code, msgParams: r.params } });
       return z.NEVER;
     }
     return r.text === '' ? undefined : r.text;
@@ -32,7 +44,7 @@ export const brandUrlSchema = z
   .transform((s, ctx) => {
     const r = parseBrandUrl(s);
     if (!r.ok) {
-      ctx.addIssue({ code: 'custom', message: translate('en', r.code) });
+      ctx.addIssue({ code: 'custom', message: translate('en', r.code), params: { msgCode: r.code } });
       return z.NEVER;
     }
     return r.href;
@@ -63,7 +75,7 @@ export const brandPixSchema = z
   .transform((p, ctx) => {
     const k = normalizePixKey(p.type as PixKeyType, p.key);
     if (!k.ok) {
-      ctx.addIssue({ code: 'custom', message: translate('en', k.code), path: ['key'] });
+      ctx.addIssue({ code: 'custom', message: translate('en', k.code), path: ['key'], params: { msgCode: k.code } });
       return z.NEVER;
     }
     return { ...p, key: k.key };
@@ -86,7 +98,7 @@ const textFields = {
       const out: Array<{ label: string; url: string }> = [];
       for (const l of links) {
         if (!l.label) {
-          ctx.addIssue({ code: 'custom', message: translate('en', 'brand.err.linkLabel') });
+          ctx.addIssue({ code: 'custom', message: translate('en', 'brand.err.linkLabel'), params: { msgCode: 'brand.err.linkLabel' } });
           return z.NEVER;
         }
         out.push({ label: l.label, url: l.url });
