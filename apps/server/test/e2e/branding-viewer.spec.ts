@@ -1,13 +1,9 @@
 import { adminApi, expect, join, test, uid } from './fixtures.js';
 
 // "Your page" end to end: the panel saves the branding on the real server (BR2 routes) and the
-// viewer's join and watch pages show it (BR4). Skipped until both land on release/0.4.0; then
-// remove the skip. Fake data only.
-const READY = false;
+// viewer's join and watch pages show it (BR4). Fake data only.
 
 test.describe('Your page on the viewer pages', () => {
-  test.skip(!READY, 'needs the branding server routes (BR2) and the viewer pages (BR4)');
-
   test('a saved page shows on the join and watch pages, with safe links', { tag: '@ui' }, async ({ browser }) => {
     await adminApi('PUT', '/api/branding', {
       enabled: true,
