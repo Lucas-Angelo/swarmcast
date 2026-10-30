@@ -46,6 +46,21 @@ function setup(snapshot?: Partial<ChatSnapshot>) {
 }
 
 describe('ChatSession', () => {
+  it('a reconnect delta keeps what is shown and adds only the new items', () => {
+    const { session, shown, calls } = setup();
+    const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
+    session.hello({ v: 1, settings: settings({ slowS: 5 }), you, roster: [bia], items: [msg(3, 'oi', 'k2'), msg(4)], lastSeq: 4, delta: true });
+    expect(shown).toEqual([1, 2, 3, 4]);
+    expect(calls.filter((c) => c === 'reset')).toHaveLength(1); // only the first hello
+    expect(session.lastSeq).toBe(4);
+    expect(session.settings?.slowS).toBe(5);
+    expect(session.roster.get('k2')?.n).toBe('Bia');
+    expect(session.roster.get('k1')?.n).toBe('Ana');
+    // An empty delta (nothing new while away) changes nothing.
+    session.hello({ v: 1, settings: settings(), you, roster: [], items: [], lastSeq: 4, delta: true });
+    expect(shown).toEqual([1, 2, 3, 4]);
+  });
+
   it('shows the snapshot, then new items in seq order, ignoring repeats (reconnect)', () => {
     const { session, shown } = setup();
     expect(shown).toEqual([1, 2]);

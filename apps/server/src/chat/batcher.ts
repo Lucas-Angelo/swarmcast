@@ -1,4 +1,4 @@
-import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_SOCKET_BUFFER_MAX, type ChatItem } from '@swarmcast/shared';
+import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_SOCKET_BUFFER_MAX, type ChatAuthor, type ChatItem } from '@swarmcast/shared';
 import { TokenBucket } from './buckets.js';
 
 /** What the batcher needs of a viewer socket (a `ws` WebSocket). */
@@ -18,7 +18,7 @@ const MAX_PENDING = 500;
 /** A batch may wait this long for upload budget before viewer messages are dropped. */
 const MAX_HOLD_MS = 1000;
 /** Seconds of budget one batch may borrow (paid back before the next batch is sent). */
-const BUDGET_DEBT_S = 4;
+const BUDGET_DEBT_S = 2;
 const OPEN = 1;
 
 interface Pending {
@@ -43,6 +43,8 @@ export interface BatcherOptions {
   slow: () => boolean;
   /** Snapshot for a socket that missed moderation items while it was slow. */
   resync: (socket: ChatSocket) => void;
+  /** Roster entry of an author key, for sockets that have not been told about that author yet. */
+  authorOf?: (a: string) => ChatAuthor | undefined;
   now?: () => number;
 }
 
@@ -56,6 +58,8 @@ export class ChatBatcher {
   private queue: Pending[] = [];
   private timer: NodeJS.Timeout | null = null;
   private readonly debts = new WeakMap<ChatSocket, SocketDebt>();
+  /** Authors each socket has a roster entry for (from its hello, a reset or a batch). */
+  private readonly known = new WeakMap<ChatSocket, Set<string>>();
   private readonly budget: TokenBucket;
   private readonly now: () => number;
   /** Bytes sent (EWMA over ~10 s, bytes per second). */
@@ -115,6 +119,24 @@ export class ChatBatcher {
       this.flush();
     }, delay);
     this.timer.unref?.();
+  }
+
+  /** The socket got roster entries for these authors (hello, reset, resume answer). */
+  markKnown(socket: ChatSocket, authors: Iterable<string>): void {
+    let k = this.known.get(socket);
+    if (!k) this.known.set(socket, (k = new Set()));
+    for (const a of authors) k.add(a);
+  }
+
+  /** Bytes sent outside the batches (hello snapshots): charged to the budget like everything else. */
+  charge(bytes: number): void {
+    this.budget.force(this.now(), bytes);
+    this.account(bytes);
+  }
+
+  /** The budget is in debt (recent sends used more than it refills): snapshots shrink. */
+  inDebt(): boolean {
+    return this.budget.available(this.now()) < 0;
   }
 
   /** Account bytes that left (batches, acks, snapshots). */
@@ -191,6 +213,15 @@ export class ChatBatcher {
     }
     const messages = this.queue.filter((p) => p.item.k === 'm').length;
     const hasPrio = this.queue.some((p) => p.item.k !== 'm' && p.item.k !== 'skip');
+    // Every socket must know the author of every message it gets. The batch's own roster items
+    // cover first appearances; a socket that joined later (and whose hello only listed the authors
+    // of its history) gets the missing entries in a small frame just before the batch.
+    const announcedNow = new Set<string>();
+    const authors = new Set<string>();
+    for (const p of this.queue) {
+      if (p.item.k === 'u') announcedNow.add(p.item.au.a);
+      else if (p.item.k === 'm') authors.add(p.item.a);
+    }
     this.queue = [];
     let sent = 0;
     for (const s of sockets) {
@@ -213,6 +244,21 @@ export class ChatBatcher {
           sent += skip.length;
         }
       }
+      let known = this.known.get(s);
+      if (!known) this.known.set(s, (known = new Set()));
+      const missing: ChatItem[] = [];
+      for (const a of authors) {
+        if (known.has(a) || announcedNow.has(a)) continue;
+        const au = this.o.authorOf?.(a);
+        if (au) missing.push({ k: 'u', au });
+        known.add(a);
+      }
+      if (missing.length) {
+        const roster = JSON.stringify({ t: 'chat.batch', items: missing });
+        s.send(roster);
+        sent += roster.length;
+      }
+      for (const a of announcedNow) known.add(a);
       s.send(payload);
       sent += payload.length;
     }

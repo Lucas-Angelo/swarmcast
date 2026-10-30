@@ -477,9 +477,10 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   async function handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://x');
     const reject = (code: number, msg: string): void => {
+      // Refused upgrades always count for the attack detector.
+      sec.upgrade();
       socket.end(`HTTP/1.1 ${code} ${msg}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
     };
-    sec.upgrade();
     const addr = clientIp(req, opts.trustTunnel && !direct);
     if (sec.blocked(addr)) return reject(403, 'Forbidden');
     if (url.pathname !== '/control' && url.pathname !== '/tracker') return reject(404, 'Not Found');
@@ -487,6 +488,11 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     const cookies = app.parseCookie(req.headers.cookie ?? '');
     const res = await access.verifySessionToken(cookies[SESSION_COOKIE]);
     if (!res) return reject(401, 'Unauthorized');
+    // A session's first socket counts as an upgrade; its reconnects do not. A tunnel drop makes
+    // every viewer reconnect at once, and that recovery of known sessions is not an attack (new
+    // identities, and anything refused, still count).
+    if (!res.session.upgraded) sec.upgrade();
+    res.session.upgraded = true;
     deps.clientSeen?.(res.session, addr);
     if (url.pathname === '/control') {
       deps.control.handleUpgrade(req, socket, head, res.session);

@@ -110,7 +110,7 @@ describe('chat settings', () => {
       historyOnJoin: 50,
       links: 'text',
       autoProtect: true,
-      budgetShare: 0.04,
+      budgetShare: 0.05,
       gif: { provider: 'klipy', key: '', rating: 'pg', consent: 'ask' },
     });
   });

@@ -109,6 +109,16 @@ export class ChatSession {
       this.view.unsupported();
       return;
     }
+    // Reconnect delta: keep what is shown and add what came since (like a batch).
+    if (s.delta && this.settings) {
+      this.settings = s.settings;
+      this.you = s.you;
+      this.view.settings(s.settings);
+      this.view.you(s.you);
+      this.batch([...s.roster.map((au): ChatItem => ({ k: 'u', au })), ...s.items]);
+      this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
+      return;
+    }
     this.dropHeld();
     this.settings = s.settings;
     this.you = s.you;

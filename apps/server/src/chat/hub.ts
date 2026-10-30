@@ -95,6 +95,8 @@ const STREAMER_ID = 'streamer';
 /** Rejects sent to one socket per second (a script gets silence beyond that). */
 const REJECTS_PER_S = 2;
 const SLOW_CODES = new Set(['chat.err.slow']);
+/** History in a hello while the chat's upload budget is in debt. */
+const SNAPSHOT_IN_DEBT = 10;
 
 /**
  * The chat of one live (docs/CHAT.md): the pipeline, limits and moderation for every message, the
@@ -111,6 +113,8 @@ export class ChatHub {
   private ring: RingEntry[] = [];
   private ringBytes = 0;
   private seq = 0;
+  /** Seq at the last delete or clear: a reconnect delta from before it would miss it. */
+  private modSeq = 0;
   /** Authors whose roster entry viewers already have (sent once, again after a colour change). */
   private announced = new Set<string>();
   private readonly paces = new KeyedBuckets<ViewerPace>(DEVICE_PACES, () => ({ lastAt: 0, burst: new TokenBucket(CHAT_BURST_CAPACITY, CHAT_BURST_REFILL_PER_S, this.now()), lastGifAt: 0 }));
@@ -160,6 +164,7 @@ export class ChatHub {
       budgetBps: () => this.budgetBps(),
       slow: () => this.guard.state !== 'ok' || this.protect !== 'off',
       resync: (s) => this.resyncSocket(s),
+      authorOf: (a) => this.moderation.authorOf(a),
       now: this.now,
     });
     this.eff = this.computeEffective();
@@ -194,6 +199,7 @@ export class ChatHub {
     this.ring = [];
     this.ringBytes = 0;
     this.seq = 0;
+    this.modSeq = 0;
     this.announced.clear();
     this.paces.clear();
     this.ipBuckets.clear();
@@ -276,7 +282,7 @@ export class ChatHub {
   // Budget
   // ---------------------------------------------------------------------------
 
-  /** B_chat: a share of the upload cap, clamped to 128–768 kbps, in bytes per second. */
+  /** B_chat: a share of the upload cap (5 % by default), clamped to 128–960 kbps, in bytes per second. */
   budgetBps(): number {
     const kbps = Math.min(CHAT_BUDGET_MAX_KBPS, Math.max(CHAT_BUDGET_MIN_KBPS, this.d.settings().budgetShare * this.d.uploadCapMbps() * 1000));
     return (kbps * 1000) / 8;
@@ -534,7 +540,9 @@ export class ChatHub {
     const oldest = this.ring[0]?.item.s ?? this.seq + 1;
     if (after + 1 < oldest || after > this.seq) return this.resyncSocket(socket, session);
     const items = this.ring.filter((e) => e.item.s > after).map((e) => e.item);
-    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...this.rosterFor(items).map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
+    const roster = this.rosterFor(items);
+    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
+    this.batcher.markKnown(socket, roster.map((r) => r.a));
   }
 
   /** Full snapshot for one socket (missed moderation items while slow, or an evicted resume). */
@@ -542,7 +550,10 @@ export class ChatHub {
     const sid = session?.id ?? (socket as ChatSocket & { sessionId?: string }).sessionId;
     const s = sid ? this.d.access.sessions.get(sid) : undefined;
     const snap = s ? this.snapshot(s) : undefined;
-    if (snap) this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.reset', ...snap } satisfies ChatServerMessage));
+    if (snap) {
+      this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.reset', ...snap } satisfies ChatServerMessage));
+      this.batcher.markKnown(socket, snap.roster.map((r) => r.a));
+    }
   }
 
   // ---------------------------------------------------------------------------
@@ -647,19 +658,38 @@ export class ChatHub {
   }
 
   /** The snapshot a viewer gets in hello (undefined while the chat is off). Counted in the budget by the caller's send. */
-  snapshot(session: Session): ChatSnapshot | undefined {
+  snapshot(session: Session, opts: { after?: number } = {}): ChatSnapshot | undefined {
     return this.safe(() => {
       if (!this.eff.enabled) return undefined;
-      const n = this.eff.historyOnJoin;
-      const items: ChatItem[] = n > 0 ? this.ring.slice(-n).map((e) => e.item) : [];
+      // A burst of hellos (a tunnel drop reconnects everyone at once) must not blow the upload
+      // budget: while it is in debt, history shrinks to the last few items.
+      let n = this.eff.historyOnJoin;
+      if (this.batcher.inDebt()) n = Math.min(n, SNAPSHOT_IN_DEBT);
       const you = this.you(session);
-      return { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, roster: this.rosterFor(items, [you.a]), items, lastSeq: this.seq };
+      const base = { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, lastSeq: this.seq };
+      // Reconnect: the viewer already has everything up to `after`. Send only what came since, when
+      // the ring still holds it, nothing was deleted or cleared meanwhile, and it is not longer than
+      // a fresh snapshot would be.
+      const after = opts.after;
+      const oldest = this.ring[0]?.item.s ?? this.seq + 1;
+      if (after !== undefined && after > 0 && after <= this.seq && after + 1 >= oldest && this.modSeq < after) {
+        const items: ChatItem[] = this.ring.filter((e) => e.item.s > after).map((e) => e.item);
+        if (items.length <= Math.max(n, SNAPSHOT_IN_DEBT)) return { ...base, roster: this.rosterFor(items, [you.a]), items, delta: true as const };
+      }
+      const items: ChatItem[] = n > 0 ? this.ring.slice(-n).map((e) => e.item) : [];
+      return { ...base, roster: this.rosterFor(items, [you.a]), items };
     });
   }
 
-  /** Bytes of a snapshot sent outside the batcher (hello): counted against the budget. */
+  /** A hello carrying `snapshot` went to `socket` (`bytes` long): charged to the budget, roster noted. */
+  helloSent(socket: ChatSocket, snapshot: ChatSnapshot, bytes: number): void {
+    this.batcher.charge(bytes);
+    this.batcher.markKnown(socket, snapshot.roster.map((r) => r.a));
+  }
+
+  /** Bytes of a snapshot sent outside the batcher: charged to the budget. */
   accountSent(bytes: number): void {
-    this.batcher.account(bytes);
+    this.batcher.charge(bytes);
   }
 
   // ---------------------------------------------------------------------------
@@ -707,6 +737,7 @@ export class ChatHub {
       return true;
     });
     const removed = before - this.ring.length;
+    this.modSeq = this.seq;
     const item: ChatItem = { k: 'd', s: [...set] };
     this.batcher.push(item, true);
     this.toAdmin(item);
@@ -715,6 +746,7 @@ export class ChatHub {
   }
 
   clear(): void {
+    this.modSeq = this.seq;
     this.ring = [];
     this.ringBytes = 0;
     const item: ChatItem = { k: 'clr', s: this.seq };

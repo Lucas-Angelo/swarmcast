@@ -29,6 +29,8 @@ export interface MountOptions {
 
 export interface ChatController {
   hello(snapshot: ChatSnapshot | undefined): void;
+  /** Highest chat seq shown (sent as /control?chatAfter= on reconnect to get only the delta). */
+  lastSeq(): number;
   frame(msg: ChatServerMessage): void;
   connection(open: boolean): void;
 }
@@ -282,6 +284,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   return {
     hello: (snapshot) => chatSession.hello(snapshot),
+    lastSeq: () => chatSession.lastSeq,
     frame: (msg) => {
       if (msg.t === 'chat.batch' && prefs.hidden) {
         unseen += msg.items.filter((i) => i.k === 'm').length;

@@ -289,6 +289,141 @@ describe('ChatHub: moderation', () => {
 });
 
 describe('ChatHub: snapshots, resume, history', () => {
+  /** What a viewer's page would know: roster entries from its hello and every frame it got. */
+  function rosterSeen(sock: FakeSocket, helloRoster: Array<{ a: string }> = []): Set<string> {
+    const seen = new Set(helloRoster.map((r) => r.a));
+    for (const m of sock.messages()) {
+      if (m.t === 'chat.batch') for (const i of m.items) if (i.k === 'u') seen.add(i.au.a);
+      if (m.t === 'chat.reset') for (const r of m.roster) seen.add(r.a);
+    }
+    return seen;
+  }
+
+  it('a late joiner gets the roster entry of an author who spoke before it joined (after a clear)', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const x = join('Xavi');
+    send(x, 'first', 1);
+    hub.flush();
+    hub.clear();
+    hub.flush();
+    // B joins: its hello history is empty, so its roster does not list X.
+    const b = join('Bia');
+    const snap = hub.snapshot(b.s)!;
+    hub.helloSent(b.sock, snap, 100);
+    expect(snap.roster.map((r) => r.n)).not.toContain('Xavi');
+    advance(2100);
+    send(x, 'again', 2);
+    hub.flush();
+    const xKey = hub.moderation.bySessionId(x.s.id)!.a;
+    const msgs = b.sock.items().filter((i) => i.k === 'm');
+    expect(msgs.map((i) => i.k === 'm' && i.a)).toContain(xKey);
+    expect(rosterSeen(b.sock, snap.roster).has(xKey)).toBe(true);
+    // The streamer too, with the streamer role.
+    hub.sendAsStreamer({ text: 'hello all' });
+    hub.flush();
+    const streamer = b.sock.items().filter((i) => i.k === 'u').map((i) => (i.k === 'u' ? i.au : null)).find((au) => au?.r === 'streamer');
+    expect(streamer).toBeDefined();
+    // Sockets that already knew X got no extra roster frame.
+    const before = x.sock.sent.length;
+    advance(2100);
+    send(x, 'third', 3);
+    hub.flush();
+    expect(x.sock.sent.length - before).toBe(2); // the ack and the batch
+  });
+
+  it('the same holds after a reconnect that got only a delta', () => {
+    const { hub, join, send, advance, sockets } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const x = join('Xavi');
+    const b = join('Bia');
+    for (let i = 1; i <= 3; i++) {
+      advance(2100);
+      send(b, `b${i}`, i);
+    }
+    hub.flush();
+    // B reconnects having seen up to seq 3: a delta with no items, so a roster of just B.
+    const again = { s: b.s, sock: new FakeSocket(b.s.id) };
+    sockets.splice(sockets.indexOf(b.sock), 1, again.sock);
+    const delta = hub.snapshot(again.s, { after: 3 })!;
+    expect(delta.delta).toBe(true);
+    hub.helloSent(again.sock, delta, 80);
+    advance(2100);
+    send(x, 'hi from X', 1);
+    hub.flush();
+    const xKey = hub.moderation.bySessionId(x.s.id)!.a;
+    expect(rosterSeen(again.sock, delta.roster).has(xKey)).toBe(true);
+  });
+
+  it('reconnect: a viewer that already has items gets only the delta', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 8; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    const b = join('Bia');
+    const delta = hub.snapshot(b.s, { after: 5 })!;
+    expect(delta.delta).toBe(true);
+    expect(delta.items.map((i) => i.k === 'm' && i.s)).toEqual([6, 7, 8]);
+    expect(delta.lastSeq).toBe(8);
+    expect(delta.roster.map((r) => r.n).sort()).toEqual(['Ana', 'Bia']);
+    expect(hub.snapshot(b.s, { after: 8 })).toMatchObject({ delta: true, items: [] });
+    // From another live (seq beyond ours) or never connected: a full snapshot.
+    expect(hub.snapshot(b.s, { after: 99 })!.delta).toBeUndefined();
+    expect(hub.snapshot(b.s, {})!.items).toHaveLength(8);
+  });
+
+  it('reconnect: a delete or clear since the viewer last saw the chat forces a full snapshot', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 6; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    hub.delete([2]);
+    const snap = hub.snapshot(a.s, { after: 4 })!;
+    expect(snap.delta).toBeUndefined();
+    expect(snap.items.map((i) => i.k === 'm' && i.s)).toEqual([1, 3, 4, 5, 6]);
+    advance(2100);
+    send(a, 'later', 7);
+    expect(hub.snapshot(a.s, { after: 7 })!.delta).toBe(true);
+  });
+
+  it('reconnect: items evicted from the ring, or a gap longer than a fresh history, give a full snapshot', () => {
+    const { hub, join, send, advance, settings } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    settings.historyOnJoin = 5;
+    hub.refresh();
+    const a = join('Ana');
+    for (let i = 1; i <= 230; i++) {
+      advance(2100);
+      send(a, `m${i}`, i);
+    }
+    expect(hub.snapshot(a.s, { after: 3 })!.delta).toBeUndefined(); // evicted
+    const long = hub.snapshot(a.s, { after: 200 })!;
+    expect(long.delta).toBeUndefined(); // 30 new items > history 5 (and > 10)
+    expect(long.items).toHaveLength(5);
+    expect(hub.snapshot(a.s, { after: 225 })!.delta).toBe(true); // 5 new items
+  });
+
+  it('hello snapshots are charged to the budget; in debt, history shrinks to 10 items', () => {
+    const { hub, join, send, advance } = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const a = join('Ana');
+    for (let i = 1; i <= 60; i++) {
+      advance(2100);
+      send(a, `message number ${i}`, i);
+    }
+    const full = hub.snapshot(a.s)!;
+    expect(full.items).toHaveLength(50);
+    // A reconnect storm: 120 hellos within a second (5 % of 10 Mbps = 62.5 KB/s).
+    const bytes = JSON.stringify({ t: 'hello', chat: full }).length;
+    for (let i = 0; i < 120; i++) hub.accountSent(bytes);
+    const shrunk = hub.snapshot(a.s)!;
+    expect(shrunk.items).toHaveLength(10);
+    expect(shrunk.items.at(-1)).toEqual(full.items.at(-1));
+    // The budget refills: back to the full history.
+    advance(5 * 60_000);
+    expect(hub.snapshot(a.s)!.items).toHaveLength(50);
+  });
+
   it('hello snapshot: the last N items, my identity, roster for the authors shown', () => {
     const { hub, join, send, advance, settings } = setup({ slowModeS: 0, duplicateWindowS: 0 });
     settings.historyOnJoin = 3;
@@ -356,10 +491,10 @@ describe('ChatHub: limits and protection', () => {
   it('the global limit G comes from the upload budget and the audience', () => {
     const many = setup({}, 120).hub;
     const few = setup({}, 5).hub;
-    // 4 % of 10 Mbps = 400 kbps = 50,000 B/s; / (120 × 70 B) ≈ 6 msg/s; few viewers hit the cap 20.
-    expect(many.globalPerS()).toBeCloseTo(50_000 / (120 * 70), 5);
+    // 5 % of 10 Mbps = 500 kbps = 62,500 B/s; / (120 × 70 B) ≈ 7.4 msg/s; few viewers hit the cap 20.
+    expect(many.globalPerS()).toBeCloseTo(62_500 / (120 * 70), 5);
     expect(few.globalPerS()).toBe(20);
-    expect(many.budgetBps()).toBe(50_000);
+    expect(many.budgetBps()).toBe(62_500);
   });
 
   it('new-viewer wait and lockdown', () => {
