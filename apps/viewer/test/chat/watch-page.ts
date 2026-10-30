@@ -45,6 +45,30 @@ export async function warmFontFallback(page: Page, texts: readonly string[] = []
   if (browser) warmed.add(browser);
 }
 
+/**
+ * A screenshot for review (not a check), taken once the page looks finished: its fonts loaded,
+ * every image in view decoded (emotes load lazily), CSS transitions and the caret frozen. Waits on
+ * those conditions, never on a fixed delay.
+ */
+export async function reviewScreenshot(page: Page, options: { path?: string; fullPage?: boolean } = {}): Promise<Buffer> {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        [...document.images]
+          .filter((img) => {
+            const r = img.getBoundingClientRect();
+            return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
+          })
+          .every((img) => img.complete),
+      ),
+    )
+    .toBe(true);
+  return page.screenshot({ ...options, animations: 'disabled', caret: 'hide' });
+}
+
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
 export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; query?: string } = {}): Promise<string[]> {
   const browser = page.context().browser();
