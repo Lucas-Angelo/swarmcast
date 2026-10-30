@@ -19,7 +19,9 @@ export default defineConfig({
   outputDir: path.join(root, 'test-results', 'chat-ui'),
   use: { trace: 'retain-on-failure' },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, grepInvert: /@mobile/ },
+    // CI (the `ui` group of _e2e.yml) has Google Chrome from the runner image, not Playwright's
+    // Chromium, like the main suite's `chromium` project.
+    { name: 'chromium', use: { ...devices['Desktop Chrome'], ...(process.env.CI ? { channel: 'chrome' } : {}) }, grepInvert: /@mobile/ },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] }, grepInvert: /@mobile/ },
     { name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: /@mobile/ },
     { name: 'mobile-webkit', use: { ...devices['iPhone 14'] }, grep: /@mobile|screenshots/ },
