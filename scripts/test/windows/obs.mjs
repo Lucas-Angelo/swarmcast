@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Real OBS Studio on a Windows runner (best effort: no GPU, D3D11 must fall back to WARP).
+// Real OBS Studio on a Windows runner (no GPU: D3D11 falls back to WARP).
 // OBS 33.0.0 portable zip (pinned SHA-256), configured through files + obs-websocket exactly
 // like scripts/test/obs-e2e/setup-obs.mjs (Advanced output, x264 CBR 2500, keyframe 2 s,
 // Custom service rtmp://127.0.0.1:1935/live + key), a looping Media Source, streaming into

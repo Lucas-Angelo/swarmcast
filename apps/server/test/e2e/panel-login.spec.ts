@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from './fixtures.js';
+import { expect, loginPanel, test } from './fixtures.js';
 
 // Panel login through /auth/<token> (the cookie is SameSite=Strict). Chromium and WebKit
 // (WebKit is the desktop app's webview on macOS).
@@ -15,9 +15,7 @@ test.beforeEach(({ browserName }) => {
 });
 
 test('script mode: opening the login URL shows the panel, logged in', { tag: '@ui' }, async ({ page }) => {
-  const login = adminLoginUrl();
-  await page.goto(login);
-  await expect(page).toHaveURL(new URL('/', login).toString());
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('status')).toBeVisible();
 });
 

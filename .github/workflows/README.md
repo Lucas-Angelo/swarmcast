@@ -13,7 +13,7 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
 | `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Go, Rust, the workflows |
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates and flakes |
-| `linux-docker.yml` | weekly, pull requests touching the Docker suites | start script, package, AppImage and OBS on Ubuntu 22.04/24.04 and Debian 12, x64 and arm64 |
+| `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 
 Files starting with `_` are reusable workflows (`workflow_call`), the stages of the pipeline.
@@ -25,24 +25,27 @@ They have no trigger of their own.
 changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ──────────────┐
          ├─ build (web + windows pkgs) ─┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
-         └─ site (when the site changed) ─────────────────────────────────────────────┘
+         ├─ site (when the site changed) ─────────────────────────────────────────────┤
+         └─ docker (when the Docker suites or what they run changed) ─────────────────┘
 ```
 
 | Stage | File | Jobs | What |
 |---|---|---|---|
-| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts` |
+| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts`, `docker` |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64` |
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
 | e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two |
-| windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs (best effort) |
+| windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
+| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, plus the Windows suites' summary table |
 
-That is 27 jobs for a change to the app (7 on macOS), 28 when it also touches the site. GitHub
-Free runs 20 jobs at once, 5 of them on macOS.
+That is 27 jobs for a change to the app (7 on macOS), 28 when it also touches the site, 12 more
+when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once, 5 of them
+on macOS.
 
 **Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` six times (two
 Windows packages, one per macOS and Linux target) and `tauri build` ten times (A and the real
@@ -65,6 +68,10 @@ made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the 
   these workflow files.
 - `scripts` is `scripts/` (not `scripts/ci` or `scripts/test/docker`), the actions and the
   node workflow (where those tests run): the install-script tests run only then, as before.
+- `docker` is `scripts/test/docker/`, the Linux start and uninstall scripts, `_docker.yml`,
+  `linux-docker.yml` and `pipeline.yml`, the e2e specs and server (`apps/server/test/e2e/`) and
+  `playwright.config.ts`. A Docker suite that fails then fails `ci-ok`, so it cannot turn `main`
+  red after the merge.
 - Monthly, by hand and on a release, everything runs. When git cannot tell (a new branch, a force
   push), everything runs too.
 
