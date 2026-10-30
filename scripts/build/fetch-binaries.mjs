@@ -132,8 +132,8 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
     } catch (err) {
       failed = got.bytes > before ? 0 : failed + 1;
       const where = `${url}, try ${attempt}, ${failed} of ${TRIES} in a row without progress`;
-      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`);
-      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`);
+      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`, { cause: err });
+      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`, { cause: err });
       const wait = waitMs(Math.max(1, failed));
       const kept = got.bytes ? `, ${got.bytes} bytes kept` : '';
       console.warn(`  try ${attempt} failed (${why(err)}${kept}; ${failed} of ${TRIES} in a row without progress); again in ${wait / 1000} s`);
@@ -174,7 +174,7 @@ export async function downloadFirst(urls, dest, sha256, opts) {
     } catch (err) {
       if (err.checksum || i === urls.length - 1) {
         if (errors.length === 0) throw err;
-        throw new Error([...errors, err.message].join('; then '));
+        throw new Error([...errors, err.message].join('; then '), { cause: err });
       }
       errors.push(err.message);
       console.warn(`  ${err.message}; trying the next source`);
