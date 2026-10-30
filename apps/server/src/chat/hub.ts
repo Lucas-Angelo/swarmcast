@@ -596,6 +596,12 @@ export class ChatHub {
   private rosterFor(items: readonly ChatItem[], extra: string[] = []): ChatAuthor[] {
     const keys = new Set(extra);
     for (const i of items) if (i.k === 'm') keys.add(i.a);
+    // A snapshot for one viewer (it names them in `extra`): also everyone already announced who
+    // is still here. An author's roster entry goes out once per live, so a viewer whose history
+    // does not hold that author's lines (after a clear, or beyond historyOnJoin) would otherwise
+    // get their next messages with no name, colour or Streamer badge. Bounded by the people in
+    // the live (members are forgotten when their session ends).
+    if (extra.length > 0) for (const a of this.announced) if (this.moderation.byAuthor(a)) keys.add(a);
     const out: ChatAuthor[] = [];
     for (const a of keys) {
       const au = this.moderation.authorOf(a);
