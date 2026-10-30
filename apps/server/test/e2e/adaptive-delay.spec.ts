@@ -12,7 +12,9 @@
 // Good network (Chromium and WebKit; Chromium emulates a good home connection, 30 Mbps and 20
 // ms): the delay drifts below 15 s with a gentle catch-up (at most the profile's limit) and no
 // stalls; "~N s behind live" shows next to the status with its tooltip, refreshed once a second;
-// the panel's viewers table gets each viewer's delay; "Go live" jumps to the adaptive live
+// the panel's viewers table gets each viewer's delay; the target starts at the Stable profile's
+// starting target or above it (a stall while the player starts, which the stall budget below
+// allows, raises it before the first sample); "Go live" jumps to the adaptive live
 // position and keeps playing. Every sample of the controller is kept (attached to the result),
 // so a failure shows how it classified the network. The drift is the controller's "firm"
 // verdict: only "firm" lowers the target, and the network never looked unstable. The state of
@@ -28,6 +30,7 @@
 // a little; once it calls the network unstable it never speeds up, except above the upper bound,
 // where it does catch up to stay inside the playlist window.
 import type { CDPSession, Page } from '@playwright/test';
+import { ADAPTIVE_DELAY } from '@swarmcast/shared';
 import { expect, measuredWindow, playsOn, test, uid, unmute, viewerByNick, waitForPlaylist, waitPlaying, type Audience, type Viewer } from './fixtures.js';
 
 const FAST = '/watch?delaySpeed=10&delayRate=10';
@@ -97,7 +100,7 @@ test('on a good network the delay drifts below 15 s, the status line shows it, a
   const since = Date.now();
 
   // Assert
-  expect(start.target).toBe(20);
+  expect(start.target).toBeGreaterThanOrEqual(ADAPTIVE_DELAY.stable.initial);
   await expect(label).toHaveText(/^~\d+ s behind live$/);
   await expect(page.locator('#delay-wrap .tip-btn')).toHaveCount(1);
   await expect(page.locator('#tip-delay')).toContainText('adjusts itself to your connection');

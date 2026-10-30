@@ -6,10 +6,14 @@
 // goes on. B9: the stall watchdog's last resort (and the player's answer to vanished playlists)
 // loads the source again, and hls.js starts that on automatic quality; the viewer's pick
 // survives, because the menu puts it back when the playlists are parsed (from the remembered
-// height). Lower delay, then back to Stable: playback never stops, and the choice is kept.
+// height). Lower delay, then back to Stable: playback never stops, and the choice is kept. A
+// profile switch sets the profile's bounds and starting target, but the stall memory survives it
+// (the network did not change), so a stall on a busy runner may already have raised the target
+// inside those bounds: the check is the bounds in force and hls.js playing at a target no higher
+// than their top (the growth limit may hold it under their floor), not one exact value.
 // The server goes back to one quality and the default feed at the next test's gate.
 import type { Page } from '@playwright/test';
-import type { QualityState } from '@swarmcast/shared';
+import { ADAPTIVE_DELAY, type QualityState } from '@swarmcast/shared';
 import { adminApi, expect, ladderUpdate, playsOn, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
 
 test.skip(({ browserName }) => browserName !== 'chromium', 'checked on Chromium');
@@ -23,6 +27,19 @@ function playing360(page: Page): Promise<unknown> {
     return h.levels[h.currentLevel]?.height === 360 && !h.autoLevelEnabled;
   }, null, { timeout: 30_000 });
 }
+
+type DelayState = { initial: number; withinTop: boolean };
+
+/** The profile whose bounds the delay controller applies now (by its starting target), and whether hls.js plays at a target no higher than their top. */
+function delayProfile(page: Page): Promise<DelayState> {
+  return page.evaluate(() => {
+    const w = window as unknown as { __hls: Hls; __swarmcast: { delay: { bounds: { initial: number; max: number } } } };
+    const { initial, max } = w.__swarmcast.delay.bounds;
+    return { initial, withinTop: w.__hls.targetLatency <= max };
+  });
+}
+
+const profileStart = (id: keyof typeof ADAPTIVE_DELAY): DelayState => ({ initial: ADAPTIVE_DELAY[id].initial, withinTop: true });
 
 /** Loads the source again, as the stall watchdog's last resort does; resolves once the playlists are parsed. */
 function reloadSource(page: Page): Promise<void> {
@@ -75,13 +92,15 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   await page.check('.latency-toggle input[value="low-delay"]');
 
   // Assert
-  await expect.poll(() => page.evaluate(() => (window as unknown as { __hls: Hls }).__hls.targetLatency)).toBe(8);
+  await expect.poll(() => delayProfile(page)).toEqual(profileStart('low-delay'));
   await playsOn(page, 2);
+  expect(await page.evaluate(() => localStorage.getItem('sc.playback-profile'))).toBe('low-delay');
 
   // Act
   await page.check('.latency-toggle input[value="stable"]');
 
   // Assert
+  await expect.poll(() => delayProfile(page)).toEqual(profileStart('stable'));
   await playsOn(page, 1);
   expect(await page.evaluate(() => localStorage.getItem('sc.playback-profile'))).toBe('stable');
   await expect(page.locator('#status')).toHaveText('Live');
