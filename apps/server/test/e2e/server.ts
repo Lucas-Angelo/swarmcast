@@ -126,6 +126,7 @@ const initial = {
   quality: structuredClone(app.config.quality),
   diagnostics: structuredClone(app.diagnostics.settings()),
   windowSeconds: app.live.origin.windowSeconds,
+  chat: structuredClone(app.live.chatSettings()),
 };
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 const shield = app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void; detector: { state: string } };
@@ -183,6 +184,15 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
   if (L.origin.windowSeconds !== initial.windowSeconds) {
     L.origin.windowSeconds = initial.windowSeconds;
     did.push('playlist window');
+  }
+  // The chat: its settings, and the flood protection a chat test may have switched on.
+  if (!same(L.chatSettings(), initial.chat)) {
+    L.updateChatSettings(structuredClone(initial.chat));
+    did.push('chat settings');
+  }
+  if (L.chat.protection !== 'off') {
+    L.chat.setProtect('off');
+    did.push('chat protection off');
   }
   let obs = !!o.hard;
   if (!same(app.config.quality, initial.quality)) {
