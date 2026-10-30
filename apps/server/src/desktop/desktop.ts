@@ -25,6 +25,8 @@ export function startDesktop(
 ): DesktopHandle {
   const { live, log } = app;
   out.send({ type: 'ready', adminUrl: app.adminLoginUrl, version: appVersion() });
+  // Before the shell's first update check (10 s after it starts).
+  bridge.sendUpdateChannel();
   // Tests only (scripts/test/desktop/verify.mjs): the panel login URL otherwise reaches only the
   // shell. The variable is set by whoever starts the app, i.e. the same user; owner-only file.
   const loginFile = process.env.SWARMCAST_TEST_LOGIN_FILE;

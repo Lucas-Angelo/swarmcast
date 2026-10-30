@@ -60,7 +60,7 @@ if [ "$diff_ok" = true ]; then
   #   scripts/test/docker: the docker output below), CodeQL, the usage numbers, Dependabot,
   #   issue forms, release notes.
   not_app='^(docs/|site/)|\.md$|^\.github/(workflows/(soak|linux-docker|_docker|codeql|stats)\.yml|soak-plan\.json|dependabot\.yml|release\.yml|ISSUE_TEMPLATE/)|^scripts/(ci|test/docker)/'
-  site_re='^(site/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
+  site_re='^(site/|scripts/releases/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
   scripts_re='^(scripts/|\.github/actions/|\.github/workflows/(_node|pipeline)\.yml)'
   docker_re='^(scripts/test/docker/|scripts/(start|uninstall)-linux\.sh$|\.github/workflows/(_docker|linux-docker|pipeline)\.yml$|apps/server/test/e2e/|playwright\.config\.ts$)'
   has() { grep -qE "$1" <<<"$files" && echo true || echo false; }

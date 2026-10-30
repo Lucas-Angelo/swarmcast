@@ -16,7 +16,9 @@
 // 2. Update: installs build A (macOS: from its .app.tar.gz, Linux: the AppImage), serves build
 //    B and its latest.json on 127.0.0.1, starts A, clicks "Update now" through the panel API
 //    right after the login and expects B to come back by itself with config.json and
-//    secrets.json unchanged. macOS and Linux then do it again with "Update now" sent the moment
+//    secrets.json unchanged. That first round also tests the update channels: B is only on the
+//    beta feed, so with "Get beta versions" off A finds nothing, and turning it on (panel API)
+//    offers B at once. macOS and Linux then do it again with "Update now" sent the moment
 //    the server is ready, while the window is still on the splash or opening the panel (that
 //    crashed the macOS shell: wry panicked in WebviewWindow::url()).
 //
@@ -27,6 +29,7 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { debianVersion, isPrerelease } from '../../releases/semver.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const args = process.argv.slice(2);
@@ -121,6 +124,8 @@ async function nothingLeft(what) {
 // ---------------------------------------------------------------- the app and its panel
 
 let child = null;
+/** Where this start of the app begins in app-output.log (the file collects every start). */
+let childLogStart = 0;
 let debPackage = '';
 /** The variables every app start in this test gets (and the updated app inherits). */
 const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1' });
@@ -129,6 +134,7 @@ const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMP
 function spawnApp(exe, env = {}, argv = []) {
   fs.rmSync(loginFile, { force: true });
   const out = fs.openSync(path.join(work, 'app-output.log'), 'a');
+  childLogStart = fs.fstatSync(out).size;
   child = spawn(exe, argv, { stdio: ['ignore', out, out], env: { ...process.env, ...testEnv(), ...env } });
   child.on('error', (err) => console.log(`spawn error: ${err.message}`));
 }
@@ -202,11 +208,67 @@ async function checkAutostart(panel) {
   step('turning it off removes the entry', off.autostart?.enabled === false && !autostartPresent(), JSON.stringify(off.autostart));
 }
 
+/** How the app ended (`null` while it runs). */
+function childExit() {
+  if (child.exitCode === null && child.signalCode === null) return null;
+  return child.signalCode ? `signal ${child.signalCode}` : `exit code ${child.exitCode}`;
+}
+
+/** What a crashing app leaves in its output (macOS / Rust / glibc). */
+const CRASH_MARKERS = /uncaught exception|libc\+\+abi: terminating|panicked at|fatal runtime error|Segmentation fault|Abort trap|EXC_BAD_ACCESS/;
+
+/** What this start of the app wrote to app-output.log (one descriptor: no check-then-read). */
+function appOutputSinceStart() {
+  let fd;
+  try {
+    fd = fs.openSync(path.join(work, 'app-output.log'), 'r');
+  } catch (err) {
+    if (err.code === 'ENOENT') return '';
+    throw err;
+  }
+  try {
+    const length = Math.max(0, fs.fstatSync(fd).size - childLogStart);
+    const buf = Buffer.alloc(length);
+    let read = 0;
+    while (read < length) {
+      const n = fs.readSync(fd, buf, read, length - read, childLogStart + read);
+      if (n === 0) break;
+      read += n;
+    }
+    return buf.subarray(0, read).toString('utf8');
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Called when the app is already gone before this test killed it. That is fine only if it
+ * demonstrably did not crash (exit code 0, nothing crash-like in its output); otherwise the
+ * test fails here, and the caller prints app-output.log.
+ */
+async function checkGoneBeforeKill() {
+  await until(() => childExit() !== null, 10_000, 'the exit status of the app').catch(() => {});
+  const output = appOutputSinceStart();
+  const crash = output.match(CRASH_MARKERS);
+  if (child.exitCode !== 0 || child.signalCode !== null || crash) {
+    throw new Error(`the app crashed before the test killed it (${childExit() ?? 'exit status unknown'}${crash ? `, output: "${crash[0]}"` : ''}): see app-output.log below`);
+  }
+  console.log('note: the app had already exited cleanly (exit code 0, no crash in its output) before the kill');
+}
+
 /** Killing the app (no clean quit) must take its server and tools down too. */
 async function killApp(what) {
   const pid = child.pid;
-  if (OS === 'windows') run('taskkill', ['/F', '/PID', String(pid)], { allowFail: true });
-  else process.kill(pid, 'SIGKILL');
+  if (childExit() !== null) await checkGoneBeforeKill();
+  else if (OS === 'windows') run('taskkill', ['/F', '/PID', String(pid)], { allowFail: true });
+  else {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (err) {
+      if (err.code !== 'ESRCH') throw err;
+      await checkGoneBeforeKill();
+    }
+  }
   await nothingLeft(what);
 }
 
@@ -250,6 +312,14 @@ async function install(dir) {
   }
   const deb = file(dir, /\.deb$/);
   debPackage = spawnSync('dpkg-deb', ['--field', deb, 'Package'], { encoding: 'utf8' }).stdout.trim();
+  // A pre-release must sort below its stable version for dpkg (0.3.0~beta.1 < 0.3.0).
+  const debVersion = spawnSync('dpkg-deb', ['--field', deb, 'Version'], { encoding: 'utf8' }).stdout.trim();
+  const v = versionIn(dir);
+  step(`the .deb's Version is ${debianVersion(v)}`, debVersion === debianVersion(v), debVersion);
+  if (isPrerelease(v)) {
+    const stable = v.replace(/-.*$/, '');
+    step(`dpkg sorts ${debVersion} below ${stable}`, spawnSync('dpkg', ['--compare-versions', debVersion, 'lt', stable]).status === 0);
+  }
   // No time limit: apt resolving the .deb's dependencies is part of the test, and a slow mirror
   // is not a failure (the workflow downloads them beforehand; the job timeout is the backstop).
   // The workflow downloads them with apt-retry.sh into $APT_DEBS (the .deb cache).
@@ -374,7 +444,30 @@ function userEnvironment(vars) {
  * right after the panel login, like a streamer clicking at once. No delay either way: the shell
  * must cope (it used to crash on macOS).
  */
-async function updateRound(dirA, manifest, env, atReady) {
+/** Feed requests seen by the local update server (file names). */
+const feedRequests = [];
+
+/**
+ * The update channels against the real shell: the stable feed (SWARMCAST_UPDATE_URL) answers
+ * 404 and B is only on the beta feed (SWARMCAST_BETA_UPDATE_URL). On stable, A's first check
+ * (10 s after start) reads only the stable feed and finds nothing; "Get beta versions" on makes
+ * the shell check both feeds right away and offer B.
+ */
+async function channelChecks(panel, manifest) {
+  let info = await api(panel, 'GET', '/api/desktop');
+  step('the update channel is the saved choice (stable)', info.updateChannel?.choice === 'stable' && info.updateChannel?.effective === 'stable', JSON.stringify(info.updateChannel));
+  await until(async () => (await api(panel, 'GET', '/api/desktop')).update?.status === 'none', 90_000, 'the first automatic check on the stable channel');
+  step('stable channel: no update (the beta feed is not read)', feedRequests.includes('stable.json') && !feedRequests.includes('beta.json'), feedRequests.join(', '));
+  info = await api(panel, 'PUT', '/api/desktop/update/channel', { channel: 'beta' });
+  step('"Get beta versions" on: saved, the shell checks again', info.updateChannel?.effective === 'beta', JSON.stringify(info.updateChannel));
+  info = await until(async () => {
+    const d = await api(panel, 'GET', '/api/desktop');
+    return d.update?.status === 'available' ? d : null;
+  }, 90_000, 'the update offered on the beta channel');
+  step(`beta channel: ${manifest.version} offered from the beta feed`, info.update.version === manifest.version && feedRequests.includes('beta.json'), `${info.update.version}; ${feedRequests.join(', ')}`);
+}
+
+async function updateRound(dirA, manifest, env, atReady, channels = false) {
   const what = atReady ? 'the moment the server is ready (window on the splash)' : 'right after the panel login';
   console.log(`\n=== update to ${manifest.version}: "Update now" ${what}`);
   const exe = await installUpdateFrom(dirA);
@@ -397,8 +490,14 @@ async function updateRound(dirA, manifest, env, atReady) {
     await api(panel, 'POST', '/api/desktop/update/install');
     console.log(`"Update now" sent ${Date.now() - seen} ms after the login URL appeared`);
   } else {
+    if (channels) {
+      // "Get beta versions" off (stable) before A's first start; B is only on the beta feed.
+      fs.mkdirSync(dataDir, { recursive: true });
+      fs.writeFileSync(config, `${JSON.stringify({ updates: { channel: 'stable' } })}\n`);
+    }
     panel = await launch(exe, env);
     await until(() => fs.existsSync(config) && fs.existsSync(secrets), 30_000, 'config.json and secrets.json');
+    if (channels) await channelChecks(panel, manifest);
     before = [read(config), read(secrets)];
     logFrom = read(log).length;
     fs.rmSync(loginFile, { force: true });
@@ -428,17 +527,22 @@ async function updateTest(dirA, dirB, port) {
   console.log(`\n=== update to ${manifest.version} (${OS})`);
   const server = http.createServer((req, res) => {
     const name = path.basename(decodeURIComponent(new URL(req.url, 'http://x').pathname.slice(1)));
-    const f = path.join(dirB, name);
+    if (name.endsWith('.json')) feedRequests.push(name);
+    // The channel round: beta.json is B's manifest, stable.json (no such file) a feed without B.
+    const f = path.join(dirB, name === 'beta.json' ? 'latest.json' : name);
     console.log(`update server: GET /${name.replace(/[\r\n]/g, "")}`);
     if (!name || !fs.existsSync(f) || !fs.statSync(f).isFile()) return res.writeHead(404).end();
     res.writeHead(200, { 'content-length': fs.statSync(f).size });
     fs.createReadStream(f).pipe(res);
   });
   await new Promise((r) => server.listen(port, '127.0.0.1', r));
-  const env = { SWARMCAST_UPDATE_URL: `http://127.0.0.1:${port}/latest.json` };
-  const restoreUserEnv = userEnvironment({ ...testEnv(), ...env });
+  const base = `http://127.0.0.1:${port}`;
+  // First round: the two channel feeds. Second round: SWARMCAST_UPDATE_URL alone (one feed).
+  const channelEnv = { SWARMCAST_UPDATE_URL: `${base}/stable.json`, SWARMCAST_BETA_UPDATE_URL: `${base}/beta.json` };
+  const env = { SWARMCAST_UPDATE_URL: `${base}/latest.json` };
+  const restoreUserEnv = userEnvironment({ ...testEnv(), ...channelEnv });
   try {
-    let exe = await updateRound(dirA, manifest, env, false);
+    let exe = await updateRound(dirA, manifest, channelEnv, false, true);
     // Windows: reinstalling A over B is a downgrade the NSIS installer handles differently; the
     // early click is a macOS/Linux shell bug (wry), so it runs there.
     if (OS !== 'windows') exe = await updateRound(dirA, manifest, env, true);

@@ -1030,7 +1030,15 @@ export const ptBR: Messages = {
   'desktop.version': 'Versão do app {version}',
   'desktop.version.tip': 'A versão do app do SwarmCast neste computador. As atualizações mantêm as suas configurações, a chave de transmissão e o acesso dos espectadores.',
   'desktop.check': 'Procurar atualizações',
-  'desktop.check.tip': 'Procura na internet uma versão estável mais nova do SwarmCast. Nada é instalado sem o seu OK. O SwarmCast também procura sozinho a cada poucas horas.',
+  'desktop.check.tip':
+    'Procura na internet uma versão mais nova do SwarmCast (versões estáveis e, se você recebe, versões beta). Nada é instalado sem o seu OK. O SwarmCast também procura sozinho a cada poucas horas.',
+  'desktop.beta': 'Receber versões beta',
+  'desktop.beta.tip':
+    'Experimente a próxima versão antes de todo mundo. Ela pode ter defeitos. Suas configurações são mantidas. Dá para desligar quando quiser; você fica na beta até sair uma versão estável mais nova.',
+  'desktop.beta.on': 'Você recebe versões beta: versões antecipadas da próxima atualização, que podem ter defeitos.',
+  'desktop.beta.feedback': 'Conte o que você encontrou',
+  'desktop.betaBadge': 'Beta',
+  'desktop.betaBadge.tip': 'Esta é uma versão beta: uma versão antecipada da próxima atualização.',
   'desktop.checking': 'Procurando atualizações…',
   'desktop.upToDate': 'Você já está com a versão mais recente.',
   'desktop.update.available': 'O SwarmCast {version} está disponível',

@@ -94,6 +94,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 | `{"type":"fatal","code":"…","message":"…"}` | Startup failed, then exits 1. `code`: `already-running` (another SwarmCast answers on the panel port, e.g. started from a terminal), `ports-busy` (the RTMP port, or all 20 panel ports, used by another program), `startup-failed` (anything else, e.g. a broken `config.json`). `message` is English. |
 | `{"type":"update-check"}` | Panel button "Check for updates". |
 | `{"type":"update-install"}` | Panel button "Update now". |
+| `{"type":"update-channel","channel":"stable\|beta\|null"}` | Right after `ready`, and when the panel's "Get beta versions" changes. `null` = automatic (beta when the app is a pre-release). See "Updates". |
 | `{"type":"export-logs","ok":true,"path":"…/Downloads/SwarmCast-logs-0.2.0-20261026-1430.zip"}` | Answer to the shell's `export-logs` once the ZIP is written (`ok:false` + English `error` when it failed). The shell reveals `path` in Explorer / Finder / the file manager. |
 
 **Shell → server** (stdin):
@@ -185,11 +186,14 @@ source of truth (read back on every request):
 Panel API (admin auth like the other routes):
 
 - `GET /api/desktop` → `{ desktop: true, version, serverVersion, autostart: { supported, enabled, stale?, error? },
-  update, updateChecking, systemCheck }`, or `{ desktop: false }` in script mode (the panel then hides
+  update, updateChecking, updateChannel: { choice, effective }, systemCheck }`, or `{ desktop: false }` in script mode (the panel then hides
   everything desktop-related). `version` is `SWARMCAST_DESKTOP_VERSION` (else the server's), `update` the
   last `update` message from the shell (or null), `updateChecking` is true from "Check for updates" until
   the shell answers (at most 60 s), `systemCheck` is `idle | running | done | failed` (first start).
 - `PUT /api/desktop/autostart {enabled}` → same object; writes or removes the entry and reads it back.
+- `PUT /api/desktop/update/channel {channel: "stable" | "beta"}` → same object; saves `updates.channel`
+  in `config.json` and sends `update-channel` to the shell (`updateChecking` until it answers when the
+  channel in use changed).
 - `POST /api/desktop/update/check` / `POST /api/desktop/update/install` → same object; send
   `update-check` / `update-install` to the shell. The panel asks for confirmation first when the live is on.
 - The same object is pushed on the panel WebSocket as `{ "type": "desktop", … }` whenever it changes.
@@ -202,10 +206,34 @@ when the app was started by that agent, bootout would kill it).
 - Tauri updater plugin, Ed25519 (minisign) signatures. Public key in `tauri.conf.json`; the private key
   is a GitHub Actions secret (`TAURI_SIGNING_PRIVATE_KEY`, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`), never
   committed. A download whose signature does not match is refused.
-- Endpoint: `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json`
-  (`/latest` never returns pre-releases, so only stable versions are offered). Tests override it with
-  `SWARMCAST_UPDATE_URL`. It is the main repository's latest release: until a release ships
-  `latest.json` (v0.1.0 has no desktop artifacts) it answers 404 and the app just says it is up to date.
+- Stable feed: `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json`
+  (`/latest` never returns pre-releases, so only stable versions are offered). It is the main
+  repository's latest release: until a release ships `latest.json` it answers 404 and the app just says
+  it is up to date.
+- **Channels** (0.3.0). `stable` reads only the stable feed. `beta` (panel: **Get beta versions**, off by
+  default) reads the stable feed and the beta feed
+  `https://lucas-angelo.github.io/swarmcast/updates/beta.json` at the same time and offers the higher
+  version. The beta feed is built with the website (`scripts/releases/beta-manifest.mjs`, `_site.yml`): a
+  byte copy of the `latest.json` of the highest release, pre-release (`X.Y.Z-beta.N`, `X.Y.Z-rc.N`) or
+  stable, so it moves to 0.3.0 once 0.3.0 is newer than every beta. Reading both feeds means a stale or
+  broken beta feed never keeps beta users behind stable; one feed failing is logged and skipped.
+  - The channel is the streamer's choice (`updates.channel` in `config.json`, sent as `update-channel`),
+    otherwise `beta` when the running version is a pre-release (someone who installed 0.3.0-beta.1 by
+    hand follows the betas) and `stable` otherwise.
+  - Never a downgrade: the plugin's default comparator (`version > current`, SemVer, so
+    `0.3.0-beta.2 < 0.3.0-rc.1 < 0.3.0`) is kept. Turning beta off keeps the beta installed until a
+    stable version is higher; config migrations are one-way.
+  - A change of the channel in use forgets the update found on the other channel and checks again at
+    once, without a native dialog (the panel shows the result).
+  - The packages stay on the versioned release URLs and are verified with the same key and
+    `requireSignedVersion`.
+  - Tests: `SWARMCAST_UPDATE_URL` alone overrides everything (the only feed, whatever the channel);
+    with `SWARMCAST_BETA_UPDATE_URL` too, it is the stable feed and that one the beta feed.
+- Pre-release `.deb`: Tauri writes `0.3.0-beta.1` into it, which dpkg reads as version 0.3.0 with
+  Debian revision `beta.1` and sorts **above** 0.3.0 (apt refuses the stable update as a downgrade).
+  `desktop.mjs` rewrites the Version field to `0.3.0~beta.1` and signs the `.deb` again
+  (`scripts/build/deb-version.mjs`). macOS keeps the SemVer string in `CFBundleShortVersionString`;
+  NSIS compares installed versions as SemVer.
 - When: 10 s after start, then every 6 h, plus tray / panel "Check for updates". Automatic checks are
   silent when there is nothing new or the check fails (offline); a manual check says "You have the latest
   version" or shows the error. 404 (no release with `latest.json` yet) and a manifest without this

@@ -7,24 +7,34 @@
 //! Platforms: Windows NSIS (passive installer, relaunches the app), macOS (replaces the .app),
 //! Linux AppImage (replaces the file) and .deb (`dpkg -i` through pkexec / a graphical sudo
 //! prompt; tauri-plugin-updater ≥ 2.10 supports it).
+//!
+//! Channels: `stable` reads only the stable feed (the latest GitHub release, never a
+//! pre-release). `beta` (the panel's "Get beta versions") reads the stable feed AND the beta feed
+//! and offers the higher version, so a stale or broken beta feed never keeps beta users behind
+//! stable. Both keep the plugin's default comparator (`version > current`): nothing is ever
+//! downgraded, so switching back to stable keeps the beta until a stable version is higher.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use tauri::AppHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind, MessageDialogResult};
 use tauri_plugin_updater::{Error as UpdaterError, Update, UpdaterExt};
 use url::Url;
 
 use crate::i18n::{t, tr};
 use crate::logs;
-use crate::protocol::{UpdateInfo, UpdateStatus};
+use crate::protocol::{Channel, UpdateInfo, UpdateStatus};
 use crate::shell::{Mode, Shell, Splash};
 
-/// Where the app looks for updates: the latest release of the main repository.
-/// `/releases/latest/` never points at a pre-release, so only stable versions are offered.
-/// It answers 404 until a release ships `latest.json`; that counts as "up to date".
+/// The stable feed: the latest release of the main repository. `/releases/latest/` never points
+/// at a pre-release, so only stable versions are offered there. It answers 404 until a release
+/// ships `latest.json`; that counts as "up to date".
 pub const UPDATE_ENDPOINT: &str = "https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json";
+/// The beta feed, built with the website (scripts/releases/beta-manifest.mjs): a copy of the
+/// `latest.json` of the highest release, pre-release or stable.
+pub const BETA_ENDPOINT: &str = "https://lucas-angelo.github.io/swarmcast/updates/beta.json";
 
 const FIRST_CHECK: Duration = Duration::from_secs(10);
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
@@ -39,17 +49,77 @@ static BUSY: AtomicBool = AtomicBool::new(false);
 static PENDING: Mutex<Option<Update>> = Mutex::new(None);
 /// Version already offered by an automatic check (not offered again every 6 h).
 static PROMPTED: Mutex<Option<String>> = Mutex::new(None);
+/// The streamer's choice from the panel (`update-channel`); `None` = automatic.
+static CHOICE: Mutex<Option<Option<Channel>>> = Mutex::new(None);
 
-/// The endpoint, or `SWARMCAST_UPDATE_URL` (tests). Plain http only in builds with the
-/// `insecure-updates` feature (local update tests); the package signature is checked anyway.
-pub fn endpoint() -> Result<Url, String> {
-    let raw = std::env::var("SWARMCAST_UPDATE_URL").ok().filter(|v| !v.trim().is_empty());
-    let url = Url::parse(raw.as_deref().unwrap_or(UPDATE_ENDPOINT)).map_err(|e| format!("invalid update URL: {e}"))?;
-    match url.scheme() {
-        "https" => Ok(url),
-        "http" if cfg!(feature = "insecure-updates") => Ok(url),
-        other => Err(format!("update URL must use https (got {other})")),
+/// The channel in use: the streamer's choice, otherwise `beta` when this version is a
+/// pre-release (someone who installed 0.3.0-beta.1 by hand follows the betas, and is back on
+/// stable by themselves once 0.3.0 is installed), otherwise `stable`.
+pub fn resolve(choice: Option<Channel>, current: &str) -> Channel {
+    choice.unwrap_or_else(|| match semver::Version::parse(current) {
+        Ok(v) if !v.pre.is_empty() => Channel::Beta,
+        _ => Channel::Stable,
+    })
+}
+
+fn channel(shell: &Shell) -> Channel {
+    resolve(CHOICE.lock().unwrap().flatten(), shell.version())
+}
+
+fn channel_name(channel: Channel) -> &'static str {
+    match channel {
+        Channel::Stable => "stable",
+        Channel::Beta => "beta",
     }
+}
+
+/// The feeds a channel reads, from the test overrides when set (`SWARMCAST_UPDATE_URL`,
+/// `SWARMCAST_BETA_UPDATE_URL`). `SWARMCAST_UPDATE_URL` alone overrides everything: it is the
+/// only feed, whatever the channel (the update tests).
+pub fn feeds(channel: Channel, update_url: Option<&str>, beta_url: Option<&str>) -> Vec<String> {
+    let stable = update_url.unwrap_or(UPDATE_ENDPOINT).to_string();
+    match (channel, update_url, beta_url) {
+        (Channel::Stable, _, _) | (Channel::Beta, Some(_), None) => vec![stable],
+        (Channel::Beta, _, beta) => vec![stable, beta.unwrap_or(BETA_ENDPOINT).to_string()],
+    }
+}
+
+/// The feed URLs of `channel`. Plain http only in builds with the `insecure-updates` feature
+/// (local update tests); the package signature is checked anyway.
+pub fn endpoints(channel: Channel) -> Result<Vec<Url>, String> {
+    let var = |name: &str| std::env::var(name).ok().filter(|v| !v.trim().is_empty());
+    let (update_url, beta_url) = (var("SWARMCAST_UPDATE_URL"), var("SWARMCAST_BETA_UPDATE_URL"));
+    feeds(channel, update_url.as_deref(), beta_url.as_deref())
+        .iter()
+        .map(|raw| {
+            let url = Url::parse(raw).map_err(|e| format!("invalid update URL: {e}"))?;
+            match url.scheme() {
+                "https" => Ok(url),
+                "http" if cfg!(feature = "insecure-updates") => Ok(url),
+                other => Err(format!("update URL must use https (got {other})")),
+            }
+        })
+        .collect()
+}
+
+/// Index of the highest version (SemVer); the first one wins a tie. Unparsable versions lose.
+pub fn newest<'a>(versions: impl IntoIterator<Item = &'a str>) -> Option<usize> {
+    let mut best: Option<(usize, Option<semver::Version>)> = None;
+    for (i, v) in versions.into_iter().enumerate() {
+        let parsed = semver::Version::parse(v).ok();
+        let better = match &best {
+            None => true,
+            Some((_, b)) => match (&parsed, b) {
+                (Some(p), Some(b)) => p > b,
+                (Some(_), None) => true,
+                _ => false,
+            },
+        };
+        if better {
+            best = Some((i, parsed));
+        }
+    }
+    best.map(|(i, _)| i)
 }
 
 struct Busy;
@@ -66,12 +136,23 @@ impl Drop for Busy {
     }
 }
 
+/// Why a check runs: what it shows besides the panel's status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Trigger {
+    /// 10 s after start and every 6 h: a dialog for a version not offered yet.
+    Scheduled,
+    /// Tray or panel "Check for updates": a dialog in every case.
+    Manual,
+    /// The streamer changed the channel in the panel: the panel shows the result, no dialog.
+    ChannelChanged,
+}
+
 /// First check 10 s after start, then every 6 h.
 pub fn schedule(shell: Arc<Shell>) {
     tauri::async_runtime::spawn(async move {
         tokio::time::sleep(FIRST_CHECK).await;
         loop {
-            check(shell.clone(), false).await;
+            check(shell.clone(), Trigger::Scheduled).await;
             tokio::time::sleep(CHECK_EVERY).await;
         }
     });
@@ -79,7 +160,34 @@ pub fn schedule(shell: Arc<Shell>) {
 
 /// Tray "Check for updates" (manual) or the panel's button (`update-check`).
 pub fn check_soon(shell: Arc<Shell>, manual: bool) {
-    tauri::async_runtime::spawn(check(shell, manual));
+    tauri::async_runtime::spawn(check(shell, if manual { Trigger::Manual } else { Trigger::Scheduled }));
+}
+
+/// The panel's channel (`update-channel`, sent at `ready` and on every change). A change of the
+/// channel in use forgets the update found on the other one and checks again right away.
+pub fn set_channel(shell: Arc<Shell>, choice: Option<Channel>) {
+    let (before, after) = {
+        let mut stored = CHOICE.lock().unwrap();
+        let before = resolve(stored.flatten(), shell.version());
+        *stored = Some(choice);
+        (before, resolve(choice, shell.version()))
+    };
+    let how = if choice.is_some() { "chosen in the panel" } else { "automatic" };
+    logs::shell(format!("update channel: {} ({how})", channel_name(after)));
+    if before == after {
+        return;
+    }
+    *PENDING.lock().unwrap() = None;
+    tauri::async_runtime::spawn(async move {
+        // A check that is running uses the old channel: wait for it (at most twice its timeout).
+        for _ in 0..(REQUEST_TIMEOUT.as_millis() * 2 / 250) {
+            if !BUSY.load(Ordering::SeqCst) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+        check(shell, Trigger::ChannelChanged).await;
+    });
 }
 
 /// Panel "Update now" (`update-install`).
@@ -103,14 +211,12 @@ pub fn install_soon(shell: Arc<Shell>) {
     });
 }
 
-/// Asks the endpoint. 404 (no release with `latest.json` yet) and a manifest without this
-/// platform both mean "no update".
-async fn find_with(shell: &Shell) -> Result<Option<Update>, String> {
-    let url = endpoint()?;
-    let updater = shell
-        .app
+/// Asks one feed. 404 (no release with `latest.json` yet) and a manifest without this platform
+/// both mean "no update" from that feed.
+async fn check_feed(app: AppHandle, url: Url) -> Result<Option<Update>, String> {
+    let updater = app
         .updater_builder()
-        .endpoints(vec![url])
+        .endpoints(vec![url.clone()])
         .map_err(|e| e.to_string())?
         .timeout(REQUEST_TIMEOUT)
         .build()
@@ -118,22 +224,45 @@ async fn find_with(shell: &Shell) -> Result<Option<Update>, String> {
     match updater.check().await {
         Ok(update) => Ok(update),
         Err(UpdaterError::ReleaseNotFound) => {
-            logs::shell("update check: no release published at the endpoint (up to date)");
+            logs::shell(format!("update check: no release published at {url} (up to date)"));
             Ok(None)
         }
         Err(UpdaterError::TargetNotFound(t)) => {
-            logs::shell(format!("update check: the release has no package for {t}"));
+            logs::shell(format!("update check: the release at {url} has no package for {t}"));
             Ok(None)
         }
         Err(UpdaterError::TargetsNotFound(t)) => {
-            logs::shell(format!("update check: the release has no package for {}", t.join(" / ")));
+            logs::shell(format!("update check: the release at {url} has no package for {}", t.join(" / ")));
             Ok(None)
         }
-        Err(err) => Err(err.to_string()),
+        Err(err) => Err(format!("{url}: {err}")),
     }
 }
 
-async fn check(shell: Arc<Shell>, manual: bool) {
+/// Asks every feed of the channel at once and keeps the highest version newer than this one.
+/// A feed that fails is logged and skipped; only when every feed fails is it an error.
+async fn find_with(shell: &Shell) -> Result<Option<Update>, String> {
+    let urls = endpoints(channel(shell))?;
+    let checks: Vec<_> = urls.into_iter().map(|url| tauri::async_runtime::spawn(check_feed(shell.app.clone(), url))).collect();
+    let mut found = Vec::new();
+    let mut errors = Vec::new();
+    for check in checks {
+        match check.await {
+            Ok(Ok(update)) => found.extend(update),
+            Ok(Err(err)) => errors.push(err),
+            Err(err) => errors.push(err.to_string()),
+        }
+    }
+    if found.is_empty() && !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+    for err in &errors {
+        logs::shell(format!("update check: one feed failed, using the others: {err}"));
+    }
+    Ok(newest(found.iter().map(|u| u.version.as_str())).map(|i| found.swap_remove(i)))
+}
+
+async fn check(shell: Arc<Shell>, trigger: Trigger) {
     if shell.mode() != Mode::Running {
         return;
     }
@@ -141,7 +270,13 @@ async fn check(shell: Arc<Shell>, manual: bool) {
         logs::shell("update check skipped: another check or install is running");
         return;
     };
-    logs::shell(format!("checking for updates ({})", if manual { "manual" } else { "automatic" }));
+    let manual = trigger == Trigger::Manual;
+    let why = match trigger {
+        Trigger::Scheduled => "automatic",
+        Trigger::Manual => "manual",
+        Trigger::ChannelChanged => "channel changed",
+    };
+    logs::shell(format!("checking for updates ({why}, {} channel)", channel_name(channel(&shell))));
     let result = find_with(&shell).await;
     drop(busy);
     let current = shell.version().to_string();
@@ -157,7 +292,7 @@ async fn check(shell: Arc<Shell>, manual: bool) {
             });
             *PENDING.lock().unwrap() = Some(update.clone());
             let already_offered = PROMPTED.lock().unwrap().as_deref() == Some(update.version.as_str());
-            if manual || !already_offered {
+            if manual || (trigger == Trigger::Scheduled && !already_offered) {
                 *PROMPTED.lock().unwrap() = Some(update.version.clone());
                 prompt(shell, update);
             }
@@ -172,9 +307,12 @@ async fn check(shell: Arc<Shell>, manual: bool) {
         }
         Err(err) => {
             logs::shell(format!("update check failed: {err}"));
-            // Automatic checks stay silent (offline, firewall…): the next one runs in 6 h.
-            if manual {
+            // Automatic checks stay silent (offline, firewall…): the next one runs in 6 h. After a
+            // channel change the panel waits for an answer, so it gets the error.
+            if trigger != Trigger::Scheduled {
                 shell.set_update(UpdateInfo { status: UpdateStatus::Error, current, error: Some(err.clone()), ..Default::default() });
+            }
+            if manual {
                 message(&shell, tr("update.check_failed", &[("error", &err)]), MessageDialogKind::Warning);
             }
         }
@@ -440,6 +578,61 @@ mod tests {
     fn default_endpoint_is_github_latest() {
         assert!(UPDATE_ENDPOINT.starts_with("https://github.com/Lucas-Angelo/swarmcast/releases/latest/"));
         assert_eq!(Url::parse(UPDATE_ENDPOINT).unwrap().scheme(), "https");
+        assert_eq!(Url::parse(BETA_ENDPOINT).unwrap().scheme(), "https");
+        assert_eq!(Url::parse(BETA_ENDPOINT).unwrap().host_str(), Some("lucas-angelo.github.io"));
+    }
+
+    #[test]
+    fn channel_is_the_choice_else_beta_for_a_prerelease() {
+        assert_eq!(resolve(None, "0.2.2"), Channel::Stable);
+        assert_eq!(resolve(None, "0.3.0-beta.1"), Channel::Beta);
+        assert_eq!(resolve(None, "0.3.0-rc.2"), Channel::Beta);
+        assert_eq!(resolve(None, "0.3.0"), Channel::Stable);
+        assert_eq!(resolve(Some(Channel::Stable), "0.3.0-beta.1"), Channel::Stable);
+        assert_eq!(resolve(Some(Channel::Beta), "0.2.2"), Channel::Beta);
+        // Not SemVer (never shipped): stable.
+        assert_eq!(resolve(None, "dev"), Channel::Stable);
+    }
+
+    #[test]
+    fn stable_reads_one_feed_beta_reads_both() {
+        assert_eq!(feeds(Channel::Stable, None, None), vec![UPDATE_ENDPOINT]);
+        assert_eq!(feeds(Channel::Beta, None, None), vec![UPDATE_ENDPOINT, BETA_ENDPOINT]);
+        // SWARMCAST_UPDATE_URL alone overrides everything (the existing update tests).
+        assert_eq!(feeds(Channel::Beta, Some("http://127.0.0.1:1/latest.json"), None), vec!["http://127.0.0.1:1/latest.json"]);
+        assert_eq!(
+            feeds(Channel::Stable, Some("http://127.0.0.1:1/a.json"), Some("http://127.0.0.1:1/b.json")),
+            vec!["http://127.0.0.1:1/a.json"]
+        );
+        assert_eq!(
+            feeds(Channel::Beta, Some("http://127.0.0.1:1/a.json"), Some("http://127.0.0.1:1/b.json")),
+            vec!["http://127.0.0.1:1/a.json", "http://127.0.0.1:1/b.json"]
+        );
+        assert_eq!(feeds(Channel::Beta, None, Some("http://127.0.0.1:1/b.json")), vec![UPDATE_ENDPOINT, "http://127.0.0.1:1/b.json"]);
+    }
+
+    #[test]
+    fn the_highest_version_wins() {
+        // Stable newer than a stale beta feed: the stable one.
+        assert_eq!(newest(["0.3.0", "0.3.0-beta.2"]), Some(0));
+        assert_eq!(newest(["0.2.2", "0.3.0-beta.2"]), Some(1));
+        assert_eq!(newest(["0.3.0-beta.11", "0.3.0-beta.2"]), Some(0));
+        assert_eq!(newest(["0.3.0-beta.2", "0.3.0-rc.1"]), Some(1));
+        // Same version on both feeds: the first (stable) one.
+        assert_eq!(newest(["0.3.0", "0.3.0"]), Some(0));
+        assert_eq!(newest(["garbage", "0.3.0-beta.1"]), Some(1));
+        assert_eq!(newest(Vec::<&str>::new()), None);
+    }
+
+    #[test]
+    fn no_downgrade_with_the_default_comparator() {
+        // What tauri-plugin-updater offers: release.version > current (semver::Version).
+        let offered = |release: &str, current: &str| semver::Version::parse(release).unwrap() > semver::Version::parse(current).unwrap();
+        assert!(!offered("0.3.0-beta.2", "0.3.0"), "stable 0.3.0 is never offered its own beta");
+        assert!(!offered("0.2.2", "0.3.0-beta.1"), "back on stable, the beta stays until a higher stable");
+        assert!(offered("0.3.0", "0.3.0-beta.2"));
+        assert!(offered("0.3.0-beta.1", "0.2.2"));
+        assert!(offered("0.3.0-beta.11", "0.3.0-beta.2"));
     }
 
     #[test]

@@ -2,7 +2,7 @@
 //!
 //! The shell never calls `WebviewWindow::url()`: on macOS it panics while WKWebView has no URL
 //! (wry 0.57 `url_from_webview` unwraps `WKWebView.URL`, which is nil until a navigation
-//! commits), and with `panic = "abort"` the whole app died when "Update now" arrived while the
+//! commits), and since any panic ends the app (main.rs, `abort_on_panic`) the whole app died when "Update now" arrived while the
 //! panel was still loading. Instead the page follows the shell's own navigations and the
 //! webview's page-load events.
 

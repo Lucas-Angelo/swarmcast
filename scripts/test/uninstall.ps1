@@ -510,6 +510,48 @@ try {
   Stop-Process -Id $p3.Id -Force -ErrorAction SilentlyContinue
   End-Case
 
+  # --- 4b. the start script restarts SwarmCast ----------------------------------
+  # start-windows.ps1 starts SwarmCast again when it stops within 10 s. The uninstaller
+  # must stop that script first, or SwarmCast comes back while its files are deleted
+  # (locked swarmcast.exe, exit 1, server still running). The fake script restarts it
+  # every 0.5 s, forever, so this fails whenever the script is not stopped.
+  Begin-Case '4b. the start script that restarts SwarmCast is stopped first; nothing comes back'
+  New-Tree
+  $x = ''
+  if ($OnWindows) { $x = '.exe' }
+  $server = Join-Path $Data "app\current\swarmcast$x"
+  Copy-Item -LiteralPath (Get-Sleeper) -Destination $server
+  $sleepArgs = "'300'"
+  if ($OnWindows) { $sleepArgs = "'--sleep', '300'" }
+  $loop = "while (`$true) { & '$server' $sleepArgs; Start-Sleep -Milliseconds 500 }"
+  $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($loop))
+  if ($OnWindows) {
+    $wrapper = Start-Process -FilePath 'powershell.exe' -ArgumentList @('-NoProfile', '-EncodedCommand', $enc) -PassThru -WindowStyle Hidden
+  } else {
+    $wrapper = Start-Process -FilePath 'pwsh' -ArgumentList @('-NoProfile', '-EncodedCommand', $enc) -PassThru
+  }
+  $script:Started += $wrapper
+  $serverProc = $null
+  for ($i = 0; $i -lt 100 -and -not $serverProc; $i++) {
+    Start-Sleep -Milliseconds 100
+    $serverProc = Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -eq $server } catch { $false } } | Select-Object -First 1
+  }
+  if (-not $serverProc) { Fail 'the fake start script did not start swarmcast' }
+  $env:SWARMCAST_SETTLE = '2'
+  Invoke-Uninstall @('--keep-settings')
+  Remove-Item Env:SWARMCAST_SETTLE
+  Assert-Eq $script:Rc 0 'exit code 0'
+  Assert-Contains $script:Out "(PID $($wrapper.Id)): the start script" 'the start script is listed'
+  Assert-NotContains $script:Out 'started again' 'SwarmCast was not started again'
+  Assert-Stopped $wrapper.Id 'the start script'
+  Start-Sleep -Seconds 2
+  $back = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { try { $_.Path -eq $server } catch { $false } })
+  if ($back.Count -eq 0) { Pass 'no swarmcast running from the data folder' } else { Fail "swarmcast is running again (PID $($back[0].Id))" }
+  Assert-Absent $server
+  Assert-Absent (Join-Path $Data '.uninstalling')
+  Assert-Eq ((@(Get-ChildItem -LiteralPath $Data -Force | ForEach-Object { $_.Name }) | Sort-Object) -join ',') 'config.json,secrets.json' 'only config.json and secrets.json are left'
+  End-Case
+
   # --- 5. swarmcast --cleanup --------------------------------------------------
   Begin-Case '5. a failing swarmcast --cleanup is only a note'
   New-Tree
