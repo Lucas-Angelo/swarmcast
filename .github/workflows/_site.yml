@@ -19,7 +19,7 @@ jobs:
   site:
     name: build and test
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: site
@@ -82,13 +82,21 @@ jobs:
         run: npm run build
 
       # Google Chrome from the runner image (site/playwright.config.ts): no browser download and
-      # no apt (`install --with-deps chromium` made this job's p90 9.9 min).
+      # no apt (`install --with-deps chromium` made this job's p90 9.9 min). No retries; a test
+      # that passes only on a retry fails the run all the same (--fail-on-flaky-tests).
       - name: Browser tests (Playwright, Google Chrome)
-        run: npm run test:e2e
+        timeout-minutes: 4
+        run: npm run test:e2e -- --fail-on-flaky-tests
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node ../.github/scripts/test-summary.mjs --title 'Website browser tests' --playwright test-results/results.json
 
       - name: Keep the test report
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: site-playwright-report
           path: |

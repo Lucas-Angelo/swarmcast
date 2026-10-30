@@ -218,7 +218,9 @@ jobs:
           compression-level: 0
           retention-days: ${{ env.RETENTION }}
       - uses: ./.github/actions/setup/save
-        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
 
   clean-machine:
     name: clean-machine (${{ matrix.os }})
@@ -236,7 +238,7 @@ jobs:
           "linux-arm64": [{"os": "ubuntu-24.04-arm", "target": "linux-arm64", "appimage": true}]
           }')[inputs.target] }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 21
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -266,9 +268,12 @@ jobs:
         with:
           names: pkg-${{ matrix.target }}
       # No Playwright browser download: verify.mjs --chrome drives the Google Chrome that the x64
-      # runner images ship.
+      # runner images ship. Time limits on this and the checks below: 2 to 4 times their slowest
+      # run; one that runs out fails, so the logs are still uploaded (a job that runs out is
+      # cancelled and uploads nothing).
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
         if: ${{ !cancelled() && matrix.preflight }}
+        timeout-minutes: 8
         run: |
           # pkg-windows-x64 also holds the installer suite's "newer" package: only this version here.
           find release -maxdepth 1 -name 'SwarmCast-v*' ! -name "SwarmCast-v$VERSION-*" -print -delete
@@ -276,7 +281,7 @@ jobs:
           cp scripts/start-macos.command release/start-macos.sh
           node scripts/build/checksums.mjs release
           ls -la release
-          node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome
+          node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome 2>&1 | tee "$RUNNER_TEMP/preflight.log"
 
       # ---------------------------------------------------------------- desktop app
       - uses: ./.github/actions/fetch-artifact
@@ -318,6 +323,7 @@ jobs:
       # the accessibility bridge and the DMA-BUF renderer (no GPU under Xvfb).
       - name: Desktop (install, launch, panel, autostart, kill, quit, uninstall, update A -> real)
         if: ${{ !cancelled() }}
+        timeout-minutes: 10
         run: |
           node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:47811 \
             --out release/desktop/latest.json release/desktop
@@ -327,16 +333,32 @@ jobs:
             run=(xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session --)
           fi
           "${run[@]}" node scripts/test/desktop/verify.mjs --installers release/desktop \
-            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811
+            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
 
       # ---------------------------------------------------------------- AppImage, minimal host
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
         if: ${{ !cancelled() && matrix.appimage }}
-        run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04
+        timeout-minutes: 5
+        run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04 2>&1 | tee "$RUNNER_TEMP/appimage.log"
+
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          OS: ${{ matrix.os }}
+          PREFLIGHT: ${{ matrix.preflight == true }}
+          APPIMAGE: ${{ matrix.appimage == true }}
+        run: |
+          summary() { node .github/scripts/test-summary.mjs --title "$1 ($TARGET, $OS)" --lines "$RUNNER_TEMP/$2.log"; }
+          if [ "$PREFLIGHT" = true ]; then summary Preflight preflight; fi
+          summary 'Desktop app' desktop
+          if [ "$APPIMAGE" = true ]; then summary 'AppImage on minimal hosts' appimage; fi
 
       - name: Upload the app logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: desktop-test-logs-${{ matrix.target }}-${{ matrix.os }}
           path: desktop-test-logs/
@@ -351,4 +373,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
       - uses: ./.github/actions/setup/save
-        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
