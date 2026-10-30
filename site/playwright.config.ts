@@ -14,7 +14,7 @@ export default defineConfig({
   fullyParallel: true,
   // Never retried, CI included: a test that fails once is a bug to fix, not a flake to rerun.
   retries: 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'retain-on-failure',
