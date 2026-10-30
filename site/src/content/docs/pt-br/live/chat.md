@@ -67,9 +67,14 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat. Aí q
 
 ## O que quem assiste vê
 
+![O chat na página de quem assiste: uma mensagem da transmissão com o selo, mensagens de dois espectadores com emotes e a caixa de mensagem. 1 Configurações do chat, 2 Ocultar chat, 3 emojis e emotes, 4 Enviar.](../../../../assets/guides/live/pt-br/chat-viewer.webp)
+
 - O chat ao lado do vídeo no computador, embaixo dele no celular.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
 - **Configurações do chat** para a cor do próprio nome, horários e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
+
+  ![As configurações do chat de quem assiste: Cor do seu nome com doze cores e Outra cor…, uma prévia do nome no tema claro e no escuro, Mostrar horários e Tamanho do texto.](../../../../assets/guides/live/pt-br/chat-viewer-settings.webp)
+
 - "enviando…" até a mensagem entrar, e um motivo curto no idioma da pessoa quando ela é recusada (modo lento, silenciado, longa demais, palavra bloqueada…).
 
 ## Privacidade

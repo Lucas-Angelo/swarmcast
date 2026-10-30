@@ -5,6 +5,8 @@ description: Put your name, picture, bio, links, colours and a support button or
 
 The panel's **Your page** card changes what your viewers see: your name, picture, a short bio, your links and your colours, on the join page and around the video. Only people with your stream link see it; anyone else who finds the address sees the plain "Link not valid" page.
 
+![A viewer's watch page with a streamer page: 1 the name and picture at the top, 2 the support button (here Pix), 3 the banner, 4 the About card with the bio, tags and links.](../../../assets/guides/live/en/your-page-watch.webp)
+
 Change what you want, check the **Preview** (watch page, join page and stream ended; computer or phone; light or dark), then click **Save**. Open viewer pages update within a few seconds. The switch at the top of the card turns your page off without losing anything; **Reset to SwarmCast defaults** removes it all.
 
 ## Name and picture
@@ -34,6 +36,8 @@ Location, camera and other hidden photo details are removed before anything is s
 
 For Pix, choose the key type (a **random key** is the best choice: it shows no personal number), type your name as the bank shows it and your city. A CPF, CNPJ or phone key needs an extra tick, because everyone watching will see it.
 
+![The Pix sheet viewers open from the support button: the key with a copy button, the "Pix copia e cola" code with a copy button, and the QR code.](../../../assets/guides/live/en/your-page-pix.webp)
+
 :::caution[Pix shows who you are]
 Anyone who sends you a Pix sees your full legal name and part of your CPF. If you want to stay anonymous, use a tip page instead.
 :::
@@ -43,6 +47,8 @@ Anyone who sends you a Pix sees your full legal name and part of your CPF. If yo
 Pick **Forest**, **Honey**, **On Air**, **Ocean**, **Clay** or **Graphite**, or **Custom…** for your own colour. It is used for buttons, links and highlights. Viewers keep their own light or dark mode, and SwarmCast adjusts your colour so it stays easy to read in both (the card says when it did). **Corners** sets how round buttons and boxes look: **Round**, **Soft** or **Square**.
 
 ## When the stream is shared or ends
+
+![The join page with a streamer page: Ana Plays with her picture at the top, "Join Ana Plays's stream", the tagline, and the nickname box.](../../../assets/guides/live/en/your-page-join.webp)
 
 - **Show a preview card when the link is shared:** off by default. When it is on, WhatsApp, Telegram, Discord and similar apps show your name, your one-line description and the **Preview card picture** next to the link, to everyone in that conversation. Off, they show a neutral "You're invited to a live stream". After **Generate new link**, the old link's preview stops working too.
 - **Message when the stream ends:** shown on the end screen, for example "Thanks! Back on Friday at 8 pm".

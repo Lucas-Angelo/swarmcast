@@ -5,6 +5,8 @@ description: Coloque seu nome, foto, bio, links, cores e um botão de apoio ou P
 
 O cartão **Sua página** do painel muda o que quem assiste vê: seu nome, foto, uma bio curta, seus links e suas cores, na página de entrada e em volta do vídeo. Só quem tem o link da sua live vê; qualquer outra pessoa que achar o endereço vê a página comum de "Link inválido".
 
+![A página da live de quem assiste com uma página do streamer: 1 o nome e a foto no topo, 2 o botão de apoio (aqui Pix), 3 o banner, 4 o cartão Sobre com a bio, as tags e os links.](../../../../assets/guides/live/pt-br/your-page-watch.webp)
+
 Mude o que quiser, confira a **Prévia** (página da live, página de entrada e fim da live; computador ou celular; claro ou escuro) e clique em **Salvar**. As páginas abertas de quem assiste se atualizam em poucos segundos. A chave no topo do cartão desliga a sua página sem perder nada; **Voltar ao padrão do SwarmCast** apaga tudo.
 
 ## Nome e foto
@@ -34,6 +36,8 @@ Localização, câmera e outros dados escondidos da foto são removidos antes de
 
 No Pix, escolha o tipo de chave (a **chave aleatória** é a melhor escolha: não mostra nenhum número pessoal), digite seu nome como o banco mostra e a sua cidade. Uma chave CPF, CNPJ ou de celular pede uma confirmação a mais, porque todo mundo que está assistindo vai ver o número.
 
+![A janela do Pix que quem assiste abre pelo botão de apoio: a chave com um botão de copiar, o código "Pix copia e cola" com um botão de copiar e o QR code.](../../../../assets/guides/live/pt-br/your-page-pix.webp)
+
 :::caution[O Pix mostra quem você é]
 Quem te manda um Pix vê o seu nome completo e parte do seu CPF. Se você quer ficar anônimo, use uma página de gorjetas.
 :::
@@ -43,6 +47,8 @@ Quem te manda um Pix vê o seu nome completo e parte do seu CPF. Se você quer f
 Escolha **Floresta**, **Mel**, **No Ar**, **Oceano**, **Argila** ou **Grafite**, ou **Personalizada…** para a sua própria cor. Ela vai nos botões, links e destaques. Cada pessoa continua com o seu modo claro ou escuro, e o SwarmCast ajusta a sua cor para ficar fácil de ler nos dois (o cartão avisa quando ajustou). **Cantos** define o quanto botões e caixas são arredondados: **Redondos**, **Suaves** ou **Retos**.
 
 ## Quando a live é compartilhada ou acaba
+
+![A página de entrada com uma página do streamer: Ana Plays com a foto no topo, "Entrar na live de Ana Plays", a frase de apresentação e a caixa do apelido.](../../../../assets/guides/live/pt-br/your-page-join.webp)
 
 - **Mostrar um cartão de prévia quando o link for compartilhado:** vem desligado. Ligado, WhatsApp, Telegram, Discord e apps parecidos mostram seu nome, a descrição em uma linha e a **Imagem do cartão de prévia** junto do link, para todo mundo naquela conversa. Desligado, aparece um convite neutro de live. Depois de **Gerar novo link**, a prévia do link antigo também para de funcionar.
 - **Mensagem quando a live acabar:** aparece na tela de fim, por exemplo "Valeu! Volto sexta às 20h".

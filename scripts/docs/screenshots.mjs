@@ -308,6 +308,104 @@ async function say(page, text) {
   await input.press('Enter');
 }
 
+
+/** A raw image upload to the panel's "Your page" image route. */
+async function adminUpload(slot, file, type) {
+  const res = await fetch(new URL(`/api/branding/image/${slot}`, admin.base), {
+    method: 'PUT',
+    headers: { cookie, origin: admin.base.origin, 'content-type': type },
+    body: fs.readFileSync(path.join(ROOT, 'scripts', 'docs', 'brand-sample', file)),
+  });
+  if (!res.ok) throw new Error(`upload ${slot}: HTTP ${res.status} ${await res.text()}`);
+}
+
+/** A made-up streamer page (pictures made from the mascot, scripts/docs/brand-sample/). */
+const BRAND_TEXT = {
+  en: { tagline: 'Cosy games and a chat every Friday 🎮', about: 'Hi! I stream cosy indie games.\nGrab a tea and make yourself at home.\nLive every Friday at 8 pm.', ended: 'Thanks! Back on Friday at 8 pm 💙' },
+  'pt-BR': { tagline: 'Jogos tranquilos e papo toda sexta 🎮', about: 'Oi! Eu transmito jogos indie e aconchegantes.\nPega um chá e fica à vontade.\nAs lives são toda sexta às 20h.', ended: 'Valeu! Volto sexta às 20h 💙' },
+};
+
+async function brandOn(lang) {
+  for (const [slot, file, type] of [
+    ['avatar', 'avatar.jpg', 'image/jpeg'],
+    ['avatar128', 'avatar128.png', 'image/png'],
+    ['fav32', 'fav32.png', 'image/png'],
+    ['fav180', 'fav180.jpg', 'image/jpeg'],
+    ['banner', 'banner.jpg', 'image/jpeg'],
+    ['banner640', 'banner640.jpg', 'image/jpeg'],
+  ]) {
+    await adminUpload(slot, file, type);
+  }
+  const text = BRAND_TEXT[lang];
+  await adminApi('PUT', '/api/branding', {
+    enabled: true,
+    name: 'Ana Plays',
+    tagline: text.tagline,
+    about: text.about,
+    tags: ['cozy', 'indie'],
+    links: [
+      { label: 'YouTube', url: 'https://www.youtube.com/@anaplays' },
+      { label: 'Instagram', url: 'https://instagram.com/anaplays' },
+    ],
+    // A random EVP key (no real person); the name is made up.
+    support: { enabled: true, label: 'pix', mode: 'pix', pix: { type: 'evp', key: '123e4567-e89b-12d3-a456-426614174000', name: 'Ana Souza', city: 'Sao Paulo' } },
+    theme: { preset: 'ocean', corners: 'soft' },
+    endedMessage: text.ended,
+    showCredit: true,
+  });
+}
+
+/** "Your page" and GIFs on the viewer side, for the "Customise your page" and "Get a GIF key" guides. */
+async function captureBranding(browser, lang) {
+  await brandOn(lang);
+  const chatBefore = (await adminApi('GET', '/api/chat')).settings;
+  await adminApi('PUT', '/api/chat/settings', { ...chatBefore, content: { text: true, emotes: true, gifs: true }, gif: { provider: 'klipy', key: 'guide_screenshot_key', rating: 'pg', consent: 'ask' } });
+  try {
+    // Join page with the streamer's name and picture.
+    const joinCtx = await browser.newContext({ ...DESKTOP, locale: lang });
+    const joinPage = await joinCtx.newPage();
+    await joinPage.goto((await state()).liveLink);
+    await joinPage.waitForURL(/\/join$/);
+    await joinPage.locator('#brand-head .sc-brand-name').waitFor({ timeout: 15_000 });
+    await joinPage.fill('#nickname', 'Maria');
+    // The browser check (proof of work) finishes first, as it does while a viewer types.
+    await joinPage.locator('#check').waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => log('browser check still showing'));
+    await guideShot(joinPage, joinPage.locator('main.card'), 'live', lang, 'your-page-join', { pad: 130 });
+    await joinCtx.close();
+
+    // Watch page: header (1), support button (2), banner (3), About card with links (4).
+    const v = await joinViewer(browser, lang, 'Bia', { viewport: { width: 1280, height: 1500 }, deviceScaleFactor: 1 });
+    const p = v.page;
+    await p.locator('#brand-head .sc-brand-name').waitFor({ timeout: 15_000 });
+    await p.locator('#brand-banner img').waitFor({ timeout: 30_000 }).catch(() => log('no banner'));
+    await adminApi('POST', '/api/chat/send', { text: lang === 'en' ? 'Good evening, chat! :hi:' : 'Boa noite, chat! :hi:' });
+    // The provider is never contacted for these pictures: viewers see the consent placeholder.
+    await adminApi('POST', '/api/chat/send', { gif: { p: 'klipy', id: 'happy-dance', w: 220, h: 220, m: '/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp' } });
+    await p.getByTestId('chat-list').locator('button.gif-consent').waitFor({ timeout: 10_000 });
+    await sleep(800);
+    await guideShot(p, p.locator('body'), 'live', lang, 'your-page-watch', {
+      pad: 0,
+      callouts: [p.locator('#brand-head'), p.getByTestId('brand-support'), p.locator('#brand-banner'), p.getByTestId('brand-about')],
+    });
+    // The GIF placeholder (nothing loads before the viewer agrees) and the GIF button.
+    await guideShot(p, p.getByTestId('chat'), 'live', lang, 'gif-consent', {
+      pad: 12,
+      callouts: [p.getByTestId('chat-list').locator('button.gif-consent').last(), p.getByTestId('chat-gif-button')],
+    });
+    // The Pix sheet.
+    await p.getByTestId('brand-support').click();
+    const sheet = p.locator('[data-testid="pix-sheet"]');
+    await sheet.waitFor({ timeout: 5_000 });
+    await sleep(400);
+    await guideShot(p, sheet, 'live', lang, 'your-page-pix', { pad: 16 });
+    await p.keyboard.press('Escape');
+    await v.context.close();
+  } finally {
+    await adminApi('PUT', '/api/chat/settings', chatBefore);
+    await adminApi('POST', '/api/branding/reset', {});
+  }
+}
+
 // ---- captures ---------------------------------------------------------------------------
 
 async function captureLocale(browser, lang) {
@@ -413,6 +511,9 @@ async function captureLocale(browser, lang) {
   await shotCard(joinPage, `link-invalid-${lang}.png`);
 
   for (const c of [joinCtx, adminCtx, desktop.context, phone.context, third.context]) await c.close();
+
+  // (9) The streamer's page and GIFs on the viewer side (guide pictures).
+  await captureBranding(browser, lang);
 }
 
 // ---- PNG size ---------------------------------------------------------------------------

@@ -31,7 +31,10 @@ The KLIPY site may look different from these steps; look for "API Keys" in its P
 
 ## What viewers see
 
-- A GIF in the chat first shows as a placeholder. The viewer taps **Load GIFs** once before their browser contacts KLIPY; the choice is remembered in that browser.
+- A GIF in the chat first shows as a placeholder: "GIF from KLIPY. Tap to show GIFs (your browser will contact KLIPY, which sees your IP address)." The viewer taps it (or **Allow GIFs from KLIPY** in the GIF picker) once before their browser contacts KLIPY; the choice is remembered in that browser and can be undone in their **Chat settings** (**Show GIFs**).
+
+  ![The viewer chat with GIFs on: 1 a GIF from the streamer shown as the placeholder "GIF from KLIPY. Tap to show GIFs…", nothing loaded yet, and 2 the GIF button next to the message box.](../../../assets/guides/live/en/gif-consent.webp)
+
 - Viewers who never agree never contact KLIPY: the page then talks only to your live, as without GIFs.
 - One GIF per viewer every 30 seconds.
 - While the chat is protected against a flood, or your computer is busy, GIFs pause by themselves.

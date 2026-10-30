@@ -67,9 +67,14 @@ To turn the chat off for everyone, use the switch at the top of the Chat card. V
 
 ## What viewers see
 
+![The chat on the viewer page: a Streamer message with its badge, two viewers' messages with emotes, and the message box. 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send.](../../../assets/guides/live/en/chat-viewer.webp)
+
 - The chat next to the video on a computer, under it on a phone.
 - **Hide chat** hides it on that device (remembered); **Show chat** brings it back.
 - **Chat settings** for their own name colour, times and text size. SwarmCast keeps every colour readable on light and dark screens.
+
+  ![The viewer's chat settings: Your name colour with twelve colours and Other colour…, a preview of the name on the light and the dark theme, Show times and Text size.](../../../assets/guides/live/en/chat-viewer-settings.webp)
+
 - "sending…" until the message is in, and a short reason in their language when it is refused (slow mode, muted, too long, a blocked word…).
 
 ## Privacy

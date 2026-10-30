@@ -31,7 +31,10 @@ O site do KLIPY é em inglês e pode estar diferente destes passos; procure por 
 
 ## O que quem assiste vê
 
-- Um GIF no chat aparece primeiro como um aviso. A pessoa toca em **Carregar GIFs** uma vez antes de o navegador dela acessar o KLIPY; a escolha fica lembrada naquele navegador.
+- Um GIF no chat aparece primeiro como um aviso: "GIF do KLIPY. Toque para mostrar GIFs (seu navegador vai se conectar ao KLIPY, que vê seu endereço IP)." A pessoa toca nele (ou em **Permitir GIFs do KLIPY** no seletor de GIFs) uma vez antes de o navegador dela acessar o KLIPY; a escolha fica lembrada naquele navegador e pode ser desfeita nas **Configurações do chat** dela (**Mostrar GIFs**).
+
+  ![O chat de quem assiste com GIFs ligados: 1 um GIF da transmissão mostrado como o aviso "GIF do KLIPY. Toque para mostrar GIFs…", nada carregado ainda, e 2 o botão de GIF ao lado da caixa de mensagem.](../../../../assets/guides/live/pt-br/gif-consent.webp)
+
 - Quem nunca aceitar nunca acessa o KLIPY: a página só conversa com a sua live, como sem GIFs.
 - Um GIF por pessoa a cada 30 segundos.
 - Enquanto o chat está protegido contra flood, ou o seu computador está ocupado, os GIFs pausam sozinhos.
