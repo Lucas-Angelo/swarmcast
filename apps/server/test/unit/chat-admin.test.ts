@@ -57,7 +57,7 @@ describe('chat admin API', () => {
     const bad = await call('POST', '/api/chat/send', { text: '\u{200B}' });
     expect(bad.statusCode).toBe(400);
     expect(bad.json()).toMatchObject({ code: 'text.empty' });
-    expect((await call('POST', '/api/chat/send', { text: 'a', gif: { p: 'klipy', id: 'x1', w: 20, h: 20 } })).statusCode).toBe(400);
+    expect((await call('POST', '/api/chat/send', { text: 'a', gif: { p: 'klipy', id: 'x1', w: 20, h: 20, m: '/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp' } })).statusCode).toBe(400);
     expect((await call('POST', '/api/chat/delete', { seqs: [1] })).json()).toEqual({ ok: true, removed: 1 });
     expect((await call('POST', '/api/chat/delete', { seqs: Array.from({ length: 101 }, (_, i) => i + 1) })).statusCode).toBe(400);
     expect((await call('POST', '/api/chat/clear', {})).statusCode).toBe(200);

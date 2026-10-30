@@ -157,7 +157,7 @@ describe('ChatHub: messages', () => {
     send(a, 'ok 😀', 3);
     expect(last(a.sock)).toMatchObject({ code: 'chat.err.mode', params: { allowedKey: 'chat.content.t' } });
     advance(3000);
-    hub.frame(a.s, a.sock, JSON.stringify({ t: 'chat.send', n: 4, gif: { p: 'klipy', id: 'abc', w: 100, h: 100 } }));
+    hub.frame(a.s, a.sock, JSON.stringify({ t: 'chat.send', n: 4, gif: { p: 'klipy', id: 'abc', w: 100, h: 100, m: '/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp' } }));
     expect(last(a.sock)).toMatchObject({ code: 'chat.err.gifOff' });
   });
 
@@ -183,7 +183,8 @@ describe('ChatHub: messages', () => {
     settings.gif = { provider: 'klipy', key: 'Abcdefgh_123', rating: 'pg', consent: 'ask' };
     hub.refresh();
     const a = join('Ana');
-    const gif = (n: number, p = 'klipy') => hub.frame(a.s, a.sock, JSON.stringify({ t: 'chat.send', n, gif: { p, id: 'abc_1', w: 200, h: 150 } }));
+    const media: Record<string, string> = { klipy: '/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp', giphy: '/media/3o7TKSjRrfIPjeiVyM/200.webp' };
+    const gif = (n: number, p = 'klipy') => hub.frame(a.s, a.sock, JSON.stringify({ t: 'chat.send', n, gif: { p, id: 'abc_1', w: 200, h: 150, m: media[p] } }));
     gif(1);
     expect(last(a.sock)).toMatchObject({ t: 'chat.ack' });
     advance(3000);

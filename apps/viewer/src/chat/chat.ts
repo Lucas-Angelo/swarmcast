@@ -3,14 +3,16 @@
 // and wires the session (protocol state), the list, the input, the picker and the settings.
 import './chat.css';
 import { t } from '@swarmcast/shared/i18n';
-import type { ChatAuthor, ChatPublicSettings, ChatServerMessage, ChatSnapshot, ChatYou } from './core/index.js';
+import { GIF_KEY_RE, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+import type { GifConfig } from './gif-api.js';
+import { createGifPicker } from './gif-picker.js';
 import { onThemeChange, NameColors } from './color-ui.js';
 import { emoteTable, type Emote } from './emotes.js';
 import { loadEmojiData } from './emoji-load.js';
 import { ChatInput } from './input.js';
 import { createPicker, type EmojiData } from './picker.js';
-import { loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
-import { ChatList } from './render.js';
+import { animateGifs, loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
+import { ChatList, GIF_PROVIDER_NAMES } from './render.js';
 import { ChatSession, type ClientFrame } from './session.js';
 import { createSettingsPopover } from './settings-popover.js';
 
@@ -83,6 +85,8 @@ export function mountChat(opts: MountOptions): ChatController {
     nickColor: (c): string => colors.paint(c),
     showTimes: () => prefs.times,
     visible,
+    gifs: () => ({ consented: prefs.gifs, animate: animateGifs(prefs) }),
+    onGifConsent: () => consentGifs(),
   });
 
   let connected = false;
@@ -110,17 +114,60 @@ export function mountChat(opts: MountOptions): ChatController {
   });
   input.tools.append(pickerButton);
 
+  /** The streamer's GIF settings while viewers may send GIFs (consent is always asked: no "auto"). */
+  const gifConfig = (): GifConfig | null => {
+    const s = session?.settings;
+    const g = s?.gif;
+    if (!s?.enabled || !s.content.includes('gifs') || !g || !GIF_KEY_RE.test(g.key)) return null;
+    return { provider: g.provider, key: g.key, rating: g.rating };
+  };
+  const me = (): ChatAuthor | null => {
+    const you = session?.you;
+    return you ? (session?.roster.get(you.a) ?? { a: you.a, n: opts.nickname, c: you.color, r: 'viewer' }) : null;
+  };
+  const sendGif = (gif: GifRef): void => {
+    const author = me();
+    if (!session || !author) return;
+    const n = nonce();
+    if (!session.send({ t: 'chat.send', n, gif })) return;
+    input.noteSent(n);
+    list.addPending(n, '', author, gif);
+  };
+  const consentGifs = (): void => {
+    prefs = savePrefs({ gifs: true });
+    list.refreshGifs();
+    applyGifs();
+  };
+  const gifButton = document.createElement('button');
+  const gifPicker = createGifPicker(gifButton, {
+    config: gifConfig,
+    consented: () => prefs.gifs,
+    consent: () => consentGifs(),
+    onPick: sendGif,
+  });
+  input.tools.append(gifButton);
+  const applyGifs = (): void => {
+    gifPicker.update();
+    const cfg = gifConfig();
+    settingsPop.setGifs(cfg ? { provider: GIF_PROVIDER_NAMES[cfg.provider], consented: prefs.gifs, animate: animateGifs(prefs) } : null);
+  };
+
   const settingsPop = createSettingsPopover(gear, {
     onColor: (color) => {
       session?.send({ t: 'chat.color', color });
     },
     onPrefs: (p) => {
+      const gifsChanged = p.gifs !== prefs.gifs || p.animate !== prefs.animate;
       prefs = p;
       applyPrefs();
+      if (gifsChanged) {
+        list.refreshGifs();
+        applyGifs();
+      }
     },
   });
 
-  root.append(head, body, input.form, picker.panel, settingsPop.popover.panel);
+  root.append(head, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
 
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
@@ -137,6 +184,7 @@ export function mountChat(opts: MountOptions): ChatController {
     emotes = emoteTable(s?.builtinEmotes !== false);
     pickerButton.hidden = !s?.content.includes('emotes');
     if (pickerButton.hidden) picker.popover.close();
+    applyGifs();
     const secs = s ? t('time.secondsShort', { count: s.slowS }) : '';
     mode.textContent = s?.enabled && s.slowS > 0 ? t(s.autoSlow ? 'chat.viewer.mode.slowAuto' : 'chat.viewer.mode.slow', { seconds: secs }) : '';
     mode.title = s?.enabled && s.slowS > 0 ? t(s.autoSlow ? 'chat.viewer.slowAuto' : 'chat.viewer.slow', { seconds: secs }) : '';

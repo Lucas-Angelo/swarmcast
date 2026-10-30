@@ -9,6 +9,13 @@ export interface ChatPrefs {
   tone: number;
   /** Recently used emoji / `:emote:` codes, newest first. */
   recent: string[];
+  /**
+   * The viewer agreed that their browser may contact the GIF provider (plan 3.3). Always asked:
+   * nothing is fetched from the provider before this is true.
+   */
+  gifs: boolean;
+  /** Animate GIFs; null = follow the system's "reduce motion" setting. */
+  animate: boolean | null;
 }
 
 const KEY = 'swarmcast.chat';
@@ -31,6 +38,8 @@ export function loadPrefs(): ChatPrefs {
     large: stored.large === true,
     tone: Number.isInteger(stored.tone) && (stored.tone as number) >= 0 && (stored.tone as number) <= 5 ? (stored.tone as number) : 0,
     recent: Array.isArray(stored.recent) ? stored.recent.filter((r): r is string => typeof r === 'string' && r.length <= 40).slice(0, RECENT_MAX) : [],
+    gifs: stored.gifs === true,
+    animate: typeof stored.animate === 'boolean' ? stored.animate : null,
   };
   return memory;
 }
@@ -43,6 +52,16 @@ export function savePrefs(patch: Partial<ChatPrefs>): ChatPrefs {
     /* storage blocked: the choice lasts for this page only */
   }
   return memory;
+}
+
+/** Animate GIFs now: the viewer's choice, else off when the system asks for reduced motion. */
+export function animateGifs(p: ChatPrefs = loadPrefs()): boolean {
+  if (p.animate !== null) return p.animate;
+  try {
+    return !matchMedia('(prefers-reduced-motion: reduce)').matches;
+  } catch {
+    return true;
+  }
 }
 
 /** Tests only. */
