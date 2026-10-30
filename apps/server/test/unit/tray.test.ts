@@ -1,5 +1,10 @@
-import { describe, expect, it } from 'vitest';
-import { decodeTrayEvent, encodeTrayCommand, sameTrayState, trayStateFor } from '../../src/tray/tray.js';
+import { EventEmitter } from 'node:events';
+import fs from 'node:fs';
+import path from 'node:path';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import type { App } from '../../src/app.js';
+import { afterTrayExit, decodeTrayEvent, encodeTrayCommand, sameTrayState, startTray, TRAY_EXIT_NO_TRAY, trayStateFor } from '../../src/tray/tray.js';
+import { captureLog, tempDir } from './helpers.js';
 
 // The tray helper (a small native program) and SwarmCast talk in JSON lines: SwarmCast sends the
 // icon state, the helper sends "ready" and menu clicks. Starting and waiting for OBS share the
@@ -112,5 +117,51 @@ describe('decodeTrayEvent', () => {
     const event = decodeTrayEvent(line);
     // Assert
     expect(event).toBeNull();
+  });
+});
+
+describe('afterTrayExit', () => {
+  it.each([
+    ['a crash (exit 2) is answered with one restart', 2, 0, 'restart'],
+    ['a second exit leaves the panel only', 2, 1, 'panel-only'],
+    ['a kill by a signal (no exit code) is answered with one restart', null, 0, 'restart'],
+    ['"no tray on this desktop" (exit 3) is never restarted', TRAY_EXIT_NO_TRAY, 0, 'no-tray'],
+  ] as const)('%s', (_what, code, restarts, expected) => {
+    // Act
+    const next = afterTrayExit(code, restarts);
+    // Assert
+    expect(next).toBe(expected);
+  });
+});
+
+/** What the real helper prints on a display without a session bus (apps/tray/session.go). */
+const NO_BUS = 'no D-Bus session bus (exec: "dbus-launch": executable file not found in $PATH): running without a tray icon';
+
+describe('startTray', () => {
+  // The stand-in helper is a shell script, so POSIX only; Windows' helper never exits with 3.
+  it.skipIf(process.platform === 'win32')('a helper that finds no tray on this desktop is not started again: its reason is logged, the panel goes on', async () => {
+    // Arrange
+    vi.stubEnv('DISPLAY', ':99');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const binDir = tempDir('sc-tray-');
+    const starts = path.join(binDir, 'starts');
+    fs.writeFileSync(path.join(binDir, 'swarmcast-tray'), `#!/bin/sh\necho start >> '${starts}'\necho '${NO_BUS}' >&2\nexit ${TRAY_EXIT_NO_TRAY}\n`, { mode: 0o755 });
+    const { log, lines } = captureLog('info');
+    const app = { log, live: Object.assign(new EventEmitter(), { phase: 'off' }), paths: { binDir }, close: async () => {} } as unknown as App;
+    const trayLines = (): Array<[unknown, unknown]> => lines().filter((l) => /tray/.test(String(l.msg))).map((l) => [l.msg, l.line]);
+    // Act
+    const tray = startTray(app);
+    onTestFinished(() => tray?.close());
+    await expect.poll(() => trayLines().length, { timeout: 10_000 }).toBe(2);
+    // Assert
+    expect(trayLines()).toEqual(
+      expect.arrayContaining([
+        ['tray helper stderr', NO_BUS],
+        ['no tray icon on this desktop, panel only', undefined],
+      ]),
+    );
+    expect(fs.readFileSync(starts, 'utf8')).toBe('start\n');
   });
 });

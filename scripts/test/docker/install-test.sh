@@ -144,10 +144,12 @@ state() { admin_get /api/state; }
 phase_is() { [ "$(state 2>/dev/null | jq -r .phase)" = "$1" ]; }
 panel_url_in() { grep -oE 'http://127\.0\.0\.1:[0-9]+/auth/[A-Za-z0-9_-]+' "$1" | head -n1; }
 
-start_bg() { # start_bg OUTFILE -> APP_PID
+start_bg() { # start_bg OUTFILE [NAME=VALUE]... -> APP_PID
+  local out="$1"
+  shift
   # setsid: a background job of a non-interactive shell would start with SIGINT ignored.
-  env SWARMCAST_HOME="$H" SWARMCAST_RELEASE_URL="$RELEASE_URL" \
-    setsid bash "$SCRIPT" --yes --no-tunnel --skip-speedtest >"$1" 2>&1 </dev/null &
+  env SWARMCAST_HOME="$H" SWARMCAST_RELEASE_URL="$RELEASE_URL" "$@" \
+    setsid bash "$SCRIPT" --yes --no-tunnel --skip-speedtest >"$out" 2>&1 </dev/null &
   APP_PID=$!
 }
 
@@ -166,6 +168,9 @@ stop_and_check() { # stop_and_check SIGNAL OUTFILE
   for p in 1935 8080 8081; do
     if port_open "$p"; then bad "port $p still open"; else ok "port $p closed"; fi
   done
+  # The reaper (apps/server/src/process/children.ts) runs from the start to the stop: the server
+  # logs this only when it died while SwarmCast still ran (and starts another).
+  hasnt "$out" "reaper exited unexpectedly"
 }
 
 begin "4. normal start, RTMP stream, curl viewer, Ctrl+C (SIGINT)"
@@ -251,12 +256,36 @@ stop_and_check TERM "$O"
 [ "$CASE_FAILED" = 1 ] && show "app output" "$O"
 end
 
-# Informational: things seen in the app output that are not failures of this suite.
-for f in "$W/4.txt" "$W/5.txt"; do
-  n="$(grep -c 'reaper exited unexpectedly' "$f")"
-  [ "$n" -gt 0 ] && echo "WARN $(basename "$f"): 'reaper exited unexpectedly, restarting' x$n (see case 6)"
-  grep -q 'tray helper stderr.*panic' "$f" && echo "WARN $(basename "$f"): the tray helper panicked (no D-Bus session in the container)"
-done
+begin "5b. a display but no D-Bus session: no tray icon, nothing crashes, the panel works"
+# The server starts the tray helper where a desktop may be (DISPLAY, WAYLAND_DISPLAY or a bus
+# address set): here a display variable with neither an X server nor a session bus behind it,
+# and no dbus-launch to start one. The helper says why on stderr and exits with code 3 before
+# showing anything (apps/tray/session.go); the server carries on with the panel only and does
+# not start it again (apps/server/src/tray/tray.ts).
+O="$W/5b.txt"
+eq "$(command -v dbus-launch)" "" "no dbus-launch in this image (nothing can start a session bus)"
+start_bg "$O" DISPLAY=:99
+if wait_for 60 bash -c "grep -qE 'http://127\.0\.0\.1:[0-9]+/auth/' \"$O\""; then ok "panel URL printed"; else bad "no panel URL after 60 s"; fi
+LOGIN="$(panel_url_in "$O")"
+ADMIN="${LOGIN%/auth/*}"
+curl -s -o /dev/null -c "$W/admin.jar" "$LOGIN"
+if wait_for 60 phase_is waiting-obs; then ok "phase waiting-obs"; else bad "phase is $(state | jq -r .phase)"; fi
+# The helper's stderr as the server logs it, and the server's answer to its exit: two lines,
+# in either order (the exit can be reported before the last stderr line is read).
+tray_err() { jq -rR 'fromjson? | objects | select(.msg == "tray helper stderr") | .line' "$O"; }
+panel_only() { grep -qF '"msg":"no tray icon on this desktop, panel only"' "$O"; }
+both_logged() { panel_only && [ -n "$(tray_err)" ]; }
+if wait_for 30 both_logged; then ok "server: no tray icon on this desktop, panel only"; else bad "30 s after the start: \"no tray icon on this desktop\" logged: $(panel_only && echo yes || echo no); helper stderr: $(tray_err)"; fi
+# One line, the reason: no panic, no second start.
+TRAY_ERR="$(tray_err)"
+# shellcheck disable=SC2016 # "$PATH" is literal: Go's own words for a program not on PATH
+eq "$TRAY_ERR" 'no D-Bus session bus (exec: "dbus-launch": executable file not found in $PATH): running without a tray icon' "the tray helper's stderr"
+hasnt "$O" "tray helper exited"
+hasnt "$O" '"msg":"tray icon ready"'
+if pgrep -f "/app/current/bin/swarmcast-tray" >/dev/null; then bad "tray helper still running: $(pgrep -a -f /app/current/bin/swarmcast-tray)"; else ok "no tray helper process"; fi
+stop_and_check TERM "$O"
+[ "$CASE_FAILED" = 1 ] && show "app output" "$O"
+end
 
 begin "6. app killed with SIGKILL: the reaper must stop MediaMTX"
 O="$W/6.txt"
