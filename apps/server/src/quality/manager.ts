@@ -106,7 +106,8 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
   private lastBackoff?: UploadState['lastBackoff'];
   private ceiling?: number;
   private mediamtxSource: MediaMtxSource;
-  private readonly guard: LoadGuard;
+  /** Decides when to drop a rendition (QualityDeps.loadGuard, or one with the default thresholds). */
+  readonly guard: LoadGuard;
   private readonly cpuSampler = new CpuSampler();
   private shed?: { reason: ShedReason; heights: number[]; at: number };
   private ladderSource: SourceInfo | null = null;

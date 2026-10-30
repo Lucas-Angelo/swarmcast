@@ -109,7 +109,9 @@ export class TrackerService {
     if (!this.access.p2pAllowed(session)) return new Error('p2p not allowed');
     if (!this.allowed.has(infoHash)) return new Error('unknown stream');
     // Each offer reaches one random peer: capping offers per announce (plus the per-socket
-    // message rate limit) limits how fast one member can learn other viewers' IPs.
+    // message rate limit) limits how fast one member can learn other viewers' IPs. numwant is
+    // capped with them: bittorrent-tracker hands the i-th peer it picks offers[i], and throws (an
+    // uncaught TypeError) when it picks more peers than offers are left.
     if (Array.isArray(params.offers) && params.offers.length > MAX_OFFERS_PER_ANNOUNCE) {
       params.offers = params.offers.slice(0, MAX_OFFERS_PER_ANNOUNCE);
     }

@@ -1,61 +1,102 @@
 import fs from 'node:fs';
 import type { AddressInfo } from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAdminServer } from '../../src/admin/server.js';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { defaultConfig, type AppConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
-import type { DirectMode } from '../../src/direct/direct.js';
 import { resettableRateLimits } from '../../src/public/rate-limit-store.js';
 import { LoadGuard } from '../../src/quality/load-guard.js';
-import { Transcoder } from '../../src/quality/transcoder.js';
-import { silentLog } from './helpers.js';
-import { makeController } from './live-helpers.js';
+import type { Transcoder } from '../../src/quality/transcoder.js';
+import { tempDir } from './helpers.js';
+import { LADDER_RUNGS, statusReached, transcoderWith } from './helpers-b.js';
+import { inactiveDirect, makeController, panelServer, startController } from './live-helpers.js';
 
-// Hooks the integration and E2E harnesses build on: free ports chosen by
-// the OS at listen time, a rate-limit reset, an injectable load guard, monotonic counters.
+// Hooks the integration and E2E harnesses build on: free ports chosen by the OS at listen time
+// (config.ports then holds the real port: verifyOff, the tunnel and the smoke test read it
+// there), a rate-limit reset, an injectable load guard, monotonic converter counters. Fastify's
+// inject() is used where the network is not the subject; the panel listens for real because its
+// CSP names the port it got.
 
-const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
-const cleanup: Array<() => Promise<unknown>> = [];
-afterEach(async () => {
-  for (const c of cleanup.splice(0).reverse()) await c().catch(() => {});
+/** /healthz answers this many requests per minute and client, then 429. */
+const HEALTHZ_PER_MINUTE = 60;
+/** The panel answers this many requests per minute, then 429. */
+const PANEL_PER_MINUTE = 600;
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
-/** Every port 0: nothing is probed, the public server gets whatever the OS hands out. */
+/** A live (not started) with every port 0 and its config at hand: the public server gets whatever the OS hands out. Stopped when the test finishes. */
 function liveOnPortZero(): { live: LiveController; config: AppConfig } {
   const config = defaultConfig();
   config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
-  const { live } = makeController(direct, { config });
-  cleanup.push(() => live.stop());
+  const { live } = makeController(inactiveDirect(), { config });
+  onTestFinished(async () => void (await live.stop()));
   return { live, config };
 }
 
+const healthz = async (port: number | null): Promise<number> => (await fetch(`http://127.0.0.1:${port}/healthz`)).status;
+
+/** The panel server listening on 127.0.0.1, port 0, and the port it got. Closed when the test finishes. */
+async function panelOnPortZero(): Promise<{ app: FastifyInstance; port: number }> {
+  const adminDir = tempDir('sc-admin-');
+  fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html>');
+  const { app } = await panelServer({ live: makeController().live, port: 0, adminDir });
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  return { app, port: (app.server.address() as AddressInfo).port };
+}
+
 describe('public server on port 0', () => {
-  it('listens on a port the OS picked, exposes it, and picks again on the next start', async () => {
+  it('has no port before the start', () => {
+    // Arrange
+    const { live } = liveOnPortZero();
+    // Act
+    const port = live.publicPort;
+    // Assert
+    expect(port).toBeNull();
+  });
+
+  it('listens on a port the OS picked, and the config holds that port', async () => {
+    // Arrange
     const { live, config } = liveOnPortZero();
-    expect(live.publicPort).toBeNull();
+    // Act
     await live.start();
-    const first = live.publicPort!;
-    expect(first).toBeGreaterThan(0);
-    // config.ports holds the real port (verifyOff, the tunnel and the smoke test read it there).
-    expect(config.ports.public).toBe(first);
-    expect((await fetch(`http://127.0.0.1:${first}/healthz`)).status).toBe(200);
-    expect(await live.stop()).toBe(true);
-    expect(live.publicPort).toBeNull();
-    await live.start();
+    // Assert
     expect(live.publicPort).toBeGreaterThan(0);
-    expect((await fetch(`http://127.0.0.1:${live.publicPort}/healthz`)).status).toBe(200);
+    expect(config.ports.public).toBe(live.publicPort);
+    expect(await healthz(live.publicPort)).toBe(200);
+  });
+
+  it('stops cleanly and forgets its port', async () => {
+    // Arrange
+    const { live } = await startController();
+    // Act
+    const verified = await live.stop();
+    // Assert
+    expect(verified).toBe(true);
+    expect(live.publicPort).toBeNull();
+  });
+
+  it('picks a port again on the next start', async () => {
+    // Arrange
+    const { live } = await startController();
+    await live.stop();
+    // Act
+    await live.start();
+    // Assert
+    expect(live.publicPort).toBeGreaterThan(0);
+    expect(await healthz(live.publicPort)).toBe(200);
   });
 });
 
 describe('rate-limit reset (test hook)', () => {
-  it('clears the global and the per-route counters, which otherwise count exactly like the default store', async () => {
+  /** A Fastify app with the resettable store: 2 requests a minute on /global, 1 on /route. Closed when the test finishes. */
+  async function limitedApp() {
     const limits = resettableRateLimits();
     const app = Fastify();
-    cleanup.push(() => app.close());
+    onTestFinished(() => app.close());
     await app.register(rateLimit, { store: limits.Store, max: 2, timeWindow: '1 minute' });
     app.get('/global', async () => 'ok');
     app.get('/route', { config: { rateLimit: { max: 1, timeWindow: '1 minute' } } }, async () => 'ok');
@@ -64,86 +105,170 @@ describe('rate-limit reset (test hook)', () => {
       for (let i = 0; i < n; i++) out.push((await app.inject({ url })).statusCode);
       return out;
     };
-    expect(await codes('/global', 3)).toEqual([200, 200, 429]);
-    expect(await codes('/route', 2)).toEqual([200, 429]);
+    return { limits, codes };
+  }
+
+  it('counts the global and the per-route limits exactly like the default store', async () => {
+    // Arrange
+    const { codes } = await limitedApp();
+    // Act
+    const global = await codes('/global', 3);
+    const route = await codes('/route', 2);
+    // Assert
+    expect(global).toEqual([200, 200, 429]);
+    expect(route).toEqual([200, 429]);
+  });
+
+  it('clears the global and the per-route counters', async () => {
+    // Arrange
+    const { limits, codes } = await limitedApp();
+    await codes('/global', 3);
+    await codes('/route', 2);
+    // Act
     limits.reset();
+    // Assert
     expect(await codes('/global', 3)).toEqual([200, 200, 429]);
     expect(await codes('/route', 2)).toEqual([200, 429]);
   });
 
   it('LiveController.resetRateLimits() lifts a 429 of the running public server', async () => {
-    const { live } = liveOnPortZero();
-    await live.start();
-    const url = `http://127.0.0.1:${live.publicPort}/healthz`;
-    // /healthz allows 60 requests per minute and client.
-    const statuses = await Promise.all(Array.from({ length: 61 }, () => fetch(url).then((r) => r.status)));
-    expect(statuses.filter((s) => s === 429)).toHaveLength(1);
-    expect((await fetch(url)).status).toBe(429);
+    // Arrange
+    const { live } = await startController();
+    const statuses = await Promise.all(Array.from({ length: HEALTHZ_PER_MINUTE + 1 }, () => healthz(live.publicPort)));
+    const limited = await healthz(live.publicPort);
+    // Act
     live.resetRateLimits();
-    expect((await fetch(url)).status).toBe(200);
+    // Assert
+    expect(statuses.filter((s) => s === 429)).toHaveLength(1);
+    expect(limited).toBe(429);
+    expect(await healthz(live.publicPort)).toBe(200);
   });
 });
 
 describe('panel server on port 0', () => {
-  it('accepts its real host and origin, refuses others, and puts the real port in its CSP', async () => {
-    const adminDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-admin-'));
-    cleanup.push(async () => fs.rmSync(adminDir, { recursive: true, force: true }));
-    fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html>');
-    const { live } = liveOnPortZero();
-    const app: FastifyInstance = await createAdminServer({ port: 0, adminDir, live, log: silentLog, token: 'tok', onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn() });
-    cleanup.push(() => app.close());
-    await app.listen({ host: '127.0.0.1', port: 0 });
-    const port = (app.server.address() as AddressInfo).port;
-    expect(port).toBeGreaterThan(0);
+  it('accepts its real host (401: no login cookie) and puts the real port in its CSP', async () => {
+    // Arrange
+    const { app, port } = await panelOnPortZero();
+    // Act
     const ok = await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}` } });
-    expect(ok.statusCode).toBe(401); // the right host, no login cookie
+    const named = await app.inject({ url: '/', headers: { host: `localhost:${port}` } });
+    // Assert
+    expect(port).toBeGreaterThan(0);
+    expect(ok.statusCode).toBe(401);
     expect(String(ok.headers['content-security-policy'])).toContain(`ws://127.0.0.1:${port}`);
-    expect((await app.inject({ url: '/', headers: { host: `localhost:${port}` } })).statusCode).toBe(401);
-    expect((await app.inject({ url: '/', headers: { host: '127.0.0.1:0' } })).statusCode).toBe(421);
-    expect((await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:1' } })).statusCode).toBe(403);
-    // Its rate-limit counters can be reset too (600 requests per minute).
-    for (let i = 0; i < 600; i++) await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}` } });
-    expect((await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}` } })).statusCode).toBe(429);
+    expect(named.statusCode).toBe(401);
+  });
+
+  it('refuses another host (421) and another origin (403)', async () => {
+    // Arrange
+    const { app, port } = await panelOnPortZero();
+    // Act
+    const wrongHost = await app.inject({ url: '/', headers: { host: '127.0.0.1:0' } });
+    const wrongOrigin = await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}`, origin: 'http://127.0.0.1:1' } });
+    // Assert
+    expect(wrongHost.statusCode).toBe(421);
+    expect(wrongOrigin.statusCode).toBe(403);
+  });
+
+  it('its rate-limit counters can be reset too', async () => {
+    // Arrange
+    const { app, port } = await panelOnPortZero();
+    const headers = { host: `127.0.0.1:${port}` };
+    for (let i = 0; i < PANEL_PER_MINUTE; i++) await app.inject({ url: '/', headers });
+    const limited = await app.inject({ url: '/', headers });
+    // Act
     app.resetRateLimits();
-    expect((await app.inject({ url: '/', headers: { host: `127.0.0.1:${port}` } })).statusCode).toBe(401);
+    // Assert
+    expect(limited.statusCode).toBe(429);
+    expect((await app.inject({ url: '/', headers })).statusCode).toBe(401);
   });
 });
 
 describe('load guard injection', () => {
-  it('uses the guard instance passed in, or builds one from options', () => {
+  /** Quality options of a logic test: no ffmpeg, no ladder. */
+  const NO_LADDER = { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
+
+  it('uses the guard instance passed in', () => {
+    // Arrange
     const guard = new LoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
-    const q = { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
-    const a = makeController(direct, { quality: { ...q, loadGuard: guard } }).live;
-    expect((a.quality as unknown as { guard: LoadGuard }).guard).toBe(guard);
-    const b = makeController(direct, { quality: { ...q, loadGuard: { cpuSaturatedPercent: 101, cpuForMs: 0 } } }).live;
-    const built = (b.quality as unknown as { guard: LoadGuard }).guard;
+    // Act
+    const { live } = makeController(inactiveDirect(), { quality: { ...NO_LADDER, loadGuard: guard } });
+    // Assert
+    expect(live.quality.guard).toBe(guard);
+  });
+
+  it('builds one from options: 100 % CPU never reaches a 101 % threshold, even with no observation window', () => {
+    // Arrange
+    const { live } = makeController(inactiveDirect(), { quality: { ...NO_LADDER, loadGuard: { cpuSaturatedPercent: 101, cpuForMs: 0 } } });
+    const built = live.quality.guard;
+    // Act
+    const verdicts = [built.check(0, { cpuBusyPercent: 100 }), built.check(60_000, { cpuBusyPercent: 100 })];
+    // Assert
     expect(built).toBeInstanceOf(LoadGuard);
-    // 100 % CPU never reaches a 101 % threshold, even with no observation window.
-    expect(built.check(0, { cpuBusyPercent: 100 })).toBeNull();
-    expect(built.check(60_000, { cpuBusyPercent: 100 })).toBeNull();
+    expect(verdicts).toEqual([null, null]);
   });
 });
 
 describe('Transcoder counters', () => {
+  /** Node refuses ffmpeg's arguments and exits at once: a converter that crashes on every launch. */
+  const crashingFfmpeg = process.execPath;
+  /** The back-off before the first restart of a crashed ladder. */
+  const FIRST_RESTART_MS = 1000;
+
+  /**
+   * Starts the ladder and lets it crash until it gives up (one restart allowed): each crash is
+   * awaited, its restart back-off passes on the fake clock.
+   */
+  async function crashUntilFailed(t: Transcoder): Promise<void> {
+    const crashed = statusReached(t, 'restarting');
+    const failed = statusReached(t, 'failed');
+    t.start(LADDER_RUNGS, 'libx264', false);
+    await crashed;
+    vi.advanceTimersByTime(FIRST_RESTART_MS);
+    await failed;
+  }
+
+  const counters = (t: Transcoder) => ({ launches: t.launches, crashes: t.crashes, restarts: t.restarts });
+
+  it('restarts a crashed ladder after its back-off, not before', async () => {
+    // Arrange
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const t = transcoderWith(crashingFfmpeg, { maxRestarts: 1 });
+    const crashed = statusReached(t, 'restarting');
+    t.start(LADDER_RUNGS, 'libx264', false);
+    await crashed;
+    // Act
+    vi.advanceTimersByTime(FIRST_RESTART_MS - 1);
+    const beforeBackoff = t.launches;
+    vi.advanceTimersByTime(1);
+    // Assert
+    expect(beforeBackoff).toBe(1);
+    expect(t.launches).toBe(2);
+  });
+
   it('launches and crashes only ever grow; restarts start again at 0 with every start', async () => {
-    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-ladder-'));
-    cleanup.push(async () => fs.rmSync(workDir, { recursive: true, force: true }));
-    // Node refuses ffmpeg's arguments and exits at once: a converter that crashes on every launch.
-    const t = new Transcoder({ ffmpeg: process.execPath, inputUrl: 'rtmp://127.0.0.1:9/live/x', workDir, reaper: null, log: silentLog, maxRestarts: 1 });
-    cleanup.push(() => t.stop());
-    const rungs = [{ name: 'v1080', height: 1080, width: 1920, fps: 30, kbps: 6000, source: true }, { name: 'v480', height: 480, width: 854, fps: 30, kbps: 1500, source: false }];
-    const failed = (): Promise<void> => new Promise((r) => t.on('status', (s) => s === 'failed' && r()));
-    let done = failed();
-    t.start(rungs, 'libx264', false);
-    await done;
-    expect({ launches: t.launches, crashes: t.crashes, restarts: t.restarts }).toEqual({ launches: 2, crashes: 2, restarts: 2 });
+    // Arrange
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const t = transcoderWith(crashingFfmpeg, { maxRestarts: 1 });
+    // Act
+    await crashUntilFailed(t);
+    const first = counters(t);
     await t.stop();
-    done = failed();
-    t.start(rungs, 'libx264', false);
-    await done;
-    expect({ launches: t.launches, crashes: t.crashes, restarts: t.restarts }).toEqual({ launches: 4, crashes: 4, restarts: 2 });
-    // Stopping is not a crash.
+    await crashUntilFailed(t);
+    const second = counters(t);
+    // Assert
+    expect(first).toEqual({ launches: 2, crashes: 2, restarts: 2 });
+    expect(second).toEqual({ launches: 4, crashes: 4, restarts: 2 });
+  });
+
+  it('stopping is not a crash', async () => {
+    // Arrange
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const t = transcoderWith(crashingFfmpeg, { maxRestarts: 1 });
+    await crashUntilFailed(t);
+    // Act
     await t.stop();
-    expect(t.crashes).toBe(4);
+    // Assert
+    expect(t.crashes).toBe(2);
   });
 });

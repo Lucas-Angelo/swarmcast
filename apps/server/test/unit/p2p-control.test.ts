@@ -1,175 +1,282 @@
-import { EventEmitter } from 'node:events';
-import { describe, expect, it, vi } from 'vitest';
-import type { ServerMessage } from '@swarmcast/shared';
-import { defaultConfig } from '../../src/core/config.js';
-import { LiveController } from '../../src/core/live.js';
-import type { DirectMode } from '../../src/direct/direct.js';
-import type { ManifestSigner } from '../../src/hls/manifest.js';
-import type { MediaMtx } from '../../src/media/mediamtx.js';
-import { NoTunnel } from '../../src/tunnel/provider.js';
-import { silentLog } from './helpers.js';
+import type { IncomingMessage } from 'node:http';
+import { describe, expect, it } from 'vitest';
+import type WebSocket from 'ws';
+import { HASH_FAILURE_THRESHOLD, encodeTrackerFrame, type ServerMessage } from '@swarmcast/shared';
+import type { Session } from '../../src/access/access.js';
+import { defaultConfig, type AppConfig } from '../../src/core/config.js';
+import type { LiveController } from '../../src/core/live.js';
+import { FakeControlSocket, announceFrame, joinViewer, nextJson, trackerSocket, upgradeServer } from './helpers-b.js';
+import { inactiveDirect, makeController } from './live-helpers.js';
 
-function makeLive(): LiveController {
-  const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
-  const mediamtx = Object.assign(new EventEmitter(), { onPublish: () => {}, pid: undefined }) as unknown as MediaMtx;
-  return new LiveController({
-    config: defaultConfig(),
-    saveConfig: () => {},
-    streamKey: 'sc_testtesttesttest',
-    signer: {} as ManifestSigner,
-    mediamtx,
-    tunnel: new NoTunnel(),
-    direct,
-    viewerDir: '/nonexistent',
-    log: silentLog,
-    version: 'test',
-    secureCookies: false,
-  });
+// P2P control of the live, as the viewers' pages see it on their /control sockets: "Remove from
+// P2P" makes a session watch-only (it keeps watching), closes its tracker connections and tells
+// every viewer to drop its peers; kicking does the same for the peers of the kicked session.
+// Repeated hash failures reported by other viewers remove the accused session automatically (a
+// viewer cannot report itself). "Allow P2P for viewers" is the global switch, saved in the
+// config. The pages' sockets are fakes the control channel takes over directly (attach): the
+// network is not the subject here (tracker-mux.test.ts has the real one). A page's tracker
+// connection is a channel inside its /control socket, as the viewer opens it. The peer ids a
+// session announced are put on it directly (the tracker records them on announces).
+
+/** The upgrade request of a page's /control socket. */
+const REQ = { url: '/control' } as IncomingMessage;
+
+/** A peer id as sessions record it (hex of the 20-byte id). */
+const PEER = 'aa'.repeat(20);
+
+/** A stats report as the player sends it. */
+const STATS = { t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 0, p2pUpBytes: 0, peers: 0, http429: 0, device: 'desktop' };
+
+/** A live that began (not started: no public server). */
+function liveOn(over: { config?: AppConfig; saveConfig?: (c: AppConfig) => void } = {}): LiveController {
+  const { live } = makeController(inactiveDirect(), over);
+  live.access.begin();
+  return live;
 }
 
+/** The page of `s` on /control. */
+function page(live: LiveController, s: Session): FakeControlSocket {
+  const sock = new FakeControlSocket();
+  live.control.attach(sock as unknown as WebSocket, s, REQ);
+  return sock;
+}
+
+/** The page of `s` with its tracker connection open: channel 1 inside its /control socket. */
+function pageWithTracker(live: LiveController, s: Session): FakeControlSocket {
+  const sock = page(live, s);
+  sock.receive(encodeTrackerFrame({ op: 'open', id: 1 }));
+  return sock;
+}
+
+/** What the server sent on `sock` after its hello, parsed: control messages only, without the viewer-count pushes (they go out on a timer of their own). */
+const received = (sock: FakeControlSocket): ServerMessage[] =>
+  sock.sent
+    .slice(1)
+    .filter((f) => !f.startsWith('~'))
+    .map((f) => JSON.parse(f) as ServerMessage)
+    .filter((m) => m.t !== 'viewers');
+
+/** True once the server closed the tracker channel inside `sock`. */
+const trackerClosed = (sock: FakeControlSocket): boolean => sock.sent.includes(encodeTrackerFrame({ op: 'close', id: 1 }));
+
+/** Forgets what the server sent on `sock` so far, except its hello. */
+const seen = (sock: FakeControlSocket): void => void sock.sent.splice(1);
+
 describe('"remove from P2P"', () => {
-  it('marks the session watch-only, closes its tracker sockets and tells everyone to drop its peers', () => {
-    const live = makeLive();
-    live.access.begin();
-    const sent: Array<[string, ServerMessage]> = [];
-    const broadcast: ServerMessage[] = [];
-    vi.spyOn(live.control, 'send').mockImplementation((id, m) => void sent.push([id, m]));
-    vi.spyOn(live.control, 'broadcast').mockImplementation((m) => void broadcast.push(m));
-    const disc = vi.spyOn(live.tracker, 'disconnectSession');
-    const s = live.access.createSession({ nickname: 'x', deviceId: 'd', device: 'desktop', ip: 'ip' });
-    s.peerIds.add('aa'.repeat(20));
-
-    expect(live.setP2P(s.id, false)).toBe(true);
+  it('makes the session watch-only: P2P off for it, and it keeps watching', () => {
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'x');
+    const own = page(live, s);
+    // Act
+    const done = live.setP2P(s.id, false);
+    // Assert
+    expect(done).toBe(true);
     expect(s.p2pAllowed).toBe(false);
-    expect(disc).toHaveBeenCalledWith(s.id);
-    expect(sent).toContainEqual([s.id, { t: 'p2p', allowed: false, forAll: true }]);
-    expect(broadcast).toContainEqual({ t: 'block-peers', peerIds: ['aa'.repeat(20)] });
-    expect(live.control.blockedPeers.has('aa'.repeat(20))).toBe(true);
-    // The session itself keeps watching.
+    expect(received(own)).toContainEqual({ t: 'p2p', allowed: false, forAll: true });
     expect(live.access.sessions.has(s.id)).toBe(true);
+  });
 
+  it('closes its tracker connections', () => {
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'x');
+    const own = pageWithTracker(live, s);
+    // Act
+    live.setP2P(s.id, false);
+    // Assert
+    expect(trackerClosed(own)).toBe(true);
+  });
+
+  it('tells every viewer to drop its peers, and to take them back once allowed again', () => {
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'x');
+    s.peerIds.add(PEER);
+    const other = page(live, joinViewer(live.access, 'other'));
+    // Act
+    live.setP2P(s.id, false);
+    const blocked = [...live.control.blockedPeers];
     live.setP2P(s.id, true);
-    expect(broadcast).toContainEqual({ t: 'unblock-peers', peerIds: ['aa'.repeat(20)] });
+    // Assert
+    expect(blocked).toEqual([PEER]);
+    expect(received(other)).toEqual([
+      { t: 'block-peers', peerIds: [PEER] },
+      { t: 'unblock-peers', peerIds: [PEER] },
+    ]);
     expect(live.control.blockedPeers.size).toBe(0);
   });
 
   it('kick also blocks the peers of the kicked session', () => {
-    const live = makeLive();
-    live.access.begin();
-    const broadcast: ServerMessage[] = [];
-    vi.spyOn(live.control, 'broadcast').mockImplementation((m) => void broadcast.push(m));
-    const kick = vi.spyOn(live.control, 'kick');
-    const s = live.access.createSession({ nickname: 'x', deviceId: 'd', device: 'desktop', ip: 'ip' });
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'x');
     s.peerIds.add('bb'.repeat(20));
+    const kicked = page(live, s);
+    const other = page(live, joinViewer(live.access, 'other'));
+    // Act
     live.kick(s.id);
-    expect(kick).toHaveBeenCalledWith(s.id);
-    expect(broadcast).toContainEqual({ t: 'block-peers', peerIds: ['bb'.repeat(20)] });
+    // Assert
+    expect(received(kicked)).toContainEqual({ t: 'kicked' });
+    expect(kicked.close).toHaveBeenCalledWith(4003, 'kicked');
+    expect(received(other)).toContainEqual({ t: 'block-peers', peerIds: ['bb'.repeat(20)] });
   });
 
   it('repeated hash failures remove the accused session from P2P automatically', () => {
-    const live = makeLive();
-    live.access.begin();
-    const reporter = live.access.createSession({ nickname: 'honest', deviceId: 'd1', device: 'desktop', ip: 'ip1' });
-    const bad = live.access.createSession({ nickname: 'evil', deviceId: 'd2', device: 'desktop', ip: 'ip2' });
+    // Arrange
+    const live = liveOn();
+    const reporter = page(live, joinViewer(live.access, 'honest'));
+    const bad = joinViewer(live.access, 'evil');
     bad.peerIds.add('cc'.repeat(20));
-    const sock = { sessionId: reporter.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
-    const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
-    for (let i = 0; i < 3; i++) onMessage(sock, JSON.stringify({ t: 'hash-fail', peerId: 'cc'.repeat(20), segment: 'p2p' }), false);
-    expect(bad.hashFailures).toBe(3);
+    // Act
+    for (let i = 0; i < HASH_FAILURE_THRESHOLD; i++) reporter.receive(JSON.stringify({ t: 'hash-fail', peerId: 'cc'.repeat(20), segment: 'p2p' }));
+    // Assert
+    expect(bad.hashFailures).toBe(HASH_FAILURE_THRESHOLD);
     expect(bad.p2pAllowed).toBe(false);
     expect(bad.autoRemovedFromP2P).toBe(true);
     expect(live.snapshot().warnings.join(' ')).toMatch(/removed from P2P automatically/);
   });
 
   it('a viewer cannot report itself, and junk messages are ignored', () => {
-    const live = makeLive();
-    live.access.begin();
-    const s = live.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'a');
     s.peerIds.add('dd'.repeat(20));
-    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
-    const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
-    for (let i = 0; i < 5; i++) onMessage(sock, JSON.stringify({ t: 'hash-fail', peerId: 'dd'.repeat(20), segment: 'x' }), false);
-    onMessage(sock, '{not json', false);
-    onMessage(sock, JSON.stringify({ t: 'stats', p2pEnabled: 'yes' }), false);
+    const own = page(live, s);
+    // Act
+    for (let i = 0; i < HASH_FAILURE_THRESHOLD + 2; i++) own.receive(JSON.stringify({ t: 'hash-fail', peerId: 'dd'.repeat(20), segment: 'x' }));
+    own.receive('{not json');
+    own.receive(JSON.stringify({ t: 'stats', p2pEnabled: 'yes' }));
+    // Assert
     expect(s.hashFailures).toBe(0);
     expect(s.p2pAllowed).toBe(true);
+    expect(own.terminate).not.toHaveBeenCalled();
   });
 
-  it('the delay a player reports shows in the viewers table; out-of-range values are refused', () => {
-    const live = makeLive();
-    live.access.begin();
-    const s = live.access.createSession({ nickname: 'late', deviceId: 'd', device: 'desktop', ip: 'ip' });
-    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
-    const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
-    const stats = { t: 'stats', p2pEnabled: true, httpBytes: 1, p2pDownBytes: 0, p2pUpBytes: 0, peers: 0, http429: 0, device: 'desktop' };
-    expect(live.snapshot().viewers.find((v) => v.nickname === 'late')?.delayS).toBeNull();
-    onMessage(sock, JSON.stringify({ ...stats, delayS: 14 }), false);
+  it('the delay a player reports shows in the viewers table', () => {
+    // Arrange
+    const live = liveOn();
+    const own = page(live, joinViewer(live.access, 'late'));
+    const before = live.snapshot().viewers.find((v) => v.nickname === 'late')?.delayS;
+    // Act
+    own.receive(JSON.stringify({ ...STATS, delayS: 14 }));
+    // Assert
+    expect(before).toBeNull();
     expect(live.snapshot().viewers.find((v) => v.nickname === 'late')?.delayS).toBe(14);
-    onMessage(sock, JSON.stringify({ ...stats, delayS: 9999 }), false);
+  });
+
+  it('an out-of-range delay is refused (the last one stays)', () => {
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'late');
+    const own = page(live, s);
+    own.receive(JSON.stringify({ ...STATS, delayS: 14 }));
+    // Act
+    own.receive(JSON.stringify({ ...STATS, delayS: 9999 }));
+    // Assert
     expect(s.delayS).toBe(14);
-    // An older player without the field: unknown again.
-    onMessage(sock, JSON.stringify(stats), false);
+  });
+
+  it('an older player without the delay field makes it unknown again', () => {
+    // Arrange
+    const live = liveOn();
+    const s = joinViewer(live.access, 'late');
+    const own = page(live, s);
+    own.receive(JSON.stringify({ ...STATS, delayS: 14 }));
+    // Act
+    own.receive(JSON.stringify(STATS));
+    // Assert
     expect(s.delayS).toBeNull();
   });
 
   it('floods on the control channel terminate the socket', () => {
-    const live = makeLive();
-    live.access.begin();
-    const s = live.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });
-    const sock = { sessionId: s.id, msgs: { n: 0, at: Date.now() }, frames: { n: 0, at: Date.now() }, terminate: vi.fn(), close: vi.fn() };
-    const onMessage = (live.control as unknown as { onMessage(s: unknown, t: string, b: boolean): void }).onMessage.bind(live.control);
-    for (let i = 0; i < 40; i++) onMessage(sock, JSON.stringify({ t: 'pong' }), false);
-    expect(sock.terminate).toHaveBeenCalled();
+    // Arrange
+    const live = liveOn();
+    const own = page(live, joinViewer(live.access, 'a'));
+    // Act
+    for (let i = 0; i < 40; i++) own.receive(JSON.stringify({ t: 'pong' }));
+    // Assert
+    expect(own.terminate).toHaveBeenCalled();
   });
 });
 
 describe('"Allow P2P for viewers" (global switch)', () => {
-  it('is on by default and persists in config', () => {
-    expect(defaultConfig().allowViewerP2P).toBe(true);
+  it('is on by default', () => {
+    // Act
+    const config = defaultConfig();
+    // Assert
+    expect(config.allowViewerP2P).toBe(true);
+  });
+
+  it('persists in config', () => {
+    // Arrange
     const saved: boolean[] = [];
-    const live = makeLive();
-    (live as unknown as { d: { saveConfig: (c: { allowViewerP2P: boolean }) => void } }).d.saveConfig = (c) => void saved.push(c.allowViewerP2P);
+    const live = liveOn({ saveConfig: (c) => void saved.push(c.allowViewerP2P) });
+    // Act
     live.updateSettings({ ...live.snapshot().settings, allowViewerP2P: false });
+    // Assert
     expect(saved).toEqual([false]);
     expect(live.snapshot().settings.allowViewerP2P).toBe(false);
   });
 
-  it('turns P2P off live for every viewer and back on (except viewers removed one by one)', () => {
-    const live = makeLive();
-    live.access.begin();
-    const sent: Array<[string, ServerMessage]> = [];
-    vi.spyOn(live.control, 'send').mockImplementation((id, m) => void sent.push([id, m]));
-    const disc = vi.spyOn(live.tracker, 'disconnectSession');
-    const a = live.access.createSession({ nickname: 'a', deviceId: 'd1', device: 'desktop', ip: 'ip1' });
-    const b = live.access.createSession({ nickname: 'b', deviceId: 'd2', device: 'desktop', ip: 'ip2' });
+  /** Viewers a and b on their pages (a with its tracker connection); b was removed from P2P one by one before. */
+  function twoViewers() {
+    const live = liveOn();
+    const a = joinViewer(live.access, 'a');
+    const b = joinViewer(live.access, 'b');
+    const pageA = pageWithTracker(live, a);
+    const pageB = page(live, b);
     live.setP2P(b.id, false);
-    sent.length = 0;
-    disc.mockClear();
+    seen(pageA);
+    seen(pageB);
+    return { live, a, b, pageA, pageB };
+  }
 
+  it('turns P2P off live for every viewer', () => {
+    // Arrange
+    const { live, a, pageA, pageB } = twoViewers();
+    // Act
     live.updateSettings({ ...live.snapshot().settings, allowViewerP2P: false });
-    expect(sent).toEqual([
-      [a.id, { t: 'p2p', allowed: false, forAll: false }],
-      [b.id, { t: 'p2p', allowed: false, forAll: false }],
-    ]);
-    expect(disc).toHaveBeenCalledWith(a.id);
+    // Assert
+    expect(received(pageA)).toEqual([{ t: 'p2p', allowed: false, forAll: false }]);
+    expect(received(pageB)).toEqual([{ t: 'p2p', allowed: false, forAll: false }]);
+    expect(trackerClosed(pageA)).toBe(true);
     expect(live.access.p2pAllowed(a)).toBe(false);
-    // The tracker refuses announces too.
-    const check = (live.tracker as unknown as { check(h: string, p: unknown): Error | null }).check.bind(live.tracker);
-    expect(check('x', { socket: { sessionId: a.id } })?.message).toBe('p2p not allowed');
     expect(live.activity.list().some((e) => e.code === 'log.p2pForAllOff')).toBe(true);
+  });
 
-    sent.length = 0;
+  it('the tracker refuses announces while it is off', async () => {
+    // Arrange
+    const { live, a } = twoViewers();
+    live.updateSettings({ ...live.snapshot().settings, allowViewerP2P: false });
+    const url = await upgradeServer(live.access, { tracker: live.tracker });
+    const tracker = await trackerSocket(url, a);
+    const reply = nextJson<Record<string, unknown>>(tracker.ws);
+    // Act
+    tracker.ws.send(announceFrame('00'.repeat(20), 1));
+    // Assert
+    expect((await reply)['failure reason']).toBe('p2p not allowed');
+  });
+
+  it('turns P2P back on for every viewer, except viewers removed one by one', () => {
+    // Arrange
+    const { live, a, b, pageA, pageB } = twoViewers();
+    live.updateSettings({ ...live.snapshot().settings, allowViewerP2P: false });
+    seen(pageA);
+    seen(pageB);
+    // Act
     live.updateSettings({ ...live.snapshot().settings, allowViewerP2P: true });
-    expect(sent).toEqual([
-      [a.id, { t: 'p2p', allowed: true, forAll: true }],
-      [b.id, { t: 'p2p', allowed: false, forAll: true }],
-    ]);
+    // Assert
+    expect(received(pageA)).toEqual([{ t: 'p2p', allowed: true, forAll: true }]);
+    expect(received(pageB)).toEqual([{ t: 'p2p', allowed: false, forAll: true }]);
     expect(live.access.p2pAllowed(a)).toBe(true);
     expect(live.access.p2pAllowed(b)).toBe(false);
   });
 
   it('a config saved with P2P off starts with P2P off', () => {
-    const live = new LiveController({ ...(makeLive() as unknown as { d: ConstructorParameters<typeof LiveController>[0] }).d, config: { ...defaultConfig(), allowViewerP2P: false } });
+    // Act
+    const { live } = makeController(inactiveDirect(), { config: { ...defaultConfig(), allowViewerP2P: false } });
+    // Assert
     expect(live.access.p2pForAll).toBe(false);
   });
 });
