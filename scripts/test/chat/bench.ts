@@ -205,7 +205,11 @@ async function runScenario(sc: Scenario): Promise<Result> {
     check(joined.joinFailures === 0, `${joined.joinFailures} bots could not join`);
     check(closed === 0, `the server closed ${closed} bot sockets (${JSON.stringify(bots.closedByServer)})`);
     check(runLoop <= baseLoop + 30, `event-loop p99 ${runLoop} ms vs calm ${baseLoop} ms (limit +30)`);
-    check(egressP95 <= budget * 1.1, `chat upload p95 ${egressP95} kbps over the budget ${budget} kbps`);
+    // Join snapshots, acks and refusals are sent at once and only charged to the budget (a
+    // viewer must get its hello), so scenarios that join or reconnect many viewers during the run
+    // may go over it while they last: at most twice the budget there.
+    const slack = sc.raid || sc.reconnectAtS !== undefined ? 2 : 1.1;
+    check(egressP95 <= budget * slack, `chat upload p95 ${egressP95} kbps over ${slack} × the budget ${budget} kbps`);
     check(inflightRun <= inflightBase + 2 + (sc.raid?.bots ?? 0), `tunnel in-flight ${inflightBase} → ${inflightRun}`);
     switch (sc.name) {
       case 'quiet':
