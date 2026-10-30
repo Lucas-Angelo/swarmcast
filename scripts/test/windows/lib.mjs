@@ -118,6 +118,7 @@ export function trackPage(page, label) {
   openPages.add({ page, label });
 }
 async function screenshotAll(tag) {
+  const states = [];
   for (const p of [...openPages]) {
     if (p.page.isClosed()) {
       openPages.delete(p);
@@ -125,7 +126,39 @@ async function screenshotAll(tag) {
     }
     const file = path.join(ART, `${SUITE}-${tag}-${p.label}.png`.replace(/[^\w.-]+/g, '_'));
     await p.page.screenshot({ path: file, timeout: 10_000 }).catch(() => {});
+    states.push(`===== ${p.label}\n${await pageState(p.page)}`);
   }
+  if (states.length) fs.writeFileSync(path.join(ART, `${SUITE}-${tag}-pages.txt`.replace(/[^\w.-]+/g, '_')), states.join('\n\n') + '\n');
+}
+
+/**
+ * What a page had done when a section failed: its address, readyState, the navigation's timings
+ * (a goto that timed out on "domcontentloaded" shows here whether the event fired at all), the
+ * scripts it asked for and which of them arrived, and every resource it fetched with its time.
+ */
+async function pageState(page) {
+  // A page stuck in a navigation may never answer: give up after 10 s rather than hang the dump.
+  const timeout = new Promise((resolve) => setTimeout(() => resolve('page state unavailable: no answer in 10 s'), 10_000).unref());
+  return Promise.race([timeout, pageStateOf(page)]);
+}
+
+function pageStateOf(page) {
+  return page
+    .evaluate(() => {
+      const nav = performance.getEntriesByType('navigation')[0];
+      const res = performance.getEntriesByType('resource');
+      const got = new Set(res.map((r) => r.name));
+      const scripts = [...document.scripts].map((s) => `${s.type || 'classic'} ${s.src || '(inline)'}${s.src ? (got.has(s.src) ? ' fetched' : ' NOT fetched') : ''}`);
+      const ms = (v) => (typeof v === 'number' ? Math.round(v) : '?');
+      return [
+        `url: ${location.href}`,
+        `readyState: ${document.readyState}`,
+        nav ? `navigation: type ${nav.type}, response end ${ms(nav.responseEnd)} ms, DOMContentLoaded ${ms(nav.domContentLoadedEventEnd)} ms, load ${ms(nav.loadEventEnd)} ms (0 = not yet)` : 'navigation: no entry',
+        `scripts:\n  ${scripts.join('\n  ')}`,
+        `resources (${res.length}):\n  ${res.map((r) => `${ms(r.startTime)}+${ms(r.duration)} ms ${r.name}`).join('\n  ')}`,
+      ].join('\n');
+    })
+    .catch((e) => `page state unavailable: ${e.message}`);
 }
 
 const cleanups = [];
