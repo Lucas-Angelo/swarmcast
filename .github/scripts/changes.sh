@@ -6,7 +6,6 @@
 # The changed files come from git, per event (GitHub's own event payload, read from env):
 #   pull_request   the PR's merge commit against its first parent (the base branch tip), so only
 #                  what the PR changes counts, whatever happened on the base branch since;
-#   merge_group    merge_group.base_sha .. merge_group.head_sha;
 #   push           before .. after; a new branch (before = 000…) or a before commit that cannot
 #                  be fetched (a force push) counts as "everything changed".
 # Anything else (schedule, workflow_dispatch, a release calling the pipeline), --all, or a diff
@@ -35,13 +34,6 @@ if [ "$all" = false ]; then
       # actions/checkout (fetch-depth: 2) checked out refs/pull/N/merge and its parents.
       if git rev-parse -q --verify 'HEAD^2' >/dev/null; then
         files="$(git diff --name-only 'HEAD^1' HEAD)" && diff_ok=true
-      fi
-      ;;
-    merge_group)
-      base="$(jq -r '.merge_group.base_sha // empty' "$GITHUB_EVENT_PATH")"
-      head="$(jq -r '.merge_group.head_sha // empty' "$GITHUB_EVENT_PATH")"
-      if [ -n "$base" ] && git fetch -q --no-tags --depth=1 origin "$base" 2>/dev/null; then
-        files="$(git diff --name-only "$base" "$head")" && diff_ok=true
       fi
       ;;
     push)

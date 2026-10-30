@@ -11,7 +11,9 @@ name: docker
 # A stage of pipeline.yml (it gates pull requests through ci-ok whenever `changes` turns it on:
 # the Docker suites, the Linux start scripts, these workflows, the e2e specs and server), and
 # the body of linux-docker.yml (weekly, by hand), which asks for the real Cloudflare quick
-# tunnel check (run.sh part d) on its schedule.
+# tunnel check (run.sh part d) on its schedule. Each suite's PASS/FAIL lines go to the job summary
+# (.github/scripts/test-summary.mjs); `shell: bash` everywhere, so `| tee` keeps the exit status
+# (pipefail).
 on:
   workflow_call:
     inputs:
@@ -40,6 +42,9 @@ jobs:
           - { arch: arm64, os: ubuntu-22.04-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     env:
       TARGET: linux-${{ matrix.arch }}
     steps:
@@ -47,6 +52,7 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           go: 'true'
           downloads: 'true'
@@ -61,6 +67,7 @@ jobs:
       # through apt-retry.sh (time limit per try, retries, another mirror after a slow try).
       # No rust-cache: a weekly build is not worth half a gigabyte of the repository's cache.
       - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
       - run: npm run build
       - name: Build tray helper
         run: node apps/tray/build.mjs --target "$TARGET" --vendor
@@ -82,7 +89,9 @@ jobs:
           compression-level: 0
           retention-days: 3
       - uses: ./.github/actions/setup/save
-        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
 
   # One job per base image and architecture, all native (no QEMU).
   release:
@@ -95,6 +104,9 @@ jobs:
         arch: [x64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     env:
       BASE: ${{ matrix.base }}
       TUNNEL_TEST: ${{ inputs.tunnel-test }}
@@ -103,19 +115,33 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           name: linux-docker-${{ matrix.arch }}
           path: linux-release
+      # Time limits: far above the slowest runs (1.3 and 0.5 minutes), since image builds and
+      # pulls vary. One that runs out fails, so the summary below still runs (a job that runs out
+      # is cancelled).
       - name: Start script and package (run.sh a-c, tunnel d when asked)
+        timeout-minutes: 12
         run: |
           tunnel=(--no-tunnel-test)
           if [ "$TUNNEL_TEST" = true ] && [ "$BASE" = ubuntu:24.04 ]; then tunnel=(); fi
-          scripts/test/docker/run.sh --release linux-release --serial "${tunnel[@]}" "$BASE"
+          scripts/test/docker/run.sh --release linux-release --serial "${tunnel[@]}" "$BASE" 2>&1 | tee "$RUNNER_TEMP/run.log"
       - name: AppImage on a minimal host (appimage.sh)
         if: ${{ !cancelled() }}
+        timeout-minutes: 5
         run: |
           . linux-release/VERSION.env
-          scripts/test/docker/appimage.sh --version "$VERSION" linux-release/*.AppImage "$BASE"
+          scripts/test/docker/appimage.sh --version "$VERSION" linux-release/*.AppImage "$BASE" 2>&1 | tee "$RUNNER_TEMP/appimage.log"
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          node .github/scripts/test-summary.mjs --title "Start script and package ($BASE $ARCH)" --lines "$RUNNER_TEMP/run.log"
+          node .github/scripts/test-summary.mjs --title "AppImage on a minimal host ($BASE $ARCH)" --lines "$RUNNER_TEMP/appimage.log"
 
   obs:
     name: OBS Studio ${{ matrix.arch }}
@@ -126,15 +152,27 @@ jobs:
         arch: [x64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 20
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           name: linux-docker-${{ matrix.arch }}
           path: linux-release
-      - run: scripts/test/docker/obs.sh --release linux-release
+      - name: OBS Studio streaming to the package (obs.sh)
+        timeout-minutes: 12
+        run: scripts/test/docker/obs.sh --release linux-release 2>&1 | tee "$RUNNER_TEMP/obs.log"
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: node .github/scripts/test-summary.mjs --title "OBS Studio ($ARCH)" --lines "$RUNNER_TEMP/obs.log"
 
   e2e:
     name: Playwright in Docker ${{ matrix.arch }}
@@ -144,16 +182,29 @@ jobs:
         arch: [x64, arm64]
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       # e2e.sh reads the Playwright version from package-lock.json; the container does the rest
-      # (npm ci, binaries, build, firefox + chromium).
-      - run: scripts/test/docker/e2e.sh
+      # (npm ci, binaries, build, firefox + chromium). 45 minutes: about 3 times the slowest run.
+      - name: Playwright in the Playwright image (e2e.sh)
+        timeout-minutes: 45
+        run: scripts/test/docker/e2e.sh 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: node .github/scripts/test-summary.mjs --title "Playwright in Docker ($ARCH)" --lines "$RUNNER_TEMP/e2e.log"
       - name: Upload the Playwright reports
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: docker-e2e-${{ matrix.arch }}
           path: test-results/docker-e2e/

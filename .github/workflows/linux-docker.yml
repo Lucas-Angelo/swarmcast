@@ -13,6 +13,11 @@ on:
 permissions:
   contents: read
 
+# One run per branch at a time; a running one is never cancelled.
+concurrency:
+  group: linux-docker-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   docker:
     name: docker

@@ -55,33 +55,55 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # Linux: the browsers' system libraries come from apt into the same .deb cache as _e2e.yml's.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
+        with:
+          apt-debs: ${{ runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
       - name: Build the viewer
         run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer
       # The `chromium` projects run the runner image's Google Chrome (CI=true), Edge is preinstalled
-      # on Windows; Firefox and WebKit come from Playwright.
+      # on Windows; Firefox and WebKit come from Playwright. Their Linux libraries through
+      # apt-retry.sh (time limit per try, retries, another mirror), as in _e2e.yml: `install
+      # --with-deps` runs apt without a limit, and GitHub's mirror has stalled it for 20+ minutes.
       - name: Playwright browsers
         timeout-minutes: 10
         env:
           BROWSERS: ${{ matrix.browsers }}
         run: |
           # shellcheck disable=SC2086 # BROWSERS is a list
-          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps $BROWSERS; else npx playwright install $BROWSERS; fi
+          npx playwright install $BROWSERS
+          # shellcheck disable=SC2086
+          if [ "$RUNNER_OS" = Linux ]; then .github/scripts/apt-retry.sh playwright-deps $BROWSERS; fi
+      # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       - name: Corpus and chat UI
+        timeout-minutes: 15
         env:
           CHAT_EDGE: ${{ runner.os == 'Windows' && '1' || '' }}
           PROJECTS: ${{ matrix.projects }}
         run: |
           # shellcheck disable=SC2086 # PROJECTS is a list of flags
-          npx playwright test -c apps/viewer/test/chat/playwright.config.ts $PROJECTS
+          npx playwright test -c apps/viewer/test/chat/playwright.config.ts $PROJECTS --fail-on-flaky-tests
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          OS: ${{ matrix.os }}
+        run: node .github/scripts/test-summary.mjs --title "Chat corpus and UI ($OS)" --playwright test-results/chat-ui.json
       - name: Upload the report and screenshots
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: rendering-${{ matrix.os }}
           path: |
             playwright-report/chat-ui/
             test-results/chat-ui/
+            test-results/chat-ui.json
           if-no-files-found: warn
           retention-days: 30
+      - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}

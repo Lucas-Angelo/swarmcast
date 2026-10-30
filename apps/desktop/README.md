@@ -18,7 +18,7 @@ flowchart TB
   - `main.rs`: plugins (single instance first), setup, macOS app menu, signals, run loop.
   - `shell.rs`: the state machine: server start / bounded restarts / fatal, splash, close dialog, quit.
   - `sidecar.rs`: spawns the server (env of the contract, Windows Job object + no console), reads stdout/stderr, quit with 35 s grace then kill.
-  - `protocol.rs`: `@@swarmcast` messages (unit-tested); `window.rs`: window, navigation policy (only the admin origin stays inside), WebView2 `--lang`.
+  - `protocol.rs`: `@@swarmcast` messages (unit-tested); `window.rs`: window, navigation policy (only the admin origin stays inside), WebView2 `--lang`; `page.rs`: which page the window shows, tracked by the shell because `WebviewWindow::url()` panics on macOS before the first page commits (`clippy.toml` forbids calling it).
   - `tray.rs`, `updater.rs` (endpoint `UPDATE_ENDPOINT`, checks, dialog, download with retries, relaunch), `i18n.rs` (EN / pt-BR, test: same keys), `logs.rs` (data dir like the server, `desktop.log` rotation).
 - `splash/`: local page shown while the server starts, on errors and during updates (the only page with IPC). Colors, radius and font come only from the brand tokens: `src-tauri/build.rs` copies `assets/brand/tokens.css` to `splash/tokens.css` (not committed) at every build. `splash/tokens.stub.css` (same names, Forest & Cream values) is only a fallback for a checkout without `assets/brand/`.
 - `src-tauri/windows/hooks.nsh`: NSIS hooks (install folder, stop processes, `--cleanup`, autostart entry, "delete app data"). `Info.plist`: macOS localizations (en, pt-BR) so `navigator.language` follows the system.
@@ -27,7 +27,7 @@ flowchart TB
 
 ## Build
 
-Needs Node 24, Rust (stable, `rustup target add <triple>`) and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) of the OS. Each OS builds its own installers:
+Needs Node 24, Rust (the toolchain pinned in `src-tauri/rust-toolchain.toml`, which rustup installs by itself; `rustup target add <triple>` for other targets) and the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) of the OS. Each OS builds its own installers:
 
 ```sh
 npm ci && npm run build
@@ -43,9 +43,9 @@ node scripts/build/desktop.mjs --target <target> --version <v>                # 
 
 Toolchain per CI runner (everything is non-interactive; `tauri build` runs with `--ci`):
 
-- **Windows** (`windows-latest`): Node 24, Rust stable (`x86_64-pc-windows-msvc`, preinstalled with the MSVC Build Tools). The Tauri CLI downloads NSIS and the WebView2 bootstrapper itself. Use a short checkout path if a path is too long.
-- **macOS** (`macos-latest`, arm64): Node 24, Rust stable + `rustup target add x86_64-apple-darwin` for `macos-x64`, Xcode command line tools (preinstalled; `codesign` signs ad hoc). The DMG step (`bundle_dmg.sh`) lays out the window through Finder/AppleScript; if it times out on a runner, retry the job.
-- **Linux** (`ubuntu-22.04` for x64, `ubuntu-22.04-arm` for arm64; the deb is built against the oldest glibc we support): Node 24, Rust stable and
+- **Windows** (`windows-latest`): Node 24, the pinned Rust (`x86_64-pc-windows-msvc`, with the MSVC Build Tools of the image). The Tauri CLI downloads NSIS and the WebView2 bootstrapper itself. Use a short checkout path if a path is too long.
+- **macOS** (`macos-latest`, arm64): Node 24, the pinned Rust + `rustup target add x86_64-apple-darwin` for `macos-x64`, Xcode command line tools (preinstalled; `codesign` signs ad hoc). The DMG step (`bundle_dmg.sh`) lays out the window through Finder/AppleScript; `desktop.mjs` runs it as its own step and repeats it when hdiutil reports "Resource busy". Any other failure is a bug to fix, not a job to re-run.
+- **Linux** (`ubuntu-22.04` for x64, `ubuntu-22.04-arm` for arm64; the deb is built against the oldest glibc we support): Node 24, the pinned Rust and
   `sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils`.
   `desktop.mjs` sets `APPIMAGE_EXTRACT_AND_RUN=1` (no FUSE on runners). AppImages are built for the runner's architecture only.
 - **Windows installer from Linux** (optional, unsigned exe): `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`, `rustup target add x86_64-pc-windows-msvc`, `cargo install --locked cargo-xwin`, `XWIN_ACCEPT_LICENSE=1`, then `desktop.mjs --target windows-x64 --runner cargo-xwin`.
@@ -55,7 +55,7 @@ Toolchain per CI runner (everything is non-interactive; `tauri build` runs with 
 
 **Rust crate licences.** `scripts/build/crate-licenses.mjs` lists the crates compiled into the app for the target (normal dependencies in `Cargo.lock`, from `cargo metadata --locked --filter-platform <triple>`; build-only and dev-only crates are not shipped) with their licence texts from the cargo registry. A crate whose package has no licence file gets the file of a crate from the same repository, or the standard text in `scripts/build/licenses/`. The build fails if a crate declares no SPDX licence or one outside the allowlist (MIT, MIT-0, Apache-2.0 (also WITH LLVM-exception), BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, Unicode-DFS-2016, MPL-2.0, CC0-1.0, 0BSD, BSL-1.0; an `OR` needs one allowed choice). Check without building: `node scripts/build/crate-licenses.mjs --target <triple> --check`.
 
-Updater signing: `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (CI secrets), or locally `~/.tauri/swarmcast-updater.key` + `~/.tauri/swarmcast-updater.password`. Never commit them; only the public key is in `tauri.conf.json`. A new key pair: `npx tauri signer generate -w ~/.tauri/swarmcast-updater.key` (then replace `plugins.updater.pubkey`; apps signed with the old key can no longer update).
+Updater signing, only when asked: `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (CI secrets), or locally `--release-key ~/.tauri/swarmcast-updater.key` (the password from `~/.tauri/swarmcast-updater.password` next to it). `desktop.mjs` never reads `~/.tauri` by itself: without either, the build has no updater signatures. Never commit them; only the public key is in `tauri.conf.json`. A new key pair: `npx tauri signer generate -w ~/.tauri/swarmcast-updater.key` (then replace `plugins.updater.pubkey`; apps signed with the old key can no longer update).
 
 Release manifest, after building every target:
 
