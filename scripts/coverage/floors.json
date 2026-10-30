@@ -14,6 +14,9 @@
     "linux": { "total": { "lines": 53, "branches": 38, "functions": 50, "statements": 49 } },
     "darwin": { "total": { "lines": 53, "branches": 37, "functions": 49, "statements": 49 } }
   },
-  "e2e-server": {},
+  "e2e-server": {
+    "ui": { "total": { "lines": 75 } },
+    "media": { "total": { "lines": 73 } }
+  },
   "desktop": {}
 }
