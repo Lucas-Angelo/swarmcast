@@ -29,6 +29,9 @@ import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 import { createChatRouter } from './chat/loader.js';
+// ---- branding: watch ----
+import { createBrandRouter } from './branding/loader.js';
+// ---- end branding: watch ----
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const video = $<HTMLVideoElement>('video');
@@ -55,6 +58,11 @@ const chat = createChatRouter({
   send: (msg) => sendControl(msg),
   debug: (msg) => debugLog(msg),
 });
+
+// ---- branding: watch ----
+// The streamer's page (name, picture, about, support): its own chunk, the player never waits for it.
+const brand = createBrandRouter('watch', (msg) => debugLog(msg));
+// ---- end branding: watch ----
 
 let tipSeq = 0;
 /** An (i) tooltip like the static ones in watch.html (installTooltips() handles it). */
@@ -223,6 +231,7 @@ function endScreen(titleKey: MessageKey, textKey: MessageKey): void {
   $('ended-title').textContent = t(titleKey);
   $('ended-text').textContent = t(textKey);
   $('ended').hidden = false;
+  brand.ended();
   goLive.hidden = true;
   viewerCountWrap.hidden = true;
   try {
@@ -473,6 +482,7 @@ async function main(): Promise<void> {
   });
   hls.on(Hls.Events.FRAG_BUFFERED, () => {
     networkErrors = 0;
+    brand.firstFrame(); // ---- branding: the banner loads after the first fragment ----
   });
 
   video.addEventListener('playing', () => {
@@ -614,6 +624,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
       switch (msg.t) {
         case 'hello':
           chat.hello(msg.chat);
+          brand.rev(msg.brandRev);
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
           handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
@@ -641,6 +652,11 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
         case 'ping':
           sendControl({ t: 'pong' });
           break;
+        // ---- branding: control ----
+        case 'branding':
+          brand.rev(msg.rev);
+          break;
+        // ---- end branding: control ----
       }
     };
     ws.onclose = (ev) => {
