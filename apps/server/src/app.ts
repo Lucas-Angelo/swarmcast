@@ -78,6 +78,9 @@ export interface App {
   close(): Promise<void>;
 }
 
+/** The encoder probe runs this long after start (a few 1-second test encodes), unless the app closed first. */
+export const ENCODER_PROBE_DELAY_MS = 3000;
+
 export function reaperCommand(): { command: string; args: string[] } {
   // Packaged (pkg): re-running our own executable requires the embedded entry script as the
   // first argument (pkg sets PKG_EXECPATH for children, which makes them behave like node).
@@ -183,9 +186,10 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     brandingDir: path.join(paths.dataDir, 'branding'),
   });
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
-  setTimeout(() => {
+  const encoderProbe = setTimeout(() => {
     if (live.phase === 'off') void live.quality.probe();
-  }, 3000).unref();
+  }, ENCODER_PROBE_DELAY_MS);
+  encoderProbe.unref();
 
   // The panel and the local public server can live on any free port (the tunnel and the
   // browser follow them); only RTMP must stay fixed because OBS is configured with it.
@@ -238,15 +242,20 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     },
     close: () => {
       closing ??= (async () => {
+        clearTimeout(encoderProbe);
         log.info('shutting down: stopping the live');
         await live.shutdown();
         blocklists.stop();
         diagnostics.stop();
         log.info('shutting down: closing the panel server');
         // A browser or HTTP client can hold a keep-alive connection open; never let it block quitting.
-        await Promise.race([app.admin.close().catch(() => {}), new Promise((r) => setTimeout(r, 3000).unref())]);
+        let cap: NodeJS.Timeout | undefined;
+        await Promise.race([app.admin.close().catch(() => {}), new Promise((r) => (cap = setTimeout(r, 3000)).unref())]);
+        clearTimeout(cap);
         reaper?.stop();
         log.info('shutdown complete');
+        // Last: the server log file is closed (lines from late background work are dropped).
+        await logFile?.end();
       })();
       return closing;
     },
