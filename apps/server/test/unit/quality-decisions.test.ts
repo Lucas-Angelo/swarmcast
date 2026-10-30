@@ -7,8 +7,8 @@ import { cpuTestArgs, parseBenchmark, testCpu, type FfmpegRun } from '../../src/
 import { installedFfmpegPath, installedPinMatches, pinStamp, resolveFfmpeg } from '../../src/quality/ffmpeg.js';
 import { CpuSampler, LoadGuard, SpeedWindow } from '../../src/quality/load-guard.js';
 import { buildLadderArgs } from '../../src/quality/transcoder.js';
-import { silentLog } from './helpers.js';
-import { SOURCE_1080P, qualitySettings, tempDir } from './helpers-b.js';
+import { silentLog, tempDir } from './helpers.js';
+import { SOURCE_1080P, qualitySettings } from './helpers-b.js';
 
 // What the quality ladder decides on its own, and what it keeps of the streamer's choices:
 // - Automatic default: with a working hardware encoder, 720p/480p/360p; without one, a single

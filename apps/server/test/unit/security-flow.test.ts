@@ -8,9 +8,9 @@ import type { LiveController } from '../../src/core/live.js';
 import type { DirectMode } from '../../src/direct/direct.js';
 import { PublicBlocklists } from '../../src/security/blocklists.js';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
-import { silentLog } from './helpers.js';
-import { directOff, droppingPort, joinViewer } from './helpers-b.js';
-import { makeController } from './live-helpers.js';
+import { manualClock, silentLog } from './helpers.js';
+import { droppingPort, joinViewer } from './helpers-b.js';
+import { inactiveDirect, makeController, startController } from './live-helpers.js';
 
 // The protection settings and the attack flow through the real public server (port 0) and the
 // live controller's reactions.
@@ -39,28 +39,31 @@ function freezePeriodicWork(): void {
   onTestFinished(() => void vi.useRealTimers());
 }
 
-/**
- * A live (port 0 unless `ports`) whose clock moves only by `advance(ms)`; every config it saves is in
- * `saved`. Stopped when the test finishes. A test that only round-trips settings through the config
- * schema (ports >= 1) and never starts the live passes `defaultConfig().ports`.
- */
-function setup(o: { ports?: AppConfig['ports']; direct?: DirectMode; blocklists?: PublicBlocklists } = {}) {
-  let now = 1_800_000_000_000;
+/** The live's dependencies here: a clock that moves only by hand, every config it saves kept in `saved` (port 0 unless `ports`). */
+function liveDeps(o: { ports?: AppConfig['ports']; blocklists?: PublicBlocklists } = {}) {
+  const clock = manualClock(1_800_000_000_000);
   const saved: AppConfig[] = [];
   const config = defaultConfig();
   config.ports = o.ports ?? { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
-  const { live } = makeController(o.direct ?? directOff(), {
-    config,
-    now: () => now,
-    saveConfig: (c) => void saved.push(JSON.parse(JSON.stringify(c)) as AppConfig),
-    ...(o.blocklists ? { blocklists: o.blocklists } : {}),
-  });
-  onTestFinished(async () => void (await live.stop()));
+  const over = { config, now: clock.now, saveConfig: (c: AppConfig) => void saved.push(JSON.parse(JSON.stringify(c)) as AppConfig), ...(o.blocklists ? { blocklists: o.blocklists } : {}) };
+  return { clock, saved, over };
+}
+
+/** A live that is never started, for the settings: its ports are the defaults (>= 1), so a saved config passes the config schema. */
+function idleLive() {
+  const d = liveDeps({ ports: defaultConfig().ports });
+  return { live: makeController(inactiveDirect(), d.over).live, saved: d.saved };
+}
+
+/** A started live whose clock moves only by `advance(ms)`, which also runs one shield sample. Stopped when the test finishes. */
+async function startedLive(o: { direct?: DirectMode; blocklists?: PublicBlocklists } = {}) {
+  const d = liveDeps(o);
+  const { live } = await startController(o.direct ?? inactiveDirect(), d.over);
   const advance = (ms = 1000): void => {
-    now += ms;
+    d.clock.advance(ms);
     live.shield.tick();
   };
-  return { live, saved, advance };
+  return { live, advance };
 }
 
 /** Resolves once the panel shows the warning `code`. */
@@ -71,7 +74,7 @@ function warningShown(live: LiveController, code: string): Promise<void> {
 describe('settings round-trip: admission limits and protection switches', () => {
   it('saves and applies new admission limits', () => {
     // Arrange
-    const { live, saved } = setup({ ports: defaultConfig().ports });
+    const { live, saved } = idleLive();
     const body = settingsSchema.parse({ ...live.snapshot().settings, maxViewers: 2, maxSessionsPerDevice: 1 });
     // Act
     live.updateSettings(body);
@@ -83,7 +86,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('lowering the cap never drops anyone already watching; new people get "full"', () => {
     // Arrange
-    const { live } = setup({ ports: defaultConfig().ports });
+    const { live } = idleLive();
     live.access.begin();
     for (const n of ['a', 'b', 'c']) joinViewer(live.access, n, { ip: '1.1.1.1' });
     // Act
@@ -96,7 +99,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('values an older panel or API client leaves out are kept', () => {
     // Arrange
-    const { live } = setup({ ports: defaultConfig().ports });
+    const { live } = idleLive();
     live.updateSettings(settingsSchema.parse({ ...live.snapshot().settings, maxViewers: 2, maxSessionsPerDevice: 1 }));
     // Act
     live.updateSettings(settingsSchema.parse({ uploadLimitMbps: 10, autoStopMinutes: 10, alsoStreamingElsewhere: false }));
@@ -106,7 +109,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it.each([{ maxViewers: 0 }, { maxViewers: 100_001 }, { maxSessionsPerDevice: 0 }, { maxSessionsPerDevice: 21 }, { maxViewers: 1.5 }])('refuses the admission limit %j', (bad) => {
     // Arrange
-    const { live } = setup({ ports: defaultConfig().ports });
+    const { live } = idleLive();
     // Act
     const r = settingsSchema.safeParse({ ...live.snapshot().settings, ...bad });
     // Assert
@@ -115,7 +118,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('protection switches have safe defaults', () => {
     // Arrange
-    const { live } = setup({ ports: defaultConfig().ports });
+    const { live } = idleLive();
     // Act
     const security = live.snapshot().security;
     // Assert
@@ -134,7 +137,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('protection switches round-trip through config', () => {
     // Arrange
-    const { live, saved } = setup({ ports: defaultConfig().ports });
+    const { live, saved } = idleLive();
     const next = securitySettingsSchema.parse({ ...live.snapshot().security.settings, requireBrowserCheck: false, autoNewLink: true, blockKnownBadIps: false });
     // Act
     live.updateSecurity(next);
@@ -148,7 +151,7 @@ describe('settings round-trip: admission limits and protection switches', () => 
 
   it('refuses a protection switch that is not a boolean', () => {
     // Arrange
-    const { live } = setup({ ports: defaultConfig().ports });
+    const { live } = idleLive();
     // Act
     const r = securitySettingsSchema.safeParse({ ...live.securitySettings(), stopOnAttack: 'yes' });
     // Assert
@@ -167,8 +170,7 @@ describe('attack flow through the real public server', () => {
   it('a flood of invalid /join links → warning, tighter limits and proof-of-work; a real viewer still joins', async () => {
     // Arrange
     freezePeriodicWork();
-    const { live, advance } = setup();
-    await live.start();
+    const { live, advance } = await startedLive();
     const base = `http://127.0.0.1:${live.publicPort}`;
     const statuses: number[] = [];
     // Act
@@ -221,8 +223,7 @@ describe('attack flow through the real public server', () => {
     const bl = new PublicBlocklists({ dir: '/nonexistent', log: silentLog, sources: () => [] });
     bl.enabled = true;
     vi.spyOn(bl, 'isBlocked').mockImplementation((ip) => ip === '127.0.0.1');
-    const { live } = setup({ blocklists: bl });
-    await live.start();
+    const { live } = await startedLive({ blocklists: bl });
     const base = `http://127.0.0.1:${live.publicPort}`;
     // Act
     const page = await fetch(`${base}/join/${live.access.currentSecret}`, { redirect: 'manual' });
@@ -255,8 +256,7 @@ describe('controller reactions in Direct mode', () => {
   async function liveInDirectMode(disable: DirectMode['disable']) {
     freezePeriodicWork();
     const port = await droppingPort();
-    const { live, advance } = setup({ direct: directOff({ enable: async () => `https://127.0.0.1:${port}`, disable }) });
-    await live.start();
+    const { live, advance } = await startedLive({ direct: Object.assign(inactiveDirect(), { enable: async () => `https://127.0.0.1:${port}`, disable }) });
     await live.enableDirect({});
     return { live, advance };
   }

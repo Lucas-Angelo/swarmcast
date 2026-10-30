@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { BROWSER_CHECK_TTL_S } from '@swarmcast/shared';
 import { BrowserVerification } from '../../src/security/verified.js';
+import { manualClock } from './helpers.js';
 
 // The "verified" cookie remembers that a browser passed the browser check (proof-of-work), and at
 // which level: `v1.<level>.<expiry>.<MAC>`, bound to the device cookie. A token issued "in the
@@ -12,10 +13,7 @@ const KEY = crypto.randomBytes(32).toString('hex');
 const DEV = 'device-abcdefghijklmnop';
 
 /** A clock that moves only when the test says so. */
-function clock(start = 1_800_000_000_000) {
-  let t = start;
-  return { now: () => t, advance: (ms: number) => void (t += ms) };
-}
+const clock = () => manualClock(1_800_000_000_000);
 
 /** The four dot-separated parts of a token. */
 function partsOf(token: string): { ver: string; exp: string; mac: string } {

@@ -7,8 +7,8 @@ import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, type DirectDeps } from '../../src/direct/direct.js';
 import { UpnpGateway } from '../../src/direct/upnp.js';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
-import { silentLog } from './helpers.js';
-import { captureLog, gatewayOf, mockRouter } from './helpers-b.js';
+import { captureLog, silentLog } from './helpers.js';
+import { gatewayOf, mockRouter } from './helpers-b.js';
 import type { MockIgd } from './mock-igd.js';
 
 // B6: Direct mode's port stays below Windows' dynamic range (49152–65535, where Hyper-V, WSL and
@@ -153,9 +153,9 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
     await t.d.enable();
     // Assert
     await expect.poll(() => t.lines().map((l) => l.msg)).toContain('direct mode: ports Windows keeps for itself');
-    expect(t.lines().find((l) => l.msg.includes('reserved by Windows'))?.ports).toEqual([t.refusedPort]);
+    expect(t.lines().find((l) => String(l.msg).includes('reserved by Windows'))?.ports).toEqual([t.refusedPort]);
     expect(t.lines().find((l) => l.msg === 'direct mode: ports Windows keeps for itself')?.excludedPortRanges).toContain('49709');
-    expect(t.lines().some((l) => l.msg.includes('used by another program'))).toBe(false);
+    expect(t.lines().some((l) => String(l.msg).includes('used by another program'))).toBe(false);
   });
 
   it('a real listen on a port another program holds fails with EADDRINUSE', async () => {
@@ -191,8 +191,8 @@ describe('Direct mode: a real listen, retried on EACCES/EADDRINUSE before the ro
     // Act
     await d.enable();
     // Assert
-    expect(lines().find((l) => l.msg.includes('used by another program'))?.ports).toEqual([inUse]);
-    expect(lines().find((l) => l.msg.includes('reserved by Windows'))?.ports).toEqual([refused]);
+    expect(lines().find((l) => String(l.msg).includes('used by another program'))?.ports).toEqual([inUse]);
+    expect(lines().find((l) => String(l.msg).includes('reserved by Windows'))?.ports).toEqual([refused]);
   });
 
   it('gives up with the translated error after 25 refused ports, and maps nothing', async () => {

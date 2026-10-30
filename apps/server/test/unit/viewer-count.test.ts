@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { settingsSchema, type ServerMessage } from '@swarmcast/shared';
 import { configSchema, defaultConfig } from '../../src/core/config.js';
 import { VIEWER_COUNT_INTERVAL_MS, type LiveController } from '../../src/core/live.js';
-import { directOff, joinViewer } from './helpers-b.js';
+import { joinViewer } from './helpers-b.js';
 import { makeController } from './live-helpers.js';
 
 // The viewer count viewers see: on by default, only the number (never who joined), pushed at most
@@ -23,7 +23,7 @@ afterEach(() => {
 
 /** A live that began, and every message it broadcast to viewers so far. */
 function live(): { live: LiveController; sent: () => ServerMessage[] } {
-  const { live } = makeController(directOff());
+  const { live } = makeController();
   const broadcast = vi.spyOn(live.control, 'broadcast');
   live.access.begin();
   return { live, sent: () => broadcast.mock.calls.map(([m]) => m) };

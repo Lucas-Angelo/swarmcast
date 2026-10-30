@@ -4,15 +4,14 @@ import path from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { createAdminServer } from '../../src/admin/server.js';
 import { defaultConfig, type AppConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
 import { resettableRateLimits } from '../../src/public/rate-limit-store.js';
 import { LoadGuard } from '../../src/quality/load-guard.js';
 import type { Transcoder } from '../../src/quality/transcoder.js';
-import { silentLog } from './helpers.js';
-import { LADDER_RUNGS, directOff, statusReached, tempDir, transcoderWith } from './helpers-b.js';
-import { makeController } from './live-helpers.js';
+import { tempDir } from './helpers.js';
+import { LADDER_RUNGS, statusReached, transcoderWith } from './helpers-b.js';
+import { inactiveDirect, makeController, panelServer, startController } from './live-helpers.js';
 
 // Hooks the integration and E2E harnesses build on: free ports chosen by the OS at listen time
 // (config.ports then holds the real port: verifyOff, the tunnel and the smoke test read it
@@ -29,11 +28,11 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-/** A live with every port 0: nothing is probed, the public server gets whatever the OS hands out. Stopped when the test finishes. */
+/** A live (not started) with every port 0 and its config at hand: the public server gets whatever the OS hands out. Stopped when the test finishes. */
 function liveOnPortZero(): { live: LiveController; config: AppConfig } {
   const config = defaultConfig();
   config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
-  const { live } = makeController(directOff(), { config });
+  const { live } = makeController(inactiveDirect(), { config });
   onTestFinished(async () => void (await live.stop()));
   return { live, config };
 }
@@ -44,9 +43,7 @@ const healthz = async (port: number | null): Promise<number> => (await fetch(`ht
 async function panelOnPortZero(): Promise<{ app: FastifyInstance; port: number }> {
   const adminDir = tempDir('sc-admin-');
   fs.writeFileSync(path.join(adminDir, 'index.html'), '<!doctype html>');
-  const { live } = liveOnPortZero();
-  const app = await createAdminServer({ port: 0, adminDir, live, log: silentLog, token: 'tok', onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn() });
-  onTestFinished(() => app.close());
+  const { app } = await panelServer({ live: makeController().live, port: 0, adminDir });
   await app.listen({ host: '127.0.0.1', port: 0 });
   return { app, port: (app.server.address() as AddressInfo).port };
 }
@@ -74,8 +71,7 @@ describe('public server on port 0', () => {
 
   it('stops cleanly and forgets its port', async () => {
     // Arrange
-    const { live } = liveOnPortZero();
-    await live.start();
+    const { live } = await startController();
     // Act
     const verified = await live.stop();
     // Assert
@@ -85,8 +81,7 @@ describe('public server on port 0', () => {
 
   it('picks a port again on the next start', async () => {
     // Arrange
-    const { live } = liveOnPortZero();
-    await live.start();
+    const { live } = await startController();
     await live.stop();
     // Act
     await live.start();
@@ -138,8 +133,7 @@ describe('rate-limit reset (test hook)', () => {
 
   it('LiveController.resetRateLimits() lifts a 429 of the running public server', async () => {
     // Arrange
-    const { live } = liveOnPortZero();
-    await live.start();
+    const { live } = await startController();
     const statuses = await Promise.all(Array.from({ length: HEALTHZ_PER_MINUTE + 1 }, () => healthz(live.publicPort)));
     const limited = await healthz(live.publicPort);
     // Act
@@ -198,14 +192,14 @@ describe('load guard injection', () => {
     // Arrange
     const guard = new LoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
     // Act
-    const { live } = makeController(directOff(), { quality: { ...NO_LADDER, loadGuard: guard } });
+    const { live } = makeController(inactiveDirect(), { quality: { ...NO_LADDER, loadGuard: guard } });
     // Assert
     expect(live.quality.guard).toBe(guard);
   });
 
   it('builds one from options: 100 % CPU never reaches a 101 % threshold, even with no observation window', () => {
     // Arrange
-    const { live } = makeController(directOff(), { quality: { ...NO_LADDER, loadGuard: { cpuSaturatedPercent: 101, cpuForMs: 0 } } });
+    const { live } = makeController(inactiveDirect(), { quality: { ...NO_LADDER, loadGuard: { cpuSaturatedPercent: 101, cpuForMs: 0 } } });
     const built = live.quality.guard;
     // Act
     const verdicts = [built.check(0, { cpuBusyPercent: 100 }), built.check(60_000, { cpuBusyPercent: 100 })];

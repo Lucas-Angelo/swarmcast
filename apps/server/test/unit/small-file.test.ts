@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readSmallFile } from '../../src/core/small-file.js';
-import { tempDir } from './helpers-b.js';
+import { tempDir } from './helpers.js';
 
 // readSmallFile reads a small regular file whole, or gives null: missing, a folder, a FIFO (at
 // once, without waiting for a writer: POSIX only, Windows has no mkfifo), or bigger than the limit.

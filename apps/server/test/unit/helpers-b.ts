@@ -1,57 +1,25 @@
-// Shared fixtures of the server unit tests (part B): test doubles, object mothers and resources
-// that clean up after themselves. Every resource made here is closed or deleted when the test that
-// made it finishes (Vitest's onTestFinished, newest first), so a helper must be called from a test
-// body, never from a beforeEach hook.
-import { once } from 'node:events';
+// Shared fixtures of the server unit tests (part B), next to helpers.ts and live-helpers.ts: test
+// doubles, object mothers and resources that clean up after themselves. Every resource made here
+// is closed or deleted when the test that made it finishes (Vitest's onTestFinished, newest first),
+// so a helper must be called from a test body, never from a beforeEach hook.
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import net, { type AddressInfo } from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
-import pino from 'pino';
-import { onTestFinished } from 'vitest';
+import { onTestFinished, vi } from 'vitest';
 import WebSocket from 'ws';
 import { defaultQualitySettings, type QualitySettings, type Rung, type SourceInfo, type TranscoderStatus } from '@swarmcast/shared';
 import type { AccessControl, Session } from '../../src/access/access.js';
 import type { ControlChannel } from '../../src/control/control.js';
-import type { DirectMode } from '../../src/direct/direct.js';
 import { UpnpGateway, parseDeviceDescription } from '../../src/direct/upnp.js';
 import { Transcoder, type TranscoderOptions } from '../../src/quality/transcoder.js';
 import type { TrackerService } from '../../src/tracker/tracker.js';
-import { silentLog } from './helpers.js';
+import { silentLog, tempDir } from './helpers.js';
 import { MockIgd } from './mock-igd.js';
 
-// ---- files ----
-
-/** A new, empty folder in the system temp folder, deleted when the test finishes. */
-export function tempDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
-  return dir;
-}
-
-// ---- logs ----
-
-/** One line of a captured log, parsed (pino writes JSON). */
-export type LogLine = Record<string, unknown> & { level: number; msg: string };
-
-/** A logger at debug level that keeps what it writes: `lines()` gives every line so far, parsed. */
-export function captureLog(): { log: pino.Logger; lines: () => LogLine[] } {
-  const out: string[] = [];
-  const log = pino({ level: 'debug' }, { write: (line: string) => void out.push(line) });
-  return { log, lines: () => out.map((l) => JSON.parse(l) as LogLine) };
-}
-
-// ---- the live controller's collaborators ----
-
-/**
- * Direct mode as a LiveController in a logic test sees it: off, no router, no HTTPS server.
- * `enable` and `disable` replace what switching it on and off does (tests of the reactions).
- */
-export function directOff(over: Partial<Pick<DirectMode, 'enable' | 'disable'>> = {}): DirectMode {
-  return { noteViewer: () => {}, snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null, ...over } as unknown as DirectMode;
-}
+// ---- requests and sessions ----
 
 /** What clientIp() reads of a request: the address of the socket it came on, and its headers. */
 export function requestFrom(remoteAddress: string, headers: Record<string, string> = {}): { socket: { remoteAddress: string }; headers: Record<string, string> } {
@@ -99,6 +67,28 @@ export async function droppingPort(): Promise<number> {
 }
 
 // ---- WebSockets ----
+
+/**
+ * A viewer's /control socket as ControlChannel.attach() takes it, without a network: what the
+ * server sends lands in `sent` (the hello first), `receive()` is a frame from the viewer, and
+ * terminate/close are spies. (The same as chat-control.test.ts's.)
+ */
+export class FakeControlSocket extends EventEmitter {
+  readonly OPEN = 1;
+  readyState = 1;
+  bufferedAmount = 0;
+  sent: string[] = [];
+  terminate = vi.fn();
+  close = vi.fn();
+  ping(): void {}
+  send(d: string): void {
+    this.sent.push(d);
+  }
+  /** A frame from the viewer. */
+  receive(data: string | Buffer, isBinary = false): void {
+    this.emit('message', typeof data === 'string' ? Buffer.from(data) : data, isBinary);
+  }
+}
 
 /** Where upgrades go: /control and /tracker, the two WebSocket paths of the public server. */
 export interface UpgradeRoutes {

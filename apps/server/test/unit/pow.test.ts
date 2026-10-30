@@ -3,6 +3,7 @@ import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import fc from 'fast-check';
 import { beforeAll, describe, expect, it } from 'vitest';
 import { JoinPow, POW_COUNTER_RANGE, POW_TTL_MS, randomCounter, type PowPayload } from '../../src/security/pow.js';
+import { manualClock } from './helpers.js';
 
 // The join proof-of-work (ALTCHA). Solving is real work: SHA-256 up to the secret counter, and the
 // counter is random within the level's range, so one solve can take three times another. The
@@ -114,10 +115,10 @@ describe('join proof-of-work (ALTCHA)', () => {
 
   it('rejects expired challenges (fake clock)', async () => {
     // Arrange
-    let now = Date.now();
-    const pow = cheapPow(() => now);
+    const clock = manualClock(Date.now());
+    const pow = cheapPow(clock.now);
     const payload = await solve(await pow.issue(1));
-    now += POW_TTL_MS + 1000;
+    clock.advance(POW_TTL_MS + 1000);
     // Act
     const verdict = await pow.verify(payload);
     // Assert

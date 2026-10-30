@@ -5,8 +5,8 @@ import { PEAK_WINDOW_MS, notePeak, recentPeak, type HttpStats } from '../../src/
 import { QuickTunnel } from '../../src/tunnel/quick.js';
 import { NoTunnel, type TunnelProvider } from '../../src/tunnel/provider.js';
 import { silentLog } from './helpers.js';
-import { controlSocket, directOff, joinViewer, roundTrip, trackerSocket, upgradeServer } from './helpers-b.js';
-import { makeController } from './live-helpers.js';
+import { controlSocket, joinViewer, roundTrip, trackerSocket, upgradeServer } from './helpers-b.js';
+import { inactiveDirect, makeController } from './live-helpers.js';
 
 // A Cloudflare quick tunnel allows 200 requests in flight and counts every open WebSocket as one:
 // the /control sockets and any plain /tracker socket (tracker channels inside /control do not
@@ -21,7 +21,7 @@ const quickTunnel = (): QuickTunnel => new QuickTunnel('/nonexistent/cloudflared
 
 /** A live on `tunnel` with `viewers` sessions watching, with P2P on unless `p2p` is false. */
 function liveWith(viewers: number, opts: { p2p?: boolean; tunnel?: TunnelProvider } = {}): LiveController {
-  const { live } = makeController(directOff(), { tunnel: opts.tunnel ?? quickTunnel() });
+  const { live } = makeController(inactiveDirect(), { tunnel: opts.tunnel ?? quickTunnel() });
   for (let i = 0; i < viewers; i++) joinViewer(live.access, `v${i}`).p2pEnabled = opts.p2p ?? true;
   return live;
 }
@@ -31,7 +31,7 @@ const tunnelWarning = (live: LiveController) => live.snapshot().warningCodes.fin
 describe('quick tunnel limit (200 in flight, WebSockets included)', () => {
   it('counts open control sockets, plain tracker sockets and the recent HTTP peak, not the channels inside /control', async () => {
     // Arrange
-    const { live } = makeController(directOff(), { tunnel: quickTunnel() });
+    const { live } = makeController(inactiveDirect(), { tunnel: quickTunnel() });
     live.access.begin();
     const url = await upgradeServer(live.access, { control: live.control, tracker: live.tracker });
     const a = joinViewer(live.access, 'a');

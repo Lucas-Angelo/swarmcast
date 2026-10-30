@@ -3,8 +3,8 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import { EgressSet, EgressWatch, isLocalAddress, sameConnection } from '../../src/access/own-connection.js';
 import type { PublicIps } from '../../src/direct/publicip.js';
 import { clientIp } from '../../src/public/security.js';
-import { silentLog } from './helpers.js';
-import { captureLog, requestFrom } from './helpers-b.js';
+import { captureLog, manualClock, silentLog } from './helpers.js';
+import { requestFrom } from './helpers-b.js';
 
 // "Is this viewer on the streamer's own internet connection?" P2P stays off for such sessions:
 // their browser would offer the server's own public address to every other peer. The same
@@ -36,7 +36,7 @@ const MANUAL_TICKS_MS = 3_600_000;
  * `settle()` resolves once no lookup is running. Stopped when the test finishes.
  */
 function watch(results: Array<PublicIps | Error>, o: { interfaces?: () => string; log?: pino.Logger } = {}) {
-  let now = 1_000_000;
+  const clock = manualClock();
   let calls = 0;
   const w = new EgressWatch({
     lookup: async () => {
@@ -46,7 +46,7 @@ function watch(results: Array<PublicIps | Error>, o: { interfaces?: () => string
     },
     log: o.log ?? silentLog,
     interfaces: o.interfaces ?? (() => 'eth0'),
-    now: () => now,
+    now: clock.now,
     tickMs: MANUAL_TICKS_MS,
     refreshMs: REFRESH_MS,
     staleMs: STALE_MS,
@@ -56,7 +56,7 @@ function watch(results: Array<PublicIps | Error>, o: { interfaces?: () => string
   w.on('changed', () => (changes += 1));
   return {
     w,
-    advance: (ms: number) => (now += ms),
+    advance: clock.advance,
     calls: () => calls,
     changes: () => changes,
     settle: () => w.idle(),
