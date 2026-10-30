@@ -113,9 +113,22 @@ export function must(name, ok, detail = '') {
 }
 
 const openPages = new Set();
+/**
+ * Tracks `page` for the failure dumps, with its requests: how many, and the last one with its
+ * time. The browser process reports them (Firefox's network observer runs in the parent), so
+ * for a page that stopped answering the automation they still tell whether its scripts run.
+ */
 export function trackPage(page, label) {
-  openPages.add({ page, label });
+  const net = { count: 0, lastAt: 0, lastUrl: '' };
+  page.on('request', (r) => {
+    net.count++;
+    net.lastAt = Date.now();
+    net.lastUrl = r.url();
+  });
+  openPages.add({ page, label, net });
 }
+const networkLine = ({ count, lastAt, lastUrl }) =>
+  count ? `requests: ${count}, the last ${((Date.now() - lastAt) / 1000).toFixed(1)} s ago (${new Date(lastAt).toISOString()}): ${lastUrl}` : 'requests: none';
 async function screenshotAll(tag) {
   const states = [];
   for (const p of [...openPages]) {
@@ -124,8 +137,9 @@ async function screenshotAll(tag) {
       continue;
     }
     const file = path.join(ART, `${SUITE}-${tag}-${p.label}.png`.replace(/[^\w.-]+/g, '_'));
+    const net = networkLine(p.net);
     await p.page.screenshot({ path: file, timeout: 10_000 }).catch(() => {});
-    states.push(`===== ${p.label}\n${await pageState(p.page)}`);
+    states.push(`===== ${p.label}\n${net}\n${await pageState(p.page)}`);
   }
   if (states.length) fs.writeFileSync(path.join(ART, `${SUITE}-${tag}-pages.txt`.replace(/[^\w.-]+/g, '_')), states.join('\n\n') + '\n');
 }
@@ -262,9 +276,52 @@ export function processTree(list) {
   return lines.join('\n');
 }
 
+/** The window over which browserCpu measures: the CPU a process used in it, as a share of one core. */
+const CPU_SAMPLE_MS = 3000;
+
+/** What a browser process is, from its command line (`cmds`: pid -> command line). */
+function browserRole(cmd = '') {
+  const chromeType = /--type=([\w-]+)/.exec(cmd)?.[1];
+  if (chromeType) return chromeType === 'utility' ? `utility ${/--utility-sub-type=([\w.]+)/.exec(cmd)?.[1] ?? ''}`.trim() : chromeType;
+  // Firefox ends a child's command line with its id and type: "... 4 tab", "... 3 rdd".
+  if (/-contentproc/.test(cmd)) return /\s(\d+ \w+)\s*$/.exec(cmd)?.[1] ?? 'child';
+  return 'browser';
+}
+
+/**
+ * CPU of every Chrome, Edge and Firefox process over CPU_SAMPLE_MS: the whole process, its main
+ * thread (the oldest) with its state, and its busiest thread. A page that stopped answering the
+ * automation is told apart here: a content process spinning at 100 % of a core (a script or
+ * layout loop), or idle with its main thread waiting (a deadlock), or idle and fine.
+ */
+function browserCpu(cmds) {
+  const snap = `Get-Process -Name firefox,chrome,msedge -ErrorAction SilentlyContinue | ForEach-Object {
+    $th = @($_.Threads | Sort-Object { try { $_.StartTime } catch { [datetime]::MaxValue } })
+    [pscustomobject]@{ pid = $_.Id; ms = $_.TotalProcessorTime.TotalMilliseconds; threads = @($th | ForEach-Object {
+      [pscustomobject]@{ id = $_.Id; ms = $_.TotalProcessorTime.TotalMilliseconds; state = "$($_.ThreadState)$(if ($_.ThreadState -eq 'Wait') { ':' + $_.WaitReason })" } }) } }`;
+  const out = ps(`$a = @(${snap}); Start-Sleep -Milliseconds ${CPU_SAMPLE_MS}; $b = @(${snap}); @{ a = $a; b = $b } | ConvertTo-Json -Depth 5 -Compress`, { allowFail: true, timeout: 60_000 });
+  const { a = [], b = [] } = JSON.parse(out || '{}');
+  const before = new Map([a].flat().map((p) => [p.pid, p]));
+  const pct = (ms) => `${Math.round((ms / CPU_SAMPLE_MS) * 100)} %`;
+  return [b]
+    .flat()
+    .filter((p) => before.has(p.pid))
+    .map((p) => {
+      const was = before.get(p.pid);
+      const wasThread = new Map([was.threads].flat().map((t) => [t.id, t.ms]));
+      const threads = [p.threads].flat().map((t) => ({ ...t, used: t.ms - (wasThread.get(t.id) ?? t.ms) }));
+      const main = threads[0];
+      const busiest = threads.reduce((x, t) => (t.used > x.used ? t : x), threads[0]);
+      return { line: `${p.pid} ${browserRole(cmds.get(p.pid))}: ${pct(p.ms - was.ms)}; main thread ${main ? `${main.id} ${pct(main.used)} ${main.state}` : '?'}; busiest ${busiest ? `${busiest.id} ${pct(busiest.used)} ${busiest.state}` : '?'}; ${threads.length} threads`, used: p.ms - was.ms };
+    })
+    .sort((x, y) => y.used - x.used)
+    .map((x) => x.line)
+    .join('\n');
+}
+
 /**
  * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
- * TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
+ * the CPU of the browsers' processes (browserCpu), TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
  * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
  * logs are copied by startApp's cleanup.
  */
@@ -286,11 +343,14 @@ export function failureDump(tag) {
     return `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
   };
   let names = new Map();
+  let cmds = new Map();
   add('process tree (pid, ppid, name, command line)', () => {
     const list = processes();
     names = new Map(list.map((p) => [p.pid, p.name]));
+    cmds = new Map(list.map((p) => [p.pid, p.cmd]));
     return processTree(list);
   });
+  add(`browser processes: CPU over ${CPU_SAMPLE_MS / 1000} s (whole process, main thread, busiest thread)`, () => browserCpu(cmds));
   const owner = (pid) => `${pid} ${names.get(pid) ?? '?'}`;
   add('TCP listeners (address:port owner)', () =>
     psJson('Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
