@@ -33,9 +33,10 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
   expect(sent.length).toBeGreaterThan(20);
 
   const consoleErrors: string[] = [];
-  // There is no stream behind the mock: the player's 404s and WebKit's media-control placards are
-  // expected; anything else logged as an error is not.
-  const noise = /^Failed to load resource|^Button failed to load/;
+  // There is no stream behind the mock: the player's 404s are expected. WebKit also logs its media
+  // controls' placard icons and one refused stylesheet on the watch page with the chat off as
+  // well (not from the chat; the page's own styles all come from files). Anything else is not.
+  const noise = browserName === 'webkit' ? /^Failed to load resource|^Button failed to load|^Refused to apply a stylesheet because its hash/ : /^Failed to load resource/;
   page.on('console', (m) => {
     if (m.type() === 'error' && !noise.test(m.text())) consoleErrors.push(m.text());
   });
