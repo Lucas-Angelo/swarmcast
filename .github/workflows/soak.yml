@@ -217,7 +217,7 @@ jobs:
       # The rest is what _build.yml and _windows.yml do before the same suite.
       # Client Windows (windows-11-arm) has Media Foundation and no Get-WindowsFeature.
       - name: Media Foundation for Firefox (app)
-        if: matrix.suite == 'windows-app'
+        if: matrix.suite == 'windows-app' || matrix.suite == 'windows-ffrepro'
         shell: pwsh
         run: |
           if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
@@ -225,7 +225,7 @@ jobs:
           "Server-Media-Foundation: $($f.InstallState)"
           if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
       - name: Playwright Firefox (app)
-        if: matrix.suite == 'windows-app'
+        if: matrix.suite == 'windows-app' || matrix.suite == 'windows-ffrepro'
         run: npx playwright install firefox
       - run: npm run build
       - name: Build tray helper

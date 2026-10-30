@@ -27,6 +27,7 @@ export const SUITES = {
   'windows-installer': { job: 'windows', setup: 15, run: 20 },
   'windows-app': { job: 'windows', setup: 15, run: 20 },
   'windows-direct': { job: 'windows', setup: 15, run: 15 },
+  'windows-ffrepro': { job: 'windows', setup: 15, run: 40 },
   'windows-quality': { job: 'windows', setup: 15, run: 15 },
   'windows-obs': { job: 'windows', setup: 15, run: 15 },
   preflight: { job: 'preflight', setup: 15, run: 15 },

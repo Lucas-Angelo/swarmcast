@@ -76,7 +76,7 @@ export function commandsFor(row) {
       { name: 'apt-get install --download-only', cmd: `.github/scripts/apt-retry.sh install -y --no-install-recommends --download-only ${A || APT_PACKAGES}` },
     ],
   };
-  for (const s of ['installer', 'app', 'direct', 'quality', 'obs']) {
+  for (const s of ['installer', 'app', 'direct', 'quality', 'obs', 'ffrepro']) {
     COMMANDS[`windows-${s}`] = [
       {
         name: `${s}.mjs`,
