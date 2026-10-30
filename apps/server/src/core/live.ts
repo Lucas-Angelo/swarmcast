@@ -17,8 +17,11 @@ import {
   type Step,
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
+import { chatSettingsSchema, countGraphemes, type AdminChatMessage, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl, type Session } from '../access/access.js';
 import { EgressWatch, type EgressWatchOptions } from '../access/own-connection.js';
+import { ChatHub } from '../chat/hub.js';
+import { BrandingStore } from '../branding/store.js';
 import { ControlChannel } from '../control/control.js';
 import { DirectMode, ipChangeNotice } from '../direct/direct.js';
 import { lookupPublicIps } from '../direct/publicip.js';
@@ -29,6 +32,7 @@ import { MediaMtx, streamPath } from '../media/mediamtx.js';
 import { isAlive, type Reaper } from '../process/children.js';
 import type { LoadGuard, LoadGuardOptions } from '../quality/load-guard.js';
 import { QualityManager } from '../quality/manager.js';
+import { chatReserveMbps } from '../quality/upload-controller.js';
 import { createPublicServer, recentPeak, type HttpStats, type PublicDeps } from '../public/server.js';
 import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
@@ -67,6 +71,8 @@ export interface LiveDeps {
   blocklists?: PublicBlocklists;
   /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
   browserCheckKey?: string;
+  /** `<data>/branding` (docs/BRANDING.md); omitted in logic tests: images kept in memory only. */
+  brandingDir?: string;
   /** Replaces parts of the own-public-address watch (tests: a fake lookup, fast ticks). */
   egress?: Partial<Omit<EgressWatchOptions, 'log'>>;
 }
@@ -94,7 +100,7 @@ export const VIEWER_COUNT_INTERVAL_MS = 3000;
 export const KEYFRAME_WARN_S = 3;
 
 /** Orchestrates one live: start/stop with visible steps, link rotation, viewer control. */
-export class LiveController extends EventEmitter<{ state: []; 'link-changed': [link: string] }> {
+export class LiveController extends EventEmitter<{ state: []; 'link-changed': [link: string]; chat: [msg: AdminChatMessage] }> {
   phase: LivePhase = 'off';
   mode: AccessMode = 'secure';
   steps: Step[] = [];
@@ -102,6 +108,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   readonly origin: HlsOrigin;
   readonly tracker: TrackerService;
   readonly control: ControlChannel;
+  /** The chat of the live (docs/CHAT.md); rides on the control channel. */
+  readonly chat: ChatHub;
+  /** The streamer's page (docs/BRANDING.md). */
+  readonly branding: BrandingStore;
+  private brandingPush: NodeJS.Timeout | null = null;
   readonly limiter: BandwidthLimiter;
   readonly quality: QualityManager;
   private publicServer: FastifyInstance | null = null;
@@ -204,6 +215,42 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       },
       changed: () => this.changed(),
     });
+
+    this.chat = new ChatHub({
+      access: this.access,
+      host: this.control,
+      settings: () => this.d.config.chat,
+      uploadCapMbps: () => this.d.config.uploadLimitMbps,
+      viewers: () => this.connectedSessions().length,
+      shieldLevel: () => {
+        const st = this.shield.detector.state;
+        return st === 'attack' ? 2 : st === 'suspicious' ? 1 : 0;
+      },
+      activity: this.activity,
+      log: d.log,
+      now: d.now,
+      onAdmin: (m) => this.emit('chat', m),
+      onState: () => this.changed(),
+      onTick: (level, egress, budget) => {
+        this.shield.chatSignal(level);
+        this.limiter.setReserveMbps(chatReserveMbps(budget, egress));
+      },
+    });
+    this.control.chat = this.chat;
+    // ---- branding: store ----
+    this.branding = new BrandingStore({
+      dir: d.brandingDir,
+      get: () => this.d.config.branding,
+      save: (b) => {
+        this.d.config.branding = b;
+        this.d.saveConfig(this.d.config);
+      },
+      activity: this.activity,
+      log: d.log,
+    });
+    this.branding.load();
+    this.control.brandRev = () => (this.d.config.branding.enabled ? this.d.config.branding.rev : undefined);
+    // ---- end branding ----
 
     this.access.on('kicked', (s) => {
       this.activity.action('log.kicked', { nickname: s.nickname });
@@ -434,6 +481,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
             throw new CodedError('err.rtmpBusy', { port: this.d.config.ports.rtmp });
           }
           this.access.begin();
+          this.chat.begin();
           // Look up our own public address while the tunnel opens (P2P privacy).
           this.syncEgress();
           this.shield.start();
@@ -474,7 +522,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
       const url = await abortable(this.d.tunnel.start(this.d.config.ports.public), signal);
       if (this.d.tunnel.name === 'none') return url;
-      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal })) return url;
+      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal, probe: this.access.probeToken() })) return url;
       this.d.log.warn({ attempt }, 'tunnel address not reachable yet, retrying with a new tunnel');
       await this.d.tunnel.stop();
     }
@@ -483,7 +531,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private async onTunnelUrl(url: string): Promise<void> {
     if (this.mode !== 'secure' || !this.access.live) return;
-    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal }).catch(() => false);
+    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal, probe: this.access.probeToken() }).catch(() => false);
     if (this.quitting.signal.aborted) return;
     this.baseUrl = url;
     this.tunnelUrlChangedAt = this.now();
@@ -511,6 +559,10 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       stats: this.httpStats,
       security: this.shield,
       clientSeen: (s, ip) => this.clientSeen(s, ip),
+      reservedNames: () => [this.d.config.chat.streamerName],
+      gifProvider: () => this.chat.effective.public.gif?.provider,
+      branding: this.branding,
+      brandingLite: () => this.shield.detector.state !== 'normal' || this.limiter.throttledWithin(10_000),
     };
     return createPublicServer(deps, {
       mode,
@@ -641,6 +693,9 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.control.closeAll('ended');
       this.tracker.disconnectAll();
       this.access.reset();
+      // Chat history, mutes and colours are wiped with everything else.
+      this.chat.reset();
+      this.limiter.setReserveMbps(0);
       this.syncEgress();
       await this.publicServer?.close();
       this.publicServer = null;
@@ -793,6 +848,45 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.d.saveConfig(this.d.config);
     this.activity.action('log.securitySaved');
     this.changed();
+  }
+
+  // ---- branding ----
+
+  /** The page changed (panel): tell open viewer pages, at most once every 2 s. */
+  brandingChanged(): void {
+    this.changed();
+    if (this.brandingPush) return;
+    this.brandingPush = setTimeout(() => {
+      this.brandingPush = null;
+      this.control.broadcast({ t: 'branding', rev: this.d.config.branding.rev });
+    }, 2000);
+    this.brandingPush.unref();
+  }
+
+  // ---- chat ----
+
+  chatSettings(): ChatSettings {
+    return this.d.config.chat;
+  }
+
+  /**
+   * Save the chat settings (panel). Throws a CodedError for values the schema cannot check:
+   * the streamer's chat name follows the nickname rules, blocked words have 1 to 40 characters,
+   * and GIFs need the streamer's own key.
+   */
+  updateChatSettings(input: unknown): ChatSettings {
+    const s = chatSettingsSchema.parse(input);
+    const name = ChatHub.validStreamerName(s.streamerName);
+    if (name === null) throw new CodedError('admin.chat.err.streamerName');
+    s.streamerName = name;
+    if (s.blockedWords.some((w) => countGraphemes(w) > 40)) throw new CodedError('admin.chat.err.blockedWord');
+    if (s.content.gifs && !s.gif.key) throw new CodedError('admin.chat.err.gifKey');
+    this.d.config.chat = s;
+    this.d.saveConfig(this.d.config);
+    this.activity.action('log.chat.settingsSaved');
+    this.chat.refresh();
+    this.changed();
+    return s;
   }
 
   /** "End alert": the streamer says the attack is over (or was a false alarm). */
@@ -1025,6 +1119,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.d.log.debug('live stopped; closing control channel and tracker');
     if (this.speedTimer) clearInterval(this.speedTimer);
     await this.quality.shutdown();
+    this.chat.reset();
     this.control.close();
     this.tracker.close();
     this.limiter.close();

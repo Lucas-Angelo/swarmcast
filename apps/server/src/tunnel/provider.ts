@@ -91,10 +91,11 @@ export function isIpHost(hostname: string): boolean {
  * asking a DNS-over-HTTPS server about it would only send the streamer's address to Cloudflare
  * and, offline, wait up to 5 s on every check of "Stop everything".
  */
-export async function probeHealth(url: string): Promise<string | null> {
+export async function probeHealth(url: string, probe?: string): Promise<string | null> {
   const u = new URL('/healthz', url);
+  const probeHeader: Record<string, string> = probe ? { 'x-swarmcast-probe': probe } : {};
   if (u.protocol !== 'https:') {
-    const res = await fetch(u, { signal: AbortSignal.timeout(5000), cache: 'no-store' });
+    const res = await fetch(u, { signal: AbortSignal.timeout(5000), cache: 'no-store', headers: probeHeader });
     await res.body?.cancel();
     return res.ok ? res.headers.get('x-swarmcast') : null;
   }
@@ -106,7 +107,7 @@ export async function probeHealth(url: string): Promise<string | null> {
       }
     : undefined;
   return new Promise((resolve) => {
-    const req = https.get(u, { lookup, timeout: 5000, headers: { 'cache-control': 'no-store' } }, (res) => {
+    const req = https.get(u, { lookup, timeout: 5000, headers: { 'cache-control': 'no-store', ...probeHeader } }, (res) => {
       res.resume();
       resolve(res.statusCode === 200 ? ((res.headers['x-swarmcast'] as string | undefined) ?? null) : null);
     });
@@ -119,7 +120,7 @@ export async function probeHealth(url: string): Promise<string | null> {
 export async function waitForReachable(
   url: string,
   expectMarker: string,
-  opts: { timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal } = {},
+  opts: { timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal; /** Sent as X-SwarmCast-Probe: only then does /healthz reveal the live's marker. */ probe?: string } = {},
 ): Promise<boolean> {
   const { signal } = opts;
   const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
@@ -128,11 +129,11 @@ export async function waitForReachable(
     try {
       let marker: string | null;
       if (opts.fetchImpl) {
-        const res = await opts.fetchImpl(`${url}/healthz`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000), cache: 'no-store' });
+        const res = await opts.fetchImpl(`${url}/healthz`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000), cache: 'no-store', ...(opts.probe ? { headers: { 'x-swarmcast-probe': opts.probe } } : {}) });
         await res.body?.cancel();
         marker = res.ok ? res.headers.get('x-swarmcast') : null;
       } else {
-        marker = await abortable(probeHealth(url), signal);
+        marker = await abortable(probeHealth(url, opts.probe), signal);
       }
       if (marker === expectMarker) {
         // Reachable through Cloudflare. Before showing the link, make sure the name also

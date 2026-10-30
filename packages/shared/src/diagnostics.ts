@@ -1,3 +1,4 @@
+import './zod-config.js';
 import { z } from 'zod';
 
 // ---- diagnostics: log retention and "Export logs" (admin panel only) ----

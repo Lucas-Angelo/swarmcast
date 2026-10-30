@@ -28,6 +28,10 @@ import {
 import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
+import { createChatRouter } from './chat/loader.js';
+// ---- branding: watch ----
+import { createBrandRouter } from './branding/loader.js';
+// ---- end branding: watch ----
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const video = $<HTMLVideoElement>('video');
@@ -45,6 +49,20 @@ const viewerCountEl = $<HTMLSpanElement>('viewer-count');
 const playerControls = $<HTMLDivElement>('player-controls');
 const delayWrap = $<HTMLSpanElement>('delay-wrap');
 const delayEl = $<HTMLSpanElement>('delay');
+
+// Chat: a separate, lazily loaded chunk (chat/loader.ts); the player never depends on it.
+const chat = createChatRouter({
+  root: $<HTMLElement>('chat'),
+  showButton: $<HTMLButtonElement>('chat-show'),
+  nickname: () => $('nick').textContent ?? '',
+  send: (msg) => sendControl(msg),
+  debug: (msg) => debugLog(msg),
+});
+
+// ---- branding: watch ----
+// The streamer's page (name, picture, about, support): its own chunk, the player never waits for it.
+const brand = createBrandRouter('watch', (msg) => debugLog(msg));
+// ---- end branding: watch ----
 
 let tipSeq = 0;
 /** An (i) tooltip like the static ones in watch.html (installTooltips() handles it). */
@@ -213,6 +231,7 @@ function endScreen(titleKey: MessageKey, textKey: MessageKey): void {
   $('ended-title').textContent = t(titleKey);
   $('ended-text').textContent = t(textKey);
   $('ended').hidden = false;
+  brand.ended();
   goLive.hidden = true;
   viewerCountWrap.hidden = true;
   try {
@@ -463,6 +482,7 @@ async function main(): Promise<void> {
   });
   hls.on(Hls.Events.FRAG_BUFFERED, () => {
     networkErrors = 0;
+    brand.firstFrame(); // ---- branding: the banner loads after the first fragment ----
   });
 
   video.addEventListener('playing', () => {
@@ -566,8 +586,10 @@ async function main(): Promise<void> {
   });
 }
 
-function sendControl(msg: unknown): void {
-  if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
+function sendControl(msg: unknown): boolean {
+  if (control?.readyState !== WebSocket.OPEN) return false;
+  control.send(JSON.stringify(msg));
+  return true;
 }
 
 /** The line under the P2P switch while P2P is not allowed: who turned it off, and why. */
@@ -582,11 +604,12 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
   let attempts = 0;
   const open = (): void => {
     if (ended) return;
-    const ws = new WebSocket(cfg.controlUrl);
+    const ws = new WebSocket(chat.controlUrl(cfg.controlUrl));
     control = ws;
     ws.onopen = () => {
       attempts = 0;
       trackerMux.attach(ws);
+      chat.connection(true);
     };
     ws.onmessage = (ev) => {
       const text = String(ev.data);
@@ -597,8 +620,11 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
       } catch {
         return;
       }
+      if (chat.frame(msg)) return;
       switch (msg.t) {
         case 'hello':
+          chat.hello(msg.chat);
+          brand.rev(msg.brandRev);
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
           handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
@@ -626,11 +652,17 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
         case 'ping':
           sendControl({ t: 'pong' });
           break;
+        // ---- branding: control ----
+        case 'branding':
+          brand.rev(msg.rev);
+          break;
+        // ---- end branding: control ----
       }
     };
     ws.onclose = (ev) => {
       control = null;
       trackerMux.detach(ws);
+      chat.connection(false);
       if (ended) return;
       if (ev.code === 4003) {
         endScreen('watch.removed.title', 'watch.removed.text');

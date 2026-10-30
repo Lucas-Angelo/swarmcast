@@ -238,6 +238,59 @@ Code: `apps/server/src/security/` (detector, reactions, pow, blocklists, cidr, s
 
 Downloaded at app start and re-checked hourly (refreshed when older than 24 h), cached with the fetch date in `<data dir>/blocklists/`, the cache is used offline, and a failed or empty download never replaces a good copy. Entries wider than /8 (IPv4) or /12 (IPv6) are ignored. Aggressive lists (full blocklist.de, Tor exit nodes) are only possible via `security.extraBlocklistUrls`.
 
+## Chat and branding (v0.4.0)
+
+Checked 2026-10-29. Design and implementation: [CHAT.md](CHAT.md) and [BRANDING.md](BRANDING.md); threats: [THREAT_MODEL.md](THREAT_MODEL.md). Sources of this section are cited as `[Cn]` and listed at its end.
+
+**Resumo (pt-BR):** o chat usa o mesmo WebSocket `/control` (zero conexões novas no túnel rápido, que conta cada WebSocket aberto no limite de 200 [C1]); não há P2P no chat, porque isso mostraria o IP de cada espectador aos vizinhos. Todo texto passa por um pipeline Unicode no servidor (limites de marcas combinantes, bidi, invisíveis, ZWJ) [C2][C3][C4], porque CSS não reduz o custo de renderização [C5] e strings conhecidas já travaram iPhones [C6][C7]. GIFs: KLIPY com a chave da própria streamer, desligados por padrão, buscados direto pelo navegador de cada espectador depois do consentimento (a KLIPY proíbe proxy [C8]; a API do Tenor acabou [C9]). "Sua página": imagens recodificadas no canvas do painel e validadas/limpas no servidor [C10][C11][C12]; tudo `Cache-Control: private`, porque a Cloudflare guarda imagens por extensão e ignora cookies na chave de cache [C13]. O Pix mostra ao pagador o nome completo e parte do CPF de quem recebe [C14].
+
+| Topic | Finding | Consequence in the code |
+|---|---|---|
+| Transport | Quick tunnels allow 200 requests in flight, every open WebSocket included (our measurement), and do not support SSE [C1] | Chat rides on `/control`; no SSE, no long polling, no second socket |
+| P2P chat | A data channel exposes each viewer's IP to its neighbours, and moderation cannot be enforced in a mesh | Rejected; chat is on by default, so it must not depend on P2P |
+| Shaping cost | HarfBuzz had O(n²) behaviour on long runs of combining marks (CVE-2023-25193) [C5]; CSS containment cannot reduce shaping work | Marks capped on the server (UTS #39 §5.4 [C2]); boxes clipped in the client |
+| Crash strings | "Effective Power" (2015), the Telugu string (2018, a ZWNJ after a consonant), "Black Dot" (2018, thousands of bidi marks) [C6][C7][C15] | RFC 5892 joiner contexts [C16], bidi-mark cap, a regression corpus; unknown future bugs remain a residual risk |
+| Invisible payloads | ASCII smuggled in tag characters [C17] and in variation selectors [C18] | Tags only inside RGI flags; one selector per grapheme |
+| Normalisation | NFKC expands U+FDFA 18× in UTF-16 [C19] | Input capped before normalising; NFC for display, NFKC only in comparison keys |
+| Look-alike names | UTS #39 skeletons and restriction levels [C2], with confusables.txt and IdentifierStatus.txt [C3] | Nickname allowlist, one script, skeleton uniqueness, reserved names |
+| GIF providers | Tenor's API shut down for third parties on 2026-06-30 [C9]; GIPHY's beta key allows 100 calls per hour, production keys are paid, analytics pings are recommended [C20]; KLIPY production keys are free, requests must come from the browser, proxying is forbidden [C8], hosts documented [C21] | KLIPY with the streamer's own key, off by default; viewer consent; CSP lists only KLIPY's hosts while on; no analytics pings |
+| CSSOM and CSP | `style.setProperty` is not blocked by `style-src` without `'unsafe-inline'` [C22] | Name colours and live theme updates use CSSOM; the CSP is unchanged |
+| Image metadata | PNG eXIf can carry GPS [C11]; JPEG APP1/APP2/APP13 carry EXIF, XMP, ICC, IPTC [C12]; a canvas serialises only pixels [C23]; OWASP: re-encode and strip, but rewriting does not guarantee safety [C10] | Panel canvas re-encode + server chunk walk that keeps pixel chunks only |
+| Crafted images | libwebp CVE-2023-4863 and Apple ImageIO CVE-2023-41064 / CVE-2025-43300 were exploited in the wild [C24] | Viewers only get canvas-encoded bytes; SVG refused everywhere [C25] |
+| Edge caching | Cloudflare caches images and CSS by extension by default and its cache key ignores cookies [C13] | `private` on every branded answer |
+| Cross-site uploads | `image/*` is not a CORS-safelisted content type [C26] | The panel accepts raw image bodies on one route only, with the `Origin` check |
+| Pix | A Pix confirmation shows the receiver's full name, part of the CPF and the bank [C14]; BR Code layout from the BCB manual [C27] | Mandatory warning in the panel; random key recommended |
+
+Sources (checked 2026-10-29):
+
+- [C1] Cloudflare, Quick Tunnels. https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/
+- [C2] UTS #39, Unicode Security Mechanisms. https://www.unicode.org/reports/tr39/
+- [C3] confusables.txt and IdentifierStatus.txt. https://www.unicode.org/Public/security/latest/confusables.txt · https://www.unicode.org/Public/security/latest/IdentifierStatus.txt
+- [C4] UAX #9, Unicode Bidirectional Algorithm. https://www.unicode.org/reports/tr9/
+- [C5] CVE-2023-25193 (HarfBuzz). https://cveawg.mitre.org/api/cve/CVE-2023-25193
+- [C6] CVE-2015-1157 "Effective Power". https://support.apple.com/en-us/HT204941
+- [C7] CVE-2018-4124, the Telugu crash, and an analysis. https://support.apple.com/en-us/HT208534 · https://manishearth.github.io/blog/2018/02/15/picking-apart-the-crashing-ios-string/
+- [C8] KLIPY integration requirements. https://docs.klipy.com/integration-requirements.md
+- [C9] Tenor API discontinued. https://developers.google.com/tenor/guides/quickstart
+- [C10] OWASP File Upload Cheat Sheet. https://cheatsheetseries.owasp.org/cheatsheets/File_Upload_Cheat_Sheet.html
+- [C11] PNG Third Edition (W3C), §11.3 and §13.4; libpng on decompression bombs. https://www.w3.org/TR/png-3/ · https://libpng.sourceforge.io/decompression_bombs.html
+- [C12] ExifTool, JPEG tags. https://exiftool.org/TagNames/JPEG.html
+- [C13] Cloudflare default cache behaviour and cache keys. https://developers.cloudflare.com/cache/concepts/default-cache-behavior/ · https://developers.cloudflare.com/cache/how-to/cache-keys/
+- [C14] IDEC on what a Pix confirmation shows; Aos Fatos on Pix data exposure. https://idec.org.br/node/29017 · https://www.aosfatos.org/noticias/informacoes-pix/
+- [C15] "Black Dot" crash, 2018. https://www.androidpolice.com/2018/05/05/emoji-message-crashes-android-app-no-big-deal
+- [C16] RFC 5892, Appendix A.1 and A.2 (CONTEXTJ). https://www.rfc-editor.org/rfc/rfc5892
+- [C17] Hidden text with Unicode tags. https://embracethered.com/blog/posts/2024/hiding-and-finding-text-with-unicode-tags/
+- [C18] Smuggling data through variation selectors. https://paulbutler.org/2025/smuggling-arbitrary-data-through-an-emoji/
+- [C19] Unicode Normalization FAQ. https://www.unicode.org/faq/normalization.html
+- [C20] GIPHY API docs. https://developers.giphy.com/docs/api/
+- [C21] KLIPY network requirements. https://docs.klipy.com/network-requirements.md
+- [C22] MDN, CSP `style-src`. https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Security-Policy/style-src
+- [C23] HTML Standard, canvas serialisation. https://html.spec.whatwg.org/multipage/canvas.html
+- [C24] NVD: CVE-2023-4863, CVE-2023-41064, CVE-2025-43300. https://nvd.nist.gov/vuln/detail/CVE-2023-4863 · https://nvd.nist.gov/vuln/detail/CVE-2023-41064 · https://nvd.nist.gov/vuln/detail/CVE-2025-43300
+- [C25] MDN, SVG as an image. https://developer.mozilla.org/en-US/docs/Web/SVG/Guides/SVG_as_an_image
+- [C26] MDN, CORS-safelisted request header. https://developer.mozilla.org/en-US/docs/Glossary/CORS-safelisted_request_header
+- [C27] Banco Central do Brasil, Manual de Padrões para Iniciação do Pix. https://www.bcb.gov.br/content/estabilidadefinanceira/pix/Regulamento_Pix/II_ManualdePadroesparaIniciacaodoPix.pdf
+
 ## 7. If budget appears later (one line each)
 
 - **VPS in São Paulo with DDoS protection included:**

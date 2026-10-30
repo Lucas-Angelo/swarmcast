@@ -1,6 +1,6 @@
 {
   "name": "@swarmcast/viewer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -11,8 +11,12 @@
   "dependencies": {
     "@swarmcast/shared": "*",
     "altcha-lib": "^2.8.0",
+    "emojibase-data": "18.0.0",
     "hls.js": "^1.7.3",
     "p2p-media-loader-core": "^4.0.0",
     "p2p-media-loader-hlsjs": "^4.0.0"
+  },
+  "devDependencies": {
+    "happy-dom": "21.0.4"
   }
 }

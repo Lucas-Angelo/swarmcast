@@ -1,0 +1,231 @@
+#!/usr/bin/env node
+// Generate the Unicode tables of the chat pipeline (packages/shared/src/chat/*.generated.ts)
+// from pinned Unicode data files, each checked against the SHA-256 in unicode-data.json.
+//
+// Usage: node scripts/build/gen-unicode-tables.mjs            (download, verify, write)
+//        node scripts/build/gen-unicode-tables.mjs --check    (fail if the files on disk differ)
+//        node scripts/build/gen-unicode-tables.mjs --pin      (record the SHA-256 values after a version bump:
+//                                                             change UNICODE_VERSION and BASE below first)
+//
+// The generated files are committed: building or testing never needs the network. Run this only
+// when bumping the Unicode version, which must match the Node runtime's `process.versions.unicode`
+// (a unit test checks it, so a Node bump that changes Unicode fails loudly).
+//
+// JavaScript regexes cover most Unicode properties (\p{…}); these tables hold the ones it lacks:
+// - VIRAMA: Canonical_Combining_Class = 9 (ZWJ/ZWNJ context, RFC 5892 Appendix A.1/A.2);
+// - JOINING: Joining_Type L, D, R, T (ZWNJ context, RFC 5892 Appendix A.1);
+// - IDENTIFIER_ALLOWED: UTS #39 Identifier_Status = Allowed (nicknames);
+// - CONFUSABLES: UTS #39 confusables.txt prototypes (skeleton; server only, a separate file so
+//   the viewer bundle never carries it).
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
+const root = path.resolve(here, '..', '..');
+const pinFile = path.join(here, 'unicode-data.json');
+const outDir = path.join(root, 'packages', 'shared', 'src', 'chat');
+const pin = JSON.parse(fs.readFileSync(pinFile, 'utf8'));
+const mode = process.argv.includes('--check') ? 'check' : process.argv.includes('--pin') ? 'pin' : 'write';
+
+/**
+ * Where each file comes from. Hard-coded here, never read from unicode-data.json (that file only
+ * pins the SHA-256 values), so no data from disk ever decides where a request goes.
+ */
+const UNICODE_VERSION = '17.0';
+const BASE = 'https://www.unicode.org/Public/17.0.0/';
+const SOURCES = {
+  'UnicodeData.txt': `${BASE}ucd/UnicodeData.txt`,
+  'DerivedJoiningType.txt': `${BASE}ucd/extracted/DerivedJoiningType.txt`,
+  'IdentifierStatus.txt': `${BASE}security/IdentifierStatus.txt`,
+  'confusables.txt': `${BASE}security/confusables.txt`,
+  'GraphemeBreakProperty.txt': `${BASE}ucd/auxiliary/GraphemeBreakProperty.txt`,
+  'DerivedCoreProperties.txt': `${BASE}ucd/DerivedCoreProperties.txt`,
+  'emoji-data.txt': `${BASE}ucd/emoji/emoji-data.txt`,
+  'GraphemeBreakTest.txt': `${BASE}ucd/auxiliary/GraphemeBreakTest.txt`,
+};
+if (pin.version !== UNICODE_VERSION) throw new Error(`unicode-data.json pins Unicode ${pin.version}, this script fetches ${UNICODE_VERSION}`);
+
+async function fetchText(name) {
+  const url = SOURCES[name];
+  if (!url) throw new Error(`unknown Unicode data file ${name}`);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  const sha = crypto.createHash('sha256').update(buf).digest('hex');
+  if (mode === 'pin') pin.files[name] = { sha256: sha };
+  else if (sha !== pin.files[name]?.sha256) throw new Error(`${name}: SHA-256 ${sha} does not match the pinned ${pin.files[name]?.sha256}`);
+  return buf.toString('utf8');
+}
+
+/** Lines of a UCD file without comments: [fields...] trimmed. */
+function* records(text) {
+  for (const raw of text.split('\n')) {
+    const line = raw.split('#')[0].trim();
+    if (!line) continue;
+    yield line.split(';').map((f) => f.trim());
+  }
+}
+
+function parseRange(field) {
+  const [a, b] = field.split('..');
+  const lo = parseInt(a, 16);
+  return [lo, b ? parseInt(b, 16) : lo];
+}
+
+/** Merge [lo, hi] ranges (sorted, adjacent ones joined). */
+function merge(ranges) {
+  const sorted = ranges.slice().sort((x, y) => x[0] - y[0]);
+  const out = [];
+  for (const r of sorted) {
+    const last = out[out.length - 1];
+    if (last && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
+    else out.push([r[0], r[1]]);
+  }
+  return out;
+}
+
+/** Ranges as a compact string: base-36 start delta and length, "start+len" pairs joined by ",". */
+function encodeRanges(ranges) {
+  let prev = 0;
+  return ranges
+    .map(([lo, hi]) => {
+      const s = `${(lo - prev).toString(36)}${hi > lo ? `+${(hi - lo).toString(36)}` : ''}`;
+      prev = hi;
+      return s;
+    })
+    .join(',');
+}
+
+/** Classed ranges: base-36 start delta, optional "+len", then one uppercase class letter. */
+function encodeClassed(ranges) {
+  const sorted = ranges.slice().sort((x, y) => x[0] - y[0]);
+  const merged = [];
+  for (const r of sorted) {
+    const last = merged[merged.length - 1];
+    if (last && last[2] === r[2] && r[0] <= last[1] + 1) last[1] = Math.max(last[1], r[1]);
+    else merged.push([r[0], r[1], r[2]]);
+  }
+  let prev = 0;
+  return merged
+    .map(([lo, hi, c]) => {
+      const s = `${(lo - prev).toString(36)}${hi > lo ? `+${(hi - lo).toString(36)}` : ''}${c}`;
+      prev = hi;
+      return s;
+    })
+    .join('');
+}
+
+const header = (files) =>
+  `// Generated by scripts/build/gen-unicode-tables.mjs from Unicode ${pin.version} data. Do not edit.\n` +
+  `// Sources (SHA-256 pinned in scripts/build/unicode-data.json):\n` +
+  files.map((f) => `//   ${f}: ${pin.files[f].sha256}\n`).join('');
+
+async function main() {
+  const unicodeData = await fetchText('UnicodeData.txt');
+  const joining = await fetchText('DerivedJoiningType.txt');
+  const idStatus = await fetchText('IdentifierStatus.txt');
+  const confusables = await fetchText('confusables.txt');
+  const gbp = await fetchText('GraphemeBreakProperty.txt');
+  const dcp = await fetchText('DerivedCoreProperties.txt');
+  const emojiData = await fetchText('emoji-data.txt');
+  const gbTest = await fetchText('GraphemeBreakTest.txt');
+  if (mode === 'pin') {
+    fs.writeFileSync(pinFile, JSON.stringify(pin, null, 2) + '\n');
+    console.log(`pinned ${Object.keys(pin.files).length} files for Unicode ${pin.version}`);
+  }
+
+  // VIRAMA: ccc = 9 (field 3 of UnicodeData.txt).
+  const virama = [];
+  for (const f of records(unicodeData)) if (f[3] === '9') virama.push([parseInt(f[0], 16), parseInt(f[0], 16)]);
+
+  // Joining types.
+  const jt = { L: [], D: [], R: [], T: [] };
+  for (const [range, type] of records(joining)) if (jt[type]) jt[type].push(parseRange(range));
+
+  // Identifier_Status = Allowed.
+  const allowed = [];
+  for (const [range, status] of records(idStatus)) if (status === 'Allowed') allowed.push(parseRange(range));
+
+  // Confusables: source ; target ; type (MA only in current files).
+  const conf = [];
+  for (const [src, tgt] of records(confusables)) {
+    const s = parseInt(src, 16);
+    const t = tgt.split(/\s+/).map((h) => parseInt(h, 16).toString(36));
+    conf.push(`${s.toString(36)}:${t.join('.')}`);
+  }
+
+  // Grapheme cluster boundaries (UAX #29): Grapheme_Cluster_Break, Extended_Pictographic, InCB.
+  const GCB = { CR: 'R', LF: 'N', Control: 'C', Extend: 'E', ZWJ: 'Z', Regional_Indicator: 'I', Prepend: 'P', SpacingMark: 'S', L: 'L', V: 'V', T: 'T', LV: 'W', LVT: 'X' };
+  const gcb = [];
+  for (const [range, prop] of records(gbp)) {
+    if (!GCB[prop]) throw new Error(`unknown Grapheme_Cluster_Break ${prop}`);
+    gcb.push([...parseRange(range), GCB[prop]]);
+  }
+  const extPict = [];
+  for (const [range, prop] of records(emojiData)) if (prop === 'Extended_Pictographic') extPict.push(parseRange(range));
+  const INCB = { Consonant: 'C', Linker: 'L', Extend: 'E' };
+  const incb = [];
+  for (const f of records(dcp)) if (f[1] === 'InCB') incb.push([...parseRange(f[0]), INCB[f[2]]]);
+  const tests = [];
+  for (const raw of gbTest.split('\n')) {
+    const line = raw.split('#')[0].trim();
+    if (line) tests.push(line.replaceAll(' ', '').replaceAll('\u00F7', '/').replaceAll('\u00D7', 'x'));
+  }
+  const graphemeOut =
+    header(['GraphemeBreakProperty.txt', 'DerivedCoreProperties.txt', 'emoji-data.txt']) +
+    `\n/** Grapheme_Cluster_Break: R CR, N LF, C Control, E Extend, Z ZWJ, I Regional_Indicator, P Prepend, S SpacingMark, L, V, T, W LV, X LVT. */\n` +
+    `export const GCB_RANGES = '${encodeClassed(gcb)}';\n` +
+    `/** Extended_Pictographic (emoji-data.txt). */\n` +
+    `export const EXTPICT_RANGES = '${encodeRanges(merge(extPict))}';\n` +
+    `/** Indic_Conjunct_Break: C Consonant, L Linker, E Extend. */\n` +
+    `export const INCB_RANGES = '${encodeClassed(incb)}';\n`;
+  const testOut =
+    header(['GraphemeBreakTest.txt']) +
+    `\n/** GraphemeBreakTest.txt cases: hex code points, "/" = boundary, "x" = no boundary. */\n` +
+    `export const GRAPHEME_BREAK_TESTS: string[] = ${JSON.stringify(tests)};\n`;
+
+  const ucd =
+    header(['UnicodeData.txt', 'DerivedJoiningType.txt', 'IdentifierStatus.txt']) +
+    `\n/** Unicode version of these tables; must equal the runtime's (unit test). */\n` +
+    `export const UCD_VERSION = '${pin.version}';\n` +
+    `export const UCD_SHA256: Record<string, string> = ${JSON.stringify(Object.fromEntries(['UnicodeData.txt', 'DerivedJoiningType.txt', 'IdentifierStatus.txt'].map((f) => [f, pin.files[f].sha256])))};\n\n` +
+    `/** Canonical_Combining_Class = 9 (virama). Ranges: see decodeRanges in ucd.ts. */\n` +
+    `export const VIRAMA_RANGES = '${encodeRanges(merge(virama))}';\n` +
+    `/** Joining_Type ranges (DerivedJoiningType.txt). */\n` +
+    `export const JOINING_L_RANGES = '${encodeRanges(merge(jt.L))}';\n` +
+    `export const JOINING_D_RANGES = '${encodeRanges(merge(jt.D))}';\n` +
+    `export const JOINING_R_RANGES = '${encodeRanges(merge(jt.R))}';\n` +
+    `export const JOINING_T_RANGES = '${encodeRanges(merge(jt.T))}';\n` +
+    `/** UTS #39 Identifier_Status = Allowed. */\n` +
+    `export const IDENTIFIER_ALLOWED_RANGES = '${encodeRanges(merge(allowed))}';\n`;
+
+  const confOut =
+    header(['confusables.txt']) +
+    `\nexport const CONFUSABLES_VERSION = '${pin.version}';\n` +
+    `export const CONFUSABLES_SHA256 = '${pin.files['confusables.txt'].sha256}';\n` +
+    `/** source:target pairs, base-36 code points; target code points joined by ".". */\n` +
+    `export const CONFUSABLES = '${conf.join(',')}';\n`;
+
+  const outputs = { 'ucd.generated.ts': ucd, 'confusables.generated.ts': confOut, 'grapheme.generated.ts': graphemeOut, [path.join('..', '..', 'test', 'chat', 'grapheme-break-test.generated.ts')]: testOut };
+  let stale = false;
+  for (const [name, text] of Object.entries(outputs)) {
+    const file = path.join(outDir, name);
+    if (mode === 'check') {
+      if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== text) {
+        console.error(`${name} is out of date: run node scripts/build/gen-unicode-tables.mjs`);
+        stale = true;
+      }
+    } else {
+      fs.writeFileSync(file, text);
+      console.log(`wrote ${path.relative(root, file)} (${text.length} bytes)`);
+    }
+  }
+  if (stale) process.exit(1);
+}
+
+main().catch((e) => {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+});

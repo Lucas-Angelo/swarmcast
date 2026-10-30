@@ -1,6 +1,7 @@
 import './style.css';
 import type { Challenge, Payload } from 'altcha-lib';
 import type { ApiErrorBody, JoinChallengeResponse } from '@swarmcast/shared';
+import { validateNickname } from '@swarmcast/shared/chat/nickname';
 import { t, tc } from './i18n.js';
 import { solvePow } from './pow.js';
 
@@ -54,16 +55,38 @@ void (async () => {
   }
 })();
 
+/**
+ * Instant nickname feedback with the server's own rules (packages/shared/src/chat/nickname.ts);
+ * the server checks again and also refuses names already taken in the live.
+ */
+let typed = false;
+input.addEventListener('input', () => {
+  const value = input.value;
+  const r = value.trim() ? validateNickname(value) : null;
+  if (value.trim().length >= 2) typed = true;
+  // "Too short" waits until the viewer has typed a second character; other problems show at once.
+  if (r && !r.ok && (typed || r.code !== 'nickname.tooShort')) {
+    showError(t(r.code, r.params));
+    input.setAttribute('aria-invalid', 'true');
+  } else {
+    errorEl.hidden = true;
+    input.removeAttribute('aria-invalid');
+  }
+});
+
 type JoinResponse = { redirect?: string; pow?: Challenge } & Partial<ApiErrorBody>;
 
 form.addEventListener('submit', async (ev) => {
   ev.preventDefault();
   errorEl.hidden = true;
-  const nickname = input.value.trim();
-  if (!nickname) {
-    showError(t('nickname.empty'));
+  const checked = validateNickname(input.value);
+  if (!checked.ok) {
+    showError(t(checked.code, checked.params));
+    input.setAttribute('aria-invalid', 'true');
+    input.focus();
     return;
   }
+  const nickname = checked.value;
   button.disabled = true;
   try {
     let proof: Payload | undefined;

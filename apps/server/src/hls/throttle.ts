@@ -14,6 +14,8 @@ export class BandwidthLimiter {
   private lastRateBps = 0;
   /** Last time a request had to wait for tokens (the cap was the bottleneck). */
   private lastThrottledAt = Number.NEGATIVE_INFINITY;
+  /** Upload kept for the chat (bytes/s), taken off the cap: video + chat stay within it. */
+  private reserveBps = 0;
 
   constructor(
     private bytesPerSecond: number,
@@ -28,9 +30,32 @@ export class BandwidthLimiter {
     return new BandwidthLimiter((mbps * 1_000_000) / 8);
   }
 
+  /** Rate video may use: the cap minus the chat's reserve, never below half the cap. */
+  private get rate(): number {
+    return Math.max(this.bytesPerSecond / 2, this.bytesPerSecond - this.reserveBps);
+  }
+
   /** Burst allowance: 250 ms worth of traffic. */
   private get burst(): number {
-    return Math.max(16 * 1024, this.bytesPerSecond / 4);
+    return Math.max(16 * 1024, this.rate / 4);
+  }
+
+  /**
+   * Upload the chat is using right now (docs/CHAT.md, "chat cannot degrade video"): the video
+   * gets the cap minus this. `mbps` keeps reporting the cap itself.
+   */
+  setReserveMbps(mbps: number): void {
+    const bps = Math.max(0, (mbps * 1_000_000) / 8);
+    if (Math.abs(bps - this.reserveBps) < 1) return;
+    this.refill();
+    this.reserveBps = bps;
+    this.tokens = Math.min(this.tokens, this.burst);
+    this.pump();
+  }
+
+  /** The chat's reserve, Mbps. */
+  get reserveMbps(): number {
+    return (this.reserveBps * 8) / 1_000_000;
   }
 
   setMbps(mbps: number): void {
@@ -58,7 +83,7 @@ export class BandwidthLimiter {
 
   private refill(): void {
     const t = this.now();
-    this.tokens = Math.min(this.burst, this.tokens + ((t - this.last) / 1000) * this.bytesPerSecond);
+    this.tokens = Math.min(this.burst, this.tokens + ((t - this.last) / 1000) * this.rate);
     this.last = t;
   }
 
@@ -87,7 +112,7 @@ export class BandwidthLimiter {
       this.lastThrottledAt = this.now();
       const head = this.queue[0]!;
       const need = Math.min(head.bytes, this.burst) - this.tokens;
-      const waitMs = Math.max(1, (need / this.bytesPerSecond) * 1000);
+      const waitMs = Math.max(1, (need / this.rate) * 1000);
       this.timer = setTimeout(() => {
         this.timer = null;
         this.pump();

@@ -8,7 +8,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 ## Watch
 
 1. Open the link in a current browser: Chrome, Edge or Firefox on a computer, Chrome on Android, or Safari on iPhone and iPad (iOS 17.1 or newer).
-2. Type a **nickname** and click **Watch**. Only the streamer sees your nickname, not the other viewers.
+2. Type a **nickname** and click **Watch**. Everyone in the live sees it in the chat: 2 to 24 letters (from one alphabet), numbers, spaces, `-`, `_` or `.`, no emoji.
 
    ![The join page: 1 type a nickname, 2 Checking your browser… runs by itself for a second or two, 3 Watch.](../../assets/guides/viewers/en/join.webp)
 
@@ -26,6 +26,15 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 On a phone the same controls sit under the video:
 
 ![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-phone.webp)
+
+## The chat
+
+Under the video (next to it on a computer) is the live's chat. Type a message and press Enter. Everyone in the live sees your nickname and your messages; the streamer's messages have a **Streamer** badge.
+
+- **Hide chat** hides it on this device (your choice is remembered); **Show chat** brings it back.
+- **Chat settings** lets you pick your name colour, show the times and make the text larger. Your colour is always shown readable for everyone.
+- If a message is refused, a short note says why (slow mode, muted, too long…). The streamer can delete messages and mute people.
+- **GIFs**, if the streamer turned them on, come from KLIPY, an outside service. A GIF first shows as "GIF from KLIPY. Tap to show GIFs…": your browser contacts KLIPY only after you tap it (or **Allow GIFs from KLIPY** in the GIF picker); KLIPY then sees your IP address. You can undo it in **Chat settings** (**Show GIFs**). Without that tap, nothing is loaded from outside.
 
 ## Help the stream (P2P)
 
@@ -48,4 +57,4 @@ You can turn it off at any time and keep watching normally. Your choice is remem
 
 ## Your privacy
 
-The live page has no ads, no trackers and no analytics. It connects only to the streamer's live and, for P2P, to other viewers and to a Cloudflare server that helps browsers find each other (STUN).
+The live page has no ads, no trackers and no analytics. It connects only to the streamer's live and, for P2P, to other viewers and to a Cloudflare server that helps browsers find each other (STUN). GIFs in the chat come from KLIPY only after you agree. Chat messages are never saved: they are gone when the live ends.

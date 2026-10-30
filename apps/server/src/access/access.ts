@@ -1,7 +1,8 @@
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { SignJWT, jwtVerify } from 'jose';
-import { JOIN_TICKET_TTL_S, SESSION_TTL_S, type DeviceKind, type P2PBlockReason } from '@swarmcast/shared';
+import { CHAT_RESERVED_NAMES, JOIN_TICKET_TTL_S, NICKNAME_MAX, SESSION_TTL_S, countGraphemes, type DeviceKind, type P2PBlockReason } from '@swarmcast/shared';
+import { nameKeys } from '@swarmcast/shared/chat/skeleton';
 
 export interface Session {
   id: string;
@@ -33,7 +34,16 @@ export interface Session {
   /** Number of open control channels. */
   connections: number;
   lastSeenAt: number;
+  /** Look-alike keys of the nickname (skeleton.ts): two live viewers never share one. */
+  nameKeys: [string, string];
+  /** This session already opened a WebSocket once (reconnects are not counted by the shield). */
+  upgraded?: boolean;
 }
+
+/** A session counts as present for name uniqueness while connected or seen this recently. */
+export const NAME_ACTIVE_MS = 30_000;
+
+const RESERVED_KEYS = new Set(CHAT_RESERVED_NAMES.flatMap((n) => nameKeys(n)));
 
 export type AccessEvents = {
   kicked: [session: Session];
@@ -196,6 +206,7 @@ export class AccessControl extends EventEmitter<AccessEvents> {
       delayS: null,
       connections: 0,
       lastSeenAt: this.now(),
+      nameKeys: nameKeys(input.nickname),
     };
     this.sessions.set(session.id, session);
     this.emit('session-created', session);
@@ -258,10 +269,76 @@ export class AccessControl extends EventEmitter<AccessEvents> {
     return session;
   }
 
+  /**
+   * Why this nickname cannot join now: 'reserved' (looks like "Streamer", "admin"… or the
+   * streamer's chat name) or 'taken' (looks like the name of someone else watching). The same
+   * device may rejoin with its own name (a new tab or a reload).
+   */
+  nicknameProblem(nickname: string, deviceId: string, extraReserved: Iterable<string> = []): 'reserved' | 'taken' | null {
+    const keys = nameKeys(nickname);
+    const reserved = new Set(RESERVED_KEYS);
+    for (const r of extraReserved) if (r.trim()) for (const k of nameKeys(r)) reserved.add(k);
+    if (keys.some((k) => reserved.has(k))) return 'reserved';
+    return this.nameTaken(keys, deviceId) ? 'taken' : null;
+  }
+
+  private nameTaken(keys: readonly string[], deviceId: string): boolean {
+    const now = this.now();
+    for (const s of this.sessions.values()) {
+      if (s.deviceId === deviceId) continue;
+      if (s.connections === 0 && now - s.lastSeenAt >= NAME_ACTIVE_MS) continue;
+      if (s.nameKeys.some((k) => keys.includes(k))) return true;
+    }
+    return false;
+  }
+
+  /** A free variant of a taken nickname: the name plus a digit (shortened to fit). */
+  suggestNickname(nickname: string, deviceId: string): string {
+    for (let d = 2; d <= 99; d++) {
+      const suffix = String(d);
+      let base = nickname;
+      while (countGraphemes(base + suffix) > NICKNAME_MAX) base = [...base].slice(0, -1).join('');
+      const candidate = base + suffix;
+      if (!this.nameTaken(nameKeys(candidate), deviceId)) return candidate;
+    }
+    return nickname;
+  }
+
+  // ---- branding: tokens derived from this live's key ----
+
+  private hmac(label: string): string {
+    return crypto.createHmac('sha256', this.jwtKey).update(label).digest('base64url').slice(0, 22);
+  }
+
+  /** Sent by our own reachability checks (X-SwarmCast-Probe): only then does /healthz say which live is on. */
+  probeToken(): string {
+    return this.hmac('probe');
+  }
+
+  checkProbeToken(candidate: string | undefined): boolean {
+    return typeof candidate === 'string' && safeEqual(candidate, this.probeToken());
+  }
+
+  /** Token in the link-preview card URL: derived from the current link, so it dies with "New link". Empty when off. */
+  previewToken(): string {
+    return this.live && this.linkSecret ? this.hmac(`preview:${this.linkSecret}`) : '';
+  }
+
+  checkPreviewToken(candidate: string): boolean {
+    const t = this.previewToken();
+    return t !== '' && safeEqual(candidate, t);
+  }
+
   sessionByPeerId(peerId: string): Session | undefined {
     for (const s of this.sessions.values()) if (s.peerIds.has(peerId)) return s;
     return undefined;
   }
+}
+
+function safeEqual(a: string, b: string): boolean {
+  const x = sha256(a);
+  const y = sha256(b);
+  return crypto.timingSafeEqual(x, y);
 }
 
 function sha256(s: string): Buffer {

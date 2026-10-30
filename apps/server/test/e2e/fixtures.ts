@@ -152,6 +152,13 @@ export async function adminApi<T = unknown>(method: string, pathname: string, bo
   return (await res.json()) as T;
 }
 
+/** A raw upload to the panel (the "Your page" image route takes image bytes, not JSON). */
+export async function adminUpload<T = unknown>(pathname: string, bytes: Buffer, contentType: string): Promise<{ status: number; body: T }> {
+  const { cookie, base } = await adminAuth();
+  const res = await fetch(new URL(pathname, base), { method: 'PUT', headers: { cookie, origin: base.origin, 'content-type': contentType }, body: new Uint8Array(bytes) });
+  return { status: res.status, body: (await res.json()) as T };
+}
+
 /** Test-only: force the attack shield's automatic browser check level (0 = back to the settings). */
 export async function forcePowLevel(level: 0 | 1 | 2): Promise<number> {
   return (await control<{ browserCheck: number }>('POST', `/pow-level/${level}`)).browserCheck;

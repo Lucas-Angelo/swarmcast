@@ -178,6 +178,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     version,
     secureCookies: config.tunnel.provider !== 'none',
     quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper, ...(opts.loadGuard ? { loadGuard: opts.loadGuard } : {}) },
+    brandingDir: path.join(paths.dataDir, 'branding'),
   });
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
   setTimeout(() => {

@@ -1,6 +1,10 @@
+import './zod-config.js';
 import { z } from 'zod';
 import { NICKNAME_MAX } from './constants.js';
 import { translate, type MessageKey, type MessageParams } from './i18n/index.js';
+import { chatClientSchemas } from './chat/schemas.js';
+import { NICKNAME_MIN, validateNickname } from './chat/nickname.js';
+import type { AdminChatMessage, ChatServerMessage, ChatSnapshot } from './chat/protocol.js';
 
 /**
  * A server-generated text with a stable code for client-side translation.
@@ -21,22 +25,27 @@ export interface ApiErrorBody {
   params?: MessageParams;
 }
 
-/** Letters, digits, spaces and a few separators; 1..NICKNAME_MAX characters after trimming. */
-export const nicknameSchema = z
-  .string()
-  .transform((s) => s.normalize('NFC').replace(/\s+/g, ' ').trim())
-  .pipe(
-    z
-      .string()
-      .min(1, translate('en', 'nickname.empty'))
-      .max(NICKNAME_MAX, translate('en', 'nickname.tooLong', { max: NICKNAME_MAX }))
-      .regex(/^[\p{L}\p{N} _.-]+$/u, translate('en', 'nickname.chars')),
-  );
+/**
+ * Nickname rules v2 (packages/shared/src/chat/nickname.ts): letters and digits from one
+ * script, spaces, "-", "_" and "."; 2..NICKNAME_MAX graphemes, at most 64 UTF-8 bytes; no
+ * emoji, symbols, invisible or control characters; no stacked marks; no reserved names.
+ * Failures carry the English text of their code (nicknameError maps it back).
+ */
+export const nicknameSchema = z.string().transform((s, ctx) => {
+  const r = validateNickname(s);
+  if (r.ok) return r.value;
+  ctx.addIssue({ code: 'custom', message: translate('en', r.code, r.params) });
+  return z.NEVER;
+});
 
 const NICKNAME_ERRORS: CodedMessage[] = [
   { code: 'nickname.empty' },
+  { code: 'nickname.tooShort', params: { min: NICKNAME_MIN } },
   { code: 'nickname.tooLong', params: { max: NICKNAME_MAX } },
   { code: 'nickname.chars' },
+  { code: 'nickname.marks' },
+  { code: 'nickname.mixed' },
+  { code: 'nickname.reserved' },
 ];
 
 /** Map a nickname validation message back to its code (unknown problems become "Invalid nickname."). */
@@ -84,6 +93,8 @@ export const clientMessageSchema = z.discriminatedUnion('t', [
   z.object({
     t: z.literal('pong'),
   }),
+  // Chat (packages/shared/src/chat): its own frame budget on the server, see control.ts.
+  ...chatClientSchemas,
 ]);
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 
@@ -98,7 +109,8 @@ export type P2PBlockReason = 'own-connection' | 'checking';
 export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
   /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone; `p2pBlock`: see P2PBlockReason. */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null }
+  /** `chat`: the chat snapshot (absent while the chat is off). */
+  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null; chat?: ChatSnapshot; brandRev?: number }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
   | { t: 'p2p'; allowed: boolean; forAll?: boolean; reason?: P2PBlockReason }
@@ -106,7 +118,12 @@ export type ServerMessage =
   | { t: 'unblock-peers'; peerIds: string[] }
   | { t: 'kicked' }
   | { t: 'ended' }
-  | { t: 'ping' };
+  | { t: 'ping' }
+  // ---- branding: control ----
+  /** The streamer saved her page: refetch /api/brand (If-None-Match) and /brand/theme.css. */
+  | { t: 'branding'; rev: number }
+  // ---- end branding: control ----
+  | ChatServerMessage;
 
 // ---------------------------------------------------------------------------
 // Viewer API
@@ -334,7 +351,7 @@ export interface AdminLogMessage {
 export interface AdminDesktopMessage extends DesktopInfo {
   type: 'desktop';
 }
-export type AdminSocketMessage = AdminState | AdminLogMessage | AdminDesktopMessage;
+export type AdminSocketMessage = AdminState | AdminLogMessage | AdminDesktopMessage | AdminChatMessage;
 
 // ---- desktop app (docs/DESKTOP.md) ----
 

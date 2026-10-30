@@ -13,6 +13,8 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
 | `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Go, Rust, the workflows |
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates and flakes |
+| `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
+| `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 
@@ -37,7 +39,7 @@ changes ─┬─ quick ──────────────────�
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
-| e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two |
+| e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two; the `ui` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, a few seconds) |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |

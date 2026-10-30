@@ -1,0 +1,87 @@
+name: Rendering
+
+# The chat's nasty-string corpus and the viewer chat UI rendered by every browser engine on every
+# desktop OS (docs/CHAT.md "Rendering checks", chat plan §10.4): apps/viewer/test/chat against the
+# mock hub, with the OS's own fonts and shaper. Windows: Google Chrome, Microsoft Edge, Firefox;
+# macOS: Safari's WebKit, Chrome, Firefox, an iPhone and a Pixel; Ubuntu: Chrome, Firefox, WebKit.
+# The report of each job has a screenshot of the corpus per engine (playwright-report/chat-ui).
+# Real phones and the iOS/Android system browsers stay a manual check before a release.
+#
+# Start it: the `rendering` label on a pull request (remove and add it again for another run), by
+# hand once this file is on the default branch, or monthly. It reports separately: `ci-ok`
+# (pipeline.yml) does not wait for it. The pull request gate already runs the same specs on
+# Ubuntu and macOS (_e2e.yml, ui group).
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+  workflow_call:
+  schedule:
+    - cron: '23 8 3 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rendering-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  render:
+    name: ${{ matrix.os }}
+    if: github.event_name != 'pull_request' || github.event.label.name == 'rendering'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            browsers: firefox
+            projects: --project=chromium --project=firefox --project=edge
+          - os: macos-latest
+            browsers: firefox webkit
+            projects: --project=chromium --project=firefox --project=webkit --project=mobile-webkit --project=mobile-chromium
+          - os: ubuntu-24.04
+            browsers: firefox webkit
+            projects: --project=chromium --project=firefox --project=webkit
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+      - name: Build the viewer
+        run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer
+      # The `chromium` projects run the runner image's Google Chrome (CI=true), Edge is preinstalled
+      # on Windows; Firefox and WebKit come from Playwright.
+      - name: Playwright browsers
+        timeout-minutes: 10
+        env:
+          BROWSERS: ${{ matrix.browsers }}
+        run: |
+          # shellcheck disable=SC2086 # BROWSERS is a list
+          if [ "$RUNNER_OS" = Linux ]; then npx playwright install --with-deps $BROWSERS; else npx playwright install $BROWSERS; fi
+      - name: Corpus and chat UI
+        env:
+          CHAT_EDGE: ${{ runner.os == 'Windows' && '1' || '' }}
+          PROJECTS: ${{ matrix.projects }}
+        run: |
+          # shellcheck disable=SC2086 # PROJECTS is a list of flags
+          npx playwright test -c apps/viewer/test/chat/playwright.config.ts $PROJECTS
+      - name: Upload the report and screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rendering-${{ matrix.os }}
+          path: |
+            playwright-report/chat-ui/
+            test-results/chat-ui/
+          if-no-files-found: warn
+          retention-days: 30

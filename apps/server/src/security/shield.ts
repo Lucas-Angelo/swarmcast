@@ -95,6 +95,10 @@ export class SecurityShield implements PublicSecurity {
   private blockLogAt = new Map<string, number>();
   private blockLogMinute = { at: 0, n: 0 };
   private reason?: MessageKey;
+  /** The chat's own flood detector (chat/detector.ts): 0 calm, 1 suspicious, 2 attack. */
+  private chatLevel: 0 | 1 | 2 = 0;
+  /** Suspicious because of the chat alone (the request/join/connection detector is calm). */
+  private chatOnly = false;
 
   constructor(private readonly d: ShieldDeps) {
     const now = d.now ?? Date.now;
@@ -146,17 +150,51 @@ export class SecurityShield implements PublicSecurity {
     this.blockedCount = 0;
     this.blockLogAt.clear();
     this.reason = undefined;
+    this.chatLevel = 0;
+    this.chatOnly = false;
   }
 
   tick(): void {
     const s = this.d.sample();
     this.detector.tick({ viewers: s.viewers, saturation: s.saturation });
+    this.updateChatOnly();
+  }
+
+  /**
+   * The chat's flood level, reported once a second. A chat flood alone is capped at
+   * "suspicious" for the shield and only ever turns on the light browser check for new joins
+   * (raids arrive through joins): it never tightens admission, rotates the link, leaves Direct
+   * mode or stops the stream, so a few trolls cannot make the streamer lose her audience. Those
+   * reactions stay tied to the request, join and connection signals.
+   */
+  chatSignal(level: 0 | 1 | 2): void {
+    this.chatLevel = level;
+  }
+
+  private updateChatOnly(): void {
+    const want = this.detector.state === 'normal' && this.chatLevel >= 1;
+    if (want === this.chatOnly) {
+      // The detector calming down resets the automatic check; the chat flood still wants it.
+      if (want && this.autoPow < 1 && this.d.settings().autoBrowserCheck) this.setAutoPow(1);
+      return;
+    }
+    this.chatOnly = want;
+    if (want) {
+      this.d.activity.add({ level: 'warn', kind: 'system', code: 'log.attackSuspicious', params: { reasonKey: 'attack.reason.chat' } });
+      if (this.d.settings().autoBrowserCheck) this.setAutoPow(1);
+    } else if (this.detector.state === 'normal') {
+      this.setAutoPow(0);
+      this.d.activity.add({ kind: 'system', code: 'log.attackOver' });
+    }
+    this.d.changed();
   }
 
   /** The streamer ended the alert: back to normal right away (baselines are kept). */
   clearAlert(): void {
-    const was = this.detector.state;
+    const was = this.chatOnly ? 'suspicious' : this.detector.state;
     this.detector.reset(true);
+    this.chatOnly = false;
+    this.chatLevel = 0;
     this.setTightened(false);
     this.setAutoPow(0);
     this.reason = undefined;
@@ -286,6 +324,7 @@ export class SecurityShield implements PublicSecurity {
   /** Panel warning while something is going on. */
   warning(): CodedText | undefined {
     const st = this.detector.state;
+    if (st === 'normal' && this.chatOnly) return coded('warn.attackSuspicious', { reasonKey: 'attack.reason.chat' });
     if (st === 'normal') return undefined;
     const reasonKey = this.reason ?? 'attack.reason.requests';
     return coded(st === 'attack' ? 'warn.attackDetected' : 'warn.attackSuspicious', { reasonKey });
@@ -295,10 +334,12 @@ export class SecurityShield implements PublicSecurity {
     const eff = this.effectiveLimits();
     const info = this.d.blocklists?.info();
     const st = this.detector.state;
+    const chatOnly = st === 'normal' && this.chatOnly;
     return {
       settings: this.d.settings(),
-      threat: st,
+      threat: chatOnly ? 'suspicious' : st,
       ...(st !== 'normal' ? { threatSince: this.detector.report.since, ...(this.reason ? { reasonCode: this.reason } : {}) } : {}),
+      ...(chatOnly ? { reasonCode: 'attack.reason.chat' as MessageKey } : {}),
       browserCheck: this.powLevel(),
       tightened: this.tightened,
       effectiveMaxViewers: eff.maxViewers,

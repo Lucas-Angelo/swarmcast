@@ -1,5 +1,19 @@
-import type { AdminDesktopMessage, AdminLogMessage, AdminSocketMessage, AdminState, ApiErrorBody, MessageKey, MessageParams } from '@swarmcast/shared';
+import type {
+  AdminChatMessage,
+  AdminChatState,
+  AdminDesktopMessage,
+  AdminLogMessage,
+  AdminSocketMessage,
+  AdminState,
+  ApiErrorBody,
+  ChatProtect,
+  ChatPublicSettings,
+  ChatSettings,
+  MessageKey,
+  MessageParams,
+} from '@swarmcast/shared';
 import { tc } from '@swarmcast/shared/i18n';
+import { chatStore } from './chat/store.js';
 
 /** API error with the server's English text and, when known, a code to translate it. */
 export class ApiError extends Error {
@@ -46,6 +60,10 @@ function isLogMessage(m: AdminSocketMessage): m is AdminLogMessage {
   return (m as Partial<AdminLogMessage>).type === 'log';
 }
 
+function isChatMessage(m: AdminSocketMessage): m is AdminChatMessage {
+  return (m as Partial<AdminChatMessage>).type === 'chat';
+}
+
 function isDesktopMessage(m: AdminSocketMessage): m is AdminDesktopMessage {
   return (m as Partial<AdminDesktopMessage>).type === 'desktop';
 }
@@ -75,6 +93,8 @@ export function subscribe(
       const msg = JSON.parse(String(ev.data)) as AdminSocketMessage;
       if (isLogMessage(msg)) onLog(msg);
       else if (isDesktopMessage(msg)) onDesktop(msg);
+      // Chat items go to the chat store (the chat card); never mistake them for a state snapshot.
+      else if (isChatMessage(msg)) chatStore.apply(msg);
       else onState(msg);
     };
     ws.onclose = () => {
@@ -95,3 +115,50 @@ export function subscribe(
     if (poll) clearInterval(poll);
   };
 }
+
+// ---- chat: panel ----
+// The chat card's calls (apps/server/src/admin/chat-routes.ts). Mutes and colours are not
+// pushed on /ws, so the calls that change them refresh the per-session state afterwards.
+
+export const chatApi = {
+  /** Settings, the ring, sessions (mutes, colours) and counters; also refreshes the store. */
+  async load(): Promise<AdminChatState> {
+    const s = await api<AdminChatState>('/api/chat', 'GET');
+    chatStore.applyState(s);
+    return s;
+  },
+  /** Sessions (mutes and colours) and counters, keeping the feed as the socket built it. */
+  async refreshSessions(): Promise<AdminChatState> {
+    const s = await api<AdminChatState>('/api/chat', 'GET');
+    chatStore.setSessions(s.sessions, s.counters);
+    return s;
+  },
+  saveSettings(settings: ChatSettings): Promise<{ settings: ChatSettings; effective: ChatPublicSettings }> {
+    return api('/api/chat/settings', 'PUT', settings);
+  },
+  send(text: string): Promise<{ ok: true; s: number }> {
+    return post('/api/chat/send', { text });
+  },
+  remove(seqs: number[]): Promise<unknown> {
+    return post('/api/chat/delete', { seqs });
+  },
+  clear(): Promise<unknown> {
+    return post('/api/chat/clear');
+  },
+  async mute(sessionId: string, minutes: number | null): Promise<void> {
+    await post('/api/chat/mute', { sessionId, minutes });
+    await chatApi.refreshSessions();
+  },
+  async unmute(sessionId: string): Promise<void> {
+    await post('/api/chat/unmute', { sessionId });
+    await chatApi.refreshSessions();
+  },
+  async color(sessionId: string, color: string | null, lock: boolean): Promise<void> {
+    await api('/api/chat/color', 'PUT', { sessionId, color, lock });
+    await chatApi.refreshSessions();
+  },
+  protect(mode: ChatProtect): Promise<{ ok: true; protect: ChatProtect }> {
+    return post('/api/chat/protect', { mode });
+  },
+};
+// ---- end ----

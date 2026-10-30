@@ -1,6 +1,6 @@
 {
   "name": "swarmcast",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Self-hosted, members-only live streaming with optional viewer P2P.",
   "license": "MIT",
@@ -35,7 +35,9 @@
     "@yao-pkg/pkg": "^6.24.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.13.0",
+    "fast-check": "^4.10.2",
     "globals": "^17.13.0",
+    "jsqr": "^1.4.0",
     "tsx": "^4.23.15",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.0",

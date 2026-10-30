@@ -144,6 +144,17 @@ export class UploadController {
   }
 }
 
+/**
+ * Upload the video limiter leaves to the chat (docs/CHAT.md, plan §6.6), Mbps:
+ * min(B_chat, 1.2 × the chat's measured upload), so video + chat stay within the ceiling and video
+ * only gives up what chat really uses (at most the chat budget: 5 % of the cap, 960 kbps at most).
+ */
+export function chatReserveMbps(budgetBitsPerS: number, egressBitsPerS: number): number {
+  const b = Number.isFinite(budgetBitsPerS) ? Math.max(0, budgetBitsPerS) : 0;
+  const e = Number.isFinite(egressBitsPerS) ? Math.max(0, egressBitsPerS) : 0;
+  return Math.min(b, 1.2 * e) / 1_000_000;
+}
+
 function clamp(v: number, lo: number, hi: number): number {
   return Math.min(hi, Math.max(lo, v));
 }
