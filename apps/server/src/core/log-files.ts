@@ -45,7 +45,9 @@ export function serverLogName(t: number, base = 'swarmcast'): string {
  * too (libuv opens files with FILE_SHARE_DELETE).
  */
 export class RotatingLogFile {
-  private readonly dest: pino.DestinationStream & { reopen(file?: string): void; flushSync(): void; end(): void };
+  private readonly dest: pino.DestinationStream & { reopen(file?: string): void; flushSync(): void; end(): void; once(event: 'close' | 'error', listener: () => void): void };
+  /** Set by end(): the file is closed for good. */
+  private ending: Promise<void> | null = null;
   private size = 0;
   private dayEndsAt = 0;
   private current: string;
@@ -75,6 +77,9 @@ export class RotatingLogFile {
   }
 
   write(chunk: string): boolean {
+    // After end() (the app closed): a late line from background work is dropped, as writing
+    // to the ended destination would throw.
+    if (this.ending) return true;
     const t = this.now();
     if (t >= this.dayEndsAt) this.switchDay(t);
     const len = Buffer.byteLength(chunk);
@@ -85,6 +90,7 @@ export class RotatingLogFile {
   }
 
   flushSync(): void {
+    if (this.ending) return;
     try {
       this.dest.flushSync();
     } catch {
@@ -92,8 +98,18 @@ export class RotatingLogFile {
     }
   }
 
-  end(): void {
-    this.dest.end();
+  /**
+   * Close the file for good (lines written later are dropped). Resolves once the file is closed
+   * (or could not be: nothing more to wait for), so its folder can be deleted right after, also
+   * on Windows. Calling it again returns the same promise.
+   */
+  end(): Promise<void> {
+    this.ending ??= new Promise<void>((resolve) => {
+      this.dest.once('close', resolve);
+      this.dest.once('error', resolve);
+      this.dest.end();
+    });
+    return this.ending;
   }
 
   private switchDay(t: number): void {

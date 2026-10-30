@@ -15,7 +15,7 @@ function lines(file: string): string[] {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
 }
 
-/** A RotatingLogFile in `dir`, ended when the test finishes (before `dir` goes: Windows cannot delete an open file's folder). */
+/** A RotatingLogFile in `dir`, ended (and closed) when the test finishes, before `dir` goes: Windows cannot delete an open file's folder. */
 function logFile(dir: string, o: ConstructorParameters<typeof RotatingLogFile>[1]): RotatingLogFile {
   const f = new RotatingLogFile(dir, o);
   onTestFinished(() => f.end());
@@ -89,6 +89,36 @@ describe('RotatingLogFile', () => {
     // Assert
     expect(fs.statSync(`${file}.1`).size).toBe(999);
     expect(lines(file)).toEqual(['next']);
+  });
+
+  it('end() is final: lines written later are dropped, without an error', async () => {
+    // Arrange
+    const f = logFile(tempDir('sc-logs-'), { now: () => NOON });
+    f.write('before\n');
+    // Act
+    await f.end();
+    const late = () => {
+      f.write('after\n');
+      f.flushSync();
+    };
+    // Assert
+    expect(late).not.toThrow();
+    expect(lines(f.file)).toEqual(['before']);
+  });
+
+  it('end() resolves once the file is closed, so its folder can go at once; a second end() is the same', async () => {
+    // Arrange
+    const dir = tempDir('sc-logs-');
+    const f = new RotatingLogFile(dir, { now: () => NOON });
+    f.write('line\n');
+    // Act
+    const first = f.end();
+    const second = f.end();
+    await first;
+    // Assert
+    expect(second).toBe(first);
+    expect(() => fs.rmSync(dir, { recursive: true })).not.toThrow();
+    expect(fs.existsSync(dir)).toBe(false);
   });
 
   it('is the logger file destination (multistream), with secrets still redacted', () => {
