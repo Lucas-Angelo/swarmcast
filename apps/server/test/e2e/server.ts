@@ -48,6 +48,16 @@ export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 
 /** The test control port below (fixtures.ts computes it the same way: no URL read from a file). */
 const CONTROL_PORT = 38082 + OFFSET;
 
+// Ports of the demo SwarmCast the maintainer keeps running (scripts/test/lib/ports.mjs reserves them
+// for the other suites): an offset of 100, for example, would put the panel on 38181. Stop before
+// binding anything.
+const DEMO_PORTS = new Set([31935, 38180, 38181]);
+const clashes = Object.entries({ ...E2E_PORTS, control: CONTROL_PORT }).filter(([, port]) => DEMO_PORTS.has(port));
+if (!Number.isInteger(OFFSET) || clashes.length > 0) {
+  const why = clashes.length > 0 ? clashes.map(([name, port]) => `${name} would be ${port}`).join(', ') : 'it is not a whole number';
+  throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: ${why}. Pick another offset.`);
+}
+
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
 // "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
 process.env.SWARMCAST_DOWNLOADS_DIR = path.join(dataDir, 'downloads');
