@@ -21,6 +21,23 @@ use tauri::{Manager, RunEvent};
 
 use shell::Shell;
 
+// wry relies on catching Objective-C exceptions that WebKit throws for custom-protocol requests
+// the page already dropped (Cargo.toml, [profile.release]); with panic = "abort" it cannot, and
+// the app crashes with "This task has already been stopped".
+#[cfg(all(target_vendor = "apple", panic = "abort"))]
+compile_error!("the desktop app must be built with panic = \"unwind\" on macOS: see [profile.release] in Cargo.toml");
+
+/// Any Rust panic still ends the app at once, as `panic = "abort"` did: a panicking thread
+/// must not leave a half-working app behind. The binary unwinds only so that Objective-C
+/// exceptions can be caught where wry expects them (they are not panics and skip this hook).
+fn abort_on_panic() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        default(info);
+        std::process::abort();
+    }));
+}
+
 /// SIGTERM / SIGINT / SIGHUP (logout, `kill`, Ctrl+C in a terminal): quit cleanly, without
 /// asking, so the server stops the live and its children instead of being orphaned.
 #[cfg(unix)]
@@ -96,6 +113,7 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<tauri::menu::Menu<tauri::Wr
 }
 
 fn main() {
+    abort_on_panic();
     // Autostart entries start the app with --background: tray only, no window.
     let background = std::env::args().any(|a| a == "--background");
 
