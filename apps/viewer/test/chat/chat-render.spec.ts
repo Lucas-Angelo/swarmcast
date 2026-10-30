@@ -76,13 +76,20 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
     if (Number.isFinite(b.maxHeight)) expect(b.height, id).toBeLessThanOrEqual(b.maxHeight + 0.5);
   }
 
-  // Still responsive with everything on screen: two animation frames and a keystroke well
-  // under 100 ms.
-  const frames = await page.evaluate(() => new Promise<number>((resolve) => {
-    const t0 = performance.now();
-    requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)));
-  }));
-  expect(frames).toBeLessThan(100);
+  // Still responsive with everything on screen: two animation frames well under 100 ms. The
+  // median of 7 samples, so one hiccup of a shared CI machine (another worker, a GC) does not
+  // count as the page freezing; a page that really hangs on the corpus fails every sample.
+  const frames = await page.evaluate(async () => {
+    const twoFrames = (): Promise<number> =>
+      new Promise((resolve) => {
+        const t0 = performance.now();
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)));
+      });
+    const samples: number[] = [];
+    for (let i = 0; i < 7; i++) samples.push(await twoFrames());
+    return samples.sort((a, b) => a - b);
+  });
+  expect(frames[3], `two-frame times (ms): ${frames.map((f) => f.toFixed(0)).join(', ')}`).toBeLessThan(100);
   const input = page.getByTestId('chat-input');
   const t0 = Date.now();
   await input.fill('ainda responde?');
