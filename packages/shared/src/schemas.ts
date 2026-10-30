@@ -109,7 +109,7 @@ export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
   /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone; `p2pBlock`: see P2PBlockReason. */
   /** `chat`: the chat snapshot (absent while the chat is off). */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null; chat?: ChatSnapshot }
+  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null; chat?: ChatSnapshot; brandRev?: number }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
   | { t: 'p2p'; allowed: boolean; forAll?: boolean; reason?: P2PBlockReason }
@@ -118,6 +118,10 @@ export type ServerMessage =
   | { t: 'kicked' }
   | { t: 'ended' }
   | { t: 'ping' }
+  // ---- branding: control ----
+  /** The streamer saved her page: refetch /api/brand (If-None-Match) and /brand/theme.css. */
+  | { t: 'branding'; rev: number }
+  // ---- end branding: control ----
   | ChatServerMessage;
 
 // ---------------------------------------------------------------------------

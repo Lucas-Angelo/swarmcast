@@ -62,6 +62,17 @@ export type ChatTextResult =
   | { ok: true; text: string; graphemes: number; emoji: number; dropped: number }
   | { ok: false; code: ChatTextReject; params?: Record<string, number>; dropped: number };
 
+/**
+ * Work counter: one unit per code point visited by every loop of the pipeline (scans, the
+ * segmenter, normalization, the RGI test). The linear-time test compares it across input sizes,
+ * which proves linearity without measuring wall-clock time.
+ */
+let work = 0;
+/** Units of work done by the pipeline so far (tests). */
+export function chatTextWork(): number {
+  return work;
+}
+
 let rgiEmoji: RegExp | null | undefined;
 /**
  * `^\p{RGI_Emoji}$` (needs the `v` flag: Node 20, Chrome 112, Firefox 116, Safari 17). Built at
@@ -100,6 +111,7 @@ function foldAndRemove(cps: readonly number[]): number[] {
   const out: number[] = [];
   let bidiMarks = 0;
   let space = true; // drops leading spaces
+  work += cps.length;
   for (const cp of cps) {
     if (isLineBreak(cp) || cp === 0x20 || props(cp) & P_ZS) {
       if (!space) out.push(0x20);
@@ -123,11 +135,17 @@ function joinerAllowed(all: readonly number[], i: number): boolean {
   if (prev >= 0 && isVirama(prev)) return true;
   if (all[i] !== ZWNJ) return false;
   let l = i - 1;
-  while (l >= 0 && joiningType(all[l]!) === 'T') l--;
+  while (l >= 0 && joiningType(all[l]!) === 'T') {
+    l--;
+    work++;
+  }
   const lt = l >= 0 ? joiningType(all[l]!) : 'U';
   if (lt !== 'L' && lt !== 'D') return false;
   let r = i + 1;
-  while (r < all.length && joiningType(all[r]!) === 'T') r++;
+  while (r < all.length && joiningType(all[r]!) === 'T') {
+    r++;
+    work++;
+  }
   const rt = r < all.length ? joiningType(all[r]!) : 'U';
   return rt === 'R' || rt === 'D';
 }
@@ -151,6 +169,7 @@ interface Pass {
 function graphemePass(s: string): Pass {
   const all = codePoints(s);
   const bounds = graphemeBounds(all);
+  work += 2 * all.length;
 
   const out: number[] = [];
   let dropped = 0;
@@ -162,6 +181,7 @@ function graphemePass(s: string): Pass {
       const re = rgi();
       let zwj = 0;
       for (const cp of g) if (cp === ZWJ) zwj++;
+      work += 2 * g.length;
       const valid = isSimpleEmoji(g) || (re !== null && re.test(fromCodePoints(g)) && g.length <= CHAT_EMOJI_MAX_CODEPOINTS && zwj <= CHAT_EMOJI_MAX_ZWJ);
       if (valid) kept = g;
       else {
@@ -252,9 +272,19 @@ export function fromCodePoints(cps: readonly number[]): string {
   return out;
 }
 
+/**
+ * Steps 3–6 only (folding, removal set, NFC, the grapheme pass), with no size, emptiness or cap
+ * decision: one line of canonical text plus the marks dropped. For other text profiles
+ * (branding fields); the caller checks well-formedness and size first.
+ */
+export function canonicalizeLine(input: string): { text: string; dropped: number } {
+  return canonicalText(input);
+}
+
 /** Steps 1–6: canonical text plus the number of marks dropped. */
 function canonicalText(input: string): { text: string; dropped: number } {
   let s = fromCodePoints(foldAndRemove(codePoints(input))).normalize('NFC');
+  work += input.length + s.length;
   let dropped = 0;
   // Dropping marks or joiners can let NFC compose further, which can in turn change the mark
   // runs; repeat until stable (each round only removes code points, so it ends; 1–2 rounds).
@@ -262,6 +292,7 @@ function canonicalText(input: string): { text: string; dropped: number } {
     const pass = graphemePass(s);
     dropped += pass.dropped;
     const next = fromCodePoints(collapseSpaces(pass.cps)).normalize('NFC');
+    work += 2 * pass.cps.length + next.length;
     if (next === s) break;
     s = next;
   }
@@ -275,7 +306,9 @@ export function measureChatText(s: string): { graphemes: number; visible: number
   let visible = 0;
   let emoji = 0;
   let latinOnly = true;
+  work += s.length;
   for (const cps of parts) {
+    work += cps.length;
     let vis = false;
     for (const cp of cps) {
       const p = props(cp);
@@ -318,10 +351,11 @@ export function canonicalizeChatText(input: string, opts: ChatTextOptions = {}):
  * of the server's output, not equality with this build's pipeline (browsers ship other Unicode
  * versions). Steps that need a missing feature are skipped; the server is authoritative.
  */
-export function checkChatInvariants(text: string, opts: { maxGraphemes?: number; maxEmoji?: number } = {}): boolean {
-  if (typeof text !== 'string' || text.length > CHAT_TEXT_MAX_UNITS) return false;
+export function checkChatInvariants(text: string, opts: { maxGraphemes?: number; maxEmoji?: number; maxBytes?: number } = {}): boolean {
+  const maxBytes = opts.maxBytes ?? CHAT_TEXT_MAX_BYTES;
+  if (typeof text !== 'string' || text.length > Math.max(CHAT_TEXT_MAX_UNITS, maxBytes)) return false;
   if (!isWellFormedString(text)) return false;
-  if (utf8Length(text) > CHAT_TEXT_MAX_BYTES) return false;
+  if (utf8Length(text) > maxBytes) return false;
   let run = 0;
   let prevMark = -1;
   let bidi = 0;

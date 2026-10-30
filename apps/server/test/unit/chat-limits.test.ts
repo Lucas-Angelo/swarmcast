@@ -177,8 +177,11 @@ describe('event-loop guard', () => {
     g.start();
     await new Promise((r) => setTimeout(r, 70));
     g.stop();
+    // Real samples were taken (the state itself depends on the machine's load, so it is not asserted).
     expect(g.last.elu).toBeGreaterThanOrEqual(0);
-    expect(g.state).toBe('ok');
+    expect(g.last.elu).toBeLessThanOrEqual(1);
+    expect(Number.isFinite(g.last.p99Ms)).toBe(true);
+    expect(g.state).toBe('ok'); // stop() resets it
   });
 });
 
