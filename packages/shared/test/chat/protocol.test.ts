@@ -20,7 +20,9 @@ describe('chat protocol: client → server', () => {
   it('accepts the frozen frames', () => {
     for (const raw of [
       '{"t":"chat.send","n":1,"text":"boa noite chat 😀"}',
-      '{"t":"chat.send","n":2147483647,"gif":{"p":"klipy","id":"AbC_12-x","w":200,"h":150}}',
+      '{"t":"chat.send","n":2147483647,"gif":{"p":"klipy","id":"AbC_12-x","w":200,"h":150,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp"}}',
+      '{"t":"chat.send","n":3,"gif":{"p":"klipy","id":"x","w":220,"h":220,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp","hi":2}}',
+      '{"t":"chat.send","n":4,"gif":{"p":"giphy","id":"abc","w":200,"h":200,"m":"/media/v1.Y2lkPTc5MGI3NjEx/3o7TKSjRrfIPjeiVyM/200.webp","hi":1}}',
       '{"t":"chat.color","color":"#E5484D"}',
       '{"t":"chat.resume","after":0}',
       '{"t":"chat.resume","after":4711}',
@@ -47,7 +49,12 @@ describe('chat protocol: client → server', () => {
       '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"https://evil.example/x.gif","w":20,"h":20}}',
       '{"t":"chat.send","n":1,"gif":{"p":"tenor","id":"abc","w":20,"h":20}}',
       '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":2000,"h":20}}',
-      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20,"url":"https://x"}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp","url":"https://x"}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20,"m":"https://evil.example/x.gif"}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20,"m":"/ii/../../x.svg"}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"klipy","id":"abc","w":20,"h":20,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp","hi":3}}',
+      '{"t":"chat.send","n":1,"gif":{"p":"giphy","id":"abc","w":20,"h":20,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp"}}',
       '{"t":"chat.color","color":"red"}',
       '{"t":"chat.color","color":"#12345"}',
       '{"t":"chat.color","color":"url(javascript:1)"}',
@@ -115,5 +122,8 @@ describe('chat settings', () => {
     expect(chatSettingsSchema.safeParse({ gif: { key: 'short' } }).success).toBe(false);
     expect(chatSettingsSchema.safeParse({ gif: { key: 'abc/def?x=1' } }).success).toBe(false);
     expect(chatSettingsSchema.safeParse({ gif: { key: 'Abcdefgh_123-xyz' } }).success).toBe(true);
+    // Every viewer must agree before their browser contacts the GIF provider: no automatic mode.
+    expect(chatSettingsSchema.safeParse({ gif: { consent: 'auto' } }).success).toBe(false);
+    expect(chatSettingsSchema.parse({ gif: { consent: 'ask' } }).gif.consent).toBe('ask');
   });
 });

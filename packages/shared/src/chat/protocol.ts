@@ -91,7 +91,8 @@ export interface ChatPublicSettings {
   colors: 'choose' | 'fixed';
   linksBlocked: boolean;
   /** Present only while the streamer has GIFs on (and a key) and protection allows them. */
-  gif?: { provider: GifProvider; key: string; rating: string; consent: 'ask' | 'auto' };
+  /** `consent` is always 'ask': each viewer agrees before their browser contacts the provider. */
+  gif?: { provider: GifProvider; key: string; rating: string; consent: 'ask' };
   /** Custom emotes (0.4.1); empty in 0.4.0. Built-in emotes ship with the viewer. */
   emotes: Array<{ code: string; url: string; w: number; h: number; animated: boolean }>;
   builtinEmotes: boolean;

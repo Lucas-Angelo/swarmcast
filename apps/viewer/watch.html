@@ -9,10 +9,23 @@
     <link rel="icon" href="../../assets/brand/favicon/favicon.svg" type="image/svg+xml" />
   </head>
   <body class="watch">
+    <!-- branding: theme (in the body on purpose: it must come after the bundled stylesheets, which
+         Vite adds at the end of the head, so the streamer's colours win at equal specificity) -->
+    <link rel="stylesheet" href="/brand/theme.css" data-brand-theme />
+    <!-- end branding: theme -->
     <header class="site-head">
       <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
+      <!-- branding: header -->
+      <div id="brand-head" class="brand-head" hidden></div>
+      <!-- end branding: header -->
+      <!-- branding: support -->
+      <div id="brand-support" class="brand-support" hidden></div>
+      <!-- end branding: support -->
     </header>
     <main class="stage">
+      <!-- branding: banner -->
+      <div id="brand-banner" class="brand-banner" hidden></div>
+      <!-- end branding: banner -->
       <div class="player">
         <video id="video" controls playsinline muted autoplay></video>
         <div id="overlay" class="overlay" data-i18n="watch.connecting">Connecting…</div>
@@ -47,6 +60,9 @@
         </div>
       </section>
       <aside id="chat" class="chat" data-testid="chat" hidden></aside>
+      <!-- branding: about -->
+      <div id="brand-about" class="brand-about" data-testid="brand-about" hidden></div>
+      <!-- end branding: about -->
       <section class="panel">
         <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
         <div class="toggle-row">
@@ -79,6 +95,11 @@
         </div>
       </section>
     </main>
+    <!-- branding: credit -->
+    <footer id="brand-credit" class="brand-credit" hidden>
+      <a href="https://lucas-angelo.github.io/swarmcast/" target="_blank" rel="noopener noreferrer" data-i18n="brand.credit" data-i18n-title="brand.viewer.creditTip">on SwarmCast</a>
+    </footer>
+    <!-- end branding: credit -->
     <div id="ended" class="ended" hidden>
       <div class="card">
         <span class="sc-mascot sc-mascot-sleep" aria-hidden="true"></span>

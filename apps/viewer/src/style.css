@@ -448,8 +448,10 @@ button#unmute {
     display: grid;
     grid-template-columns: minmax(0, 1fr) var(--chat-w);
     grid-template-areas:
+      'banner banner'
       'player chat'
       'bar .'
+      'about .'
       'panel .';
     column-gap: var(--sp-4);
   }
@@ -462,6 +464,14 @@ button#unmute {
   .watch.has-chat .stage > .panel {
     grid-area: panel;
   }
+  /* ---- branding: grid areas ---- */
+  .watch.has-chat .stage > .brand-banner {
+    grid-area: banner;
+  }
+  .watch.has-chat .stage > .brand-about {
+    grid-area: about;
+  }
+  /* ---- end branding: grid areas ---- */
   .watch.has-chat .stage > .chat {
     grid-area: chat;
     height: 0;
@@ -469,6 +479,17 @@ button#unmute {
     margin: 0;
   }
 }
+
+/* ---- branding: header with the streamer's name and support button ---- */
+.watch .site-head {
+  gap: var(--sp-3);
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .brand-banner {
+    display: none;
+  }
+}
+/* ---- end branding ---- */
 
 /* ---- Phones -------------------------------------------------------------------------------- */
 @media (max-width: 640px) {

@@ -10,6 +10,8 @@ export interface SettingsPopover {
   popover: Popover;
   /** Colour section: shown with the current colour and nickname, or hidden (null). */
   setColor(state: { color: string; nick: string; locked: boolean } | null): void;
+  /** GIF section (consent, animation): shown while the streamer has GIFs on. */
+  setGifs(state: { provider: string; consented: boolean; animate: boolean } | null): void;
 }
 
 export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor(color: string): void; onPrefs(p: ChatPrefs): void }): SettingsPopover {
@@ -57,11 +59,37 @@ export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor
     l.append(r, s);
     size.append(l);
   }
-  panel.append(colorSection, times, size);
+  const gifs = document.createElement('div');
+  gifs.className = 'gif-settings';
+  const check = (testid: string, onChange: (on: boolean) => void): { label: HTMLLabelElement; box: HTMLInputElement; text: HTMLSpanElement } => {
+    const label = document.createElement('label');
+    label.className = 'check-row';
+    const box = document.createElement('input');
+    box.type = 'checkbox';
+    box.dataset.testid = testid;
+    const text = document.createElement('span');
+    label.append(box, text);
+    box.addEventListener('change', () => onChange(box.checked));
+    return { label, box, text };
+  };
+  const gifConsent = check('chat-gif-consent', (on) => opts.onPrefs(savePrefs({ gifs: on })));
+  const gifAnimate = check('chat-gif-animate', (on) => opts.onPrefs(savePrefs({ animate: on })));
+  gifAnimate.text.textContent = t('chat.viewer.animate');
+  gifs.append(gifConsent.label, gifAnimate.label);
+  gifs.hidden = true;
+  panel.append(colorSection, times, size, gifs);
   const popover = createPopover(button, panel);
 
   return {
     popover,
+    setGifs(state) {
+      gifs.hidden = state === null;
+      if (!state) return;
+      gifConsent.text.textContent = t('chat.viewer.gif.setting', { provider: state.provider });
+      gifConsent.box.checked = state.consented;
+      gifAnimate.box.checked = state.animate;
+      gifAnimate.label.hidden = !state.consented;
+    },
     setColor(state) {
       colorSection.hidden = state === null;
       if (!state) return;

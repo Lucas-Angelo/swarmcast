@@ -2,13 +2,13 @@
 // It turns server frames into calls on a ChatView, in seq order and without duplicates
 // (plan §4.2): items at or below lastSeq are ignored (reconnects), and a gap without a `skip`
 // item asks the server to resume from lastSeq while the newer items wait (at most RESUME_WAIT_MS).
-import { CHAT_PROTOCOL_VERSION, type ChatAuthor, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou } from './core/index.js';
+import { CHAT_PROTOCOL_VERSION, type GifRef, type ChatAuthor, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
-export type ClientFrame = { t: 'chat.send'; n: number; text: string } | { t: 'chat.color'; color: string } | { t: 'chat.resume'; after: number };
+export type ClientFrame = { t: 'chat.send'; n: number; text: string } | { t: 'chat.send'; n: number; gif: GifRef } | { t: 'chat.color'; color: string } | { t: 'chat.resume'; after: number };
 
 export type ChatEntry =
-  | { kind: 'msg'; s: number; at: number; author: ChatAuthor; text?: string; gif?: boolean }
+  | { kind: 'msg'; s: number; at: number; author: ChatAuthor; text?: string; gif?: GifRef }
   | { kind: 'sys'; s: number; at: number; code: MessageKey; params?: MessageParams }
   | { kind: 'skip'; n: number };
 
@@ -192,7 +192,7 @@ export class ChatSession {
           return;
         }
         const author = this.roster.get(item.a) ?? { a: item.a, n: '…', c: '', r: 'viewer' as const };
-        out.push({ kind: 'msg', s: item.s, at: item.at, author, ...(typeof item.x === 'string' ? { text: item.x } : {}), ...(item.g ? { gif: true } : {}) });
+        out.push({ kind: 'msg', s: item.s, at: item.at, author, ...(typeof item.x === 'string' ? { text: item.x } : {}), ...(item.g ? { gif: item.g } : {}) });
         return;
       }
       case 'd': {

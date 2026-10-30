@@ -152,6 +152,11 @@ export class ChatInput {
     return this.sent.keys().next().value;
   }
 
+  /** A send that did not come from the box (a GIF): tracked for acks and rejects. */
+  noteSent(n: number): void {
+    this.sent.set(n, '');
+  }
+
   acked(n: number): void {
     this.sent.delete(n);
   }
@@ -174,7 +179,8 @@ export class ChatInput {
     const emotesOnly = !!s && !s.content.includes('text') && s.content.includes('emotes');
     this.textarea.placeholder = t(emotesOnly ? 'chat.viewer.placeholder.emotes' : 'chat.viewer.placeholder');
     this.textarea.disabled = block !== null && !block.typing;
-    this.tools.hidden = this.textarea.disabled;
+    // GIFs-only mode keeps the tools (the GIF button) while the text box is off.
+    this.tools.hidden = this.textarea.disabled && block?.key !== 'chat.viewer.gifsOnly';
     this.sendButton.disabled = block !== null || len.over || this.textarea.value.trim() === '';
     this.counter.textContent = counterText(len.graphemes, len.max);
     this.counter.title = t('chat.viewer.counter', { count: len.graphemes, max: len.max });
