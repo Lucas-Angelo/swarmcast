@@ -5,7 +5,9 @@
 //
 // Budget: at most RENDER_PER_FRAME messages per animation frame (older ones become one
 // "N messages skipped" line), at most DOM_MAX in the list, nothing rendered while the chat is
-// hidden or the tab is in the background (messages wait, up to DOM_MAX).
+// hidden or the tab is in the background (messages wait, up to DOM_MAX). A visible page whose
+// frames are late or do not come (the browser may skip rendering opportunities of a page it still
+// reports as visible) gets its messages from a timer instead, FRAME_FALLBACK_MS later.
 import { formatNumber, getLang, t } from '@swarmcast/shared/i18n';
 import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, gifMediaUrl, isHexColor, tokenizeChat, type ChatAuthor, type GifProvider, type GifRef } from './core/index.js';
 import type { Emote } from './emotes.js';
@@ -14,6 +16,8 @@ import type { ChatEntry } from './session.js';
 export const RENDER_PER_FRAME = 50;
 export const DOM_MAX = 150;
 export const ANNOUNCE_EVERY_MS = 3000;
+/** Messages waiting for an animation frame are drawn by a timer when no frame came this long. */
+export const FRAME_FALLBACK_MS = 500;
 /** A sent message still waiting for its own copy from the server after the ack: shown as sent. */
 const ACKED_WAIT_MS = 10_000;
 
@@ -25,7 +29,10 @@ export interface ListOptions {
   showTimes(): boolean;
   /** Rendering is allowed (chat shown and tab visible). */
   visible(): boolean;
+  /** Next animation frame (requestAnimationFrame). */
   raf?: (cb: () => void) => unknown;
+  /** Run `cb` in `ms`; returns its cancel (setTimeout). */
+  later?: (cb: () => void, ms: number) => () => void;
   now?: () => number;
   /** GIFs: has the viewer agreed to load them, and should they animate (plan 3.3, 5.4)? */
   gifs?: () => { consented: boolean; animate: boolean };
@@ -42,6 +49,8 @@ export interface ListStats {
   rendered: number;
   hidden: number;
   skipped: number;
+  /** Draws the fallback timer did because no animation frame came in FRAME_FALLBACK_MS. */
+  late: number;
 }
 
 interface Pending {
@@ -67,7 +76,7 @@ export class ChatList {
   readonly list: HTMLUListElement;
   readonly pill: HTMLButtonElement;
   readonly live: HTMLDivElement;
-  readonly stats: ListStats = { rendered: 0, hidden: 0, skipped: 0 };
+  readonly stats: ListStats = { rendered: 0, hidden: 0, skipped: 0, late: 0 };
   private queue: ChatEntry[] = [];
   private scheduled = false;
   private stuck = true;
@@ -79,6 +88,7 @@ export class ChatList {
   private readonly gifRefs = new WeakMap<HTMLElement, GifRef>();
   private liveGifs: HTMLElement[] = [];
   private readonly raf: (cb: () => void) => unknown;
+  private readonly later: (cb: () => void, ms: number) => () => void;
   /** Called when the unread count changes (for the "Show chat (3 new)" button). */
   onUnread: (n: number) => void = () => {};
 
@@ -87,6 +97,12 @@ export class ChatList {
     private readonly opts: ListOptions,
   ) {
     this.raf = opts.raf ?? ((cb) => requestAnimationFrame(cb));
+    this.later =
+      opts.later ??
+      ((cb, ms) => {
+        const id = setTimeout(cb, ms);
+        return () => clearTimeout(id);
+      });
     this.list = el('ul', 'chat-list');
     this.list.setAttribute('role', 'log');
     this.list.setAttribute('aria-live', 'off');
@@ -243,13 +259,24 @@ export class ChatList {
     this.queue = [{ kind: 'skip', n }, ...this.queue.slice(i)];
   }
 
+  /**
+   * Draw on the next animation frame, or from a timer when that frame is FRAME_FALLBACK_MS late:
+   * frames pace the drawing, they must not decide whether a message shows at all.
+   */
   private schedule(): void {
     if (this.scheduled || !this.opts.visible()) return;
     this.scheduled = true;
-    this.raf(() => {
+    let done = false;
+    const draw = (late: boolean): void => {
+      if (done) return;
+      done = true;
+      cancelTimer();
       this.scheduled = false;
+      if (late) this.stats.late++;
       this.flush();
-    });
+    };
+    const cancelTimer = this.later(() => draw(true), FRAME_FALLBACK_MS);
+    this.raf(() => draw(false));
   }
 
   private flush(): void {
