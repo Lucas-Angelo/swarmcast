@@ -8,7 +8,7 @@ import { expect, test } from '@playwright/test';
 import { canonicalizeChatText, validateNickname, type ChatAuthor } from '@swarmcast/shared/chat';
 import { CORPUS } from '../../../../packages/shared/test/chat/corpus.js';
 import { MockHub } from './mock-hub.js';
-import { openWatch, requireBuild } from './watch-page.js';
+import { openWatch, requireBuild, warmFontFallback } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
@@ -40,6 +40,7 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
   page.on('console', (m) => {
     if (m.type() === 'error' && !noise.test(m.text())) consoleErrors.push(m.text());
   });
+  await warmFontFallback(page, [...NAMES, ...sent.map((e) => e.text)]);
   const errors = await openWatch(page, hub);
   const list = page.getByTestId('chat-list');
   // The snapshot carries the last 50: the corpus fits.
@@ -79,7 +80,9 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
   // Still responsive with everything on screen: two animation frames well under 100 ms. The
   // median of 7 samples, so one hiccup of a shared CI machine (another worker, a GC) does not
   // count as the page freezing; a page that really hangs on the corpus fails every sample.
+  // Web font subsets (Inter greek, cyrillic, vietnamese) load once the list asks for them.
   const frames = await page.evaluate(async () => {
+    await document.fonts.ready;
     const twoFrames = (): Promise<number> =>
       new Promise((resolve) => {
         const t0 = performance.now();

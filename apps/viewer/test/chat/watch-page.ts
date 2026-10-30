@@ -15,6 +15,29 @@ export function requireBuild(): void {
   if (!fs.existsSync(path.join(DIST, 'watch.html'))) throw new Error('Build the viewer first: npm run build -w @swarmcast/viewer');
 }
 
+/**
+ * Lays out `texts` once on a blank page of the same origin, before the page under test. The first
+ * text in a script the page fonts lack makes the browser load and scan the system fonts for a
+ * fallback: once per browser process, but seconds on a fresh CI runner (Firefox on Windows, Chrome
+ * on macOS), during which the page does not paint. A real visitor's browser has done it long
+ * before; a test that times the watch page would time this instead.
+ */
+export async function warmFontFallback(page: Page, texts: readonly string[]): Promise<void> {
+  await page.route(`${ORIGIN}/warm`, (route) => route.fulfill({ body: '<!doctype html><meta charset="utf-8"><title>warm</title>', contentType: 'text/html' }));
+  await page.goto(`${ORIGIN}/warm`);
+  await page.evaluate(async (list) => {
+    for (const t of list) {
+      const p = document.createElement('p');
+      p.textContent = t;
+      document.body.append(p);
+    }
+    document.body.getBoundingClientRect();
+    await document.fonts.ready;
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  }, texts);
+  await page.unroute(`${ORIGIN}/warm`);
+}
+
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
 export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; query?: string } = {}): Promise<string[]> {
   await page.route(`${ORIGIN}/**`, async (route) => {
