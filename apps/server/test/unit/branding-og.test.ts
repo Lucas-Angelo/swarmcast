@@ -5,6 +5,9 @@ import { escapeHtml, isPreviewAgent, previewPage } from '../../src/branding/og.j
 import { CORPUS } from '../../../../packages/shared/test/chat/corpus.js';
 import { hostile } from '../../../../packages/shared/test/chat/arbitraries.js';
 
+// The link preview page that chat apps fetch for the live link: the streamer's name and tagline
+// (only with the preview turned on), escaped so no input can open a tag or an attribute.
+
 /** Decode the few entities escapeHtml writes. */
 const unescape = (s: string): string => s.replace(/&(amp|lt|gt|quot|#39);/g, (_m, e: string) => ({ amp: '&', lt: '<', gt: '>', quot: '"', '#39': "'" })[e]!);
 
@@ -13,47 +16,75 @@ function og(html: string, prop: string): string | undefined {
   return m ? unescape(m[1]!) : undefined;
 }
 
-describe('link preview page (U9)', () => {
-  const branded = (name: string, tagline?: string) => brandingSchema.safeParse({ name, tagline, preview: { enabled: true } });
+/** The only elements a preview page may contain. */
+const PAGE_TAGS = new Set(['html', 'head', 'meta', 'title', 'body', 'p', 'a']);
 
-  it('every corpus string as name and tagline round-trips through the escaping; only fixed elements appear', () => {
-    let checked = 0;
-    for (const e of CORPUS) {
-      const parsed = branded(e.input.slice(0, 40), e.input.slice(0, 100));
-      if (!parsed.success || !parsed.data.name) continue;
-      const b = parsed.data;
-      const html = previewPage({ branding: b, url: 'https://x.trycloudflare.com/join/abc' });
-      expect(og(html, 'og:title'), e.id).toBe(`${b.name} is live`);
-      if (b.tagline) expect(og(html, 'og:description'), e.id).toBe(b.tagline);
-      const tags = [...html.matchAll(/<([a-z]+)[\s>]/g)].map((m) => m[1]);
-      expect(new Set(tags), e.id).toEqual(new Set(['html', 'head', 'meta', 'title', 'body', 'p', 'a']));
-      checked++;
-    }
-    expect(checked).toBeGreaterThan(20);
+/** Every corpus string the branding schema accepts as a name (40) and tagline (100), previewed. */
+const previewable = CORPUS.flatMap((e) => {
+  const parsed = brandingSchema.safeParse({ name: e.input.slice(0, 40), tagline: e.input.slice(0, 100), preview: { enabled: true } });
+  return parsed.success && parsed.data.name ? [{ id: e.id, branding: parsed.data }] : [];
+});
+
+describe('link preview page (U9)', () => {
+  it('the corpus gives enough previewable names to be meaningful', () => {
+    // Assert
+    expect(previewable.length).toBeGreaterThan(20);
+  });
+
+  it.each(previewable)('corpus $id as name and tagline round-trips through the escaping; only fixed elements appear', ({ branding }) => {
+    // Act
+    const html = previewPage({ branding, url: 'https://x.trycloudflare.com/join/abc' });
+    // Assert
+    expect(og(html, 'og:title')).toBe(`${branding.name} is live`);
+    if (branding.tagline) expect(og(html, 'og:description')).toBe(branding.tagline);
+    expect(new Set([...html.matchAll(/<([a-z]+)[\s>]/g)].map((m) => m[1]))).toEqual(PAGE_TAGS);
   });
 
   it('property: no input can open a tag or an attribute', () => {
-    fc.assert(
-      fc.property(fc.oneof(hostile, fc.constantFrom('"><script>alert(1)</script>', "' onload='x", '</title><script>', '&quot;')), (s) => {
-        const w = [...s].map((c) => (c.codePointAt(0)! >= 0xd800 && c.codePointAt(0)! <= 0xdfff ? '?' : c)).join('');
-        const out = escapeHtml(w);
-        expect(out).not.toMatch(/[<>"']/);
-        expect(unescape(out)).toBe(w);
-        return true;
-      }),
-      { numRuns: Number(process.env.CHAT_FUZZ_RUNS ?? 2000), seed: 0x0f },
-    );
+    // Arrange
+    const input = fc.oneof(hostile, fc.constantFrom('"><script>alert(1)</script>', "' onload='x", '</title><script>', '&quot;'));
+    const property = fc.property(input, (s) => {
+      const wellFormed = [...s].map((c) => (c.codePointAt(0)! >= 0xd800 && c.codePointAt(0)! <= 0xdfff ? '?' : c)).join('');
+      const out = escapeHtml(wellFormed);
+      expect(out).not.toMatch(/[<>"']/);
+      expect(unescape(out)).toBe(wellFormed);
+      return true;
+    });
+    // Act
+    const run = () => fc.assert(property, { numRuns: Number(process.env.CHAT_FUZZ_RUNS ?? 2000), seed: 0x0f });
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('preview off or no name: a neutral invitation that names nobody', () => {
+    // Act
     const html = previewPage({ branding: brandingSchema.parse({ name: 'Secret Name' }), url: 'https://x/join/a', acceptLanguage: 'en-US,en;q=0.8' });
+    // Assert
     expect(html).toContain('You&#39;re invited to a live stream');
     expect(html).not.toContain('Secret Name');
     expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
   });
 
-  it('recognises the preview fetchers and nothing else', () => {
-    for (const ua of ['facebookexternalhit/1.1', 'WhatsApp/2.23.20.0 A', 'TelegramBot (like TwitterBot)', 'Mozilla/5.0 (compatible; Discordbot/2.0)', 'Slackbot-LinkExpanding 1.0', 'Twitterbot/1.0']) expect(isPreviewAgent(ua), ua).toBe(true);
-    for (const ua of ['Mozilla/5.0 (iPhone) Safari/604.1', 'Mozilla/5.0 Chrome/140', '', undefined, 'x'.repeat(600)]) expect(isPreviewAgent(ua), String(ua)).toBe(false);
+  it.each(['facebookexternalhit/1.1', 'WhatsApp/2.23.20.0 A', 'TelegramBot (like TwitterBot)', 'Mozilla/5.0 (compatible; Discordbot/2.0)', 'Slackbot-LinkExpanding 1.0', 'Twitterbot/1.0'])(
+    'recognises the preview fetcher %s',
+    (ua) => {
+      // Act
+      const preview = isPreviewAgent(ua);
+      // Assert
+      expect(preview).toBe(true);
+    },
+  );
+
+  it.each([
+    ['Safari on an iPhone', 'Mozilla/5.0 (iPhone) Safari/604.1'],
+    ['Chrome', 'Mozilla/5.0 Chrome/140'],
+    ['an empty User-Agent', ''],
+    ['no User-Agent', undefined],
+    ['a 600-character User-Agent', 'x'.repeat(600)],
+  ])('does not take %s for a preview fetcher', (_what, ua) => {
+    // Act
+    const preview = isPreviewAgent(ua);
+    // Assert
+    expect(preview).toBe(false);
   });
 });
