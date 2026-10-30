@@ -17,6 +17,8 @@ export default defineConfig({
   retries: 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never', outputFolder: path.join(root, 'playwright-report', 'chat-ui') }]] : 'list',
   outputDir: path.join(root, 'test-results', 'chat-ui'),
+  // Every engine started once before the tests (warm-browsers.ts): a fresh runner's first start is not the page.
+  globalSetup: path.join(import.meta.dirname, 'warm-browsers.ts'),
   use: { trace: 'retain-on-failure' },
   projects: [
     // CI (the `ui` group of _e2e.yml) has Google Chrome from the runner image, not Playwright's

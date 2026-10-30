@@ -16,7 +16,7 @@ export function requireBuild(): void {
 }
 
 /** Emoji and the scripts the specs use: each one sends the engine to the system fonts. */
-const WARM_TEXTS = ['Hi 😀👍🎉❤️', 'Привет', 'Ζωή', 'Nguyễn', 'नमस्ते', 'עדי', 'محمد', 'アナ 漢字', '한국어', 'ประเสริฐ', 'క్షమ'];
+export const WARM_TEXTS = ['Hi 😀👍🎉❤️', 'Привет', 'Ζωή', 'Nguyễn', 'नमस्ते', 'עדי', 'محمد', 'アナ 漢字', '한국어', 'ประเสริฐ', 'క్షమ'];
 const warmed = new WeakSet<Browser>();
 
 /**
