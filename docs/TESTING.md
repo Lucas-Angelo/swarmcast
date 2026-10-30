@@ -92,7 +92,6 @@ Real time that a test measures, on purpose:
 | Unit | `apps/*/test/unit`, `packages/*/test`, `scripts/*/test`, `site/test/unit` | Vitest | `npm test` |
 | Integration | `apps/server/test/integration` | Vitest | `npm run test:integration` (needs `ffmpeg`, `npm run fetch-bins`) |
 | End to end | `apps/server/test/e2e`, `apps/viewer/test` | Playwright | `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test` |
-| Real phone browsers | `apps/server/test/devices` | Playwright (+ safaridriver on iOS) | `scripts/test/devices/setup.sh install android`, then `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=6000 npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome`; `setup.sh remove all` afterwards |
 | Desktop shell | `#[cfg(test)]` modules of `apps/desktop/src-tauri/src` | cargo test | `npm run desktop:test` |
 | Start and uninstall scripts | `scripts/test/run.sh`, `uninstall.sh`, `run.ps1`, `uninstall.ps1` | their own | `bash scripts/test/run.sh` (macOS, Linux); `powershell -File scripts\test\run.ps1` |
 | System (real installers and packages) | `scripts/test/windows`, `preflight`, `desktop`, `docker` | their own (below) | CI only: they install and start the real app on a clean machine |
@@ -128,33 +127,6 @@ fixtures. Test bodies hold only Arrange/Act/Assert comments. The only real-time 
 retry. Run with `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e HLS
 port is 38083 + offset; the server refuses any offset that hits a reserved port
 ([scripts/test/lib/ports.mjs](../scripts/test/lib/ports.mjs) `RESERVED`).
-
-### Real devices
-
-`apps/server/test/devices` runs the viewer in real mobile browsers against the e2e server: Chrome on
-an Android emulator (Pixel 7) and Mobile Safari on an iOS Simulator. Each test joins with a nickname
-typed on the on-screen keyboard and checks one behaviour: muted autoplay and Unmute by a tap; the chat
-under the player with the keyboard up (input and Send inside the visual viewport) and a message both
-ways with a desktop viewer; the browser sent to the background and back (playback resumes, Go live
-returns to the live point); turning the phone (Android: Chrome's fullscreen video, then SwarmCast's
-sideways layout; iOS: the sideways layout).
-
-- **Setup:** `scripts/test/devices/setup.sh install android|ios` (a manifest records what it created;
-  `setup.sh remove all` deletes exactly that). iOS also needs `sudo safaridriver --enable` once.
-- **Design facts:** Android reaches the server through `adb reverse` on 127.0.0.1 (10.0.2.2 is not a
-  secure context, so the browser check could not run); the suite starts Chrome itself (Playwright's
-  launchBrowser disables renderer backgrounding) and detaches before backgrounding (focus emulation
-  keeps an attached page visible); taps wait for the keyboard and for two identical layout readings
-  and aim at the visible part of an enabled, uncovered element; a mouse click does not raise the
-  keyboard, a touch does.
-- **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
-  outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
-- **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a
-  schedule only after a run of consecutive green dispatches on both jobs. Failed tests keep their
-  recording, screenshots and logs as artifacts.
-- **Windows 11:** `setup.sh install windows` builds a UTM VM from the official Windows 11 Arm64 ISO
-  (downloaded by hand from Microsoft's page) with an unattended answer file and OpenSSH; the
-  Windows harnesses then run in it over SSH. SmartScreen's "Run anyway" and the UAC prompt stay manual.
 
 ### Desktop shell (Rust)
 

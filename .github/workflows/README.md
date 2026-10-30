@@ -15,7 +15,6 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates; fails on any single failed run |
 | `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
 | `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
-| `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 

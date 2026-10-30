@@ -108,7 +108,6 @@ and Google Chrome. Run from the repository root.
 | `npm run test:e2e` | Playwright on Chrome, Firefox, WebKit (`--grep @ui` / `@media`); after `fetch-bins` and `build`; `npx playwright install firefox webkit` once |
 | `npx playwright test -c apps/viewer/test/chat/playwright.config.ts` | viewer chat UI against a mock hub; after `npm run build -w @swarmcast/viewer` |
 | `npm run desktop:test` | `cargo test`; in `apps/desktop/src-tauri` also `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` |
-| `npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome` | the viewer in a real Android Chrome (after `scripts/test/devices/setup.sh install android`; iOS: `--project=ios-safari` on macOS 26) |
 | `cd site && npm run build && npm run check` | website build (fails on a broken link) and types; `npm run test:e2e` for its browser tests |
 | `npm run dev -w @swarmcast/server -- --no-tunnel --no-tray --no-autostart` | the app from source (data in `.cache/dev-data`), after `build`, with the environment of §5 (arguments reach the server only through `-w`) |
 
