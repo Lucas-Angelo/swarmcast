@@ -1,25 +1,25 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { countGraphemes, type MessageKey } from '@swarmcast/shared';
+import { BRAND_MAX_TAGS, BRAND_SUPPORT_LABELS, BRAND_TEXT, defaultBranding, lineCount, type AdminBrandingState, type BrandSlot } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
 import { errorText } from '../api.js';
 import { Info } from '../Info.js';
 import { brandingApi, NotAvailableError } from './api.js';
-import type { FieldId, SlotId } from './image.js';
+import type { FieldId } from './image.js';
 import { ImageField } from './ImageField.js';
 import { LinksEditor } from './LinksEditor.js';
 import { PixField } from './PixField.js';
 import { Preview } from './Preview.js';
 import { ThemePicker } from './ThemePicker.js';
-import { BRAND_LIMITS, defaultBranding, textOf, type BrandingResponse, type BrandingText, type SupportConfig, type SupportLabel } from './types.js';
-import { checkNewTag, cleanDraft, countLines, validateDraft, type FieldError } from './validate.js';
+import { defaultDraft, textOf, type Draft, type PixDraft, type SupportDraft } from './types.js';
+import { checkNewTag, cleanDraft, validateDraft, type FieldError } from './validate.js';
 import './branding.css';
 
 type Section = 'identity' | 'about' | 'links' | 'colours' | 'share';
 const SECTIONS: Section[] = ['identity', 'about', 'links', 'colours', 'share'];
-const SUPPORT_LABELS: SupportLabel[] = ['support', 'tip', 'donate', 'pix'];
-const MASTER: Record<FieldId, SlotId> = { avatar: 'avatar', banner: 'banner', card: 'card' };
+const MASTER: Record<FieldId, BrandSlot> = { avatar: 'avatar', banner: 'banner', card: 'card' };
 
-const same = (a: BrandingText, b: BrandingText): boolean => JSON.stringify(a) === JSON.stringify(b);
+const same = (a: Draft, b: Draft): boolean => JSON.stringify(a) === JSON.stringify(b);
 
 function Counter({ value, max }: { value: string | undefined; max: number }) {
   const n = countGraphemes(value ?? '');
@@ -41,9 +41,9 @@ function ErrorText({ e, testid }: { e?: FieldError; testid?: string }) {
  */
 export function BrandingCard() {
   const [available, setAvailable] = useState(true);
-  const [saved, setSaved] = useState<BrandingText>(() => textOf(defaultBranding()));
-  const [draft, setDraft] = useState<BrandingText>(() => textOf(defaultBranding()));
-  const [images, setImages] = useState<BrandingResponse['images']>({});
+  const [saved, setSaved] = useState<Draft>(defaultDraft);
+  const [draft, setDraft] = useState<Draft>(defaultDraft);
+  const [images, setImages] = useState<AdminBrandingState['images']>({});
   const [local, setLocal] = useState<Partial<Record<FieldId, string>>>({});
   const [open, setOpen] = useState<Section>('identity');
   const [err, setErr] = useState<unknown>(null);
@@ -56,12 +56,13 @@ export function BrandingCard() {
   const localRef = useRef(local);
   localRef.current = local;
 
-  const apply = (r: BrandingResponse, keepDraft = false): void => {
+  const apply = (r: AdminBrandingState, keepDraft = false): void => {
     const text = textOf({ ...defaultBranding(), ...r.branding });
     setSaved(text);
     if (!keepDraft) {
       setDraft(text);
-      setPixConfirmed(Boolean(text.support?.pixKey));
+      // A personal key that was saved was confirmed then.
+      setPixConfirmed(Boolean(text.support.pix));
     }
     setImages(r.images ?? {});
   };
@@ -81,11 +82,12 @@ export function BrandingCard() {
   const errors = validateDraft(draft, { pixConfirmed });
   const hasErrors = Object.keys(errors).length > 0;
   const dirty = !same(cleanDraft(draft), saved);
-  const patch = (p: Partial<BrandingText>): void => {
+  const patch = (p: Partial<Draft>): void => {
     setJustSaved(false);
     setDraft((d) => ({ ...d, ...p }));
   };
-  const patchSupport = (p: Partial<SupportConfig>): void => patch({ support: { label: 'support', mode: 'link', ...draft.support, ...p } });
+  const patchSupport = (p: Partial<SupportDraft>): void => patch({ support: { ...draft.support, ...p } });
+  const patchPix = (pix: PixDraft): void => patchSupport({ pix });
 
   const run = async (fn: () => Promise<void>): Promise<void> => {
     setBusy(true);
@@ -117,11 +119,11 @@ export function BrandingCard() {
 
   const saveImage =
     (field: FieldId) =>
-    async (variants: Array<{ slot: SlotId; blob: Blob }>): Promise<boolean> => {
+    async (variants: Array<{ slot: BrandSlot; blob: Blob }>): Promise<boolean> => {
       setLocalUrl(field, variants[0]!.blob);
       if (!available) return false;
       try {
-        let last: BrandingResponse | null = null;
+        let last: AdminBrandingState | null = null;
         for (const v of variants) last = await brandingApi.upload(v.slot, v.blob);
         if (last) apply(last, true);
         setLocalUrl(field, null);
@@ -144,22 +146,22 @@ export function BrandingCard() {
       (['avatar', 'banner', 'card'] as FieldId[]).forEach((f) => setLocalUrl(f, null));
       if (available) apply(await brandingApi.reset());
       else {
-        const d = textOf(defaultBranding());
+        const d = defaultDraft();
         setSaved(d);
         setDraft(d);
       }
     });
 
   const addTag = (): void => {
-    const e = checkNewTag(tagText, draft.tags);
-    setTagErr(e);
-    if (e) return;
-    patch({ tags: [...draft.tags, tagText.trim()] });
+    const r = checkNewTag(tagText, draft.tags);
+    setTagErr(r.ok ? null : r.error);
+    if (!r.ok) return;
+    patch({ tags: [...draft.tags, r.tag] });
     setTagText('');
   };
 
   const img = (field: FieldId): string | undefined => local[field] ?? images[MASTER[field]];
-  const supportMode = draft.support?.mode ?? 'none';
+  const supportMode = draft.support.enabled ? draft.support.mode : 'none';
 
   const sectionBody = (s: Section) => {
     switch (s) {
@@ -168,7 +170,7 @@ export function BrandingCard() {
           <>
             <label class="field">
               <span class="label-w">
-                {t('admin.brand.name')} <Info text={t('admin.brand.name.tip')} /> <Counter value={draft.name} max={BRAND_LIMITS.name} />
+                {t('admin.brand.name')} <Info text={t('admin.brand.name.tip')} /> <Counter value={draft.name} max={BRAND_TEXT.name.maxGraphemes} />
               </span>
               <input class="text-input bf-wide" data-testid="brand-name" maxLength={400} value={draft.name ?? ''} onInput={(e) => patch({ name: (e.target as HTMLInputElement).value })} />
               <ErrorText e={errors.name} />
@@ -182,22 +184,22 @@ export function BrandingCard() {
           <>
             <label class="field">
               <span class="label-w">
-                {t('admin.brand.tagline')} <Info text={t('admin.brand.tagline.tip')} /> <Counter value={draft.tagline} max={BRAND_LIMITS.tagline} />
+                {t('admin.brand.tagline')} <Info text={t('admin.brand.tagline.tip')} /> <Counter value={draft.tagline} max={BRAND_TEXT.tagline.maxGraphemes} />
               </span>
               <input class="text-input bf-wide" data-testid="brand-tagline" maxLength={1000} value={draft.tagline ?? ''} onInput={(e) => patch({ tagline: (e.target as HTMLInputElement).value })} />
               <ErrorText e={errors.tagline} />
             </label>
             <label class="field">
               <span class="label-w">
-                {t('admin.brand.about')} <Info text={t('admin.brand.about.tip')} /> <Counter value={draft.about} max={BRAND_LIMITS.about} />
-                <span class="small muted">{t('admin.brand.about.lines', { count: countLines(draft.about ?? ''), max: BRAND_LIMITS.aboutLines })}</span>
+                {t('admin.brand.about')} <Info text={t('admin.brand.about.tip')} /> <Counter value={draft.about} max={BRAND_TEXT.about.maxGraphemes} />
+                <span class="small muted">{t('admin.brand.about.lines', { count: lineCount((draft.about ?? '').trim()), max: BRAND_TEXT.about.maxLines })}</span>
               </span>
               <textarea class="text-input bf-wide bf-textarea" data-testid="brand-about" rows={5} maxLength={8000} value={draft.about ?? ''} onInput={(e) => patch({ about: (e.target as HTMLTextAreaElement).value })} />
               <ErrorText e={errors.about} />
             </label>
             <div class="field">
               <span class="label-w">
-                {t('admin.brand.tags')} <Info text={t('admin.brand.tags.tip')} /> <span class="small muted">{t('admin.brand.counter', { count: draft.tags.length, max: BRAND_LIMITS.tags })}</span>
+                {t('admin.brand.tags')} <Info text={t('admin.brand.tags.tip')} /> <span class="small muted">{t('admin.brand.counter', { count: draft.tags.length, max: BRAND_MAX_TAGS })}</span>
               </span>
               <ul class="bf-tags" data-testid="brand-tags">
                 {draft.tags.map((tag) => (
@@ -249,28 +251,28 @@ export function BrandingCard() {
                       data-testid={`brand-support-${m}`}
                       checked={supportMode === m}
                       onChange={() => {
-                        if (m === 'none') patch({ support: undefined });
-                        else patchSupport({ mode: m, label: m === 'pix' && !draft.support ? 'pix' : (draft.support?.label ?? 'support') });
+                        if (m === 'none') patchSupport({ enabled: false });
+                        else patchSupport({ enabled: true, mode: m, ...(m === 'pix' && !draft.support.pix ? { pix: { type: 'evp', key: '', name: '', city: '' } } : {}) });
                       }}
                     />
                     {t(`admin.brand.support.${m}`)}
                   </label>
                 ))}
               </div>
-              {draft.support && (
+              {draft.support.enabled && (
                 <label class="row tight small">
                   {t('admin.brand.support.text')}
-                  <select class="lang-select" data-testid="brand-support-label" value={draft.support.label} onChange={(e) => patchSupport({ label: (e.target as HTMLSelectElement).value as SupportLabel })}>
-                    {SUPPORT_LABELS.map((l) => (
+                  <select class="lang-select" data-testid="brand-support-label" value={draft.support.label} onChange={(e) => patchSupport({ label: (e.target as HTMLSelectElement).value as SupportDraft['label'] })}>
+                    {BRAND_SUPPORT_LABELS.map((l) => (
                       <option key={l} value={l}>
-                        {t(`admin.brand.pv.support.${l}`)}
+                        {t(`support.label.${l}`)}
                       </option>
                     ))}
                   </select>
                   <Info text={t('admin.brand.support.text.tip')} />
                 </label>
               )}
-              {draft.support?.mode === 'link' && (
+              {draft.support.enabled && draft.support.mode === 'link' && (
                 <label class="field">
                   <span class="label-w">
                     {t('admin.brand.support.url')} <Info text={t('admin.brand.support.url.tip')} />
@@ -279,7 +281,7 @@ export function BrandingCard() {
                   {draft.support.url?.trim() ? <ErrorText e={errors['support.url']} /> : null}
                 </label>
               )}
-              {draft.support?.mode === 'pix' && <PixField support={draft.support} errors={errors} confirmed={pixConfirmed} onConfirm={setPixConfirmed} onChange={patchSupport} />}
+              {draft.support.enabled && draft.support.mode === 'pix' && draft.support.pix && <PixField pix={draft.support.pix} errors={errors} confirmed={pixConfirmed} onConfirm={setPixConfirmed} onChange={patchPix} />}
             </div>
           </>
         );
@@ -290,7 +292,7 @@ export function BrandingCard() {
           <>
             <label class="field">
               <span class="label-w">
-                {t('admin.brand.ended')} <Info text={t('admin.brand.ended.tip')} /> <Counter value={draft.endedMessage} max={BRAND_LIMITS.ended} />
+                {t('admin.brand.ended')} <Info text={t('admin.brand.ended.tip')} /> <Counter value={draft.endedMessage} max={BRAND_TEXT.ended.maxGraphemes} />
               </span>
               <input class="text-input bf-wide" data-testid="brand-ended" maxLength={1000} value={draft.endedMessage ?? ''} onInput={(e) => patch({ endedMessage: (e.target as HTMLInputElement).value })} />
               <ErrorText e={errors.ended} />

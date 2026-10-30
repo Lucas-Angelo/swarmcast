@@ -1,80 +1,86 @@
 import { useEffect, useRef } from 'preact/hooks';
+import { buildPixPayload, drawQr, normalizePixKey, PIX_CITY_MAX, PIX_NAME_MAX, PIX_PERSONAL_TYPES, pixAscii, qrMatrix, type PixKeyType } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
 import { Info } from '../Info.js';
-import { buildBrCode, parsePixKey, PIX_CITY_MAX, PIX_NAME_MAX, toPixAscii } from './pix.js';
-import { drawQr, encodeQr } from './qr.js';
-import type { SupportConfig } from './types.js';
+import type { PixDraft } from './types.js';
 import type { FieldErrors } from './validate.js';
 
+/** Key types, the safest first (a random key shows no personal number). */
+const TYPES: PixKeyType[] = ['evp', 'email', 'phone', 'cpf', 'cnpj'];
+
 /**
- * Pix for the support button (BR6). The privacy warning is always shown: a Pix confirmation
- * shows the receiver's legal name, part of the CPF and the bank to every payer, whatever the
- * key. A CPF or phone key needs a second, explicit confirmation.
+ * Pix for the support button (BR6: key, "copia e cola" and QR code). The privacy warning is
+ * always shown: a Pix confirmation shows the receiver's legal name and part of the CPF to every
+ * payer, whatever the key. A CPF or phone key needs a second, explicit confirmation.
  */
-export function PixField({
-  support,
-  errors,
-  confirmed,
-  onConfirm,
-  onChange,
-}: {
-  support: SupportConfig;
-  errors: FieldErrors;
-  confirmed: boolean;
-  onConfirm: (ok: boolean) => void;
-  onChange: (patch: Partial<SupportConfig>) => void;
-}) {
+export function PixField({ pix, errors, confirmed, onConfirm, onChange }: { pix: PixDraft; errors: FieldErrors; confirmed: boolean; onConfirm: (ok: boolean) => void; onChange: (pix: PixDraft) => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
-  const key = parsePixKey(support.pixKey ?? '');
-  const name = toPixAscii(support.pixName ?? '', PIX_NAME_MAX);
-  const city = toPixAscii(support.pixCity ?? '', PIX_CITY_MAX);
-  let code: string | null = null;
-  if (key.ok && name && city) {
-    try {
-      code = buildBrCode({ key: key.key, name, city });
-    } catch {
-      code = null;
-    }
-  }
+  const key = normalizePixKey(pix.type, pix.key);
+  const payload = key.ok ? buildPixPayload({ key: key.key, name: pix.name, city: pix.city }) : null;
+  const code = payload?.ok ? payload.payload : null;
   useEffect(() => {
-    if (canvas.current && code) drawQr(canvas.current, encodeQr(code), 3);
+    const c = canvas.current;
+    if (!c || !code) return;
+    const m = qrMatrix(code);
+    c.width = c.height = (m.length + 8) * 3;
+    const ctx = c.getContext('2d');
+    if (ctx) drawQr(ctx, m, 3);
   }, [code]);
-  const keyErr = support.pixKey?.trim() ? errors['support.pixKey'] : undefined;
+  const set = (p: Partial<PixDraft>): void => onChange({ ...pix, ...p });
+  const keyErr = pix.key.trim() ? errors['support.pixKey'] : undefined;
+  const name = pixAscii(pix.name, PIX_NAME_MAX);
+  const city = pixAscii(pix.city, PIX_CITY_MAX);
+  const personal = PIX_PERSONAL_TYPES.includes(pix.type);
   return (
     <div class="bf-pix" data-testid="brand-pix">
       <div class="warn small" data-testid="brand-pix-warning">
-        {t('admin.brand.pix.warning')}
+        {t('pix.warning')}
       </div>
       <p class="small muted">{t('admin.brand.pix.recommend')}</p>
-      <label class="field">
-        <span class="label-w">
-          {t('admin.brand.pix.key')} <Info text={t('admin.brand.pix.key.tip')} />
-        </span>
-        <input
-          class="text-input bf-wide"
-          data-testid="brand-pix-key"
-          maxLength={100}
-          autoComplete="off"
-          value={support.pixKey ?? ''}
-          aria-invalid={keyErr ? true : undefined}
-          onInput={(e) => {
-            onConfirm(false);
-            onChange({ pixKey: (e.target as HTMLInputElement).value });
-          }}
-        />
-      </label>
-      {key.ok && (
-        <p class="small" data-testid="brand-pix-type">
-          {t('admin.brand.pix.detected', { typeKey: `admin.brand.pix.type.${key.type}` })}
-        </p>
-      )}
-      {keyErr && <p class="small danger-text">{t(keyErr.key, keyErr.params)}</p>}
-      {key.ok && key.needsConfirm && (
+      <div class="bf-two">
+        <label class="field">
+          <span class="label-w">{t('admin.brand.pix.type')}</span>
+          <select
+            class="lang-select"
+            data-testid="brand-pix-type"
+            value={pix.type}
+            onChange={(e) => {
+              onConfirm(false);
+              set({ type: (e.target as HTMLSelectElement).value as PixKeyType });
+            }}
+          >
+            {TYPES.map((ty) => (
+              <option key={ty} value={ty}>
+                {t(`admin.brand.pix.type.${ty}`)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label class="field">
+          <span class="label-w">
+            {t('admin.brand.pix.key')} <Info text={t('admin.brand.pix.key.tip')} />
+          </span>
+          <input
+            class="text-input bf-wide"
+            data-testid="brand-pix-key"
+            maxLength={100}
+            autoComplete="off"
+            value={pix.key}
+            aria-invalid={keyErr ? true : undefined}
+            onInput={(e) => {
+              onConfirm(false);
+              set({ key: (e.target as HTMLInputElement).value });
+            }}
+          />
+          {keyErr && <span class="small danger-text">{t(keyErr.key, keyErr.params)}</span>}
+        </label>
+      </div>
+      {key.ok && personal && (
         <div class="warn small">
-          <p>{t('admin.brand.pix.confirm.why')}</p>
+          <p>{t('pix.personal')}</p>
           <label>
             <input type="checkbox" data-testid="brand-pix-confirm" checked={confirmed} onChange={(e) => onConfirm((e.target as HTMLInputElement).checked)} />
-            {t('admin.brand.pix.confirm', { typeKey: `admin.brand.pix.type.${key.type}` })}
+            {t('admin.brand.pix.confirm', { typeKey: `admin.brand.pix.type.${pix.type}` })}
           </label>
         </div>
       )}
@@ -83,15 +89,15 @@ export function PixField({
           <span class="label-w">
             {t('admin.brand.pix.name')} <Info text={t('admin.brand.pix.name.tip')} />
           </span>
-          <input class="text-input bf-wide" data-testid="brand-pix-name" maxLength={60} value={support.pixName ?? ''} onInput={(e) => onChange({ pixName: (e.target as HTMLInputElement).value })} />
-          {name && name !== (support.pixName ?? '').trim() && <span class="small muted">{t('admin.brand.pix.inCode', { text: name })}</span>}
+          <input class="text-input bf-wide" data-testid="brand-pix-name" maxLength={100} value={pix.name} onInput={(e) => set({ name: (e.target as HTMLInputElement).value })} />
+          {name && name !== pix.name.trim() && <span class="small muted">{t('admin.brand.pix.inCode', { text: name })}</span>}
         </label>
         <label class="field">
           <span class="label-w">
             {t('admin.brand.pix.city')} <Info text={t('admin.brand.pix.city.tip')} />
           </span>
-          <input class="text-input bf-wide" data-testid="brand-pix-city" maxLength={40} value={support.pixCity ?? ''} onInput={(e) => onChange({ pixCity: (e.target as HTMLInputElement).value })} />
-          {city && city !== (support.pixCity ?? '').trim() && <span class="small muted">{t('admin.brand.pix.inCode', { text: city })}</span>}
+          <input class="text-input bf-wide" data-testid="brand-pix-city" maxLength={100} value={pix.city} onInput={(e) => set({ city: (e.target as HTMLInputElement).value })} />
+          {city && city !== pix.city.trim() && <span class="small muted">{t('admin.brand.pix.inCode', { text: city })}</span>}
         </label>
       </div>
       {key.ok && !code && <p class="small muted">{t('admin.brand.pix.needNameCity')}</p>}

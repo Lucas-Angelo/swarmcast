@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { t } from '@swarmcast/shared/i18n';
 import { Info } from '../Info.js';
-import { cropRect, encodeVariant, FIELD_ASPECT, FIELD_SLOTS, ImageError, pickImage, SLOTS, type Crop, type FieldId, type Picked, type SlotId } from './image.js';
-import { safeImageSrc } from './Preview.js';
+import { BRAND_SLOTS, type BrandSlot } from '@swarmcast/shared/branding';
+import { cropRect, encodeVariant, FIELD_ASPECT, FIELD_SLOTS, ImageError, pickImage, type Crop, type FieldId, type Picked } from './image.js';
+import { safeImageSrc } from './public.js';
 
 const LABEL = { avatar: 'admin.brand.avatar', banner: 'admin.brand.banner', card: 'admin.brand.card' } as const;
 const TIP = { avatar: 'admin.brand.avatar.tip', banner: 'admin.brand.banner.tip', card: 'admin.brand.card.tip' } as const;
@@ -12,7 +13,7 @@ export interface ImageFieldProps {
   /** What the preview shows now (server file URL or a local object URL). */
   current?: string;
   /** Store the rendered variants (master first). Resolves false when the server could not keep them. */
-  onSave: (variants: Array<{ slot: SlotId; blob: Blob }>) => Promise<boolean>;
+  onSave: (variants: Array<{ slot: BrandSlot; blob: Blob }>) => Promise<boolean>;
   onRemove: () => Promise<void>;
   disabled?: boolean;
 }
@@ -32,7 +33,7 @@ export function ImageField({ field, current, onSave, onRemove, disabled }: Image
   const canvas = useRef<HTMLCanvasElement>(null);
   const drag = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
   const aspect = FIELD_ASPECT[field];
-  const master = SLOTS[FIELD_SLOTS[field][0]!];
+  const master = BRAND_SLOTS[FIELD_SLOTS[field][0]!];
 
   // Live crop preview on a canvas (no object URL needed for the picked file).
   useEffect(() => {
@@ -70,8 +71,8 @@ export function ImageField({ field, current, onSave, onRemove, disabled }: Image
     setWorking(true);
     setErr(null);
     try {
-      const variants: Array<{ slot: SlotId; blob: Blob }> = [];
-      for (const slot of FIELD_SLOTS[field]) variants.push({ slot, blob: await encodeVariant(picked, aspect, crop, SLOTS[slot]) });
+      const variants: Array<{ slot: BrandSlot; blob: Blob }> = [];
+      for (const slot of FIELD_SLOTS[field]) variants.push({ slot, blob: await encodeVariant(picked, aspect, crop, BRAND_SLOTS[slot]) });
       const kept = await onSave(variants);
       setNotSaved(!kept);
       setPicked(null);
@@ -153,7 +154,7 @@ export function ImageField({ field, current, onSave, onRemove, disabled }: Image
       )}
       {err && (
         <div class="err small" data-testid={`brand-image-error-${field}`}>
-          {t(err.code, err.params)}
+          {t(err.key, err.params)}
         </div>
       )}
       {notSaved && <p class="muted small">{t('admin.brand.img.notSaved')}</p>}

@@ -1,78 +1,56 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import type { MessageKey } from '@swarmcast/shared';
+import type { MessageKey, MessageParams } from '@swarmcast/shared';
+import { deriveTheme, drawQr, qrMatrix, renderBrandAbout, renderBrandHeader, renderSupportButton, type PublicBranding, type ThemeMode } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
-import { buildBrCode, parsePixKey } from './pix.js';
-import { drawQr, encodeQr } from './qr.js';
-import { deriveTheme, previewVars, type ThemeName } from './theme.js';
-import type { BrandingText, SupportLabel } from './types.js';
-import { parseBrandUrl, PLATFORM_NAMES, type BrandLink } from './url.js';
+import { previewVars } from './preview-theme.js';
+import { toPublic, type PreviewImages } from './public.js';
+import type { Draft } from './types.js';
 
 /**
- * A faithful component render of what viewers see (plan branding-0.4.0 §2.7): the watch page's
- * header, banner and About card, the join card and the end screen, with the derived theme
- * tokens, in light or dark and at computer or phone width. Not an iframe: the viewer pages
- * cannot be framed. Text only through text nodes; every href comes from parseBrandUrl.
+ * What viewers see (plan branding-0.4.0 §2.7), drawn by the viewers' own renderer
+ * (`@swarmcast/shared/branding` render-dom: createElement + textContent only) inside the panel,
+ * with the derived theme tokens, in light or dark and at computer or phone width. Not an
+ * iframe: the viewer pages cannot be framed. The join card and the end screen, which the viewer
+ * pages build themselves, are Preact text nodes here.
  */
 
-export interface PreviewImages {
-  avatar?: string;
-  banner?: string;
-}
+const tr = (key: MessageKey, params?: MessageParams): string => t(key, params);
 
-const SUPPORT_KEY: Record<SupportLabel, MessageKey> = {
-  tip: 'admin.brand.pv.support.tip',
-  support: 'admin.brand.pv.support.support',
-  donate: 'admin.brand.pv.support.donate',
-  pix: 'admin.brand.pv.support.pix',
-};
-
-/** Only object URLs this panel made, or the panel's own branding file route. */
-export function safeImageSrc(src: string | undefined): string | undefined {
-  if (!src) return undefined;
-  if (src.startsWith('blob:')) return src;
-  return /^\/api\/branding\/file\/[0-9a-f]{64}\.(png|jpg|webp)$/.test(src) ? src : undefined;
+/** Mount a render-dom node into a container (replacing what was there). */
+function useMount(ref: { current: HTMLElement | null }, build: (doc: Document) => HTMLElement | null, deps: unknown[]): void {
+  useEffect(() => {
+    const host = ref.current;
+    if (!host) return;
+    const node = build(host.ownerDocument);
+    if (node) host.replaceChildren(node);
+    else host.replaceChildren();
+  }, deps);
 }
 
 /** "Join {name}'s stream" with the name as its own <bdi> node (never concatenated into markup). */
 function Interpolated({ template, name }: { template: string; name: string }) {
-  const mark = '';
-  const [before = '', after = ''] = template.split(mark);
+  const [before = '', after = ''] = template.split('');
   return (
     <>
       {before}
-      <bdi>{name}</bdi>
+      <bdi dir="auto">{name}</bdi>
       {after}
     </>
   );
 }
 
-function ExternalLink({ link, label, class: cls, testid }: { link: BrandLink; label: string; class?: string; testid?: string }) {
-  return (
-    <a class={cls} href={link.href} target="_blank" rel="noopener noreferrer nofollow" referrerpolicy="no-referrer" data-testid={testid}>
-      <bdi>{label}</bdi>
-    </a>
-  );
-}
-
-function Avatar({ src, size }: { src?: string; size: 'sm' | 'lg' }) {
-  const safe = safeImageSrc(src);
-  return safe ? <img class={`bp-avatar bp-avatar-${size}`} src={safe} alt="" data-testid="bp-avatar" /> : <span class={`bp-avatar bp-avatar-${size} sc-symbol`} aria-hidden="true" />;
-}
-
-function PixSheet({ d, onClose }: { d: BrandingText; onClose: () => void }) {
+function PixSheet({ pix, onClose }: { pix: NonNullable<NonNullable<PublicBranding['support']>['pix']>; onClose: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  const s = d.support!;
-  const key = parsePixKey(s.pixKey ?? '');
-  let code: string | null = null;
-  try {
-    code = key.ok ? buildBrCode({ key: key.key, name: s.pixName ?? '', city: s.pixCity ?? '' }) : null;
-  } catch {
-    code = null;
-  }
   useEffect(() => {
-    if (canvas.current && code) drawQr(canvas.current, encodeQr(code), 4);
-  }, [code]);
+    const c = canvas.current;
+    if (!c) return;
+    const m = qrMatrix(pix.payload);
+    const scale = 4;
+    c.width = c.height = (m.length + 8) * scale;
+    const ctx = c.getContext('2d');
+    if (ctx) drawQr(ctx, m, scale);
+  }, [pix.payload]);
   const copy = (what: string, text: string): void => {
     void navigator.clipboard?.writeText(text).then(
       () => setCopied(what),
@@ -87,72 +65,64 @@ function PixSheet({ d, onClose }: { d: BrandingText; onClose: () => void }) {
           {t('admin.brand.pv.close')}
         </button>
       </div>
-      {key.ok && (
-        <>
-          <div class="bp-muted">{t('admin.brand.pv.pixKey')}</div>
-          <code class="bp-code" data-testid="bp-pix-key">
-            {key.key}
-          </code>
-          <button type="button" class="bp-btn" data-testid="bp-pix-copy-key" onClick={() => copy('key', key.key)}>
-            {copied === 'key' ? t('common.copied') : t('admin.brand.pv.pixCopyKey')}
-          </button>
-        </>
-      )}
-      {code && (
-        <>
-          <button type="button" class="bp-btn" data-testid="bp-pix-copy-code" onClick={() => copy('code', code)}>
-            {copied === 'code' ? t('common.copied') : t('admin.brand.pv.pixCopyCode')}
-          </button>
-          <code class="bp-code bp-code-long" data-testid="bp-pix-code">
-            {code}
-          </code>
-          <div class="bp-muted">{t('admin.brand.pv.pixScan')}</div>
-          <canvas ref={canvas} class="bp-qr" data-testid="bp-pix-qr" aria-label="QR code" role="img" />
-        </>
-      )}
+      <div class="bp-muted">{t('admin.brand.pv.pixKey')}</div>
+      <code class="bp-code" data-testid="bp-pix-key">
+        {pix.key}
+      </code>
+      <button type="button" class="bp-btn" data-testid="bp-pix-copy-key" onClick={() => copy('key', pix.key)}>
+        {copied === 'key' ? t('common.copied') : t('admin.brand.pv.pixCopyKey')}
+      </button>
+      <button type="button" class="bp-btn" data-testid="bp-pix-copy-code" onClick={() => copy('code', pix.payload)}>
+        {copied === 'code' ? t('common.copied') : t('admin.brand.pv.pixCopyCode')}
+      </button>
+      <code class="bp-code bp-code-long" data-testid="bp-pix-code">
+        {pix.payload}
+      </code>
+      <div class="bp-muted">{t('admin.brand.pv.pixScan')}</div>
+      <canvas ref={canvas} class="bp-qr" data-testid="bp-pix-qr" role="img" aria-label="QR code" />
       <div class="bp-muted bp-small">{t('admin.brand.pv.pixPayerSees')}</div>
     </div>
   );
 }
 
-function SupportButton({ d, onPix }: { d: BrandingText; onPix: () => void }) {
-  const s = d.support;
-  if (!s) return null;
-  const label = t(SUPPORT_KEY[s.label]);
-  if (s.mode === 'link') {
-    const r = parseBrandUrl(s.url ?? '');
-    return r.ok ? <ExternalLink link={r.value} label={label} class="bp-btn bp-support" testid="bp-support" /> : null;
-  }
-  return parsePixKey(s.pixKey ?? '').ok ? (
-    <button type="button" class="bp-btn bp-support" data-testid="bp-support" onClick={onPix}>
-      {label}
-    </button>
-  ) : null;
-}
-
-export function Preview({ draft: d, images }: { draft: BrandingText; images: PreviewImages }) {
+export function Preview({ draft, images }: { draft: Draft; images: PreviewImages }) {
   const [page, setPage] = useState<'watch' | 'join' | 'ended'>('watch');
   const [phone, setPhone] = useState(false);
-  const [theme, setTheme] = useState<ThemeName>(() => (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
-  const [more, setMore] = useState(false);
+  const [mode, setMode] = useState<ThemeMode>(() => (window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [pixOpen, setPixOpen] = useState(false);
-  const derived = deriveTheme(d.theme.preset, d.theme.accent);
-  const vars = previewVars(theme, derived, d.theme.corners);
-  const branded = d.enabled;
-  const name = branded ? d.name?.trim() : undefined;
-  const links = branded ? d.links.map((l) => ({ label: l.label.trim(), r: parseBrandUrl(l.url) })).filter((l) => l.label && l.r.ok) : [];
-  const banner = branded ? safeImageSrc(images.banner) : undefined;
-  const avatar = branded ? images.avatar : undefined;
-  const about = branded ? d.about?.trim() : undefined;
-  const tagline = branded ? d.tagline?.trim() : undefined;
-  const tags = branded ? d.tags : [];
-  const credit = !branded || d.showCredit;
+  const header = useRef<HTMLDivElement>(null);
+  const about = useRef<HTMLDivElement>(null);
+  const support = useRef<HTMLDivElement>(null);
+  const endedSupport = useRef<HTMLDivElement>(null);
+
+  const branded = draft.enabled;
+  const pub: PublicBranding = branded ? toPublic(draft, images) : { rev: 0, tags: [], links: [], theme: { preset: 'forest', corners: 'round' }, showCredit: true };
+  const derived = deriveTheme(branded ? draft.theme : { preset: 'forest' });
+  const vars = previewVars(mode, derived, branded ? draft.theme.corners : 'round');
+  const key = JSON.stringify(pub);
+  const lang = t('lang.name');
+  const opts = { t: tr };
+
+  const supportNode = (doc: Document): HTMLElement | null => {
+    const b = renderSupportButton(pub, { doc, ...opts });
+    if (b && pub.support?.pix) b.addEventListener('click', () => setPixOpen(true));
+    b?.setAttribute('data-testid', 'bp-support');
+    return b;
+  };
+  useMount(header, (doc) => (pub.name || pub.avatar || pub.tagline ? renderBrandHeader(pub, { doc, ...opts }) : null), [key, page, lang]);
+  useMount(about, (doc) => renderBrandAbout(pub, { doc, ...opts }), [key, page, lang]);
+  useMount(support, supportNode, [key, page, lang]);
+  useMount(endedSupport, supportNode, [key, page, lang]);
+  useEffect(() => {
+    if (!pub.support?.pix) setPixOpen(false);
+  }, [key]);
 
   const seg = <T extends string>(value: T, current: T, set: (v: T) => void, label: string, testid: string) => (
     <button type="button" class="seg-btn" aria-pressed={value === current} data-testid={testid} onClick={() => set(value)}>
       {label}
     </button>
   );
+  const credit = pub.showCredit && <footer class="bp-credit">{t('brand.credit')}</footer>;
 
   return (
     <div class="bp-wrap">
@@ -167,94 +137,53 @@ export function Preview({ draft: d, images }: { draft: BrandingText; images: Pre
           {seg<'d' | 'p'>('p', phone ? 'p' : 'd', (v) => setPhone(v === 'p'), t('admin.brand.preview.phone'), 'bp-phone')}
         </div>
         <div class="seg">
-          {seg<ThemeName>('light', theme, setTheme, t('admin.brand.preview.light'), 'bp-light')}
-          {seg<ThemeName>('dark', theme, setTheme, t('admin.brand.preview.dark'), 'bp-dark')}
+          {seg<ThemeMode>('light', mode, setMode, t('admin.brand.preview.light'), 'bp-light')}
+          {seg<ThemeMode>('dark', mode, setMode, t('admin.brand.preview.dark'), 'bp-dark')}
         </div>
       </div>
-      <div class={`bp ${phone ? 'bp-phone' : 'bp-desktop'}`} style={vars} data-theme-preview={theme} data-testid="brand-preview">
+      <div class={`bp ${phone ? 'bp-phone' : 'bp-desktop'}`} style={vars} data-mode={mode} data-testid="brand-preview">
         {page === 'watch' && (
           <div class="bp-page">
-            <header class="bp-header">
-              <Avatar src={avatar} size="sm" />
-              <span class="bp-name" data-testid="bp-name">
-                {name ? <bdi>{name}</bdi> : <span class="sc-wordmark">SwarmCast</span>}
-              </span>
+            <div class="bp-top">
+              {!pub.name && !pub.avatar && (
+                <span class="bp-stock">
+                  <span class="sc-symbol" aria-hidden="true" />
+                  <span class="sc-wordmark">SwarmCast</span>
+                </span>
+              )}
+              <div ref={header} class="bp-header-slot" data-testid="bp-header" />
               <span class="spacer" />
-              {branded && <SupportButton d={d} onPix={() => setPixOpen(true)} />}
-            </header>
-            {banner && <img class="bp-banner" src={banner} alt="" data-testid="bp-banner" />}
+              <div ref={support} class="bp-support-slot" />
+            </div>
+            {pub.banner && <img class="bp-banner" src={pub.banner.s1280} alt={pub.banner.alt ?? ''} data-testid="bp-banner" />}
             <div class="bp-video" aria-hidden="true">
               <span class="bp-live">{t('admin.brand.pv.live')}</span>
             </div>
-            {(tagline || about || tags.length > 0 || links.length > 0) && (
-              <section class="bp-about" data-testid="bp-about">
-                <h3>{t('admin.brand.pv.about')}</h3>
-                {tagline && (
-                  <p class="bp-tagline" data-testid="bp-tagline">
-                    <bdi>{tagline}</bdi>
-                  </p>
-                )}
-                {about && (
-                  <>
-                    <p class={`bp-about-text ${more ? '' : 'bp-clamp'}`} dir="auto" data-testid="bp-about-text">
-                      {about}
-                    </p>
-                    {about.split('\n').length > 6 || about.length > 400 ? (
-                      <button type="button" class="bp-btn-ghost" onClick={() => setMore(!more)}>
-                        {more ? t('admin.brand.pv.showLess') : t('admin.brand.pv.showMore')}
-                      </button>
-                    ) : null}
-                  </>
-                )}
-                {tags.length > 0 && (
-                  <ul class="bp-tags" data-testid="bp-tags">
-                    {tags.map((tag) => (
-                      <li key={tag}>
-                        <bdi>{tag}</bdi>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-                {links.length > 0 && (
-                  <ul class="bp-links" data-testid="bp-links">
-                    {links.map(({ label, r }, i) =>
-                      r.ok ? (
-                        <li key={i}>
-                          <ExternalLink link={r.value} label={label} class="bp-link" testid="bp-link" />
-                          <span class="bp-host">
-                            {r.value.platform ? `${PLATFORM_NAMES[r.value.platform]} · ` : ''}
-                            {r.value.display}
-                          </span>
-                        </li>
-                      ) : null,
-                    )}
-                  </ul>
-                )}
-              </section>
-            )}
-            {credit && <footer class="bp-credit">{t('admin.brand.pv.credit')}</footer>}
+            <div ref={about} class="bp-about-slot" data-testid="bp-about" />
+            {credit}
           </div>
         )}
         {page === 'join' && (
           <div class="bp-page bp-join">
             <div class="bp-join-card">
-              <Avatar src={avatar} size="lg" />
-              <h3 data-testid="bp-join-title">{name ? <Interpolated template={t('admin.brand.pv.join', { name: '' })} name={name} /> : t('admin.brand.pv.joinStock')}</h3>
-              <p class="bp-muted">{tagline ? <bdi>{tagline}</bdi> : t('admin.brand.pv.intro')}</p>
+              {pub.avatar ? <img class="bp-avatar-lg" src={pub.avatar.s256} alt="" /> : <span class="bp-avatar-lg sc-symbol" aria-hidden="true" />}
+              <h3 data-testid="bp-join-title">{pub.name ? <Interpolated template={t('admin.brand.pv.join', { name: '' })} name={pub.name} /> : t('admin.brand.pv.joinStock')}</h3>
+              <p class="bp-muted">{pub.tagline ? <bdi dir="auto">{pub.tagline}</bdi> : t('admin.brand.pv.intro')}</p>
               <span class="bp-input">{t('admin.brand.pv.nickname')}</span>
               <span class="bp-btn bp-btn-wide">{t('admin.brand.pv.joinButton')}</span>
             </div>
-            {credit && <footer class="bp-credit">{t('admin.brand.pv.credit')}</footer>}
+            {credit}
           </div>
         )}
         {page === 'ended' && (
           <div class="bp-page bp-ended">
-            {branded && avatar ? <Avatar src={avatar} size="lg" /> : <span class="bp-mascot sc-mascot sc-mascot-sleep" aria-hidden="true" />}
-            <p data-testid="bp-ended">{branded && d.endedMessage?.trim() ? <bdi>{d.endedMessage.trim()}</bdi> : t('admin.brand.pv.ended')}</p>
-            {branded && <SupportButton d={d} onPix={() => setPixOpen(true)} />}
+            {pub.avatar ? <img class="bp-avatar-lg" src={pub.avatar.s256} alt="" /> : <span class="bp-mascot sc-mascot sc-mascot-sleep" aria-hidden="true" />}
+            <p data-testid="bp-ended">{pub.endedMessage ? <bdi dir="auto">{pub.endedMessage}</bdi> : t('admin.brand.pv.ended')}</p>
+            <div ref={endedSupport} class="bp-support-slot" />
+            {credit}
           </div>
         )}
-        {pixOpen && d.support?.mode === 'pix' && <PixSheet d={d} onClose={() => setPixOpen(false)} />}
+        {pixOpen && pub.support?.pix && <PixSheet pix={pub.support.pix} onClose={() => setPixOpen(false)} />}
       </div>
     </div>
   );

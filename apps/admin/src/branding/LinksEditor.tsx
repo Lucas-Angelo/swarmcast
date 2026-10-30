@@ -1,21 +1,24 @@
+import { BRAND_MAX_LINKS } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
 import { Info } from '../Info.js';
-import type { BrandLinkConfig } from './types.js';
-import { LINKS_MAX, parseBrandUrl, PLATFORM_NAMES } from './url.js';
-import type { FieldErrors } from './validate.js';
+import { PLATFORM_NAMES } from './platforms.js';
+import type { Draft } from './types.js';
+import { isEmptyLink, linkOf, suggestLink, type FieldErrors } from './validate.js';
 
-/** Up to 6 links: a name and an address each; the site it goes to shows as soon as it parses. */
-export function LinksEditor({ links, errors, onChange }: { links: BrandLinkConfig[]; errors: FieldErrors; onChange: (links: BrandLinkConfig[]) => void }) {
-  const set = (i: number, patch: Partial<BrandLinkConfig>): void => onChange(links.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+/** Up to 6 links: a name and an address each; where it goes shows as soon as the address parses. */
+export function LinksEditor({ links, errors, onChange }: { links: Draft['links']; errors: FieldErrors; onChange: (links: Draft['links']) => void }) {
+  const set = (i: number, patch: Partial<Draft['links'][number]>): void => onChange(links.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   return (
     <div class="field" data-testid="brand-links">
       <span class="label-w">
         {t('admin.brand.links')} <Info text={t('admin.brand.links.tip')} />
       </span>
       {links.map((l, i) => {
-        const r = l.url.trim() ? parseBrandUrl(l.url) : null;
-        const labelErr = errors[`links.${i}.label`];
+        const r = l.url.trim() ? linkOf(l.url) : null;
+        const empty = isEmptyLink(l);
+        const labelErr = empty ? undefined : errors[`links.${i}.label`];
         const urlErr = l.url.trim() ? errors[`links.${i}.url`] : undefined;
+        const added = r?.ok && suggestLink(l.url) !== l.url.trim();
         return (
           <div class="bf-link-row" key={i} data-testid="brand-link-row">
             <input
@@ -43,12 +46,16 @@ export function LinksEditor({ links, errors, onChange }: { links: BrandLinkConfi
               {t('admin.brand.links.remove')}
             </button>
             {r?.ok && (
-              <span class="muted small bf-link-host" data-testid="brand-link-host">
-                {t('admin.brand.links.goesTo', { host: r.value.platform && r.value.platform !== 'email' ? `${PLATFORM_NAMES[r.value.platform]} (${r.value.display})` : r.value.display })}
-                {r.value.prefixed && r.value.kind === 'https' ? ` · ${t('admin.brand.links.prefixed')}` : ''}
+              <span class="muted small bf-link-msg" data-testid="brand-link-host">
+                {t('admin.brand.links.goesTo', { host: r.platform !== 'link' && r.platform !== 'mail' ? `${PLATFORM_NAMES[r.platform]} (${r.display})` : r.display })}
+                {added ? ` · ${r.kind === 'mailto' ? t('admin.brand.links.prefixedMail') : t('admin.brand.links.prefixed')}` : ''}
               </span>
             )}
-            {labelErr && l.url.trim() && <span class="small danger-text bf-link-msg">{t(labelErr.key, labelErr.params)}</span>}
+            {labelErr && (
+              <span class="small danger-text bf-link-msg" data-testid="brand-link-label-error">
+                {t(labelErr.key, labelErr.params)}
+              </span>
+            )}
             {urlErr && (
               <span class="small danger-text bf-link-msg" data-testid="brand-link-error">
                 {t(urlErr.key, urlErr.params)}
@@ -57,7 +64,7 @@ export function LinksEditor({ links, errors, onChange }: { links: BrandLinkConfi
           </div>
         );
       })}
-      {links.length < LINKS_MAX && (
+      {links.length < BRAND_MAX_LINKS && (
         <button type="button" class="small" data-testid="brand-link-add" onClick={() => onChange([...links, { label: '', url: '' }])}>
           {t('admin.brand.links.add')}
         </button>
