@@ -5,10 +5,14 @@ name: Pipeline
 #   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ──────────┐
 #            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
 #            │                              └─ desktop <target> ×5: build ─ clean-machine┤
-#            └─ site (when the site changed) ──────────────────────────────────────────┘
+#            ├─ site (when the site changed) ──────────────────────────────────────────┤
+#            └─ docker (when the Docker suites or what they run changed) ──────────────┘
 #
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
+# - docker: the Linux Docker suites (_docker.yml: package, start script, AppImage, OBS and the
+#   Playwright suite in containers, x64 and arm64), on their own builds. Also weekly through
+#   linux-docker.yml.
 # - build runs in parallel with quick; the test jobs download its artifacts (build once, test
 #   the same bytes everywhere).
 # - ci-ok is the one required check: it always reports, and it is red when any stage failed or
@@ -65,6 +69,7 @@ jobs:
       app: ${{ steps.changes.outputs.app }}
       site: ${{ steps.changes.outputs.site }}
       scripts: ${{ steps.changes.outputs.scripts }}
+      docker: ${{ steps.changes.outputs.docker }}
     steps:
       # A pull request's merge commit and its two parents.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -172,10 +177,16 @@ jobs:
     if: needs.changes.outputs.site == 'true'
     uses: ./.github/workflows/_site.yml
 
+  docker:
+    name: docker
+    needs: changes
+    if: needs.changes.outputs.docker == 'true'
+    uses: ./.github/workflows/_docker.yml
+
   # ---------------------------------------------------------------- the required check
   ci-ok:
     name: ci-ok
-    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site]
+    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site, docker]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -188,13 +199,14 @@ jobs:
           NEEDS: ${{ toJSON(needs) }}
           APP: ${{ needs.changes.outputs.app }}
           SITE: ${{ needs.changes.outputs.site }}
+          DOCKER: ${{ needs.changes.outputs.docker }}
         run: |
           app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node e2e windows'
           bad=0
           {
             echo '## ci-ok'
             echo
-            echo "Change: app=${APP:-?}, site=${SITE:-?}"
+            echo "Change: app=${APP:-?}, site=${SITE:-?}, docker=${DOCKER:-?}"
             echo
             echo '| stage | result | |'
             echo '|---|---|---|'
@@ -205,6 +217,7 @@ jobs:
             [ "$stage" = changes ] && needed=true
             [ "$APP" = true ] && [[ " $app_stages " == *" $stage "* ]] && needed=true
             [ "$SITE" = true ] && [ "$stage" = site ] && needed=true
+            [ "$DOCKER" = true ] && [ "$stage" = docker ] && needed=true
             verdict=ok
             case "$result" in
               success) ;;
