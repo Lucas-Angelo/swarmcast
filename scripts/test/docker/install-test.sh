@@ -12,6 +12,8 @@
 #   SKIP_SPEED    1 = pass --skip-speedtest to the first run too (default 0)
 set -u
 set -o pipefail
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$(dirname "$0")/lib.sh"
 
 RELEASE_URL="${RELEASE_URL:?RELEASE_URL is required}"
 CORRUPT_URL="${CORRUPT_URL:-}"
@@ -48,17 +50,6 @@ no_proc() {
 }
 tree_sum() { (cd "$1" 2>/dev/null && find . -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16); }
 port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
-
-# wait_for SECONDS COMMAND... -> 0 once COMMAND succeeds
-wait_for() {
-  local secs="$1" _i
-  shift
-  for _i in $(seq 1 "$((secs * 2))"); do
-    "$@" && return 0
-    sleep 0.5
-  done
-  return 1
-}
 
 run_script() { # run_script URL OUTFILE args... -> RC
   local url="$1" out="$2"
@@ -163,7 +154,7 @@ start_bg() { # start_bg OUTFILE -> APP_PID
 stop_and_check() { # stop_and_check SIGNAL OUTFILE
   local sig="$1" out="$2" rc
   kill -s "$sig" "$APP_PID"
-  if wait_for 45 bash -c "! kill -0 $APP_PID 2>/dev/null"; then ok "app exited after SIG$sig"; else bad "app still running 45 s after SIG$sig"; kill -9 "$APP_PID"; fi
+  if wait_for 45 gone "$APP_PID"; then ok "app exited after SIG$sig"; else bad "app still running 45 s after SIG$sig"; kill -9 "$APP_PID"; fi
   wait "$APP_PID" 2>/dev/null
   rc=$?
   eq "$rc" 0 "app exit code after SIG$sig"
@@ -278,9 +269,12 @@ if wait_for 60 phase_is waiting-obs; then ok "phase waiting-obs"; else bad "phas
 if pgrep -x mediamtx >/dev/null; then ok "mediamtx running"; else bad "mediamtx not running"; fi
 kill -9 "$APP_PID"
 wait "$APP_PID" 2>/dev/null
-sleep 5
+# The reaper sees its parent go at once (its stdin closes) or within its 1 s check, and gives up
+# on a kill after 8 s (REAP_CAP_MS, apps/server/src/process/children.ts): 10 s is its own bound.
+mediamtx_gone() { ! pgrep -f "/app/current/bin/mediamtx( |\$)" >/dev/null 2>&1 && ! port_open 1935; }
+wait_for 10 mediamtx_gone
 no_proc mediamtx
-if port_open 1935; then bad "port 1935 still open 5 s after SIGKILL"; else ok "port 1935 closed"; fi
+if port_open 1935; then bad "port 1935 still open 10 s after SIGKILL"; else ok "port 1935 closed"; fi
 pkill -9 -x mediamtx 2>/dev/null
 pkill -9 -f "/app/current/swarmcast" 2>/dev/null
 end

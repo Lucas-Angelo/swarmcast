@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Sourced by the Docker suites: pull_image IMAGE [PLATFORM] pulls a base image with retries.
 #
-# A registry hiccup (Docker Hub answered one CI run's pull with "502 Bad Gateway") is the
-# network, not the test: each try has a time limit, and a failed or slow try is retried after
+# Infra recovery, not a test retry: a registry hiccup (Docker Hub answered one CI run's pull with
+# "502 Bad Gateway") is the network, not the test: each try has a time limit, and a failed or slow try is retried after
 # a pause (5 s, 15 s, 45 s). `docker build` then finds the image locally and does not pull it
 # again (no --pull). An image that is already here is not pulled, so --no-build runs and
 # offline machines keep working. Exit code 1 after the last try, with every try's error.
@@ -17,7 +17,7 @@ pull_image() {
   fi
   for ((try = 1; try <= tries; try++)); do
     if out="$(${tmo[@]+"${tmo[@]}"} docker pull -q ${platform:+--platform "$platform"} "$image" 2>&1)"; then
-      if [ "$try" -gt 1 ]; then echo "pull $image: passed on retry (try $try of $tries; before: ${errors[*]})" >&2; fi
+      if [ "$try" -gt 1 ]; then echo "infra recovery: docker pull $image worked on try $try of $tries (before: ${errors[*]})" >&2; fi
       return 0
     fi
     errors+=("try $try: $(printf '%s' "$out" | tail -n 1)")

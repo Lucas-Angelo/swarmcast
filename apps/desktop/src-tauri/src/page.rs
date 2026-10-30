@@ -93,23 +93,48 @@ mod tests {
         Url::parse(s).unwrap()
     }
 
+    /// A tracker whose splash has loaded (the state after the first page load).
+    fn on_the_splash(t0: Instant) -> PageTracker {
+        let mut page = PageTracker::new(t0);
+        assert!(page.loaded(Page::Splash), "the first splash load");
+        page
+    }
+
+    /// The splash is served by Tauri on `tauri://localhost` (macOS, Linux) or `http://tauri.localhost`
+    /// (Windows); the panel is the server's http origin.
     #[test]
     fn pages_by_url() {
-        assert_eq!(Page::of(&u("tauri://localhost/index.html")), Page::Splash);
-        assert_eq!(Page::of(&u("http://tauri.localhost/index.html")), Page::Splash);
-        assert_eq!(Page::of(&window::splash_url()), Page::Splash);
-        assert_eq!(Page::of(&u("http://127.0.0.1:8081/auth/abc")), Page::Panel);
-        assert_eq!(Page::of(&u("about:blank")), Page::Other);
+        // Arrange
+        let urls = [
+            u("tauri://localhost/index.html"),
+            u("http://tauri.localhost/index.html"),
+            window::splash_url(),
+            u("http://127.0.0.1:8081/auth/abc"),
+            u("about:blank"),
+        ];
+
+        // Act
+        let pages = urls.map(|url| Page::of(&url));
+
+        // Assert
+        assert_eq!(pages, [Page::Splash, Page::Splash, Page::Splash, Page::Panel, Page::Other]);
     }
 
     /// The window was just built and the webview has no URL yet (where wry's `url()` panics on
     /// macOS): the shell knows the splash is loading without asking the webview.
     #[test]
     fn a_new_window_waits_for_its_splash_without_a_url() {
+        // Arrange
         let t0 = Instant::now();
         let mut page = PageTracker::new(t0);
-        assert_eq!(page.splash_route(t0), SplashRoute::Wait);
-        assert!(page.loaded(Page::Splash));
+
+        // Act
+        let while_loading = page.splash_route(t0);
+        let shown = page.loaded(Page::Splash);
+
+        // Assert
+        assert_eq!(while_loading, SplashRoute::Wait);
+        assert!(shown);
         assert_eq!(page.splash_route(t0), SplashRoute::Update);
     }
 
@@ -117,35 +142,61 @@ mod tests {
     /// the splash, and late events of the page being left change nothing.
     #[test]
     fn an_update_while_the_panel_loads_goes_back_to_the_splash() {
+        // Arrange
         let t0 = Instant::now();
         let mut page = PageTracker::new(t0);
+
+        // Act
         page.navigating(Page::Panel, t0);
-        assert!(!page.loaded(Page::Splash), "late event of the splash being left");
+        let late_splash_event = page.loaded(Page::Splash);
+
+        // Assert
+        assert!(!late_splash_event, "late event of the splash being left");
         assert_eq!(page.splash_route(t0), SplashRoute::Navigate);
+
+        // Act
         page.navigating(Page::Splash, t0);
-        assert!(!page.loaded(Page::Panel), "late event of the panel being left");
+        let late_panel_event = page.loaded(Page::Panel);
+
+        // Assert
+        assert!(!late_panel_event, "late event of the panel being left");
         assert_eq!(page.splash_route(t0), SplashRoute::Wait);
-        assert!(page.loaded(Page::Splash));
+
+        // Act
+        let shown = page.loaded(Page::Splash);
+
+        // Assert
+        assert!(shown);
         assert_eq!(page.splash_route(t0), SplashRoute::Update);
     }
 
+    /// The panel's /auth page opens / by itself, and a reload (Cmd+R) loads it again: more loads
+    /// of the panel than navigations of the shell, none of them the splash.
     #[test]
     fn the_panel_and_its_own_navigations_are_not_the_splash() {
+        // Arrange
         let t0 = Instant::now();
-        let mut page = PageTracker::new(t0);
-        assert!(page.loaded(Page::Splash));
+        let mut page = on_the_splash(t0);
         page.navigating(Page::Panel, t0);
-        assert!(page.loaded(Page::Panel));
-        // The panel's /auth page opens / by itself; a reload (Cmd+R) loads it again.
-        assert!(page.loaded(Page::Panel));
+
+        // Act
+        let loads = [page.loaded(Page::Panel), page.loaded(Page::Panel)];
+
+        // Assert
+        assert_eq!(loads, [true, true]);
         assert_eq!(page.splash_route(t0), SplashRoute::Navigate);
     }
 
     #[test]
     fn a_splash_load_that_never_reports_is_started_again() {
+        // Arrange
         let t0 = Instant::now();
         let mut page = PageTracker::new(t0);
+
+        // Act
         page.navigating(Page::Splash, t0);
+
+        // Assert
         assert_eq!(page.splash_route(t0 + SPLASH_LOAD_TIMEOUT - Duration::from_millis(1)), SplashRoute::Wait);
         assert_eq!(page.splash_route(t0 + SPLASH_LOAD_TIMEOUT), SplashRoute::Navigate);
     }
@@ -154,10 +205,14 @@ mod tests {
     /// place, but the shell cannot be sure of that: it navigates to the splash again.
     #[test]
     fn a_panel_navigation_that_never_loads_falls_back_to_navigating() {
+        // Arrange
         let t0 = Instant::now();
-        let mut page = PageTracker::new(t0);
-        assert!(page.loaded(Page::Splash));
+        let mut page = on_the_splash(t0);
+
+        // Act
         page.navigating(Page::Panel, t0);
+
+        // Assert
         assert_eq!(page.splash_route(t0 + Duration::from_secs(60)), SplashRoute::Navigate);
     }
 }

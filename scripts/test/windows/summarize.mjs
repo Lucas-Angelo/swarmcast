@@ -69,8 +69,8 @@ console.log(md);
 
 // ---------------------------------------------------------------------------
 // Soak mode (--soak): every result file of a soak (many jobs, and --repeat runs inside a job)
-// folded into one row per check: runs, pass, fail, warn, "passed on retry", and the 95 % upper
-// bound of its failure rate (0 failures in n runs gives about 3/n, the rule of three). Plus the
+// folded into one row per check: runs, pass, fail, warn, and the 95 % upper bound of its failure
+// rate (0 failures in n runs gives about 3/n, the rule of three; no check is ever retried). Plus the
 // duration of each section (median, p90, max) and the counts of every "<x>: outcome" info row
 // (for example the console close method and shutdown path, B2).
 // ---------------------------------------------------------------------------
@@ -118,11 +118,10 @@ function soakTable(list) {
         m.set(value, (m.get(value) ?? 0) + 1);
         continue;
       }
-      if (!checks.has(key)) checks.set(key, { suite: run.suite, runner: run.runner, section: r.section, name: r.name, runs: 0, pass: 0, fail: 0, warn: 0, skip: 0, retry: 0, failedIn: [] });
+      if (!checks.has(key)) checks.set(key, { suite: run.suite, runner: run.runner, section: r.section, name: r.name, runs: 0, pass: 0, fail: 0, warn: 0, skip: 0, failedIn: [] });
       const c = checks.get(key);
       c.runs++;
       if (r.status in c) c[r.status]++;
-      if (r.retry) c.retry++;
       if ((r.status === 'fail' || r.status === 'warn') && c.failedIn.length < 10) c.failedIn.push({ status: r.status, run: run.run?.url ?? null, rep: r.rep ?? 1, detail: r.detail.slice(0, 300) });
     }
     for (const s of run.sections ?? []) {
@@ -149,12 +148,12 @@ function soakSummary(t) {
   // Markdown table cell: backslashes first (Windows paths), then the cell separator.
   const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
   const out = ['## SwarmCast Windows soak', '', `${t.jobs} result files, ${t.checks.reduce((a, c) => a + c.runs, 0)} check runs.`, ''];
-  const bad = t.checks.filter((c) => c.fail || c.warn || c.retry);
-  out.push('### Checks that failed, warned or passed only on retry', '');
+  const bad = t.checks.filter((c) => c.fail || c.warn);
+  out.push('### Checks that failed or warned', '');
   if (!bad.length) out.push('None.', '');
   else {
-    out.push('| Suite | Runner | Section | Check | Runs | Fail | Warn | Passed on retry | Failure rate < (95 %) |', '|---|---|---|---|---|---|---|---|---|');
-    for (const c of bad.sort((a, b) => b.fail - a.fail || b.warn - a.warn)) out.push(`| ${c.suite} | ${c.runner} | ${esc(c.section)} | ${esc(c.name)} | ${c.runs} | ${c.fail} | ${c.warn} | ${c.retry} | ${pct(c.failUpper95)} |`);
+    out.push('| Suite | Runner | Section | Check | Runs | Fail | Warn | Failure rate < (95 %) |', '|---|---|---|---|---|---|---|---|');
+    for (const c of bad.sort((a, b) => b.fail - a.fail || b.warn - a.warn)) out.push(`| ${c.suite} | ${c.runner} | ${esc(c.section)} | ${esc(c.name)} | ${c.runs} | ${c.fail} | ${c.warn} | ${pct(c.failUpper95)} |`);
     out.push('');
     const links = bad.flatMap((c) => c.failedIn.map((f) => `- ${icon[f.status]} ${c.suite} on ${c.runner} [${esc(c.section)}] ${esc(c.name)}${f.rep > 1 ? ` (run ${f.rep})` : ''}${f.run ? ` [artifacts](${f.run})` : ''}: ${esc(f.detail)}`));
     if (links.length) out.push('<details><summary>Details and artifacts</summary>', '', ...links, '', '</details>', '');

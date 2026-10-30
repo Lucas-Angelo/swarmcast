@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
+import { CookieJar } from '../../../../scripts/test/lib/cookie-jar.mjs';
 import { clipFeedArgs, ensureClipSync, ffmpegBin, hasFfmpeg as ffmpegRuns, liveFeedArgs, type FeedOptions } from '../../../../scripts/test/lib/ffmpeg.mjs';
 import { allocPortMap, isBindError } from '../../../../scripts/test/lib/ports.mjs';
 import { descendants, spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
@@ -368,43 +369,14 @@ export function pushTestStream(rtmpUrl: string, o: FeedOptions & { logFile?: str
   return startFeed(rtmpUrl, { ...o, live: true }).child;
 }
 
-/** Tiny cookie jar for fetch-based "browsers". */
-export class Jar {
-  private cookies = new Map<string, string>();
-  constructor(private readonly base: string) {}
-  header(): string {
-    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
-  }
-  store(res: Response): void {
-    for (const sc of res.headers.getSetCookie()) {
-      const [pair, ...attrs] = sc.split(';');
-      const eq = pair!.indexOf('=');
-      const k = pair!.slice(0, eq).trim();
-      const v = pair!.slice(eq + 1).trim();
-      const expired = attrs.some((a) => /max-age=0/i.test(a) || /expires=thu, 01 jan 1970/i.test(a));
-      if (expired || v === '') this.cookies.delete(k);
-      else this.cookies.set(k, v);
-    }
-  }
-  async fetch(p: string, init: RequestInit = {}): Promise<Response> {
-    const res = await fetch(p.startsWith('http') ? p : this.base + p, {
-      ...init,
-      redirect: 'manual',
-      headers: { ...(init.headers as Record<string, string>), cookie: this.header() },
-    });
-    this.store(res);
-    return res;
-  }
-  has(name: string): boolean {
-    return this.cookies.has(name);
-  }
-}
+/** A fetch-based browser (its cookies, no redirects followed): the shared scripts/test/lib/cookie-jar.mjs. */
+export { CookieJar as Jar };
 
 /**
  * Open the live link, pick a nickname, and return the viewer's cookie jar. Like the join page,
  * solves the browser check (on by default) when the server asks for it.
  */
-export async function joinAs(base: string, liveLink: string, nickname: string, jar = new Jar(base)): Promise<Jar> {
+export async function joinAs(base: string, liveLink: string, nickname: string, jar = new CookieJar(base)): Promise<CookieJar> {
   const r1 = await jar.fetch(liveLink);
   if (r1.status !== 303) throw new Error(`join link returned ${r1.status}`);
   const ch = (await (await jar.fetch('/api/join/challenge')).json()) as { required: boolean; challenge?: Challenge };

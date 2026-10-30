@@ -41,6 +41,19 @@ export async function canListen(port) {
   return true;
 }
 
+/**
+ * True when something accepts TCP connections on host:port right now (a connect probe; 800 ms
+ * without an answer counts as no). For "is the app still listening" checks.
+ */
+export function isListening(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const s = net.connect({ port, host });
+    s.setTimeout(800, () => (s.destroy(), resolve(false)));
+    s.once('connect', () => (s.destroy(), resolve(true)));
+    s.once('error', () => resolve(false));
+  });
+}
+
 /** `n` distinct ports of this worker's block that are free right now. */
 export async function allocPorts(n) {
   const base = PORT_BASE + (poolId() % BLOCKS) * BLOCK;

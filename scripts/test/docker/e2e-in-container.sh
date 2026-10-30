@@ -4,6 +4,8 @@
 #   PROJECTS="firefox chromium"   Playwright projects to run
 set -u
 set -o pipefail
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$(dirname "$0")/lib.sh"
 PROJECTS="${PROJECTS:-firefox chromium}"
 
 echo "== copy the repo (without node_modules / build output)"
@@ -29,20 +31,21 @@ echo "== codec support of the bundled browsers"
 node scripts/test/docker/codec-probe.mjs
 
 # Processes the e2e web server (apps/server/test/e2e/server.ts) leaves behind once Playwright
-# has stopped it. Reported, then killed so the next invocation can bind its ports again.
+# has stopped it: still running LEFTOVER_GRACE_S after it (the server's own shutdown stops its
+# children before it exits). Reported, then killed so the next invocation can bind its ports.
 LEFTOVER=0
+LEFTOVER_GRACE_S=10
 LEFT_RE='vendor/linux-[a-z0-9]+/(mediamtx|cloudflared)|test/e2e/server\.ts'
+none_left() { ! pgrep -f "$LEFT_RE" >/dev/null; }
 leftovers() { # leftovers LABEL
   local l
-  sleep 2
+  wait_for "$LEFTOVER_GRACE_S" none_left && return
   l="$(pgrep -a -f "$LEFT_RE")"
-  if [ -n "$l" ]; then
-    echo "WARN after $1: processes left running after Playwright stopped the web server:"
-    printf '%s\n' "$l" | sed 's/^/  /'
-    LEFTOVER=1
-    pkill -9 -f "$LEFT_RE"
-    sleep 1
-  fi
+  echo "WARN after $1: processes left running $LEFTOVER_GRACE_S s after Playwright stopped the web server:"
+  printf '%s\n' "$l" | sed 's/^/  /'
+  LEFTOVER=1
+  pkill -9 -f "$LEFT_RE"
+  wait_for 10 none_left || echo "WARN after $1: still running after SIGKILL: $(pgrep -a -f "$LEFT_RE")"
 }
 
 declare -A RC

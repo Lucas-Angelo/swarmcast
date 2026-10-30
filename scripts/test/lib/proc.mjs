@@ -10,7 +10,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { formatExit } from './wait.mjs';
+import { formatExit, orTimeout } from './wait.mjs';
 
 const win = process.platform === 'win32';
 const TAIL_LINES = 200;
@@ -182,8 +182,8 @@ class Tracked extends EventEmitter {
         if (this.exitInfo) return;
         this.exitInfo = info;
         // Let the pipes drain so the last lines are in tail(); a grandchild holding them open
-        // must not keep the exit from being reported.
-        void Promise.race([closed, new Promise((r) => setTimeout(r, 500))]).then(() => {
+        // must not keep the exit from being reported (orTimeout clears its timer either way).
+        void orTimeout(closed, 500, null).then(() => {
           this.log(`--- ${new Date().toISOString()} ${this.name} pid ${this.pid ?? '?'} exited (${formatExit(info)})\n`);
           resolve(info);
         });
@@ -232,11 +232,12 @@ class Tracked extends EventEmitter {
     if (!this.exitInfo && graceMs > 0) {
       // Graceful: the process stops its own children (SwarmCast stops MediaMTX, its reaper exits).
       await killTree(pid, { signal: 'SIGTERM', waitMs: 0, tree: false });
-      await Promise.race([this.exited, new Promise((r) => setTimeout(r, graceMs))]);
+      await orTimeout(this.exited, graceMs, null);
     }
     // Also after an exit of its own: the child may have left its own children behind.
     const gone = await killTree(pid, { waitMs: timeoutMs, exited: !!this.exitInfo });
-    const exited = await Promise.race([this.exited.then(() => true), new Promise((r) => setTimeout(() => r(false), timeoutMs))]);
+    // No timer outlives the stop: a leftover one would keep the test process alive for nothing.
+    const exited = await orTimeout(this.exited.then(() => true), timeoutMs, false);
     if (!exited) throw new Error(`${this.name} (pid ${pid}) did not exit within ${timeoutMs} ms of a forced kill`);
     if (!gone) throw new Error(`${this.name} (pid ${pid}): a process of its tree is still running ${timeoutMs} ms after a forced kill`);
   }
@@ -250,6 +251,20 @@ class Tracked extends EventEmitter {
  */
 export function spawnTracked(command, args, o = {}) {
   return new Tracked(command, args, o);
+}
+
+/**
+ * What a wait needs of a process it depends on (an Owner of wait.mjs), for a child that is not
+ * tracked (a start script whose whole output a test reads): its exit, and the last lines of
+ * `output()`.
+ */
+export function ownerOf(child, name, output) {
+  const exited = new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) resolve({ code: child.exitCode, signal: child.signalCode });
+    child.once('exit', (code, sig) => resolve({ code, signal: sig }));
+    child.once('error', (err) => resolve({ code: null, signal: null, error: err.message }));
+  });
+  return { name, exited, tail: (n = 20) => output().split(/\r?\n/).filter(Boolean).slice(-n).join('\n') };
 }
 
 /** Stops every tracked child still running; throws one error listing every one that survived. */

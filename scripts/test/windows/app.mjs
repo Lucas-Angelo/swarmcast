@@ -14,9 +14,10 @@ import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ART, appLog, appProcess, check, checkWithRetry, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
-  killTree, killUnder, launchBrowser, listening, log, must, onCleanup, openPanel, opt, peSubsystem, pkgVersion, powershellExe, probe, processes, processesUnder,
-  ps, pushStream, quitAndVerify, readText, record, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, sleep, socketsOf, startApp, stats, ui, until, waitLiveLink, waitPhase, waitPlaying, bareEnv,
+  ART, appLog, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, here, info, installerResult, isLoopback, join, joinAndPlay,
+  killTree, killUnder, launchBrowser, listening, must, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, powershellExe, probe, processes, processesUnder,
+  ps, pushStream, quitAndVerify, readText, record, renderedTwice, uninstallAndVerify, uploadCapCheck, repoRoot, runInstaller, section, serve, socketsOf, startApp, stats, ui, until,
+  waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners, bareEnv,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -25,6 +26,13 @@ const relDir = path.join(work, 'rel');
 const home = path.join(process.env.LOCALAPPDATA, 'SwarmCast');
 const srv = await serve(relDir);
 const start = (args = ['-Yes', '-SkipSpeedtest', '-NoTunnel'], label = 'start') => startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home: undefined, args, label });
+/**
+ * How far a paused viewer falls behind hls.js' live target before the Go-live check resumes it:
+ * the viewer offers "Go live" from 4 s (two segments) behind, and the two seconds more keep it
+ * offered while playback resumes. Far inside MediaMTX's window and hls.js' 36 s maximum, past
+ * which hls.js would jump back to live by itself.
+ */
+const GO_LIVE_BEHIND_S = 6;
 const resetConfig = (fn) =>
   editConfig(home, (c) => {
     delete c.maxViewers;
@@ -50,6 +58,7 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   const chrome = await launchBrowser('chrome');
   const edge = await launchBrowser('msedge');
   const firefox = await launchBrowser('firefox');
+  const startedAt = Date.now();
   const app = await start(undefined, 'local');
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
@@ -98,16 +107,21 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   check('every TCP listener of SwarmCast/MediaMTX is on 127.0.0.1 (no firewall prompt)', exposed.length === 0, socks.tcp.map((t) => `${t.LocalAddress}:${t.LocalPort}`).join(' '));
   info('UDP endpoints of SwarmCast processes', socks.udp.map((t) => `${t.LocalAddress}:${t.LocalPort}`).join(' ') || 'none');
 
-  // Tray helper (needs the runner's interactive desktop).
+  // Tray helper (needs the runner's interactive desktop). The server logs "tray icon ready" when
+  // the helper reports its icon up (apps/server/src/tray/tray.ts), well within a second of the
+  // start; "tray helper exited" when it died (restarted once, then panel only). Only this run's
+  // lines count (pino's "time", against the start: --repeat runs this section again).
   const trayProc = processesUnder(home).find((p) => /swarmcast-tray/i.test(p.name));
-  const trayReady = /tray icon ready/.test(appLog(home));
   check('tray helper running next to the app', !!trayProc, describeProcs(processesUnder(home)));
-  record('tray helper reports "tray icon ready"', trayReady ? 'pass' : 'warn', trayReady ? 'icon up in the runner session' : `no "tray icon ready" in the log; tray lines: ${appLog(home).split('\n').filter((l) => /tray/.test(l)).slice(-3).join(' ')}`);
+  const trayLines = () => appLog(home).split('\n').filter((l) => /tray/.test(l) && Number(/"time":(\d+)/.exec(l)?.[1]) >= startedAt);
+  const trayReady = await until(() => trayLines().some((l) => l.includes('"msg":"tray icon ready"')), 30_000, '"tray icon ready" in the app log').then(() => true, () => false);
+  const trayExits = trayLines().filter((l) => l.includes('tray helper exited'));
+  check('tray helper reports "tray icon ready" and never exited', trayReady && trayExits.length === 0, trayReady && !trayExits.length ? 'icon up in the runner session' : `tray lines: ${trayLines().slice(-4).join(' ') || 'none'}`);
 
   await uploadCapCheck(app, 'panel with one viewer');
 
-  // Edge + Chrome P2P (Firefox not joined yet).
-  await sleep(25_000); // let the playlist fill so peers sit behind the live edge
+  // Edge + Chrome P2P (Firefox not joined yet): Edge must start on segments Chrome already played.
+  await waitPlaylistForLateJoiners(early.page);
   const e = await joinAndPlay(edge, s0.liveLink, 'edge');
   check('viewer plays in Microsoft Edge', true, edge.version());
   await early.page.check('#p2p');
@@ -141,27 +155,26 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
     check('P2P Chrome<->Firefox (hash-verified)', !(p2pFf instanceof Error) && p2pFf.hashFailures + sc2.hashFailures === 0, p2pFf instanceof Error ? p2pFf.message : `Firefox down ${Math.round(p2pFf.p2pDownBytes / 1e3)} KB / up ${Math.round(p2pFf.p2pUpBytes / 1e3)} KB`);
   }
 
-  // Go-live button.
+  // Go-live button. The default Stable profile targets ~20 s behind the newest video, and a
+  // viewer who joined before the stream sits much closer than that (it started on the first
+  // segments): paused, it falls behind its live target as the live goes on (GO_LIVE_BEHIND_S).
   const gl = early.page.locator('[data-testid=go-live]');
   await early.page.waitForFunction(() => document.querySelector('[data-testid=go-live]')?.classList.contains('at-live'), null, { timeout: 20_000 });
-  // The default Stable profile targets ~20 s behind the newest video, and a viewer who joined
-  // before the stream sits much closer than that (it started on the first segments). "Go live"
-  // appears once the playhead is >= 4 s behind that target: pause until ~25 s behind the edge
-  // (inside MediaMTX's ~30 s window and hls.js' 36 s maximum).
   const lat0 = await early.page.evaluate(() => {
     const v = document.querySelector('video');
     return v.seekable.length ? v.seekable.end(v.seekable.length - 1) - v.currentTime : 0;
   });
-  const pauseS = Math.min(20, Math.max(6, 25 - lat0));
+  const tPause = Date.now();
   await early.page.evaluate(() => document.querySelector('video').pause());
-  await sleep(pauseS * 1000);
-  await early.page.evaluate(() => document.querySelector('video').play());
-  await sleep(1500);
+  await early.page.waitForFunction((min) => Number(document.querySelector('[data-testid=go-live]')?.dataset.behind || 0) >= min, GO_LIVE_BEHIND_S, { timeout: 60_000, polling: 250 });
+  const pausedS = (Date.now() - tPause) / 1000;
+  // play() resolves after the 'playing' event, whose listener in the page updates the button.
+  await early.page.evaluate(() => Promise.race([document.querySelector('video').play(), new Promise((_, fail) => setTimeout(() => fail(new Error('playback did not resume within 15 s')), 15_000))]));
   const behind = await gl.getAttribute('data-behind');
   const notAtLive = !(await gl.evaluate((el) => el.classList.contains('at-live')));
   await gl.click();
   const back = await early.page.waitForFunction(() => document.querySelector('[data-testid=go-live]')?.classList.contains('at-live'), null, { timeout: 15_000 }).then(() => true, () => false);
-  check('Go-live: after a pause it offers "Go live", one click returns to the live edge', notAtLive && back, `${lat0.toFixed(1)} s from the edge, paused ${pauseS.toFixed(1)} s, ${behind} s behind the live target before the click`);
+  check('Go-live: after a pause it offers "Go live", one click returns to the live edge', notAtLive && back, `${lat0.toFixed(1)} s from the edge, paused ${pausedS.toFixed(1)} s (until ${GO_LIVE_BEHIND_S} s behind the live target), ${behind} s behind it before the click`);
 
   // Kick (Firefox if it joined, else a new Edge viewer).
   const victim = f instanceof Error ? await joinAndPlay(edge, s0.liveLink, 'kick-me') : f;
@@ -236,7 +249,10 @@ await section('2. pt-BR UI, session cap (maxViewers=2 -> "full"), auto-stop', as
   );
   const ptPanel = await openPanel(chrome, app.loginUrl, 'panel-ptbr', pt);
   if (fs.existsSync(path.join(repoRoot, 'apps', 'admin', 'src', 'onboarding'))) {
-    await sleep(2000);
+    // The panel asks /api/onboarding once as it loads and opens the tutorial from the answer:
+    // the check comes after that answer arrived and two frames were rendered since.
+    await ptPanel.page.waitForFunction(() => performance.getEntriesByType('resource').some((e) => new URL(e.name).pathname === '/api/onboarding' && e.responseEnd > 0), null, { timeout: 30_000, polling: 100 });
+    await renderedTwice(ptPanel.page);
     check('setup tutorial does not reopen after it was finished (new browser profile)', !(await ptPanel.page.locator('[data-testid=onboarding]').isVisible()));
   }
   const stopLabel = ui('pt-BR', 'admin.stopAll');
@@ -266,37 +282,25 @@ await section('2. pt-BR UI, session cap (maxViewers=2 -> "full"), auto-stop', as
 await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async () => {
   resetConfig();
   const browsers = [await launchBrowser('chrome'), await launchBrowser('msedge'), await launchBrowser('firefox')];
-  let done = false;
-  for (let attempt = 1; attempt <= 2 && !done; attempt++) {
-    const app = await start(['-Yes', '-SkipSpeedtest'], `tunnel-${attempt}`);
-    try {
-      const s0 = await waitLiveLink(app, 180_000);
-      must('live link on trycloudflare.com', /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\//.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, ''));
-      const feed = pushStream(s0.rtmpUrl, s0.streamKey);
-      await waitPhase(app, 'live');
-      for (const b of browsers) {
-        // Through Cloudflare's network: one retry on a fresh page, recorded as "passed on retry".
-        await checkWithRetry(`viewer plays through the tunnel in ${b.__kind}`, async (n) => {
-          const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}${n > 1 ? '-retry' : ''}`);
-          await v.context.close();
-        });
-      }
-      const base = s0.liveLink.replace(/\/join\/.*/, '');
-      const stop = await app.api('/api/live/stop', {});
-      check('[tunnel] "Stop everything" verified', stop.verified === true);
-      check('[tunnel] cloudflared gone', !processesUnder(home).some((p) => /cloudflared/i.test(p.name)));
-      check('[tunnel] public address no longer answers', !(await probe(base)));
-      feed.stop();
-      await quitAndVerify(app, home, 'tunnel');
-      done = true;
-    } catch (e) {
-      log(`tunnel attempt ${attempt} failed: ${e.message}`);
-      killTree(app.inst.child.pid); // first the start script, which would restart a killed app
-      killUnder(home);
-      if (attempt === 2) throw e;
-      await sleep(15_000);
-    }
+  const app = await start(['-Yes', '-SkipSpeedtest'], 'tunnel');
+  onCleanup(() => killUnder(home));
+  const s0 = await waitLiveLink(app, 180_000);
+  must('live link on trycloudflare.com', /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\//.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, ''));
+  const feed = pushStream(s0.rtmpUrl, s0.streamKey);
+  await waitPhase(app, 'live');
+  // Once each, no retry: a viewer that does not play is a failure (its page state is dumped).
+  for (const b of browsers) {
+    const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}`).catch((err) => err);
+    check(`viewer plays through the tunnel in ${b.__kind}`, !(v instanceof Error), v instanceof Error ? v.message.split('\n')[0] : '');
+    if (!(v instanceof Error)) await v.context.close();
   }
+  const base = s0.liveLink.replace(/\/join\/.*/, '');
+  const stop = await app.api('/api/live/stop', {});
+  check('[tunnel] "Stop everything" verified', stop.verified === true);
+  check('[tunnel] cloudflared gone', !processesUnder(home).some((p) => /cloudflared/i.test(p.name)));
+  check('[tunnel] public address no longer answers', !(await probe(base)));
+  feed.stop();
+  await quitAndVerify(app, home, 'tunnel');
   copyAppLogs(home, 'tunnel');
 });
 
@@ -318,7 +322,7 @@ await section('4. taskkill /F on the app: the reaper removes MediaMTX, cloudflar
   const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 20_000, 'reaper').catch(() => processesUnder(home));
   check('after taskkill /F: no reaper/MediaMTX/cloudflared/tray/ffmpeg left', left.length === 0, left.length ? `left: ${describeProcs(left)}` : `killed: ${describeProcs(before.filter((p) => p.pid !== main.pid))}`);
   check('after taskkill /F: port 1935 free', !(await listening(1935)));
-  const code = await Promise.race([app.inst.exit, sleep(10_000).then(() => 'timeout')]);
+  const code = await orTimeout(app.inst.exit, 10_000, 'timeout');
   info('start script exit code after the app was killed', String(code));
 });
 
@@ -329,8 +333,9 @@ async function startInConsole(label) {
   const env = bareEnv({ releaseUrl: srv.url });
   const r = spawnSync(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(here, 'launch-console.ps1'), '-Launcher', launcher, '-Title', `SwarmCast ${label}`], { env, encoding: 'utf8', timeout: 60_000 });
   info('console launcher', (r.stdout || r.stderr || '').trim());
+  // 1935 listens only once the app has its Ctrl+C / Ctrl+Break handlers (main.ts starts the live
+  // after them), and the start script logged its window watch before it started the app.
   await until(async () => (await listening(1935)) && appProcess(home), 180_000, 'app live in its console window');
-  await sleep(3000);
   const watch = readText(path.join(home, 'logs', 'install.log')).match(/Window watch.*$/gm)?.pop();
   info('start script window watch', watch ?? 'no "Window watch" line in install.log');
   return { pid: appProcess(home).pid, launcher };
@@ -418,7 +423,7 @@ await section('6. uninstall-windows.cmd during a live (tunnel, viewer watching),
       () => info('viewer after uninstall', 'no end screen (the app was force-stopped or the tunnel vanished)'),
     );
   }
-  const code = await Promise.race([app.inst.exit, sleep(15_000).then(() => 'timeout')]);
+  const code = await orTimeout(app.inst.exit, 15_000, 'timeout');
   info('start script exit code after the uninstaller stopped SwarmCast', String(code));
   feed.stop();
 });

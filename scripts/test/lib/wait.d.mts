@@ -34,6 +34,24 @@ export interface UntilOptions {
 
 export function until(pred: () => boolean | Promise<boolean>, o: UntilOptions): Promise<void>;
 
+export interface PollOptions {
+  timeoutMs: number;
+  what: string;
+  detail?: () => string;
+  abortOn?: readonly Owner[];
+  /** Interval between two calls of `fn` (default 500 ms). */
+  everyMs?: number;
+}
+
+/**
+ * Polls `fn` until it returns something truthy and resolves with it; a throw means "not yet",
+ * except a WaitError, which fails the wait at once.
+ */
+export function poll<T>(fn: () => T | Promise<T>, o: PollOptions): Promise<NonNullable<T>>;
+
+/** What `promise` resolves to, or `fallback` after `ms` (the timer is cleared either way). */
+export function orTimeout<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F>;
+
 export interface LineSource extends Owner, EventEmitter {
   readonly lines: readonly string[];
 }

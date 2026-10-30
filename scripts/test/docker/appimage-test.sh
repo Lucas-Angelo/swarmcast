@@ -13,8 +13,13 @@
 # HTTP goes through bash's /dev/tcp, so no HTTP client (and none of its libraries) is installed.
 set -u
 set -o pipefail
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$(dirname "$0")/lib.sh"
 
 APPIMAGE_FILE="${APPIMAGE_FILE:?APPIMAGE_FILE is required}"
+# Measured: the app must still run this long after it opened the panel (a crash while the
+# webview loads it shows here). The one wait that is a duration, on purpose.
+ALIVE_AFTER_PANEL_S=5
 EXPECT_VER="${EXPECT_VER:-}"
 W="$(mktemp -d /tmp/sc-appimage.XXXXXX)"
 LOGIN="$W/login.txt"
@@ -22,7 +27,6 @@ DESKTOP_LOG="$HOME/.local/share/swarmcast/logs/desktop.log"
 FAIL=0
 ok() { printf 'PASS %s\n' "$*"; }
 bad() { printf 'FAIL %s\n' "$*"; FAIL=$((FAIL + 1)); }
-wait_for() { local s="$1" _i; shift; for _i in $(seq 1 "$((s * 2))"); do "$@" && return 0; sleep 0.5; done; return 1; }
 
 # http METHOD PORT PATH [COOKIE]: prints the raw response (status line, headers, body).
 http() {
@@ -105,10 +109,10 @@ else
 fi
 
 if wait_for 30 grep -qF 'ready, opening the panel' "$DESKTOP_LOG"; then ok "the shell opens the panel in its window"; else bad "the shell never logged 'ready, opening the panel'"; fi
-sleep 5
-procs="$(app_procs)"
-if [[ "$procs" == *swarmcast-desktop* ]]; then ok "the app is still running 5 s later"; else bad "the app exited after opening the panel"; fi
-if [[ "$procs" == *WebKitWebProcess* ]]; then ok "WebKitGTK started its web process (the window has a webview)"; else bad "no WebKitWebProcess: the window has no webview"; fi
+web_process() { [[ "$(app_procs)" == *WebKitWebProcess* ]]; }
+if wait_for 30 web_process; then ok "WebKitGTK started its web process (the window has a webview)"; else bad "no WebKitWebProcess within 30 s: the window has no webview"; fi
+sleep "$ALIVE_AFTER_PANEL_S"
+if [[ "$(app_procs)" == *swarmcast-desktop* ]]; then ok "the app is still running $ALIVE_AFTER_PANEL_S s later"; else bad "the app exited after opening the panel"; fi
 if grep -E 'error while loading shared libraries|cannot open shared object|panicked at' "$W/app.log" "$DESKTOP_LOG" 2>/dev/null; then bad "missing library or panic in the output (above)"; else ok "no missing library or panic in the output"; fi
 grep -F 'no tray icon' "$DESKTOP_LOG" 2>/dev/null | sed 's/^/INFO /'
 

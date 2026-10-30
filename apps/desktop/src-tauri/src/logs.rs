@@ -129,48 +129,92 @@ pub fn shell(msg: impl AsRef<str>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
     use std::time::Duration;
 
-    #[test]
-    fn data_dir_matches_the_server() {
-        let env = |vars: &'static [(&'static str, &'static str)]| {
-            move |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| PathBuf::from(v))
-        };
-        assert_eq!(
-            data_dir_for("windows", env(&[("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local"), ("USERPROFILE", "C:\\Users\\a")])),
-            PathBuf::from("C:\\Users\\a\\AppData\\Local").join("SwarmCast")
-        );
-        assert_eq!(data_dir_for("macos", env(&[("HOME", "/Users/a")])), PathBuf::from("/Users/a/Library/Application Support/SwarmCast"));
-        assert_eq!(data_dir_for("linux", env(&[("HOME", "/home/a")])), PathBuf::from("/home/a/.local/share/swarmcast"));
-        assert_eq!(data_dir_for("linux", env(&[("HOME", "/home/a"), ("XDG_DATA_HOME", "/x")])), PathBuf::from("/x/swarmcast"));
-        // Made absolute like the server's path.resolve (on Windows "/tmp/sc" gets the current drive).
-        assert_eq!(
-            data_dir_for("macos", env(&[("HOME", "/Users/a"), ("SWARMCAST_DATA_DIR", "/tmp/sc")])),
-            std::path::absolute("/tmp/sc").unwrap()
-        );
+    /// An environment that holds only `vars`.
+    fn env_of(vars: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<PathBuf> {
+        move |k: &str| vars.iter().find(|(n, _)| *n == k).map(|(_, v)| PathBuf::from(v))
     }
 
+    #[test]
+    fn the_windows_data_dir_is_in_localappdata() {
+        // Arrange
+        let env = env_of(&[("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local"), ("USERPROFILE", "C:\\Users\\a")]);
+
+        // Act
+        let dir = data_dir_for("windows", env);
+
+        // Assert
+        assert_eq!(dir, PathBuf::from("C:\\Users\\a\\AppData\\Local").join("SwarmCast"));
+    }
+
+    #[test]
+    fn the_macos_data_dir_is_in_application_support() {
+        // Act
+        let dir = data_dir_for("macos", env_of(&[("HOME", "/Users/a")]));
+
+        // Assert
+        assert_eq!(dir, PathBuf::from("/Users/a/Library/Application Support/SwarmCast"));
+    }
+
+    #[test]
+    fn the_linux_data_dir_follows_xdg_data_home() {
+        // Act
+        let default = data_dir_for("linux", env_of(&[("HOME", "/home/a")]));
+        let xdg = data_dir_for("linux", env_of(&[("HOME", "/home/a"), ("XDG_DATA_HOME", "/x")]));
+
+        // Assert
+        assert_eq!(default, PathBuf::from("/home/a/.local/share/swarmcast"));
+        assert_eq!(xdg, PathBuf::from("/x/swarmcast"));
+    }
+
+    /// Made absolute like the server's `path.resolve` (on Windows "/tmp/sc" gets the current drive).
+    #[test]
+    fn an_explicit_data_dir_is_made_absolute() {
+        // Arrange
+        let env = env_of(&[("HOME", "/Users/a"), ("SWARMCAST_DATA_DIR", "/tmp/sc")]);
+
+        // Act
+        let dir = data_dir_for("macos", env);
+
+        // Assert
+        assert_eq!(dir, std::path::absolute("/tmp/sc").unwrap());
+    }
+
+    /// Milliseconds are kept, and the calendar handles a leap day (no date crate).
     #[test]
     fn formats_utc_timestamps() {
-        assert_eq!(timestamp(UNIX_EPOCH), "1970-01-01T00:00:00.000Z");
-        assert_eq!(timestamp(UNIX_EPOCH + Duration::from_millis(1_793_016_000_123)), "2026-10-26T12:00:00.123Z");
-        assert_eq!(timestamp(UNIX_EPOCH + Duration::from_secs(951_782_400)), "2000-02-29T00:00:00.000Z");
+        // Arrange
+        let times = [UNIX_EPOCH, UNIX_EPOCH + Duration::from_millis(1_793_016_000_123), UNIX_EPOCH + Duration::from_secs(951_782_400)];
+
+        // Act
+        let formatted = times.map(timestamp);
+
+        // Assert
+        assert_eq!(formatted, ["1970-01-01T00:00:00.000Z", "2026-10-26T12:00:00.123Z", "2000-02-29T00:00:00.000Z"]);
     }
 
+    /// Three times MAX_BYTES of lines: desktop.log stays under the limit, `KEEP` (2) old files
+    /// are kept and the oldest is dropped.
     #[test]
     fn rotates_by_size() {
-        let dir = std::env::temp_dir().join(format!("swarmcast-log-test-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        let path = dir.join("desktop.log");
-        let mut w = Writer { path: path.clone(), file: None, size: 0 };
+        // Arrange
+        let dir = TempDir::new("log-rotation");
+        let path = dir.path().join("desktop.log");
+        let mut writer = Writer { path: path.clone(), file: None, size: 0 };
         let line = "x".repeat(1023);
+
+        // Act
         for _ in 0..(MAX_BYTES / 1024) * 3 + 10 {
-            w.write_line(&line);
+            writer.write_line(&line);
         }
+        drop(writer);
+
+        // Assert
         assert!(fs::metadata(&path).unwrap().len() <= MAX_BYTES);
-        assert!(dir.join("desktop.log.1").exists());
-        assert!(dir.join("desktop.log.2").exists());
-        assert!(!dir.join("desktop.log.3").exists());
-        let _ = fs::remove_dir_all(&dir);
+        assert!(dir.path().join("desktop.log.1").exists());
+        assert!(dir.path().join("desktop.log.2").exists());
+        assert!(!dir.path().join("desktop.log.3").exists());
     }
 }
