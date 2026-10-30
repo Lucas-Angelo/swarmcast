@@ -33,7 +33,9 @@ export const brandingApi = {
   load: (): Promise<AdminBrandingState> => call('/api/branding', { method: 'GET' }),
   save: (text: BrandingText): Promise<AdminBrandingState> => call('/api/branding', json('PUT', text)),
   /** One rendered variant, as raw bytes with its sniffed image type. */
-  upload: (slot: BrandSlot, blob: Blob): Promise<AdminBrandingState> => call(`/api/branding/image/${slot}`, { method: 'PUT', headers: { 'Content-Type': blob.type }, body: blob }),
+  upload: async (slot: BrandSlot, blob: Blob): Promise<AdminBrandingState> =>
+    // The bytes, not the Blob: some engines stream a Blob body without a known length.
+    call(`/api/branding/image/${slot}`, { method: 'PUT', headers: { 'Content-Type': blob.type }, body: await blob.arrayBuffer() }),
   /** Removes a field's picture (its master slot; the variants go with it). */
   remove: (slot: BrandSlot): Promise<AdminBrandingState> => call(`/api/branding/image/${slot}`, json('DELETE')),
   reset: (): Promise<AdminBrandingState> => call('/api/branding/reset', json('POST')),
