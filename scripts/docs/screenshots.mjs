@@ -12,6 +12,7 @@
 // SWARMCAST_E2E_PORT_OFFSET (default 1500 here, so it can run next to the e2e suite).
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
@@ -37,6 +38,11 @@ const DESKTOP = { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 }
 // in the guides instead of filling the page.
 const PHONE = { ...devices['iPhone 15'], deviceScaleFactor: 1 };
 const MAX_BYTES = 250 * 1024;
+// The website's guide pictures (site/src/assets/guides/<section>/<en|pt-br>/<name>.webp), with
+// numbered callouts like the hand-made ones. WebP through sharp, a dependency of the site
+// (`npm ci --prefix site` first).
+const GUIDES = path.join(ROOT, 'site', 'src', 'assets', 'guides');
+const guideDir = (lang) => (lang === 'en' ? 'en' : 'pt-br');
 
 const log = (msg) => console.log(`[screenshots] ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,13 +76,15 @@ function startServer() {
   });
   let output = '';
   const ready = new Promise((resolve, reject) => {
+    // The server sends its own stdout (and "e2e server ready") to test-results/e2e-server.log, so
+    // ready means its test control port answers.
     const onData = (d) => {
       output += d;
-      if (output.includes('e2e server ready')) resolve();
     };
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     child.once('exit', (code) => reject(new Error(`e2e server exited (${code}):\n${output.slice(-2000)}`)));
+    void poll('the test control port', async () => (await fetch(new URL('/env', CONTROL))).ok, 90_000, 500).then(resolve, () => {});
   });
   const timeout = sleep(90_000).then(() => {
     throw new Error(`e2e server did not start in 90 s:\n${output.slice(-2000)}`);
@@ -240,6 +248,66 @@ async function joinViewer(browser, locale, nickname, contextOptions) {
   return { context, page };
 }
 
+// ---- guide pictures ---------------------------------------------------------------------
+
+let sharp = null;
+async function toWebp(png, out) {
+  sharp ??= createRequire(path.join(ROOT, 'site', 'package.json'))('sharp');
+  fs.mkdirSync(path.dirname(out), { recursive: true });
+  await sharp(png).webp({ quality: 82, effort: 6 }).toFile(out);
+}
+
+/**
+ * One guide picture: `target` (a locator) with `pad` px of page around it, each callout target
+ * outlined in amber with its number in a badge (CSSOM styles: allowed by every CSP here).
+ */
+async function guideShot(page, target, section, lang, name, { pad = 24, callouts = [] } = {}) {
+  await target.scrollIntoViewIfNeeded();
+  const boxes = [];
+  for (const [n, loc] of callouts.entries()) {
+    const b = await loc.boundingBox();
+    if (b) boxes.push({ n: n + 1, ...b });
+    else log(`${name}: callout ${n + 1} not visible`);
+  }
+  await page.evaluate((boxes) => {
+    for (const b of boxes) {
+      const ring = document.createElement('div');
+      const badge = document.createElement('div');
+      ring.dataset.guide = badge.dataset.guide = '1';
+      Object.assign(ring.style, { position: 'absolute', left: `${b.x + scrollX - 3}px`, top: `${b.y + scrollY - 3}px`, width: `${b.width + 6}px`, height: `${b.height + 6}px`, border: '2.5px solid #e9a92c', borderRadius: '8px', zIndex: '2147483646', pointerEvents: 'none', boxSizing: 'border-box' });
+      Object.assign(badge.style, { position: 'absolute', left: `${b.x + scrollX - 13}px`, top: `${b.y + scrollY - 13}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
+      badge.textContent = String(b.n);
+      document.body.append(ring, badge);
+    }
+  }, boxes);
+  const box = await target.boundingBox();
+  const vp = page.viewportSize();
+  const x = Math.max(0, Math.floor(box.x - pad));
+  const y = Math.max(0, Math.floor(box.y - pad));
+  const clip = { x, y, width: Math.min(vp.width - x, Math.ceil(box.width + pad * 2)), height: Math.ceil(box.height + pad * 2) };
+  const png = path.join(os.tmpdir(), `sc-guide-${process.pid}-${name}.png`);
+  await page.screenshot({ path: png, clip, animations: 'disabled', caret: 'hide' });
+  await page.evaluate(() => document.querySelectorAll('[data-guide]').forEach((e) => e.remove()));
+  const out = path.join(GUIDES, section, guideDir(lang), `${name}.webp`);
+  await toWebp(png, out);
+  fs.rmSync(png, { force: true });
+  log(`guide picture ${path.relative(ROOT, out)}`);
+  return out;
+}
+
+/** What the viewers and the streamer say in the pictures (made-up people, both languages). */
+const CHAT_LINES = {
+  en: { streamer: 'Welcome everyone! Starting in a minute :hi:', pedro: 'hi from my phone 👋', alex: 'great sound today :gg:', maria: 'can you show the map again?' },
+  'pt-BR': { streamer: 'Boa noite, pessoal! Já vamos começar :hi:', pedro: 'oi do celular 👋', alex: 'som tá ótimo hoje :gg:', maria: 'mostra o mapa de novo?' },
+};
+
+async function say(page, text) {
+  const input = page.getByTestId('chat-input');
+  await input.fill(text);
+  await poll('Send enabled', () => page.getByTestId('chat-send').isEnabled(), 15_000, 200);
+  await input.press('Enter');
+}
+
 // ---- captures ---------------------------------------------------------------------------
 
 async function captureLocale(browser, lang) {
@@ -310,6 +378,26 @@ async function captureLocale(browser, lang) {
   // (6) Viewer page on a phone (portrait).
   await waitPlaying(phone.page, 6);
   await shot(phone.page, `viewer-phone-${lang}.png`);
+
+  // (6b) The chat on the viewer page, for the "Chat" guide: the column with a few messages
+  // (hide, settings, emoji, send), then the viewer's chat settings (name colour).
+  if ((await desktop.page.getByTestId('chat').count()) > 0) {
+    const lines = CHAT_LINES[lang];
+    await adminApi('POST', '/api/chat/send', { text: lines.streamer });
+    await say(phone.page, lines.pedro);
+    await say(third.page, lines.alex);
+    await desktop.page.getByTestId('chat-list').getByText(lines.alex.split(' :')[0]).waitFor({ timeout: 10_000 });
+    await desktop.page.getByTestId('chat-input').fill(lines.maria);
+    const chat = desktop.page.getByTestId('chat');
+    await guideShot(desktop.page, chat, 'live', lang, 'chat-viewer', {
+      pad: 12,
+      callouts: [desktop.page.getByTestId('chat-settings-button'), desktop.page.getByTestId('chat-hide'), desktop.page.getByTestId('chat-picker-button'), desktop.page.getByTestId('chat-send')],
+    });
+    await desktop.page.getByTestId('chat-settings-button').click();
+    await guideShot(desktop.page, desktop.page.getByTestId('chat-settings'), 'live', lang, 'chat-viewer-settings', { pad: 12 });
+    await desktop.page.keyboard.press('Escape');
+    await desktop.page.getByTestId('chat-input').fill('');
+  }
 
   // (7) Join page with a nickname typed (not submitted).
   const joinCtx = await browser.newContext({ ...DESKTOP, locale: lang });
