@@ -75,7 +75,8 @@ const TEXT = {
 for (const lang of ['en', 'pt-BR'] as const) {
   test(`stable app (${lang}): "Get beta versions" is off; on and off again reach config.json and the shell`, { tag: '@ui' }, async ({ page }) => {
     const d = await startDesktop('0.2.2');
-    expect(channelsSent(d)).toEqual([null]);
+    // Sent right after "ready" (desktop.ts), as its own line: it may arrive a moment later.
+    await expect.poll(() => channelsSent(d)).toEqual([null]);
     await openPanel(page, d, lang);
     const toggle = page.getByTestId('beta-updates');
     await expect(page.getByTestId('desktop-card').getByText(TEXT[lang].label)).toBeVisible();
