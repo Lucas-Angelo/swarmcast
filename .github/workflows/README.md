@@ -94,6 +94,7 @@ schedules and releases are never cancelled.
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
+| `.github/actions/fetch-artifact` | `actions/download-artifact` tried up to three times with a pause between tries (every download in these workflows goes through it) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/soak-plan.json` | what `soak.yml` repeats |

@@ -324,13 +324,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/fetch-artifact
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/fetch-artifact
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
@@ -433,7 +433,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/fetch-artifact
         with:
           pattern: soak-*
           path: soak-results

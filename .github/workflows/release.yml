@@ -341,7 +341,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           npm-ci: 'false'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/fetch-artifact
         with:
           pattern: swarmcast-*
           merge-multiple: true
@@ -531,7 +531,7 @@ jobs:
 
       # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
       - name: Download the desktop installers
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/fetch-artifact
         with:
           pattern: desktop-*
           merge-multiple: true
