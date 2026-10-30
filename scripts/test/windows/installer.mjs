@@ -425,6 +425,14 @@ await section('14. uninstaller (-KeepSettings while live, reinstall keeps the st
   if (!fs.existsSync(uninstallCmd)) return record('scripts/uninstall-windows.cmd not on this commit', 'skip');
   const browser = await chrome();
   const keyBefore = JSON.parse(readText(path.join(homeU, 'secrets.json'))).streamKey;
+  // Uninstall right after the start: the start script restarts SwarmCast when it stops within
+  // 10 s, so the uninstaller must stop that script first, or SwarmCast comes back while its
+  // files are deleted (locked swarmcast.exe, port 8081 still open).
+  const app0 = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'uninstall-right-after-start' });
+  onCleanup(() => killUnder(homeU));
+  await uninstallAndVerify({ dir: relDir, home: homeU, args: ['-KeepSettings'], label: 'uninstall -KeepSettings within 10 s of the start' });
+  const script0 = await Promise.race([app0.inst.exit.then(() => 'exited'), sleep(15_000).then(() => 'running')]);
+  check('uninstall within 10 s of the start: the start script did not restart SwarmCast', script0 === 'exited' && !/Trying again in/.test(app0.inst.out()), `start script ${script0}; ${(/SwarmCast stopped right away[^\n]*/.exec(app0.inst.out()) ?? ['no restart attempt'])[0]}`);
   const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'before-uninstall-keep' });
   onCleanup(() => killUnder(homeU));
   await quickStreamCheck(app, browser, 'before uninstall');
