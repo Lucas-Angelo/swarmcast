@@ -18,22 +18,39 @@ export async function solvePow(challenge: Challenge, onProgress?: PowProgress): 
   return { challenge: { parameters: challenge.parameters, ...(challenge.signature ? { signature: challenge.signature } : {}) }, solution };
 }
 
+/**
+ * A worker that has said nothing for this long is stuck (it never started, or its script never
+ * arrived without an error event); the solve moves to the main thread. A working one reports
+ * every few hundred attempts, far more often.
+ */
+const WORKER_SILENT_MS = 15_000;
+
 function solveInWorker(challenge: Challenge, report: (attempts: number) => void): Promise<Solution | null> {
   return new Promise((resolve, reject) => {
     const worker = new Worker(new URL('./pow-worker.ts', import.meta.url), { type: 'module' });
+    let watchdog = 0;
+    const fail = (why: string): void => {
+      clearTimeout(watchdog);
+      worker.terminate();
+      reject(new Error(why));
+    };
+    const arm = (): void => {
+      clearTimeout(watchdog);
+      watchdog = window.setTimeout(() => fail('the worker stopped answering'), WORKER_SILENT_MS);
+    };
     worker.onmessage = (ev: MessageEvent<{ solution?: Solution | null; error?: string; attempts?: number }>) => {
       if (ev.data.attempts !== undefined) {
+        arm();
         report(ev.data.attempts);
         return;
       }
+      clearTimeout(watchdog);
       worker.terminate();
       if (ev.data.error) reject(new Error(ev.data.error));
       else resolve(ev.data.solution ?? null);
     };
-    worker.onerror = (ev) => {
-      worker.terminate();
-      reject(new Error(ev.message || 'worker failed'));
-    };
+    worker.onerror = (ev) => fail(ev.message || 'worker failed');
+    arm();
     worker.postMessage(challenge);
   });
 }

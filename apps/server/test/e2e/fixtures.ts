@@ -240,11 +240,38 @@ export async function liveLink(): Promise<string> {
   return (await adminState()).liveLink!;
 }
 
+/** How long join() waits for the final answer to POST /api/join (a browser check included). */
+const JOIN_ANSWER_MS = 60_000;
+
+/** The join page's own state, for a join that got no answer: which step it never finished. */
+function joinPageState(page: Page): Promise<string> {
+  return page
+    .evaluate(() => {
+      const el = (id: string) => document.getElementById(id);
+      const progress = el('check-progress') as HTMLProgressElement | null;
+      const sent = performance
+        .getEntriesByType('resource')
+        .map((r) => new URL(r.name).pathname)
+        .filter((p) => p.startsWith('/api/') || p.includes('pow-worker'));
+      return JSON.stringify({
+        readyState: document.readyState,
+        button: { disabled: (el('join') as HTMLButtonElement | null)?.disabled },
+        check: { hidden: el('check')?.hidden, progress: progress?.value },
+        error: el('error')?.hidden ? null : el('error')?.textContent,
+        requests: sent,
+      });
+    })
+    .catch((e: Error) => `unavailable (${e.message})`);
+}
+
 /** Make the link point at the test base URL (it already does without a tunnel). */
 export async function join(browser: Browser, nickname: string, link?: string, setup?: (context: BrowserContext) => Promise<void>): Promise<{ context: BrowserContext; page: Page }> {
   const context = await browser.newContext();
   await setup?.(context);
   const page = await context.newPage();
+  const consoleLines: string[] = [];
+  page.on('console', (m) => consoleLines.push(`${m.type()}: ${m.text()}`));
+  page.on('pageerror', (e) => consoleLines.push(`pageerror: ${e.message}`));
   await page.goto(link ?? (await liveLink()));
   await expect(page).toHaveURL(/\/join$/);
   await page.fill('#nickname', nickname);
@@ -262,7 +289,13 @@ export async function join(browser: Browser, nickname: string, link?: string, se
   answer.catch(() => {});
   shownError.catch(() => {});
   await page.click('#join');
-  const res = await Promise.race([answer, shownError]);
+  // No answer at all within a minute: fail with what the page was doing, not a bare test timeout.
+  let stuckTimer: ReturnType<typeof setTimeout> | undefined;
+  const stuck = new Promise<'stuck'>((resolve) => {
+    stuckTimer = setTimeout(() => resolve('stuck'), JOIN_ANSWER_MS);
+  });
+  const res = await Promise.race([answer, shownError, stuck]).finally(() => clearTimeout(stuckTimer));
+  if (res === 'stuck') throw new Error(`join as "${nickname}": no POST /api/join answer in ${JOIN_ANSWER_MS / 1000} s; the page: ${await joinPageState(page)}; console: ${JSON.stringify(consoleLines.slice(-20))}`);
   if (!res) throw new Error(`join as "${nickname}" failed without a final POST /api/join answer; the page says: ${await page.locator('#error').textContent()}`);
   expect(res.status(), `POST /api/join as "${nickname}" answered ${res.status()}: ${await res.text().catch(() => '(no body)')}`).toBe(200);
   await expect(page).toHaveURL(/\/watch$/);
