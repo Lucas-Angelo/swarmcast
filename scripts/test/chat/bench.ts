@@ -19,9 +19,8 @@ import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
 import type { MessageKey } from '@swarmcast/shared';
 import { defaultConfig } from '../../../apps/server/src/core/config.js';
-import type { DirectMode } from '../../../apps/server/src/direct/direct.js';
 import { TunnelProvider } from '../../../apps/server/src/tunnel/provider.js';
-import { makeController } from '../../../apps/server/test/unit/live-helpers.js';
+import { inactiveDirect, makeController } from '../../../apps/server/test/unit/live-helpers.js';
 import { writeJunit } from '../lib/junit.mjs';
 import type { BotStats } from './bots.js';
 import { SCENARIOS, type Scenario } from './scenarios.js';
@@ -149,7 +148,6 @@ interface Result {
 }
 
 async function runScenario(sc: Scenario): Promise<Result> {
-  const direct = { noteViewer: () => {}, snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
   const config = defaultConfig();
   config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
   config.security.requireBrowserCheck = false;
@@ -157,7 +155,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
   config.maxViewers = 1000;
   config.maxSessionsPerDevice = 3;
   config.chat = { ...config.chat, ...sc.chat, content: { ...config.chat.content, ...sc.chat?.content }, gif: { ...config.chat.gif, ...sc.chat?.gif } };
-  const { live } = makeController(direct, {
+  const { live } = makeController(inactiveDirect(), {
     config,
     tunnel: new FakeQuickTunnel(),
     // The server's own public address: none (never asks Cloudflare's trace endpoint).
