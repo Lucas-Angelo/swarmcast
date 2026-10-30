@@ -231,9 +231,11 @@ Installed apps and the scripts may already have it. A mistake is fixed by shippi
 
 For a beta (`vX.Y.Z-beta.N`), steps 1–5 are the same with these differences: the changelog stays under
 `## [Unreleased]` (the workflow takes the beta's notes from there; it must not be empty), the version is
-`X.Y.Z-beta.N` everywhere (step 2), and the pull request is titled `SwarmCast vX.Y.Z-beta.N` (or the
-minor's own pull request, `SwarmCast vX.Y.Z`, ships as its first beta). Then do **Verify a beta** below
-before the stable version.
+`X.Y.Z-beta.N` everywhere (step 2), and the beta is **not merged into `main`** (`main` only takes stable
+versions): once `ci-ok` is green on the minor's release pull request (branch `release/X.Y.Z`, titled
+`SwarmCast vX.Y.Z`), tag its head commit itself and push only the tag
+(`git tag -a vX.Y.Z-beta.N -m "SwarmCast vX.Y.Z-beta.N" <head> && git push origin vX.Y.Z-beta.N`).
+Then do **Verify a beta** below before the stable version.
 
 1. **Changelog.** In `CHANGELOG.md`, rename `## [Unreleased]` (or the prepared `## [X.Y.Z] - Unreleased`)
    to `## [X.Y.Z] - YYYY-MM-DD`, start a new empty `## [Unreleased]` above it, and update the link
