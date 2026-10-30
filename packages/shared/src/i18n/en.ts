@@ -1146,7 +1146,7 @@ export const en = {
   'admin.chat.group.safety': 'Safety',
   'admin.chat.group.looks': 'Looks',
   'admin.chat.group.emotes': 'Emotes',
-  'admin.chat.content.tip': 'Pick a mode with one click, or tick any mix. "Emotes only" allows emoji and SwarmCast emotes, no letters.',
+  'admin.chat.content.tip': 'Pick a mode with one click, or tick any mix. "Emotes only" allows emoji and SwarmCast emotes, no letters. "Text only" allows letters, no emoji or emotes.',
   'admin.chat.unit.seconds': 'seconds',
   'admin.chat.unit.characters': 'characters',
   'admin.chat.unit.messages': 'messages',

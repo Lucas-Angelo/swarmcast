@@ -1143,7 +1143,7 @@ export const ptBR: Messages = {
   'admin.chat.group.safety': 'Segurança',
   'admin.chat.group.looks': 'Aparência',
   'admin.chat.group.emotes': 'Emotes',
-  'admin.chat.content.tip': 'Escolha um modo com um clique ou marque qualquer combinação. "Só emotes" aceita emojis e emotes do SwarmCast, sem letras.',
+  'admin.chat.content.tip': 'Escolha um modo com um clique ou marque qualquer combinação. "Só emotes" aceita emojis e emotes do SwarmCast, sem letras. "Só texto" aceita letras, sem emojis nem emotes.',
   'admin.chat.unit.seconds': 'segundos',
   'admin.chat.unit.characters': 'caracteres',
   'admin.chat.unit.messages': 'mensagens',
