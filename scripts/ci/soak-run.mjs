@@ -88,11 +88,15 @@ export function commandsFor(row) {
   return COMMANDS[row.suite];
 }
 
-/** Infra problems the harnesses recover from by themselves: counted, not failed. */
+/**
+ * Problems of the runner's infrastructure (not of SwarmCast) that the harnesses wait out by
+ * themselves: counted, not failed. A check itself is never retried. The harnesses log their own
+ * as "infra recovery: <what>" (a brand-new quick-tunnel name, a busy disk image, a registry pull).
+ */
 const RECOVERIES = {
   'apt: slow or failed try, retried': /failed or took more than \d+ s \(try \d+/g,
   'hdiutil: Resource busy': /Resource busy/g,
-  'passed on retry': /passed on retry/gi,
+  'infra recovery': /infra recovery: /g,
 };
 
 // ------------------------------------------------------------------ parsers
@@ -144,13 +148,15 @@ export function playwrightChecks({ dir }) {
   return out;
 }
 
+/** cargo test's own lines; colour codes first stripped (CI runs it with CARGO_TERM_COLOR=always). */
 export function cargoChecks({ output }) {
+  const text = stripVTControlCharacters(output);
   const out = [];
-  for (const m of output.matchAll(/^test (\S+) \.\.\. (ok|FAILED|ignored)/gm)) {
+  for (const m of text.matchAll(/^test (\S+) \.\.\. (ok|FAILED|ignored)/gm)) {
     out.push({ name: m[1], status: { ok: 'pass', FAILED: 'fail' }[m[2]] ?? 'skip' });
   }
   for (const c of out.filter((c) => c.status === 'fail')) {
-    const block = output.split(`---- ${c.name} stdout ----`)[1];
+    const block = text.split(`---- ${c.name} stdout ----`)[1];
     c.error = firstLine(block?.split('\n').find((l) => /panicked at|assert/.test(l)));
   }
   return out;
