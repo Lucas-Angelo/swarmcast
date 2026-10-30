@@ -406,6 +406,54 @@ async function captureBranding(browser, lang) {
   }
 }
 
+
+/** The panel's chat and "Your page" cards, for the guides (skipped while the panel has no such card). */
+async function capturePanelGuides(browser, lang) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 2400 }, deviceScaleFactor: 1, locale: lang });
+  const panel = await ctx.newPage();
+  await panel.goto(admin.loginUrl.href);
+  await panel.waitForSelector('[data-testid="live-link"]');
+  const s = await state();
+
+  const card = panel.getByTestId('chat-card');
+  if ((await card.count()) > 0) {
+    await panel.getByTestId('chat-feed').locator('[data-testid="chat-msg"]').first().waitFor({ timeout: 15_000 }).catch(() => log('no chat messages in the panel'));
+    await panel.getByTestId('chat-input').fill(lang === 'en' ? 'Thanks for coming!' : 'Valeu por virem!');
+    await sanitize(panel, s);
+    // 1 on/off, 2 the messages, 3 send as the streamer, 4 flood protection, 5 clear.
+    await guideShot(panel, card, 'live', lang, 'chat-panel', {
+      callouts: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-feed'), panel.getByTestId('chat-send'), panel.getByTestId('chat-protect'), panel.getByTestId('chat-clear')],
+    });
+    await panel.getByTestId('chat-input').fill('');
+    // A viewer's message with its moderation menu open.
+    const msg = panel.getByTestId('chat-feed').locator('[data-testid="chat-msg"]').filter({ hasNot: panel.getByTestId('chat-badge') }).last();
+    if ((await msg.count()) > 0) {
+      await msg.getByTestId('chat-more').click();
+      await panel.getByTestId('chat-menu').waitFor({ timeout: 5_000 });
+      await guideShot(panel, panel.getByTestId('chat-feed'), 'live', lang, 'chat-moderation', { pad: 16, callouts: [panel.getByTestId('chat-menu')] });
+      await panel.keyboard.press('Escape');
+      await msg.getByTestId('chat-more').click().catch(() => {});
+    }
+    const settings = panel.getByTestId('chat-settings');
+    await guideShot(panel, settings, 'live', lang, 'chat-settings', { pad: 16 });
+    const gifGroup = panel.locator('fieldset', { has: panel.getByTestId('chat-gif-key') });
+    if ((await gifGroup.count()) > 0) {
+      await guideShot(panel, gifGroup, 'live', lang, 'gif-settings', { pad: 16, callouts: [panel.getByTestId('chat-gif-key')] });
+    }
+  } else log('no chat card in the panel: skipped');
+
+  const brandCard = panel.getByTestId('brand-card');
+  if ((await brandCard.count()) > 0) {
+    await brandOn(lang);
+    await panel.reload();
+    await panel.getByTestId('brand-name').waitFor({ timeout: 15_000 });
+    await sleep(1000);
+    await guideShot(panel, brandCard, 'live', lang, 'your-page-card', { pad: 16 });
+    await adminApi('POST', '/api/branding/reset', {});
+  } else log('no "Your page" card in the panel: skipped');
+  await ctx.close();
+}
+
 // ---- captures ---------------------------------------------------------------------------
 
 async function captureLocale(browser, lang) {
@@ -514,6 +562,8 @@ async function captureLocale(browser, lang) {
 
   // (9) The streamer's page and GIFs on the viewer side (guide pictures).
   await captureBranding(browser, lang);
+  // (10) The panel's chat and "Your page" cards (guide pictures).
+  await capturePanelGuides(browser, lang);
 }
 
 // ---- PNG size ---------------------------------------------------------------------------
