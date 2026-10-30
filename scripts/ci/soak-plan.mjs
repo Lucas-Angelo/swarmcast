@@ -20,6 +20,7 @@ import { fileURLToPath } from 'node:url';
 export const SUITES = {
   unit: { job: 'node', setup: 10, run: 5 },
   integration: { job: 'node', setup: 10, run: 8 },
+  'chat-load': { job: 'node', setup: 10, run: 12 },
   e2e: { job: 'node', setup: 15, run: 30, inner: true },
   rust: { job: 'rust', setup: 20, run: 5 },
   'windows-installer': { job: 'windows', setup: 15, run: 20 },

@@ -1,0 +1,105 @@
+name: Chat load
+
+# The heavy chat and "Your page" checks that never run on every push (docs/CHAT.md "Load and
+# soak", chat plan §10.5 and §10.6, branding plan §7.4):
+# - bench: the chat load bench (scripts/test/chat/bench.ts) with every scenario on Ubuntu and
+#   Windows: delivery time, the global limit G, chat upload against its budget, server CPU, event
+#   loop and memory, protection, reconnects;
+# - fuzz: the chat property tests at 1,000,000 runs each (CHAT_FUZZ_RUNS), plus the 24-bit sweep
+#   of name colours;
+# - branding-fuzz: the image validator fuzz at 1,000,000 runs, and the 24-bit sweep of the page
+#   theme (about 10 minutes).
+#
+# Start it: the `chat-load` label on a pull request (remove and add it again for another run), by
+# hand once this file is on the default branch (`gh workflow run chat-load.yml`), monthly, or
+# from another workflow (workflow_call). It reports separately: `ci-ok` (pipeline.yml) does not wait for it.
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Bench scenarios (comma-separated, or all)'
+        default: all
+  workflow_call:
+  schedule:
+    - cron: '41 7 2 * *'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: chat-load-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  bench:
+    name: bench (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || github.event.label.name == 'chat-load'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+      - name: Chat bench
+        env:
+          SCENARIO: ${{ inputs.scenario || 'all' }}
+        run: node --import tsx scripts/test/chat/bench.ts --scenario "$SCENARIO" --out test-results/chat-bench
+      - name: Upload the bench results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chat-bench-${{ matrix.os }}
+          path: test-results/chat-bench/
+          if-no-files-found: warn
+          retention-days: 30
+
+  fuzz:
+    name: ${{ matrix.name }}
+    if: github.event_name != 'pull_request' || github.event.label.name == 'chat-load'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: fuzz (chat text, nicknames, tokens, colours)
+            files: packages/shared/test/chat
+          - name: branding-fuzz (images, link previews, theme)
+            files: packages/shared/test/branding apps/server/test/unit/branding-image.test.ts apps/server/test/unit/branding-og.test.ts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+      # The seed is printed on a failure; rerun it locally with the same CHAT_FUZZ_RUNS and seed.
+      - name: Property tests at 1,000,000 runs, exhaustive colour sweeps
+        env:
+          CHAT_FUZZ_RUNS: '1000000'
+          CHAT_EXHAUSTIVE: '1'
+          FILES: ${{ matrix.files }}
+        run: |
+          # shellcheck disable=SC2086 # FILES is a list of paths
+          npx vitest run --testTimeout=7200000 --reporter=default --reporter=json --outputFile.json=test-results/chat-fuzz.json $FILES
+      - name: Upload the results
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chat-fuzz-${{ strategy.job-index }}
+          path: test-results/chat-fuzz.json
+          if-no-files-found: warn
+          retention-days: 30
