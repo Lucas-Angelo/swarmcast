@@ -102,7 +102,11 @@ export function sentenceWithName(key: 'brand.viewer.joinTitle', name: string): D
   nameEl.className = 'sc-brand-inline';
   nameEl.setAttribute('dir', 'auto');
   nameEl.textContent = name;
-  frag.append(before ?? '', nameEl, after ?? '');
+  // One inline box: the page's h1 is a flex row with a gap, which would otherwise put a gap
+  // between the name and the text around it ("Join Ana Plays 's stream").
+  const sentence = document.createElement('span');
+  sentence.append(before ?? '', nameEl, after ?? '');
+  frag.append(sentence);
   return frag;
 }
 

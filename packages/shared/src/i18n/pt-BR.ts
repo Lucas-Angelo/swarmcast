@@ -1274,7 +1274,7 @@ export const ptBR: Messages = {
   'admin.chat.gif.rating.g': 'Rígido (livre para todos)',
   'admin.chat.gif.rating.pg': 'Moderado',
   'admin.chat.gif.rating.pg-13': 'Leve (adolescentes e adultos)',
-  'admin.chat.gif.consent.tip': 'Cada espectador toca em "Carregar GIFs" uma vez antes de o navegador dele acessar o KLIPY. Isso fica sempre ligado, para proteger a privacidade de quem assiste.',
+  'admin.chat.gif.consent.tip': 'Um GIF aparece primeiro como "GIF do KLIPY. Toque para mostrar GIFs…": cada espectador toca nele, ou em "Permitir GIFs do KLIPY" no seletor de GIFs, antes de o navegador dele acessar o KLIPY. Isso fica sempre ligado, para proteger a privacidade de quem assiste.',
   'admin.chat.emotes.builtin.tip': 'Os emotes de abelha que vêm com o SwarmCast (:gg:, :love:, :wow:…). Quem envia é o seu próprio computador.',
   'admin.chat.save': 'Salvar configurações do chat',
   'admin.chat.save.tip': 'Vale para todo mundo assistindo em até um segundo.',

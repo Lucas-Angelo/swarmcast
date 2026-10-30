@@ -8,7 +8,7 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 ## Assistir
 
 1. Abra o link num navegador atualizado: Chrome, Edge ou Firefox no computador, Chrome no Android ou Safari no iPhone e no iPad (iOS 17.1 ou mais novo).
-2. Digite um **apelido** e clique em **Assistir**. Só quem faz a live vê o seu apelido; os outros espectadores não veem.
+2. Digite um **apelido** e clique em **Assistir**. Todo mundo na live vê o apelido no chat: de 2 a 24 letras (de um só alfabeto), números, espaços, `-`, `_` ou `.`, sem emojis.
 
    ![A página de entrada: 1 digite um apelido, 2 Verificando seu navegador… roda sozinho por um ou dois segundos, 3 Assistir.](../../../assets/guides/viewers/pt-br/join.webp)
 
@@ -26,6 +26,15 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 No celular, os mesmos controles ficam embaixo do vídeo:
 
 ![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+
+## O chat
+
+Embaixo do vídeo (ao lado dele no computador) fica o chat da live. Digite uma mensagem e aperte Enter. Todo mundo na live vê o seu apelido e as suas mensagens; as mensagens de quem transmite têm o selo **Transmissão**.
+
+- **Ocultar chat** esconde o chat neste aparelho (a escolha fica lembrada); **Mostrar chat** traz de volta.
+- **Configurações do chat** deixa escolher a cor do seu nome, mostrar os horários e aumentar o texto. A sua cor sempre aparece legível para todo mundo.
+- Se uma mensagem for recusada, um aviso curto diz o motivo (modo lento, silenciado, longa demais…). Quem transmite pode apagar mensagens e silenciar pessoas.
+- **GIFs**, se quem transmite ligou, vêm do KLIPY, um serviço de fora. Um GIF aparece primeiro como "GIF do KLIPY. Toque para mostrar GIFs…": o seu navegador só acessa o KLIPY depois que você toca nele (ou em **Permitir GIFs do KLIPY** no seletor de GIFs); aí o KLIPY vê o seu endereço IP. Dá para desfazer nas **Configurações do chat** (**Mostrar GIFs**). Sem esse toque, nada é carregado de fora.
 
 ## Ajudar a transmissão (P2P)
 
@@ -48,4 +57,4 @@ Você pode desligar quando quiser e continuar assistindo normalmente. A sua esco
 
 ## A sua privacidade
 
-A página da live não tem anúncios, rastreadores nem estatísticas. Ela só se conecta à live de quem transmite e, no P2P, aos outros espectadores e a um servidor da Cloudflare que ajuda os navegadores a se encontrarem (STUN).
+A página da live não tem anúncios, rastreadores nem estatísticas. Ela só se conecta à live de quem transmite e, no P2P, aos outros espectadores e a um servidor da Cloudflare que ajuda os navegadores a se encontrarem (STUN). Os GIFs do chat só vêm do KLIPY depois que você aceita. As mensagens do chat nunca são salvas: somem quando a live acaba.

@@ -10,6 +10,8 @@ Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How it works, design choices, verified facts with sources | English |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Assets, attackers, mitigations, accepted risks | English |
 | [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md) | Attack detection and protections, with sources | English |
+| [CHAT.md](CHAT.md) | Chat: settings, protocol, Unicode pipeline, moderation, flood protection, GIFs, privacy | English |
+| [BRANDING.md](BRANDING.md) | "Your page": data, limits, image pipeline, links, Pix, link previews, routes, caching | English |
 | [QUALITY.md](QUALITY.md) | Renditions, ffmpeg, player settings, upload budget | English |
 | [DESKTOP.md](DESKTOP.md) | Desktop app: installers, shell ↔ server contract, updates | English |
 | [RELEASING.md](RELEASING.md) | Maintainer: repository settings, branches and protection, releases and hotfixes, updater key, GitHub Pages, signing | English |

@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Chat.** Viewers can talk to you and to each other next to the video, and you can write from the panel with a "Streamer" badge nobody else can get. It is on by default and uses the connection viewers already have. Chat uses at most 5 % of your upload (between 128 and 960 kbps), and if your computer gets busy the chat slows down first, so it never takes room from the video. Nothing is saved: the chat is wiped when you stop.
+  - Choose what viewers can send: text, emoji and SwarmCast emotes, GIFs, or any mix ("Text only" also refuses emoji). Set slow mode, the longest message, how many emoji fit in one, a wait for new viewers, blocked words (also caught when written with look-alike letters or accents), and whether links are shown as text or refused. Links are never clickable.
+  - Moderate from the panel: delete a message, clear the chat, mute someone for 1, 10 or 60 minutes or until the end of the live (it holds if they leave and come back), and set or lock anyone's name colour.
+  - Viewers can hide the chat and pick their name colour; SwarmCast keeps every colour readable in light and dark mode.
+  - Automatic flood protection slows the chat down by itself when it gets too busy or someone floods it, and goes back to normal when it calms down. It never drops viewers or touches the video.
+  - Messages that could freeze or crash phones and computers (piles of accents, invisible or reversed text, giant emoji sequences, known crash strings) are cleaned or refused before anyone sees them.
+  - A viewer whose connection drops gets only the messages they missed when it comes back, and people who join late see every name and badge correctly.
+  - GIFs are off by default. To use them, add your own free KLIPY key in the panel; each viewer then agrees before their browser contacts KLIPY, which sees their IP address. Nothing goes through your computer.
+- **Your page.** A new "Your page" card in the panel gives your stream pages your channel name, picture or logo, a banner, a one-line description, an "About" text with tags, up to 6 links, a theme colour and corner style, and a message for when the live ends. Only people with your link see it.
+  - A support button opens your tip page or shows your Pix key, with a Copy button, "Pix copia e cola" and a QR code. The panel warns that anyone who sends a Pix sees your full legal name and part of your CPF.
+  - Location and camera details are removed from pictures before they are saved. Colours you pick are adjusted, if needed, so everyone can read them in light and dark mode.
+  - Optional link previews: when the link is pasted into WhatsApp, Telegram or Discord, it can show your name and picture (off by default; it then shows a neutral invitation instead of "Link not valid").
+  - Changes reach open viewer pages within a few seconds, without a reload.
+- **New guide pages** on the website, in English and Portuguese: "Chat", "Customise your page" and "Get a GIF key", with pictures of the new screens.
+
+### Changed
+
+- **Nicknames are now visible to everyone in the live**, because they appear in the chat. The join page says so.
+- **Stricter nicknames:** 2 to 24 characters, letters from one alphabet, numbers, spaces, "-", "_" or "."; no emoji or invisible characters. Names that look like someone already watching (for example "Ana" and "ana", or a Cyrillic look-alike) and names like "Streamer" or "admin" are refused, with a suggestion.
+- The stream address no longer tells strangers whether you are live: only SwarmCast's own check learns it.
+
 ### Fixed
 
 - **Windows: uninstalling while SwarmCast runs no longer fails because SwarmCast starts again.** The uninstaller killed SwarmCast outright, and the start script, which retries a start that stops within 10 seconds, started it again while its files were being deleted ("some files could not be removed", SwarmCast still running). The uninstaller now stops the start script first, lets SwarmCast stop the live by itself (as Ctrl+C does), and checks that nothing came back before deleting anything; the start script never restarts SwarmCast while it is being uninstalled.

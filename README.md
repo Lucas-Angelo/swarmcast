@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-Stream a members-only live straight from your own computer, through a secret link. Your members watch in any browser, with no app and no account, and help each other through optional P2P. Free, private (no telemetry) and open source, for Windows, macOS and Linux, in English and Brazilian Portuguese.
+Stream a members-only live straight from your own computer, through a secret link. Your members watch in any browser, with no app and no account, and help each other through optional P2P. They can talk in a built-in chat that you moderate, and the stream page carries your name, picture, links and a support button (a link or Pix). Free, private (no telemetry) and open source, for Windows, macOS and Linux, in English and Brazilian Portuguese.
 
 **Guide, download and help: <https://lucas-angelo.github.io/swarmcast/>** (em português: <https://lucas-angelo.github.io/swarmcast/pt-br/>)
 
@@ -18,7 +18,7 @@ Get the SwarmCast app for your system from the [download page](https://lucas-ang
 ## For developers
 
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md): build, test, configuration, version policy and the website.
-- [docs/](docs/README.md): architecture, threat model, security research, quality, the desktop app and the [release guide](docs/RELEASING.md).
+- [docs/](docs/README.md): architecture, threat model, security research, the [chat](docs/CHAT.md), the [streamer's page](docs/BRANDING.md), quality, the desktop app and the [release guide](docs/RELEASING.md).
 - [CONTRIBUTING.md](CONTRIBUTING.md): bug reports, questions, pull requests and the [Code of Conduct](CODE_OF_CONDUCT.md).
 - [CHANGELOG.md](CHANGELOG.md) and [SECURITY.md](SECURITY.md) (reporting a vulnerability).
 

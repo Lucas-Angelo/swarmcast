@@ -139,6 +139,28 @@ describe('branding on the viewer server', () => {
     expect((await fetch(link, { redirect: 'manual', headers: { 'user-agent': 'WhatsApp/2' } })).status).toBe(404);
   });
 
+  it('under attack the page goes lite: no banner, a different ETag; names and links stay', async () => {
+    const { live, base, link } = await startLive();
+    const banner = live.branding.putImage('banner', makeJpeg(1280, 320));
+    expect(banner.ok).toBe(true);
+    const jar = await joinAs(base, link, 'Ana');
+    const calm = await jar.fetch('/api/brand');
+    const calmBody = (await calm.json()) as PublicBranding;
+    expect(calmBody.banner?.s1280).toMatch(/^\/brand\/[0-9a-f]{64}\.jpg$/);
+    expect(calmBody.lite).toBeUndefined();
+
+    // The shield's own state, as its detector sets it under a flood.
+    live.shield.detector.state = 'attack';
+    const r = await jar.fetch('/api/brand', { headers: { 'if-none-match': calm.headers.get('etag')! } });
+    expect(r.status).toBe(200);
+    const body = (await r.json()) as PublicBranding;
+    expect(body).toMatchObject({ lite: true, name: MARKER, tagline: 'Chill games' });
+    expect(body.banner).toBeUndefined();
+    expect(body.links).toHaveLength(1);
+    expect(r.headers.get('etag')).not.toBe(calm.headers.get('etag'));
+    live.shield.detector.state = 'normal';
+  });
+
   it('/healthz tells which live is on only to our own probe', async () => {
     const { live, base } = await startLive();
     const plain = await fetch(`${base}/healthz`);

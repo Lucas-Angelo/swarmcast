@@ -6,7 +6,7 @@ description: SwarmCast has no telemetry. How the numbers on the home page are co
 ## SwarmCast does not phone home
 
 - The app has **no telemetry, no analytics and no crash reports**. It never sends anything about you, your computer, your live or your viewers to the SwarmCast project.
-- Your stream key, your links and your viewers' nicknames and IP addresses stay on your computer, in memory or in your settings folder.
+- Your stream key, your links and your viewers' nicknames and IP addresses stay on your computer, in memory or in your settings folder. Chat messages stay in memory only and are wiped when you stop; your page's texts and pictures are kept in your settings folder.
 - The viewer page has no ads, no trackers and no analytics.
 - This website has **no trackers and no cookies**, and loads no fonts or scripts from other companies. It remembers your language and light/dark choice in your own browser (local storage) only.
 
@@ -17,6 +17,7 @@ What the app does contact, and why:
 - **The ffmpeg publisher:** downloading the video converter, the first time.
 - **Public blocklists** (Spamhaus, FireHOL): downloaded once a day, without an account.
 - **Let's Encrypt:** only in Direct mode, for the HTTPS certificate.
+- **KLIPY:** only if you turn GIFs on in the chat, with your own key. Then viewers' browsers (after each viewer agrees) contact KLIPY to search and show GIFs; your computer does only if you search GIFs in the panel. See [Get a GIF key](/swarmcast/live/gif-key/).
 
 ## How the numbers on the home page are counted
 
