@@ -72,9 +72,8 @@ function phase(server: ServerProcess, p: DesktopStateMessage['phase'], from = 0)
 /** Signs in with the panel address of `ready` and opens / with the cookie, like the webview. */
 async function webviewLogin(ready: Ready): Promise<{ panel: Panel; page: string; root: number }> {
   const panel = await signIn(ready.adminUrl);
-  const page = await panel.login.text();
   const root = (await fetch(`${panel.base}/`, { headers: { cookie: panel.cookie } })).status;
-  return { panel, page, root };
+  return { panel, page: panel.login.page, root };
 }
 
 /** The JSON answer of a panel API GET. */

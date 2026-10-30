@@ -250,8 +250,8 @@ export class ServerProcess {
 export interface Panel {
   base: string;
   cookie: string;
-  /** The login page's own answer (200 and a page that opens /, see signIn). */
-  login: Response;
+  /** How the login address answered: 200 and a page that opens / itself (see signIn). */
+  login: { status: number; page: string };
   api(p: string, init?: RequestInit): Promise<Response>;
 }
 
@@ -260,13 +260,13 @@ export interface Panel {
  * a page that opens / itself: not a redirect, the cookie is SameSite=Strict) and keep the cookie.
  */
 export async function signIn(loginUrl: string): Promise<Panel> {
-  const login = await fetch(loginUrl, { redirect: 'manual' });
-  const cookie = login.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
+  const res = await fetch(loginUrl, { redirect: 'manual' });
+  const cookie = res.headers.getSetCookie().map((c) => c.split(';')[0]).join('; ');
   const base = new URL(loginUrl).origin;
   return {
     base,
     cookie,
-    login,
+    login: { status: res.status, page: await res.text() },
     api: (p, init = {}) => fetch(base + p, { ...init, headers: { cookie, origin: base, 'content-type': 'application/json', ...(init.headers as Record<string, string>) } }),
   };
 }
