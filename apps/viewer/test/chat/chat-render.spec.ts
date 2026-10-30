@@ -77,22 +77,31 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
     if (Number.isFinite(b.maxHeight)) expect(b.height, id).toBeLessThanOrEqual(b.maxHeight + 0.5);
   }
 
-  // Still responsive with everything on screen: two animation frames well under 100 ms. The
-  // median of 7 samples, so one hiccup of a shared CI machine (another worker, a GC) does not
+  // Still responsive with everything on screen: the main thread finishes a frame's work (script,
+  // style, layout, paint recording) in well under 50 ms. Each sample posts a message from inside an
+  // animation frame callback and times its arrival, which comes after that frame's rendering work.
+  // Rasterising is left out on purpose: it runs off the main thread, and Chrome on the macOS
+  // runners does it in software (no GPU), so two frames there take 100-400 ms on any page with this
+  // much text, while Firefox and WebKit on the same runner and Chrome on a real Mac take ~20 ms.
+  // The median of 7 samples, so one hiccup of a shared CI machine (another worker, a GC) does not
   // count as the page freezing; a page that really hangs on the corpus fails every sample.
   // Web font subsets (Inter greek, cyrillic, vietnamese) load once the list asks for them.
-  const frames = await page.evaluate(async () => {
+  const busy = await page.evaluate(async () => {
     await document.fonts.ready;
-    const twoFrames = (): Promise<number> =>
+    const frameWork = (): Promise<number> =>
       new Promise((resolve) => {
-        const t0 = performance.now();
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve(performance.now() - t0)));
+        requestAnimationFrame(() => {
+          const t0 = performance.now();
+          const ch = new MessageChannel();
+          ch.port1.onmessage = () => resolve(performance.now() - t0);
+          ch.port2.postMessage(0);
+        });
       });
     const samples: number[] = [];
-    for (let i = 0; i < 7; i++) samples.push(await twoFrames());
+    for (let i = 0; i < 7; i++) samples.push(await frameWork());
     return samples.sort((a, b) => a - b);
   });
-  expect(frames[3], `two-frame times (ms): ${frames.map((f) => f.toFixed(0)).join(', ')}`).toBeLessThan(100);
+  expect(busy[3], `main-thread frame work (ms): ${busy.map((f) => f.toFixed(0)).join(', ')}`).toBeLessThan(50);
   const input = page.getByTestId('chat-input');
   const t0 = Date.now();
   await input.fill('ainda responde?');

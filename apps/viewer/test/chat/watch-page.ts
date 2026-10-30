@@ -3,7 +3,7 @@
 // mock UI spec (chat-ui.spec.ts) and the corpus rendering spec (chat-render.spec.ts).
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, type Page } from '@playwright/test';
+import { expect, type Browser, type Page } from '@playwright/test';
 import { viewerCsp } from '../../../server/src/public/security.js';
 import type { MockHub } from './mock-hub.js';
 
@@ -15,14 +15,19 @@ export function requireBuild(): void {
   if (!fs.existsSync(path.join(DIST, 'watch.html'))) throw new Error('Build the viewer first: npm run build -w @swarmcast/viewer');
 }
 
+/** Emoji and the scripts the specs use: each one sends the engine to the system fonts. */
+const WARM_TEXTS = ['Hi 😀👍🎉❤️', 'Привет', 'Ζωή', 'Nguyễn', 'नमस्ते', 'עדי', 'محمد', 'アナ 漢字', '한국어', 'ประเสริฐ', 'క్షమ'];
+const warmed = new WeakSet<Browser>();
+
 /**
  * Lays out `texts` once on a blank page of the same origin, before the page under test. The first
- * text in a script the page fonts lack makes the browser load and scan the system fonts for a
- * fallback: once per browser process, but seconds on a fresh CI runner (Firefox on Windows, Chrome
- * on macOS), during which the page does not paint. A real visitor's browser has done it long
- * before; a test that times the watch page would time this instead.
+ * emoji or text in a script the page fonts lack makes the browser load and scan the system fonts
+ * for a fallback: once per browser process, but seconds on a fresh CI runner (7 s in Firefox on
+ * Windows, and Chrome on macOS), during which the page does not paint. A real visitor's browser
+ * has done it long before; a test that times the watch page would time this instead. openWatch
+ * does it for the first page of each browser; a spec with other scripts can add its own texts.
  */
-export async function warmFontFallback(page: Page, texts: readonly string[]): Promise<void> {
+export async function warmFontFallback(page: Page, texts: readonly string[] = []): Promise<void> {
   await page.route(`${ORIGIN}/warm`, (route) => route.fulfill({ body: '<!doctype html><meta charset="utf-8"><title>warm</title>', contentType: 'text/html' }));
   await page.goto(`${ORIGIN}/warm`);
   await page.evaluate(async (list) => {
@@ -34,12 +39,16 @@ export async function warmFontFallback(page: Page, texts: readonly string[]): Pr
     document.body.getBoundingClientRect();
     await document.fonts.ready;
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  }, texts);
+  }, [...WARM_TEXTS, ...texts]);
   await page.unroute(`${ORIGIN}/warm`);
+  const browser = page.context().browser();
+  if (browser) warmed.add(browser);
 }
 
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
 export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; query?: string } = {}): Promise<string[]> {
+  const browser = page.context().browser();
+  if (browser && !warmed.has(browser)) await warmFontFallback(page);
   await page.route(`${ORIGIN}/**`, async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname === '/api/config') {
