@@ -102,11 +102,6 @@ export function record(name, status, detail = '') {
 }
 export const check = (name, ok, detail = '') => record(name, ok ? 'pass' : 'fail', detail);
 export const info = (name, detail) => record(name, 'info', detail);
-/**
- * A check that currently fails because of a reported app bug: recorded as a finding (warn,
- * prefixed "BUG") instead of failing the job, and as a plain pass once the bug is fixed.
- */
-export const bug = (name, ok, detail = '') => record(name, ok ? 'pass' : 'warn', ok ? '' : `BUG: ${detail}`);
 /** Like check(), but aborts the current section when it fails. */
 export function must(name, ok, detail = '') {
   check(name, ok, detail);

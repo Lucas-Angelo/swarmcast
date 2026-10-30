@@ -15,7 +15,7 @@ import { DirectMode } from '../../../apps/server/src/direct/direct.js';
 import { UpnpGateway, discoverUpnp } from '../../../apps/server/src/direct/upnp.js';
 import { MockIgd } from '../../../apps/server/test/unit/mock-igd.js';
 
-const out = (name: string, ok: boolean, detail = '', knownBug = false): void => console.log(JSON.stringify({ name, ok, detail, knownBug }));
+const out = (name: string, ok: boolean, detail = ''): void => console.log(JSON.stringify({ name, ok, detail }));
 const lan = Object.values(os.networkInterfaces())
   .flat()
   .find((i) => i && i.family === 'IPv4' && !i.internal)?.address;
@@ -88,9 +88,14 @@ try {
   out('server bound to 0.0.0.0 (all interfaces), as the app does', bound.startsWith('0.0.0.0:'), bound);
   out('HTTPS answers with a host name (SNI sent): https://localhost:<port>', (await get('localhost', port)) === 200);
   // Direct-mode links are https://<public IP>:<port>. Clients never send SNI for an IP literal
-  // (RFC 6066), so a server configured with only SNICallback has no certificate to offer.
-  out('HTTPS answers for an IP-literal URL (no SNI), as viewers open the direct link: https://127.0.0.1:<port>', (await get('127.0.0.1', port)) === 200, 'TLS handshake fails without SNI; same https options as apps/server/src/public/server.ts (SNICallback only, no default key/cert)', true);
-  if (lan) out('HTTPS answers on the LAN address (IP literal, no SNI)', (await get(lan, port)) === 200, `${lan}: TLS handshake fails without SNI (local traffic; inbound from other machines also depends on Windows Firewall)`, true);
+  // (RFC 6066): the server answers with its default certificate (key/cert beside the
+  // SNICallback, as apps/server/src/public/server.ts sets them).
+  const viaIp = (await get('127.0.0.1', port)) === 200;
+  out('HTTPS answers for an IP-literal URL (no SNI), as viewers open the direct link: https://127.0.0.1:<port>', viaIp, viaIp ? '' : 'the TLS handshake without SNI failed: no default certificate');
+  if (lan) {
+    const viaLan = (await get(lan, port)) === 200;
+    out('HTTPS answers on the LAN address (IP literal, no SNI)', viaLan, viaLan ? '' : `${lan}: the TLS handshake without SNI failed (local traffic; inbound from other machines also depends on Windows Firewall)`);
+  }
   const r = await d.disable();
   out('disable(): mapping removed and verified', r.verified && igd.mappings.size === 0 && !state.state.activeMapping, r.details.join(', '));
   out('port closed after disable', !(await tcpOpen(port)));

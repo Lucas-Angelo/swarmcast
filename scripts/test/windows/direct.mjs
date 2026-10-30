@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  ART, appProcess, bug, check, copyAppLogs, environmentFacts, finish, info, joinAndPlay, killUnder, launchBrowser, listening, must, onCleanup, opt, ps, pushStream,
+  ART, appProcess, check, copyAppLogs, environmentFacts, finish, info, joinAndPlay, killUnder, launchBrowser, listening, must, onCleanup, opt, ps, pushStream,
   quitAndVerify, record, repoRoot, section, serve, socketsOf, startApp, uninstallAndVerify, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
@@ -45,8 +45,7 @@ await section('2. DirectMode + mock UPnP gateway, real 0.0.0.0 bind', async () =
   const lines = (r.stdout ?? '').split(/\r?\n/).filter((l) => l.startsWith('{'));
   for (const l of lines) {
     const x = JSON.parse(l);
-    if (x.knownBug) bug(x.name, x.ok, x.detail);
-    else check(x.name, x.ok, x.detail);
+    check(x.name, x.ok, x.detail);
   }
   must('direct-igd.ts produced results', lines.length > 0, `exit ${r.status}: ${(r.stderr ?? '').slice(0, 800)}`);
 });
@@ -81,7 +80,8 @@ await section('3. app-level direct mode via the panel (manual port forward) + Wi
   // Viewers open https://<public IP>:<port>: an IP literal, so the browser sends no SNI.
   const viaIp = en.liveLink.replace(`${u.hostname}:${port}`, `127.0.0.1:${port}`);
   const vIp = await joinAndPlay(browser, viaIp, 'direct-ip', { ignoreHTTPSErrors: true }).catch((e) => e);
-  bug('a viewer plays over the direct link by IP address (https://<ip>:<port>, as sent to viewers)', !(vIp instanceof Error), vIp instanceof Error ? `${vIp.message.split('\n')[0]} -- the direct HTTPS server only has an SNICallback (apps/server/src/public/server.ts https options) and browsers send no SNI for IP addresses, so the TLS handshake fails` : '');
+  // An IP literal sends no SNI: the server's default certificate answers it (apps/server/src/public/server.ts).
+  check('a viewer plays over the direct link by IP address (https://<ip>:<port>, as sent to viewers)', !(vIp instanceof Error), vIp instanceof Error ? vIp.message.split('\n')[0] : '');
   if (!(vIp instanceof Error)) await vIp.context.close();
   const viaName = en.liveLink.replace(`${u.hostname}:${port}`, `localhost:${port}`);
   const v = await joinAndPlay(browser, viaName, 'direct-name', { ignoreHTTPSErrors: true }).catch((e) => e);
