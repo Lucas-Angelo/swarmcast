@@ -64,6 +64,7 @@ export const test = base.extend<{ visit: (v?: Visitor) => Promise<{ context: Bro
       const context = await browser.newContext({
         userAgent: ua.userAgent,
         locale: v.locale ?? 'en-US',
+        timezoneId: 'UTC',
         viewport: v.viewport ?? { width: 1280, height: 900 },
         isMobile: v.isMobile ?? false,
         hasTouch: v.isMobile ?? false,

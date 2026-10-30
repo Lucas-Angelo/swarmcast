@@ -20,7 +20,9 @@ export default defineConfig({
   outputDir: path.join(root, 'test-results', 'chat-ui'),
   // Every engine started once before the tests (warm-browsers.ts): a fresh runner's first start is not the page.
   globalSetup: path.join(import.meta.dirname, 'warm-browsers.ts'),
-  use: { trace: 'retain-on-failure' },
+  // The same browser language and time zone on every machine (the page's language comes from
+  // ?lang=, but Intl formatting and the first-visit language follow the browser's).
+  use: { trace: 'retain-on-failure', locale: 'en-US', timezoneId: 'UTC' },
   projects: [
     // CI (the `ui` group of _e2e.yml) has Google Chrome from the runner image, not Playwright's
     // Chromium, like the main suite's `chromium` project.

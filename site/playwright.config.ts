@@ -18,6 +18,10 @@ export default defineConfig({
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'retain-on-failure',
+    // The same browser language and time zone on every machine: a browser in Portuguese is sent
+    // to the pt-BR pages on its first visit, so the system's language must not decide the test.
+    locale: 'en-US',
+    timezoneId: 'UTC',
   },
   webServer: {
     command: `node test/serve.mjs ${PORT}`,
