@@ -10,7 +10,8 @@
 # left open (Direct mode), uninstalls the SwarmCast desktop app (its own uninstaller,
 # silently) and its "start with the computer" entry, then deletes the SwarmCast data
 # folder. It never asks anything (unless -Ask), never touches OBS or anything that is
-# not SwarmCast's own, and writes nothing to disk.
+# not SwarmCast's own, and writes nothing to disk (except a short-lived ".uninstalling"
+# note in the data folder that tells a running start script not to restart SwarmCast).
 #
 # Compatible with Windows PowerShell 5.1. This file is ASCII-only on purpose
 # (PowerShell 5.1 reads BOM-less files as ANSI); symbols are built from char codes.
@@ -28,6 +29,12 @@ $SC_ObsNote = 'Your OBS settings were not changed. Remove the SwarmCast target/s
 # anything is deleted (protects against a wrong SWARMCAST_HOME).
 $SC_Markers = @('app', 'config.json', 'secrets.json', 'state.json', 'logs', 'run', 'bin', 'tools', 'cache', 'blocklists', 'system-check.json')
 $SC_Keep = @('config.json', 'secrets.json')
+# Written into the data folder while the uninstaller stops SwarmCast and deletes its files:
+# the start script (start-windows.ps1) restarts SwarmCast when it stops within 10 s, and
+# must not do that while it is being removed. Removed again before the uninstaller exits.
+$SC_UninstallMarker = '.uninstalling'
+# Programs that run the start script: the PowerShell that started SwarmCast restarts it.
+$SC_ScriptHosts = @('powershell.exe', 'pwsh.exe', 'pwsh')
 $SC_CleanupTimeout = 60
 # Desktop app (docs/DESKTOP.md): per-user NSIS install, found through its Uninstall key.
 $SC_AppId = 'io.github.lucas-angelo.swarmcast'
@@ -38,11 +45,14 @@ $SC_RegBase = 'HKCU:\Software\Microsoft\Windows\CurrentVersion'
 # never the real Run / Uninstall keys, Start menu or desktop.
 $script:Sandbox = ("$env:SWARMCAST_TEST_SANDBOX" -match '^[A-Za-z0-9-]+$')
 if ($script:Sandbox) { $SC_RegBase = "HKCU:\Software\SwarmCastTestSandbox\$($env:SWARMCAST_TEST_SANDBOX)" }
-# SWARMCAST_STOP_GRACE / SWARMCAST_DELETE_DELAYS: shorter waits for the tests.
+# SWARMCAST_STOP_GRACE / SWARMCAST_DELETE_DELAYS / SWARMCAST_SETTLE: shorter waits for the tests.
 $SC_StopGrace = 10
 if ("$env:SWARMCAST_STOP_GRACE" -match '^\d+$') { $SC_StopGrace = [int]$env:SWARMCAST_STOP_GRACE }
 $SC_DeleteDelays = @(1, 2, 3, 4)
 if ("$env:SWARMCAST_DELETE_DELAYS" -match '^[\d ]+$') { $SC_DeleteDelays = @(("$env:SWARMCAST_DELETE_DELAYS" -split ' ') | Where-Object { $_ } | ForEach-Object { [int]$_ }) }
+# How long SwarmCast must stay stopped before its files are deleted (a restart shows up by then).
+$SC_SettleSeconds = 3
+if ("$env:SWARMCAST_SETTLE" -match '^\d+$') { $SC_SettleSeconds = [int]$env:SWARMCAST_SETTLE }
 
 $script:OnWindows = ($env:OS -eq 'Windows_NT')
 $script:Opt = @{ KeepSettings = $false; Ask = $false; Help = $false }
@@ -108,6 +118,7 @@ function Say-Heading([string]$Message) { Write-Host ''; Write-Host $Message -For
 
 # The only line meant for logs: one summary line on stdout. Nothing is written to disk.
 function Complete-Uninstall {
+  Remove-UninstallMarker
   Write-Host ''
   Write-Host ('[{0}] SwarmCast uninstall finished: {1} (exit code {2})' -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $script:Result, $script:ExitCode)
   exit $script:ExitCode
@@ -256,22 +267,15 @@ function Test-LooksLikeSwarmCast {
   return $false
 }
 
-# Processes whose executable lives inside a SwarmCast folder: the data folder
-# (swarmcast, its reaper, mediamtx, cloudflared, swarmcast-tray, ffmpeg...) and the
-# desktop app's install folder (SwarmCast.exe, swarmcast-server.exe, mediamtx,
-# cloudflared), plus the WebView2 processes that use the app's own web data folder.
-# Nothing else is ever touched.
-function Get-SwarmCastProcesses {
-  $sep = [System.IO.Path]::DirectorySeparatorChar
-  $prefixes = @($script:ProcDirs | Where-Object { $_ } | ForEach-Object { $_ + $sep })
-  $webData = $null
-  if ($script:WebDataDir) { $webData = $script:WebDataDir + $sep }
+# Every process with its executable path and parent (Win32_Process; Get-Process when
+# CIM is not available, and on Linux/macOS).
+function Get-AllProcesses {
   $all = @()
   $listed = $false
   if ($script:OnWindows) {
     try {
       foreach ($p in @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)) {
-        if ($p.ExecutablePath) { $all += [pscustomobject]@{ Id = [int]$p.ProcessId; Path = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } }
+        if ($p.ExecutablePath) { $all += [pscustomobject]@{ Id = [int]$p.ProcessId; ParentId = [int]$p.ParentProcessId; Path = [string]$p.ExecutablePath; CommandLine = [string]$p.CommandLine } }
       }
       $listed = $true
     } catch {
@@ -282,10 +286,26 @@ function Get-SwarmCastProcesses {
     foreach ($p in @(Get-Process -ErrorAction SilentlyContinue)) {
       $path = $null
       try { $path = $p.Path } catch { $path = $null }
-      if ($path) { $all += [pscustomobject]@{ Id = [int]$p.Id; Path = [string]$path; CommandLine = '' } }
+      $parent = 0
+      try { if ($p.Parent) { $parent = [int]$p.Parent.Id } } catch { $parent = 0 }
+      if ($path) { $all += [pscustomobject]@{ Id = [int]$p.Id; ParentId = $parent; Path = [string]$path; CommandLine = '' } }
     }
   }
-  return @($all | Where-Object {
+  return $all
+}
+
+# Processes whose executable lives inside a SwarmCast folder: the data folder
+# (swarmcast, its reaper, mediamtx, cloudflared, swarmcast-tray, ffmpeg...) and the
+# desktop app's install folder (SwarmCast.exe, swarmcast-server.exe, mediamtx,
+# cloudflared), plus the WebView2 processes that use the app's own web data folder.
+# Nothing else is ever touched (except the start script, see Get-StartScripts).
+function Get-SwarmCastProcesses([object[]]$All) {
+  $sep = [System.IO.Path]::DirectorySeparatorChar
+  $prefixes = @($script:ProcDirs | Where-Object { $_ } | ForEach-Object { $_ + $sep })
+  $webData = $null
+  if ($script:WebDataDir) { $webData = $script:WebDataDir + $sep }
+  if ($null -eq $All) { $All = @(Get-AllProcesses) }
+  return @($All | Where-Object {
       $proc = $_
       if ($proc.Id -eq $PID) { return $false }
       foreach ($pre in $prefixes) {
@@ -293,6 +313,53 @@ function Get-SwarmCastProcesses {
       }
       return ($webData -and (Split-Path -Leaf $proc.Path) -eq 'msedgewebview2.exe' -and $proc.CommandLine.IndexOf($webData, [StringComparison]::OrdinalIgnoreCase) -ge 0)
     })
+}
+
+# The start script's PowerShell (start-windows.ps1, also run as "irm ... | iex") that runs
+# SwarmCast in its window: the direct parent of a SwarmCast process, when that parent is
+# powershell.exe / pwsh.exe. When SwarmCast stops within 10 s
+# of starting, that script starts it again (a failed start is retried): stopped first, it
+# can no longer bring SwarmCast back while its files are being deleted. Never this
+# uninstaller or the programs that started it.
+function Get-StartScripts([object[]]$All, [object[]]$Procs) {
+  $byId = @{}
+  foreach ($p in $All) { $byId[$p.Id] = $p }
+  $mine = @{}
+  $cur = $PID
+  for ($i = 0; $i -lt 64 -and $cur -gt 0 -and -not $mine.ContainsKey($cur); $i++) {
+    $mine[$cur] = $true
+    if ($byId.ContainsKey($cur)) { $cur = $byId[$cur].ParentId } else { $cur = 0 }
+  }
+  $inside = @{}
+  foreach ($p in $Procs) { $inside[$p.Id] = $true }
+  $dataPrefix = $script:DataDir + [System.IO.Path]::DirectorySeparatorChar
+  $found = @{}
+  foreach ($p in $Procs) {
+    # Only the start script's SwarmCast (data folder), never the desktop app's processes.
+    if (-not $p.Path.StartsWith($dataPrefix, [StringComparison]::OrdinalIgnoreCase)) { continue }
+    $parentId = $p.ParentId
+    if ($parentId -le 0 -or $inside.ContainsKey($parentId) -or $mine.ContainsKey($parentId) -or $found.ContainsKey($parentId)) { continue }
+    if (-not $byId.ContainsKey($parentId)) { continue }
+    $parent = $byId[$parentId]
+    if ($SC_ScriptHosts -notcontains (Split-Path -Leaf $parent.Path).ToLowerInvariant()) { continue }
+    $found[$parentId] = $parent
+  }
+  return @($found.Values)
+}
+
+function Set-UninstallMarker {
+  if (-not $script:DataDir -or -not (Test-Path -LiteralPath $script:DataDir -PathType Container)) { return }
+  $f = Join-Path $script:DataDir $SC_UninstallMarker
+  try {
+    [System.IO.File]::WriteAllText($f, "$PID")
+    $script:MarkerFile = $f
+  } catch { }
+}
+
+function Remove-UninstallMarker {
+  if (-not $script:MarkerFile) { return }
+  try { if (Test-Path -LiteralPath $script:MarkerFile) { [System.IO.File]::Delete($script:MarkerFile) } } catch { }
+  $script:MarkerFile = $null
 }
 
 # Ctrl+C to the console SwarmCast runs in: the same as pressing Ctrl+C in its window,
@@ -359,19 +426,32 @@ function Wait-NoSwarmCast([int]$Seconds) {
   return $left
 }
 
-function Stop-SwarmCast {
-  $procs = @(Get-SwarmCastProcesses)
-  if ($procs.Count -eq 0) {
-    Say-Ok 'SwarmCast is not running.'
-    return
+function Format-Proc($p) { return "$(Split-Path -Leaf $p.Path) (PID $($p.Id))" }
+
+# One stop pass: the start script first (so nothing restarts SwarmCast), then the desktop
+# app's window, then Ctrl+C to the rest (SwarmCast stops MediaMTX, the tunnel, the tray and
+# ffmpeg by itself); whatever still runs after $SC_StopGrace s is forced. Returns what is
+# still running.
+function Stop-Once([object[]]$Procs, [object[]]$Scripts, [bool]$Quiet) {
+  if (-not $Quiet) {
+    foreach ($p in $Scripts) { Say "  $(Format-Proc $p): the start script that runs SwarmCast" }
+    foreach ($p in $Procs) { Say "  $(Format-Proc $p)" }
   }
-  Say-Heading 'Stopping SwarmCast'
-  foreach ($p in $procs) { Say "  $(Split-Path -Leaf $p.Path) (PID $($p.Id))" }
-  # The desktop app has no console for Ctrl+C: closing it makes its server
-  # (swarmcast-server.exe) stop everything by itself, as when its window is closed.
-  $shells = @($procs | Where-Object { (Split-Path -Leaf $_.Path) -eq "$SC_ProductName.exe" })
+  # Ended outright: SwarmCast notices that the program that started it is gone and stops
+  # everything by itself (as when its window is closed).
+  foreach ($p in $Scripts) { try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { } }
+  # The desktop app (SwarmCast.exe in its install folder) has no console for Ctrl+C:
+  # closing it makes its server (swarmcast-server.exe) stop everything by itself, as when
+  # its window is closed. Never the start script's swarmcast.exe in the data folder (file
+  # names are not case-sensitive): that one gets Ctrl+C like the rest, so it stops the live
+  # and closes a router port cleanly instead of being killed.
+  $dataPrefix = $script:DataDir + [System.IO.Path]::DirectorySeparatorChar
+  $shells = @()
+  $others = @()
+  foreach ($p in $Procs) {
+    if ((Split-Path -Leaf $p.Path) -eq "$SC_ProductName.exe" -and -not $p.Path.StartsWith($dataPrefix, [StringComparison]::OrdinalIgnoreCase)) { $shells += $p } else { $others += $p }
+  }
   foreach ($p in $shells) { try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { } }
-  $others = @($procs | Where-Object { (Split-Path -Leaf $_.Path) -ne "$SC_ProductName.exe" })
   if ($others.Count -gt 0) { Send-GracefulStop @($others | ForEach-Object { $_.Id }) }
   $left = @(Wait-NoSwarmCast $SC_StopGrace)
   if ($left.Count -gt 0) {
@@ -380,8 +460,33 @@ function Stop-SwarmCast {
     foreach ($p in $left) { try { Stop-Process -Id $p.Id -Force -ErrorAction Stop } catch { } }
     $left = @(Wait-NoSwarmCast 5)
   }
+  return $left
+}
+
+function Stop-SwarmCast {
+  $all = @(Get-AllProcesses)
+  $procs = @(Get-SwarmCastProcesses $all)
+  if ($procs.Count -eq 0) {
+    Say-Ok 'SwarmCast is not running.'
+    return
+  }
+  Say-Heading 'Stopping SwarmCast'
+  $left = @()
+  # Once nothing runs, check again a moment later: a start script this uninstaller could
+  # not see (between two tries, or an older one) may have started SwarmCast again.
+  # Bounded: three passes at most.
+  for ($round = 1; $round -le 3; $round++) {
+    $left = @(Stop-Once $procs @(Get-StartScripts $all $procs) ($round -gt 1))
+    if ($left.Count -gt 0) { break }
+    Start-Sleep -Seconds $SC_SettleSeconds
+    $all = @(Get-AllProcesses)
+    $procs = @(Get-SwarmCastProcesses $all)
+    if ($procs.Count -eq 0) { break }
+    Say "  SwarmCast started again ($(($procs | ForEach-Object { Format-Proc $_ }) -join ', ')); stopping it again..."
+    $left = @($procs)
+  }
   if ($left.Count -gt 0) {
-    Say-Warn "Could not stop these processes: $(($left | ForEach-Object { "$(Split-Path -Leaf $_.Path) (PID $($_.Id))" }) -join ', '). Restart the computer and run this again if files remain."
+    Say-Warn "Could not stop these processes: $(($left | ForEach-Object { Format-Proc $_ }) -join ', '). Restart the computer and run this again if files remain."
     return
   }
   Say-Ok 'SwarmCast stopped.'
@@ -479,7 +584,7 @@ function Show-Leftovers([string]$Path) {
 function Remove-Data {
   if ($script:Opt.KeepSettings) {
     foreach ($e in @(Get-ChildItem -LiteralPath $script:DataDir -Force -ErrorAction SilentlyContinue)) {
-      if ($SC_Keep -contains $e.Name) { continue }
+      if ($SC_Keep -contains $e.Name -or $e.Name -eq $SC_UninstallMarker) { continue }
       if (-not (Remove-WithRetry $e.FullName)) { $script:Failed += $e.FullName }
     }
   } else {
@@ -741,6 +846,7 @@ function Invoke-Main {
     }
   }
 
+  if ($haveData) { Set-UninstallMarker }
   Stop-SwarmCast
   if ($haveData) { Invoke-RouterCleanup }
   Say-Heading 'Deleting SwarmCast files'

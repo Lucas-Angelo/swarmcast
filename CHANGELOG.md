@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Switching between "Stable" and "Lower delay" while the player was briefly pausing to absorb a stall no longer leaves the video paused on "Buffering" for good: it plays again at once.
+- **Windows: uninstalling while SwarmCast runs no longer fails because SwarmCast starts again.** The uninstaller killed SwarmCast outright, and the start script, which retries a start that stops within 10 seconds, started it again while its files were being deleted ("some files could not be removed", SwarmCast still running). The uninstaller now stops the start script first, lets SwarmCast stop the live by itself (as Ctrl+C does), and checks that nothing came back before deleting anything; the start script never restarts SwarmCast while it is being uninstalled.
 
 ## [0.2.2] - 2026-10-29
 

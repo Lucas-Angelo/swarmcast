@@ -1290,6 +1290,24 @@ function Invoke-App([string[]]$AppArgs) {
   Write-Log "SwarmCast exited with code $code after $($script:AppSeconds) s"
 }
 
+# The uninstaller (uninstall-windows.ps1) is removing SwarmCast: it leaves a ".uninstalling"
+# note in the data folder while it stops SwarmCast and deletes its files. A note older than
+# 10 minutes is a leftover of an interrupted uninstall and is ignored.
+function Test-Uninstalling {
+  $marker = Join-Path $script:DataDir '.uninstalling'
+  try {
+    $item = Get-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    if ($item -and ((Get-Date) - $item.LastWriteTime).TotalMinutes -lt 10) { return $true }
+  } catch { }
+  return (-not (Test-Path -LiteralPath $script:CurrentExe))
+}
+
+function Exit-Uninstalling {
+  Say "SwarmCast was stopped by its uninstaller (exit code $($script:AppCode)); not starting it again."
+  Write-Log 'SwarmCast is being uninstalled: not restarting it'
+  exit $script:AppCode
+}
+
 function Start-App {
   if (-not (Test-Path -LiteralPath $script:CurrentExe)) {
     Stop-Setup "SwarmCast is not installed correctly ($($script:CurrentExe) is missing). Run this script again."
@@ -1310,9 +1328,12 @@ function Start-App {
     if ($delay -gt 0) {
       Say "SwarmCast stopped right away (exit code $($script:AppCode)). Trying again in $delay s (attempt $attempt of $($delays.Count))..."
       Start-Sleep -Seconds $delay
+      if (Test-Uninstalling) { Exit-Uninstalling }
     }
     Invoke-App $appArgs
     if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }
+    # Stopped by the uninstaller: never start it again (or roll back) under its feet.
+    if (Test-Uninstalling) { Exit-Uninstalling }
     if ($script:JustUpdated -and (Invoke-Rollback)) {
       Invoke-App $appArgs
       if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }
