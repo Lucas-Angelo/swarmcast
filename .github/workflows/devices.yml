@@ -7,8 +7,9 @@ name: Devices
 # and sends the browser to the background and back.
 #
 # Start it: the `devices` label on a pull request (remove and add it again for another run), by
-# hand once this file is on the default branch, or weekly. It reports separately: `ci-ok`
-# (pipeline.yml) does not wait for it.
+# hand once this file is on the default branch. It reports separately: `ci-ok` (pipeline.yml)
+# does not wait for it. No schedule yet: a scheduled run reports on main's commit, so it starts
+# only once the suite has had its run of consecutive green dispatches (docs/TESTING.md).
 on:
   pull_request:
     types: [labeled]
@@ -21,8 +22,6 @@ on:
         description: Run on every event, without the `devices` label check.
         type: boolean
         default: false
-  schedule:
-    - cron: '41 6 * * 1'
 
 permissions:
   contents: read
