@@ -209,17 +209,33 @@ See section 7. Without those secrets the release is unsigned, which is the defau
 **Versions** follow [Semantic Versioning](https://semver.org/): minor bumps (`0.3.0`) for features,
 patch bumps (`0.2.2`) for fixes.
 
-**Pre-releases** (planned with the opt-in beta channel in 0.3.0): `X.Y.Z-beta.N`, and optionally
-`X.Y.Z-rc.N` for a final frozen build. Always put a dot before the number (`beta.2`, not `beta2`), so
-`beta.11` sorts after `beta.2`. No alpha. They are tags on `main` like any release, and a version with a
-hyphen is published as a **GitHub pre-release**, which `/releases/latest` (stable apps, the start scripts
-and the site's download button) never returns. Patch releases normally skip betas.
+**Pre-releases** (the opt-in beta channel, since 0.3.0): `X.Y.Z-beta.N`, and optionally `X.Y.Z-rc.N`
+for a final frozen build. Always put a dot before the number (`beta.2`, not `beta2`), so `beta.11` sorts
+after `beta.2`. No alpha: the release workflow refuses any other pre-release identifier. They are tags on
+`main` like any release, and are published as a **GitHub pre-release** that is never **Latest**, so
+`/releases/latest` and its `latest.json` (stable apps, the start scripts and the site's download button)
+never return them. Desktop apps with **Get beta versions** on read the beta feed
+`https://lucas-angelo.github.io/swarmcast/updates/beta.json`, which the website build copies from the
+`latest.json` of the highest release, beta or stable (docs/DESKTOP.md, "Updates").
+
+**The rule: a new minor ships as a beta first, and the stable version only after the beta was verified.**
+`X.Y.0` is refused by the release workflow unless `vX.Y.0-beta.N` (or `-rc.N`) is published. Patch
+releases (`X.Y.Z`, Z > 0) normally skip betas. Merge and release only after `ci-ok` passed on the pull
+request.
 
 **A published release is never changed.** Release immutability is on (section 1): once published, its
 assets and its tag cannot be edited, replaced or deleted, and GitHub adds a release attestation.
 Installed apps and the scripts may already have it. A mistake is fixed by shipping the next version.
 
 ### Steps
+
+For a beta (`vX.Y.Z-beta.N`), steps 1–5 are the same with these differences: the changelog stays under
+`## [Unreleased]` (the workflow takes the beta's notes from there; it must not be empty), the version is
+`X.Y.Z-beta.N` everywhere (step 2), and the beta is **not merged into `main`** (`main` only takes stable
+versions): once `ci-ok` is green on the minor's release pull request (branch `release/X.Y.Z`, titled
+`SwarmCast vX.Y.Z`), tag its head commit itself and push only the tag
+(`git tag -a vX.Y.Z-beta.N -m "SwarmCast vX.Y.Z-beta.N" <head> && git push origin vX.Y.Z-beta.N`).
+Then do **Verify a beta** below before the stable version.
 
 1. **Changelog.** In `CHANGELOG.md`, rename `## [Unreleased]` (or the prepared `## [X.Y.Z] - Unreleased`)
    to `## [X.Y.Z] - YYYY-MM-DD`, start a new empty `## [Unreleased]` above it, and update the link
@@ -240,8 +256,11 @@ Installed apps and the scripts may already have it. A mistake is fixed by shippi
    git tag vX.Y.Z && git push origin vX.Y.Z
    ```
 5. **Watch the release workflow** in the **Actions** tab. It runs by itself on the tag and:
-   1. checks that the tag matches `package.json`, that `CHANGELOG.md` has a section for the version and
-      that the updater signing secrets exist, and that no GitHub release exists yet for the tag;
+   1. checks that the tag matches `package.json`, that the version is `X.Y.Z`, `X.Y.Z-beta.N` or
+      `X.Y.Z-rc.N`, that the tag commit is on `main` or `release/X.Y` (a pre-release may also be on the minor's release pull request branch `release/X.Y.Z`, same X.Y.Z, before it is merged), that a new minor `X.Y.0` had a
+      published beta, that `CHANGELOG.md` has the notes (`## [X.Y.Z]`, or `## [Unreleased]` for a
+      pre-release), that the updater signing secrets exist, and that no GitHub release exists yet for the
+      tag;
    2. runs the whole pipeline, every stage, the same as for pull requests, with the desktop installers
       built with full optimisation and their update packages signed with the updater key (from the
       `release` environment, section 3). If anything fails, nothing is published;
@@ -250,7 +269,11 @@ Installed apps and the scripts may already have it. A mistake is fixed by shippi
    4. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
       `CHANGELOG.md` section: it uploads every asset to a draft first, checks them, attests them (build
       provenance, `gh attestation verify <file> -R Lucas-Angelo/swarmcast`) and only then publishes the
-      draft, so nothing edits a published release.
+      draft, so nothing edits a published release. A pre-release is published with
+      `--prerelease --latest=false` and its page says what a beta is and links **Beta feedback**; a stable
+      release becomes **Latest** only when it is the highest stable version (a hotfix on an older line
+      does not take the download button back). The job then checks that `/releases/latest` is what it
+      should be.
 6. **Check the result** (a few minutes after it finishes):
    - the release is marked **Latest** and has every asset listed below;
    - `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json` shows the new
@@ -259,6 +282,26 @@ Installed apps and the scripts may already have it. A mistake is fixed by shippi
    - the site's download button links the new files. Publishing the release starts the **Usage stats**
      job, which records the latest release's installers and rebuilds the site (section 6). If the button
      still shows the old version after that, run **Usage stats** by hand in the Actions tab.
+
+**Verify a beta** (before tagging the stable `vX.Y.Z`):
+
+- the release is a **Pre-release**, not Latest, with every asset of section 5 (the same list as a stable
+  release, `latest.json` included) and a `.sig` next to every updatable file;
+  `gh attestation verify <asset> -R Lucas-Angelo/swarmcast` passes for a few of them;
+- `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json` still shows the
+  previous **stable** version;
+- after the Release → Usage stats → Website chain (or **Actions → Website → Run workflow** on `main`),
+  `https://lucas-angelo.github.io/swarmcast/updates/beta.json` is byte for byte the beta's `latest.json`
+  (`curl -sL <both> | shasum`);
+- a desktop app on the previous stable version with **Get beta versions** off finds nothing new; turned on,
+  it offers the beta, and **Update now** installs it and reopens with the settings kept (one OS at least,
+  ideally the three); a `.deb` install shows `X.Y.Z~beta.N` in `dpkg -l | grep -i swarm`;
+- beta testers' reports in **Discussions → Beta feedback** are answered or fixed (a fix ships as
+  `-beta.N+1`).
+
+Then the stable version: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (step 1), set `X.Y.Z`
+(step 2), pull request `SwarmCast vX.Y.Z`, tag. Beta apps then get `X.Y.Z` from both feeds (it is higher
+than every beta), and stable apps from the stable feed.
 
 **If the release workflow fails** before publishing, fix the problem on `main` (a normal pull request),
 then move the tag (the admin bypass of the tag ruleset allows it):

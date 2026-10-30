@@ -66,7 +66,7 @@ made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the 
 **What a change runs** (`.github/scripts/changes.sh`):
 - `app` is anything except `docs/`, `site/`, `*.md` and the files only other workflows read (soak,
   Docker suites, CodeQL, stats, Dependabot, issue forms). Without it every app stage is skipped.
-- `site` is `site/`, the screenshots, the brand assets, the shared translations, the actions and
+- `site` is `site/`, `scripts/releases/` (the beta update feed is built with the site), the screenshots, the brand assets, the shared translations, the actions and
   these workflow files.
 - `scripts` is `scripts/` (not `scripts/ci` or `scripts/test/docker`), the actions and the
   node workflow (where those tests run): the install-script tests run only then, as before.

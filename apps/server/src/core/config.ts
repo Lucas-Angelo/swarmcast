@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
-import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, chatSettingsSchema, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
+import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, UPDATE_CHANNELS, chatSettingsSchema, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
 import { brandingSchema } from '@swarmcast/shared/branding';
 import { writePrivateFile } from './paths.js';
 
@@ -94,6 +94,11 @@ export const configSchema = z.object({
   /** The streamer's page ("Your page", docs/BRANDING.md); images live in <data>/branding/. */
   branding: brandingSchema.prefault({}),
   // ---- end branding: config ----
+  /**
+   * Desktop app updates: `channel` is the panel's "Get beta versions" (beta) or its opposite
+   * (stable). Absent = automatic: beta when the installed app is a pre-release, else stable.
+   */
+  updates: z.object({ channel: z.enum(UPDATE_CHANNELS).optional() }).prefault({}),
   /** Log files and old log exports are deleted after this many days (panel: Diagnostics). */
   diagnostics: z
     .object({ logRetentionDays: z.number().int().min(3).max(90).default(14) })

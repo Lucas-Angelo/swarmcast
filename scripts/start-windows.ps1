@@ -517,9 +517,36 @@ function Test-GitHub([switch]$Once) {
   }
 }
 
-# Finds this platform's package in a GNU-format SHA256SUMS file.
+# True when version A is newer than version B, by SemVer 2.0.0 precedence:
+# 0.3.0-beta.2 < 0.3.0-beta.11 < 0.3.0-rc.1 < 0.3.0 (a pre-release is older than its release).
+# [version] cannot read a pre-release ("0.3.0-beta.1"). Unreadable versions are never newer.
+function Test-NewerVersion([string]$A, [string]$B) {
+  $re = '^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$'
+  if ($A.Trim() -notmatch $re) { return $false }
+  $x = @([long]$Matches[1], [long]$Matches[2], [long]$Matches[3]); $p = @(); if ($Matches[4]) { $p = @($Matches[4].Split('.')) }
+  if ($B.Trim() -notmatch $re) { return $true }
+  $y = @([long]$Matches[1], [long]$Matches[2], [long]$Matches[3]); $q = @(); if ($Matches[4]) { $q = @($Matches[4].Split('.')) }
+  for ($i = 0; $i -lt 3; $i++) {
+    if ($x[$i] -ne $y[$i]) { return ($x[$i] -gt $y[$i]) }
+  }
+  if ($p.Count -eq 0 -or $q.Count -eq 0) { return ($p.Count -eq 0 -and $q.Count -gt 0) }
+  for ($i = 0; $i -lt [Math]::Max($p.Count, $q.Count); $i++) {
+    if ($i -ge $p.Count) { return $false }
+    if ($i -ge $q.Count) { return $true }
+    $s = $p[$i]; $t = $q[$i]
+    if ($s -ceq $t) { continue }
+    $an = $s -match '^\d+$'; $bn = $t -match '^\d+$'
+    if ($an -and $bn) { return ([long]$s -gt [long]$t) }
+    if ($an -or $bn) { return $bn }
+    return ([string]::CompareOrdinal($s, $t) -gt 0)
+  }
+  return $false
+}
+
+# Finds this platform's package in a GNU-format SHA256SUMS file: X.Y.Z, or a pre-release
+# X.Y.Z-beta.N / X.Y.Z-rc.N (the beta versions).
 function Find-Package([string]$SumsFile, [string]$Arch) {
-  $re = '^SwarmCast-v(\d+\.\d+\.\d+)-windows-' + [regex]::Escape($Arch) + '\.zip$'
+  $re = '^SwarmCast-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-windows-' + [regex]::Escape($Arch) + '\.zip$'
   foreach ($line in [System.IO.File]::ReadAllLines($SumsFile)) {
     $l = $line.Trim()
     if ($l -notmatch '^([0-9a-fA-F]{64}) [ *]?(.+)$') { continue }
@@ -576,7 +603,7 @@ function Test-Release {
         Save-Url "$SC_DefaultReleaseUrl/SHA256SUMS.txt" $online 30
         $script:OnlineState = 'same'
         $remote = Find-Package $online $script:ArchInfo.Arch
-        if ($remote -and ([version]$remote.Version -gt [version]$local.Version)) {
+        if ($remote -and (Test-NewerVersion $remote.Version $local.Version)) {
           $script:OnlineState = 'newer'
           $script:Source = 'online'
           $script:ReleaseUrl = $SC_DefaultReleaseUrl.TrimEnd('/')
@@ -866,8 +893,13 @@ function Install-OrUpdate {
     Say-Ok "Already up to date (v$installed)"
     return
   }
-  if ($script:Source -eq 'local' -and $installed -and ([version]$installed -gt [version]$script:Package.Version)) {
-    Say-Ok "Already up to date (v$installed; the local bundle has the older v$($script:Package.Version), so it is not used)"
+  # Never a downgrade (settings are migrated one way only): a beta stays until a newer version.
+  if ($installed -and (Test-NewerVersion $installed $script:Package.Version)) {
+    if ($script:Source -eq 'local') {
+      Say-Ok "Already up to date (v$installed; the local bundle has the older v$($script:Package.Version), so it is not used)"
+    } else {
+      Say-Ok "Already up to date (v$installed; the release has the older v$($script:Package.Version), so it is not installed)"
+    }
     return
   }
   if ($installed) {
@@ -1290,6 +1322,24 @@ function Invoke-App([string[]]$AppArgs) {
   Write-Log "SwarmCast exited with code $code after $($script:AppSeconds) s"
 }
 
+# The uninstaller (uninstall-windows.ps1) is removing SwarmCast: it leaves a ".uninstalling"
+# note in the data folder while it stops SwarmCast and deletes its files. A note older than
+# 10 minutes is a leftover of an interrupted uninstall and is ignored.
+function Test-Uninstalling {
+  $marker = Join-Path $script:DataDir '.uninstalling'
+  try {
+    $item = Get-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
+    if ($item -and ((Get-Date) - $item.LastWriteTime).TotalMinutes -lt 10) { return $true }
+  } catch { }
+  return (-not (Test-Path -LiteralPath $script:CurrentExe))
+}
+
+function Exit-Uninstalling {
+  Say "SwarmCast was stopped by its uninstaller (exit code $($script:AppCode)); not starting it again."
+  Write-Log 'SwarmCast is being uninstalled: not restarting it'
+  exit $script:AppCode
+}
+
 function Start-App {
   if (-not (Test-Path -LiteralPath $script:CurrentExe)) {
     Stop-Setup "SwarmCast is not installed correctly ($($script:CurrentExe) is missing). Run this script again."
@@ -1310,9 +1360,12 @@ function Start-App {
     if ($delay -gt 0) {
       Say "SwarmCast stopped right away (exit code $($script:AppCode)). Trying again in $delay s (attempt $attempt of $($delays.Count))..."
       Start-Sleep -Seconds $delay
+      if (Test-Uninstalling) { Exit-Uninstalling }
     }
     Invoke-App $appArgs
     if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }
+    # Stopped by the uninstaller: never start it again (or roll back) under its feet.
+    if (Test-Uninstalling) { Exit-Uninstalling }
     if ($script:JustUpdated -and (Invoke-Rollback)) {
       Invoke-App $appArgs
       if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }

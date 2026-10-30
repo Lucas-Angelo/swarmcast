@@ -36,10 +36,14 @@ jobs:
     environment: release
     outputs:
       version: ${{ steps.version.outputs.version }}
+      channel: ${{ steps.channel.outputs.channel }}
+      is_latest: ${{ steps.channel.outputs.is_latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # Every branch and tag: the tag commit must be on main or a maintenance branch.
+          fetch-depth: 0
       - name: Tag must match package.json version
         id: version
         shell: bash
@@ -69,15 +73,58 @@ jobs:
             echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets (Settings > Environments > release, docs/RELEASING.md section 3): without them the desktop installers have no update signatures."
             exit 1
           fi
-      - name: CHANGELOG.md must have a section for this version
+      # X.Y.Z (stable) or X.Y.Z-beta.N / X.Y.Z-rc.N (a pre-release, the beta channel); any other
+      # pre-release identifier stops here (scripts/releases/version.mjs). is_latest: only a stable
+      # version at least every published stable one becomes GitHub's "Latest" (a hotfix on an
+      # older line does not take the download button back).
+      - name: Release channel (stable, or beta for beta.N / rc.N)
+        id: channel
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mapfile -t stable < <(gh release list -R "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName')
+          node scripts/releases/version.mjs "$VERSION" "${stable[@]}" | tee -a "$GITHUB_OUTPUT"
+      # Stable: main, or the maintenance branch release/X.Y. A pre-release may also be tagged on
+      # the minor's release pull request branch release/X.Y.Z, before it is merged into main (main
+      # only takes the stable version).
+      - name: The tag is on main or a release branch
         shell: bash
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          if ! grep -qF "## [${VERSION}]" CHANGELOG.md; then
-            echo "::error file=CHANGELOG.md::No '## [${VERSION}]' section in CHANGELOG.md."
+          mapfile -t branches < <(git branch -r --contains "$GITHUB_SHA" --format '%(refname:short)')
+          node scripts/releases/version.mjs --on-branch "$VERSION" "${branches[@]}"
+      # A new minor or major ships to everyone only after its beta: X.Y.0 needs a published
+      # X.Y.0-beta.N or X.Y.0-rc.N (patch releases normally skip betas).
+      - name: A new minor was a beta first
+        if: steps.channel.outputs.channel == 'stable'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          [[ "$VERSION" == *.0 ]] || { echo "Patch release: no beta needed."; exit 0; }
+          betas="$(gh release list -R "$GITHUB_REPOSITORY" --exclude-drafts --limit 1000 --json tagName,isPrerelease \
+            --jq '.[] | select(.isPrerelease) | .tagName' | grep -xE "v${VERSION//./\\.}-(beta|rc)\.[0-9]+" || true)"
+          if [ -z "$betas" ]; then
+            echo "::error::v${VERSION} is a new minor: publish and verify v${VERSION}-beta.1 first (docs/RELEASING.md, section 4)."
             exit 1
           fi
+          echo "Published pre-releases of ${VERSION}:"; echo "$betas"
+      # Stable: its own `## [X.Y.Z]` section. Pre-release: `## [Unreleased]`, which becomes the
+      # X.Y.Z section when the stable version ships. Either becomes the release notes and the
+      # update dialog, so it must not be empty.
+      - name: CHANGELOG.md has the release notes
+        shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          CHANNEL: ${{ steps.channel.outputs.channel }}
+        run: |
+          section="${VERSION}"
+          [ "$CHANNEL" = beta ] && section="Unreleased"
+          node scripts/releases/notes.mjs --section "$section" CHANGELOG.md > /dev/null
 
   # ---- Gate: the whole pipeline. Nothing is signed or published unless all of it passes. ----
   # It builds the desktop installers in release flavour (updater artifacts signed with the
@@ -285,6 +332,8 @@ jobs:
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ github.ref_name }}
+      CHANNEL: ${{ needs.verify.outputs.channel }}
+      IS_LATEST: ${{ needs.verify.outputs.is_latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -459,19 +508,26 @@ jobs:
           done
       # --- end uninstallers ---
 
+      # notes.md goes into latest.json (the app's update dialog); the release page also gets, for a
+      # pre-release, what a beta is and where to report on it (notes-page.md).
       - name: Extract release notes from CHANGELOG.md
         run: |
-          awk -v header="## [${VERSION}]" '
-            /^## \[/ { if (found) exit; if (index($0, header) == 1) { found = 1; next } }
-            # Stop at the link reference definitions at the bottom of the file.
-            found && /^\[[^]]+\]: / { exit }
-            found { print }
-          ' CHANGELOG.md > notes.md
-          if ! grep -q '[^[:space:]]' notes.md; then
-            echo "::error file=CHANGELOG.md::The '## [${VERSION}]' section in CHANGELOG.md is empty."
-            exit 1
+          section="$VERSION"
+          [ "$CHANNEL" = beta ] && section="Unreleased"
+          node scripts/releases/notes.mjs --section "$section" CHANGELOG.md > notes.md
+          if [ "$CHANNEL" = beta ]; then
+            {
+              echo "**Beta version** of the next update: new features, may have bugs. Your settings are kept."
+              echo "Desktop app: turn on **Get beta versions** on the panel's Desktop app card to get it (and the next betas) as updates;"
+              echo "turn it off at any time, and you stay on the beta until the next stable version is newer."
+              echo "Found a problem? Tell us in [Discussions → Beta feedback](https://github.com/${GITHUB_REPOSITORY}/discussions/categories/beta-feedback)."
+              echo
+              cat notes.md
+            } > notes-page.md
+          else
+            cp notes.md notes-page.md
           fi
-          cat notes.md
+          cat notes-page.md
 
       # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
       - name: Download the desktop installers
@@ -509,9 +565,11 @@ jobs:
             echo "Deleting the unpublished draft $id of an earlier attempt"
             gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
           done
-          prerelease=()
-          if [[ "$VERSION" == *-* ]]; then prerelease=(--prerelease); fi
-          gh release create "$TAG" release/* --draft --verify-tag --title "SwarmCast $TAG" --notes-file notes.md "${prerelease[@]}"
+          # A pre-release is never "Latest": /releases/latest (stable apps, the start scripts, the
+          # site's download button) keeps pointing at the stable release.
+          flags=(--latest="$IS_LATEST")
+          if [ "$CHANNEL" = beta ]; then flags=(--prerelease --latest=false); fi
+          gh release create "$TAG" release/* --draft --verify-tag --title "SwarmCast $TAG" --notes-file notes-page.md "${flags[@]}"
       - name: Every asset is on the draft, byte for byte the same size
         env:
           GH_TOKEN: ${{ github.token }}
@@ -537,4 +595,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" -F draft=false --jq '"Published \(.html_url)"'
+          gh api -X PATCH "repos/$GITHUB_REPOSITORY/releases/$DRAFT_ID" -F draft=false -f make_latest="$IS_LATEST" \
+            --jq '"Published \(.html_url) (pre-release: \(.prerelease))"'
+      # What stable apps read must not have moved for a pre-release.
+      - name: releases/latest is the expected release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest="$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name 2>/dev/null || echo none)"
+          echo "releases/latest: $latest"
+          if [ "$CHANNEL" = beta ] && [ "$latest" = "$TAG" ]; then echo "::error::the pre-release $TAG became Latest"; exit 1; fi
+          if [ "$IS_LATEST" = true ] && [ "$latest" != "$TAG" ]; then echo "::error::$TAG should be Latest, it is $latest"; exit 1; fi

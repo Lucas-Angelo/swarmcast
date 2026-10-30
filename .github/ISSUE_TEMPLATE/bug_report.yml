@@ -22,6 +22,19 @@ body:
       required: true
 
   - type: dropdown
+    id: channel
+    attributes:
+      label: Update channel
+      description: |
+        Desktop app: is **Get beta versions** on, on the panel's **Desktop app** card? A version like "0.3.0-beta.1" (with a **Beta** badge) is a beta. Beta problems can also go to [Discussions → Beta feedback](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback).
+      options:
+        - Stable (the usual versions)
+        - Beta ("Get beta versions" is on, or a version with -beta or -rc)
+        - Not sure, or not the desktop app
+    validations:
+      required: true
+
+  - type: dropdown
     id: os
     attributes:
       label: Your computer

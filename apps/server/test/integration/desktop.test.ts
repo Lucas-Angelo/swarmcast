@@ -305,3 +305,41 @@ describe.skipIf(!posix)('desktop mode (--desktop) driven by a fake shell', () =>
     expect(await first.exited).toBe(0);
   });
 });
+
+describe.skipIf(!posix)('desktop mode: update channel ("Get beta versions")', () => {
+  const isChannel = (m: DesktopOutMessage): m is Extract<DesktopOutMessage, { type: 'update-channel' }> => m.type === 'update-channel';
+
+  it('sent right after ready, changed from the panel, saved in config.json and sent again at the next start', async () => {
+    const dir = tmpDir();
+    const home = tmpDir('sc-home-');
+    const ports = await allocAppPorts();
+    writeConfig(dir, ports);
+    const env = { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_DESKTOP_VERSION: '0.2.2' };
+    let shell = new FakeShell(dir, home, ['--no-autostart'], env);
+    const ready = await shell.next(isReady);
+    // Before the shell's first update check: automatic, which is stable for 0.2.2.
+    expect((await shell.next(isChannel, 10_000)).channel).toBeNull();
+    expect(shell.messages.findIndex(isChannel)).toBe(shell.messages.findIndex(isReady) + 1);
+    const { base, cookie } = await login(ready.adminUrl);
+    const api = (p: string, init: RequestInit = {}) => fetch(base + p, { ...init, headers: { cookie, origin: base, 'content-type': 'application/json' } });
+    expect((await (await api('/api/desktop')).json()).updateChannel).toEqual({ choice: null, effective: 'stable' });
+
+    const from = shell.messages.length;
+    const r = await api('/api/desktop/update/channel', { method: 'PUT', body: JSON.stringify({ channel: 'beta' }) });
+    expect(r.status).toBe(200);
+    expect(await r.json()).toMatchObject({ updateChannel: { choice: 'beta', effective: 'beta' }, updateChecking: true });
+    expect((await shell.next(isChannel, 5000, from)).channel).toBe('beta');
+    expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).updates).toEqual({ channel: 'beta' });
+    // The shell's check answers: "checking" ends.
+    shell.send({ type: 'update', update: { status: 'available', current: '0.2.2', version: '0.3.0-beta.1' } });
+    await until(async () => (await (await api('/api/desktop')).json()).updateChecking === false, { timeoutMs: 5000, what: 'the check to end', abortOn: [shell.t] });
+
+    shell.send({ type: 'quit' });
+    expect(await shell.exited).toBe(0);
+    shell = new FakeShell(dir, home, ['--no-autostart'], env);
+    await shell.next(isReady);
+    expect((await shell.next(isChannel, 10_000)).channel).toBe('beta');
+    shell.send({ type: 'quit' });
+    expect(await shell.exited).toBe(0);
+  });
+});

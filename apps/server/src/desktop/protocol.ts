@@ -1,4 +1,4 @@
-import { desktopUpdateSchema, type DesktopUpdate, type LivePhase } from '@swarmcast/shared';
+import { desktopUpdateSchema, type DesktopUpdate, type LivePhase, type UpdateChannel } from '@swarmcast/shared';
 import { trayStateFor, type TrayStateMessage } from '../tray/tray.js';
 
 /**
@@ -68,7 +68,9 @@ export type DesktopOutMessage =
   | DesktopFatalMessage
   | DesktopExportLogsMessage
   | { type: 'update-check' }
-  | { type: 'update-install' };
+  | { type: 'update-install' }
+  /** The streamer's update channel, at start and on every change; null = automatic. */
+  | { type: 'update-channel'; channel: UpdateChannel | null };
 
 export const DESKTOP_CLICK_IDS = ['start', 'stop', 'quit'] as const;
 export type DesktopClickId = (typeof DESKTOP_CLICK_IDS)[number];

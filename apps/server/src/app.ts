@@ -208,6 +208,14 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     currentLogFile: () => logFile?.file,
   });
   diagnostics.start();
+  // Desktop app: "Get beta versions" lives in config.json (`updates.channel`).
+  opts.desktop?.useUpdateChannel({
+    get: () => config.updates.channel,
+    save: (channel) => {
+      config.updates = { ...config.updates, channel };
+      saveConfig(paths.configFile, persistableConfig(config, loadConfig(paths.configFile), { noTunnel: opts.noTunnel }));
+    },
+  });
   let closing: Promise<void> | null = null;
   const app: App = {
     paths,
