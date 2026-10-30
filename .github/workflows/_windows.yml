@@ -5,7 +5,7 @@ name: windows
 # update tests), assembles the release folders and installer zip like release.yml, serves them
 # locally and drives the real start script with a bare-OS PATH, then the app with Google Chrome,
 # Microsoft Edge and Firefox (Playwright), the real Cloudflare quick tunnel, direct mode, the
-# quality ladder and (best effort) real OBS Studio (scripts/test/windows). pipeline.yml's ci-ok
+# quality ladder and real OBS Studio (scripts/test/windows). pipeline.yml's ci-ok
 # job writes the summary table of all suites.
 on:
   workflow_call:
@@ -34,9 +34,7 @@ jobs:
         os: ${{ fromJSON(inputs.runners) }}
         suite: ${{ fromJSON(inputs.suites) }}
     runs-on: ${{ matrix.os }}
-    # Real OBS on a GPU-less VM is best effort until it is proven to work.
-    continue-on-error: ${{ matrix.suite == 'obs' }}
-    timeout-minutes: 20
+    timeout-minutes: 16
     defaults:
       run:
         shell: bash
@@ -74,9 +72,11 @@ jobs:
       # ffmpeg is only for the test harness (OBS-like feed, FFMPEG_BIN); the installer and the
       # app run with a bare-OS PATH and never see it.
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           ffmpeg: 'true'
       - uses: ./.github/actions/get-build
+        timeout-minutes: 5
         with:
           names: pkg-windows-x64
 
@@ -93,6 +93,7 @@ jobs:
             echo "SC_NEWER=$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")" >> "$GITHUB_ENV"
           fi
       - name: Playwright Firefox
+        timeout-minutes: 8
         if: matrix.suite == 'app'
         run: npx playwright install firefox
       - name: Assemble release folders and the installer zip

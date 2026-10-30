@@ -245,7 +245,12 @@ export function attachAdaptiveDelay(
       return holding;
     },
     setProfile(id) {
-      endHold();
+      // A hold is our own pause: ending it must play again. Only clearing it left the video
+      // paused for good, still showing "Buffering": the hold timer was gone, the profile switch
+      // (applyProfile) leaves a paused video alone, and so does the stall watchdog (seen in
+      // quality.spec in Docker: "Lower delay" a few ms after a source reload, which a hold met).
+      if (holding) resume();
+      else endHold();
       ctl.reset(id, clock());
       applyTarget();
     },
