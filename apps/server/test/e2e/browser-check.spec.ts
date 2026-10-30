@@ -7,13 +7,20 @@
 // The kicked device is its cookie, so the earlier tabs are closed before it opens the link: once
 // a goto there never reached "load" in 150 s on WebKit (PR #14, Ubuntu) with five players still
 // open in the same session. What is checked is the server's answer, which "commit" already has.
+//
+// "Checking your browser…" goes away by itself once the check is done. It used to sit above
+// "Watch", so a fast viewer's (or a test's) press could start on the button and end beside it
+// once the line was gone: no join was sent (stability soak: adaptive-delay.spec on WebKit/Ubuntu,
+// nickname filled, Watch focused, nothing posted for 240 s). The page clock holds the line until
+// the button is pressed, so the regression test does not depend on timing.
 import type { BrowserContext, Page } from '@playwright/test';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
+import { CHECK_MIN_VISIBLE_MS } from '../../../viewer/src/join-form.js';
 import { admin, adminState, expect, forcePowLevel, liveLink, test, uid, viewerByNick } from './fixtures.js';
 
 /**
  * Records, in every tab of `context`, whether its join page ever showed "Checking your
- * browser…" (#check). The page keeps it up at least 600 ms (join.ts CHECK_MIN_VISIBLE_MS);
+ * browser…" (#check). The page keeps it up at least CHECK_MIN_VISIBLE_MS (join-form.ts);
  * recording it as it happens does not depend on the test looking within that time, and the
  * tab's sessionStorage keeps the answer once the join has moved on to /watch.
  */
@@ -114,4 +121,33 @@ test('the browser check is on by default and asked once per browser', { tag: '@u
   // Assert
   expect(res?.status()).toBe(403);
   await expect(banned).not.toHaveURL(/\/watch$/);
+});
+
+test('a press on Watch held while the browser check ends still joins: the button does not move', { tag: '@ui' }, async ({ viewers }) => {
+  // Arrange
+  const page = await (await viewers.browserContext()).newPage();
+  await page.clock.install();
+  await page.goto(await liveLink());
+  await expect(page.locator('#check-progress')).toHaveJSProperty('value', 1);
+  await page.fill('#nickname', uid('press'));
+  const watch = page.locator('#join');
+  await expect(watch).toBeEnabled();
+  const before = (await watch.boundingBox())!;
+  const post = page.waitForRequest((r) => r.url().endsWith('/api/join') && r.method() === 'POST');
+
+  // Act
+  await page.mouse.move(before.x + before.width / 2, before.y + before.height / 2);
+  await page.mouse.down();
+  await page.clock.runFor(CHECK_MIN_VISIBLE_MS);
+
+  // Assert
+  await expect(page.locator('#check')).toBeHidden();
+  expect(await watch.boundingBox()).toEqual(before);
+
+  // Act
+  await page.mouse.up();
+
+  // Assert
+  await post;
+  await expect(page).toHaveURL(/\/watch$/);
 });
