@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
@@ -14,6 +15,8 @@ import { allocAppPorts, hangingServer, isAlive, POSIX, ServerProcess, signIn, st
 // Logging in like the webview: /auth/<token> answers 200 with the cookie and a page that opens /
 // itself (no redirect: the cookie is SameSite=Strict), and the token never shows in that page.
 // Unknown or broken stdin lines are ignored: the first test sends some mid-way and carries on.
+// The first-run system check asks whether GitHub is reachable: here it asks a local stand-in
+// (SWARMCAST_GITHUB_URL), so the result is known and no test depends on the internet.
 
 /** A quit while the network hangs (speed test, tunnel check) ends within this. */
 const QUIT_WHILE_HUNG_MS = 5000;
@@ -53,6 +56,14 @@ function desktop(o: { ports: Ports; args?: string[]; env?: Record<string, string
   });
 }
 
+/** A local stand-in for github.com that answers every request at once (the check only needs an answer). */
+async function githubStandIn(): Promise<string> {
+  const server = http.createServer((_req, res) => res.end());
+  onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  return `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`;
+}
+
 /** The first state message for `phase` from index `from` on. */
 function phase(server: ServerProcess, p: DesktopStateMessage['phase'], from = 0): Promise<DesktopStateMessage> {
   return server.next((m): m is DesktopStateMessage => m.type === 'state' && m.phase === p, `phase ${p}`, { from });
@@ -83,7 +94,7 @@ describe.skipIf(!POSIX)('desktop mode (--desktop) driven by a fake shell', () =>
     const home = tmpDir('sc-home-');
     const exe = process.platform === 'darwin' ? '/Applications/Swarm Cast Test.app/Contents/MacOS/SwarmCast' : '/opt/Swarm Cast Test/swarmcast-desktop';
     const entry = process.platform === 'darwin' ? path.join(home, 'Library', 'LaunchAgents', 'io.github.lucas-angelo.swarmcast.plist') : path.join(home, '.config', 'autostart', 'swarmcast.desktop');
-    const server = desktop({ ports, home, env: { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_DESKTOP_EXE: exe } });
+    const server = desktop({ ports, home, env: { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_DESKTOP_EXE: exe, SWARMCAST_GITHUB_URL: await githubStandIn() } });
     // Act
     const ready = await server.next(isReady, 'ready');
     const { panel, page, root } = await webviewLogin(ready);
@@ -148,6 +159,7 @@ describe.skipIf(!POSIX)('desktop mode (--desktop) driven by a fake shell', () =>
     expect(systemCheck.results.map((r: { id: string }) => r.id)).toEqual(['os', 'ram', 'cpu', 'upload', 'download', 'disk', 'ports', 'obs', 'github', 'release']);
     expect(systemCheck.results.find((r: { id: string }) => r.id === 'ports')).toMatchObject({ status: 'ok', value: 'free' });
     expect(systemCheck.results.find((r: { id: string }) => r.id === 'upload')).toMatchObject({ status: 'skipped' });
+    expect(systemCheck.results.find((r: { id: string }) => r.id === 'github')).toMatchObject({ status: 'ok', value: 'reachable' });
     expect(served.status).toBe(200);
     // Act
     const children = server.children();
@@ -188,7 +200,7 @@ describe.skipIf(!POSIX)('desktop mode (--desktop) driven by a fake shell', () =>
       ports,
       tunnel: true,
       config: { speedTest: { enabled: true, intervalMinutes: 15 }, tunnel: { provider: 'external', externalUrl: hang.url } },
-      env: { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_SPEEDTEST_URL: hang.url },
+      env: { SWARMCAST_WEB_DIR: webDir(), SWARMCAST_SPEEDTEST_URL: hang.url, SWARMCAST_GITHUB_URL: hang.url },
     });
     await server.next(isReady, 'ready');
     await phase(server, 'starting');
