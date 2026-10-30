@@ -9,7 +9,6 @@ import { resolvePaths } from '../../src/core/paths.js';
 import { decodeDesktopMessage, decodeShellMessage, encodeDesktopMessage, encodeShellMessage } from '../../src/desktop/protocol.js';
 import { EXPORT_RATE_LIMIT } from '../../src/admin/diagnostics-routes.js';
 import { Diagnostics } from '../../src/diagnostics/diagnostics.js';
-import type { DirectMode } from '../../src/direct/direct.js';
 import { Anonymizer } from '../../src/diagnostics/anonymize.js';
 import { buildLogExport, exportFileName, revealCommand, sanitizeConfig, writeExportFile, xdgDownloadDir } from '../../src/diagnostics/export.js';
 import { silentLog, tempDir } from './helpers.js';
@@ -427,7 +426,7 @@ describe('diagnostics admin API', () => {
     const paths = resolvePaths(dataDir);
     fs.mkdirSync(paths.logsDir, { recursive: true });
     fs.writeFileSync(path.join(paths.logsDir, 'swarmcast-2026-10-26.log'), JSON.stringify({ msg: `stream key ${STREAM_KEY} from ${VIEWER_IP4}` }) + '\n');
-    const { live } = makeController({ snapshot: () => ({}) } as unknown as DirectMode);
+    const { live } = makeController();
     const config = defaultConfig();
     const persist = vi.fn();
     const diagnostics = new Diagnostics({ paths, config, persist, live, log: silentLog, version: '0.1.0', panelToken: PANEL_TOKEN, downloadsDir: async () => downloads });

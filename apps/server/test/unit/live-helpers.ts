@@ -11,7 +11,11 @@ import type { ManifestSigner } from '../../src/hls/manifest.js';
 import { NoTunnel } from '../../src/tunnel/provider.js';
 import { silentLog } from './helpers.js';
 
-/** Direct mode as logic tests need it: never on, nobody seen through it. */
+/**
+ * Direct mode of a live that never turns it on: nobody seen through it. The real one talks to the
+ * router (UPnP, NAT-PMP) and to public-address services: systems outside this machine, not a
+ * test's to call. The one Direct mode stand-in of the unit and integration tests.
+ */
 export function inactiveDirect(): DirectMode {
   return { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
 }
