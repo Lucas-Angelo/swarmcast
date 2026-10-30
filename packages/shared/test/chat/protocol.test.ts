@@ -115,5 +115,8 @@ describe('chat settings', () => {
     expect(chatSettingsSchema.safeParse({ gif: { key: 'short' } }).success).toBe(false);
     expect(chatSettingsSchema.safeParse({ gif: { key: 'abc/def?x=1' } }).success).toBe(false);
     expect(chatSettingsSchema.safeParse({ gif: { key: 'Abcdefgh_123-xyz' } }).success).toBe(true);
+    // Every viewer must agree before their browser contacts the GIF provider: no automatic mode.
+    expect(chatSettingsSchema.safeParse({ gif: { consent: 'auto' } }).success).toBe(false);
+    expect(chatSettingsSchema.parse({ gif: { consent: 'ask' } }).gif.consent).toBe('ask');
   });
 });
