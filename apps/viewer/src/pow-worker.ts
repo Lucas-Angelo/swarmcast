@@ -15,15 +15,18 @@ function isChallenge(data: unknown): data is Challenge {
   return typeof p === 'object' && p !== null && typeof (p as { salt?: unknown }).salt === 'string';
 }
 
-ctx.onmessage = (ev) => {
+/** One message from the page; settles once its answer, if it gets one, is posted. */
+export function handleMessage(ev: { origin: string; data: unknown }): Promise<void> {
   // A dedicated worker hears only the page that started it, and those messages carry no origin
   // (or this page's own). Anything else, or anything that is not a challenge, is ignored.
-  if (ev.origin !== '' && ev.origin !== ctx.location.origin) return;
-  if (!isChallenge(ev.data)) return;
+  if (ev.origin !== '' && ev.origin !== ctx.location.origin) return Promise.resolve();
+  if (!isChallenge(ev.data)) return Promise.resolve();
   // Count attempts for the page's progress bar (the server puts the most attempts needed in data.max).
   const counting = countAttempts(deriveKey, (attempts) => ctx.postMessage({ attempts }));
-  solveChallenge({ challenge: ev.data, deriveKey: counting, timeout: 60_000 }).then(
+  return solveChallenge({ challenge: ev.data, deriveKey: counting, timeout: 60_000 }).then(
     (solution) => ctx.postMessage({ solution }),
     (err: unknown) => ctx.postMessage({ error: String(err) }),
   );
-};
+}
+
+ctx.onmessage = (ev) => void handleMessage(ev);

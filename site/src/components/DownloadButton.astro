@@ -134,9 +134,13 @@ const downloadPage = pagePath(lang, 'download');
     };
 
     render(null);
-    void loadUsage(root.dataset.stats ?? '').then((u) => {
-      if (u.latest) render(u.latest, u.latest.version);
-    });
+    // Busy while stats.json is read: the button may then point at the installer itself.
+    root.setAttribute('aria-busy', 'true');
+    void loadUsage(root.dataset.stats ?? '')
+      .then((u) => {
+        if (u.latest) render(u.latest, u.latest.version);
+      })
+      .finally(() => root.setAttribute('aria-busy', 'false'));
   }
 </script>
 

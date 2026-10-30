@@ -12,11 +12,16 @@ export default defineConfig({
   testDir: 'test/e2e',
   timeout: 30_000,
   fullyParallel: true,
-  retries: process.env.CI ? 1 : 0,
-  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
+  // Never retried, CI included: a test that fails once is a bug to fix, not a flake to rerun.
+  retries: 0,
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }], ['json', { outputFile: 'test-results/results.json' }]] : 'list',
   use: {
     baseURL: `http://127.0.0.1:${PORT}`,
     trace: 'retain-on-failure',
+    // The same browser language and time zone on every machine: a browser in Portuguese is sent
+    // to the pt-BR pages on its first visit, so the system's language must not decide the test.
+    locale: 'en-US',
+    timezoneId: 'UTC',
   },
   webServer: {
     command: `node test/serve.mjs ${PORT}`,

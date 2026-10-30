@@ -62,7 +62,7 @@ const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter
  * when its Content-Range says so, else it starts over. The try is aborted when no bytes arrive for
  * `stallMs`; what arrived until then stays in `got` for the next try. Nothing is written here.
  */
-async function fetchInto(url, got, stallMs) {
+async function fetchInto(url, got, stallMs, fetchImpl) {
   const ac = new AbortController();
   let timer;
   const arm = () => {
@@ -76,7 +76,7 @@ async function fetchInto(url, got, stallMs) {
   arm();
   try {
     const from = got.bytes;
-    const res = await fetch(url, { redirect: 'follow', signal: ac.signal, ...(from > 0 ? { headers: { range: `bytes=${from}-` } } : {}) });
+    const res = await fetchImpl(url, { redirect: 'follow', signal: ac.signal, ...(from > 0 ? { headers: { range: `bytes=${from}-` } } : {}) });
     if (from > 0 && res.status === 416) {
       await res.body?.cancel();
       const total = /^bytes \*\/(\d+)$/.exec(res.headers.get('content-range') ?? '')?.[1];
@@ -118,9 +118,9 @@ async function fetchInto(url, got, stallMs) {
  * where it stopped (see fetchInto). The bytes are checked in memory and only bytes that match
  * reach the disk (written to `dest.part`, then renamed). A mismatch is final: the pin or the
  * upstream file is wrong (or, after a resume, the server sent a different file), and downloading
- * again would not change that. `waitMs`, `stallMs` and `maxMs` are for tests.
+ * again would not change that. `waitMs`, `stallMs`, `maxMs` and `fetch` (the network) are for tests.
  */
-export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS } = {}) {
+export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS, fetch: fetchImpl = fetch } = {}) {
   if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) throw new Error(`no pinned SHA-256 for ${url}`);
   const got = { chunks: [], bytes: 0, resumedAt: [] };
   const deadline = Date.now() + maxMs;
@@ -128,12 +128,12 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
   for (let attempt = 1, failed = 0; ; attempt++) {
     const before = got.bytes;
     try {
-      await fetchInto(url, got, stallMs);
+      await fetchInto(url, got, stallMs, fetchImpl);
     } catch (err) {
       failed = got.bytes > before ? 0 : failed + 1;
       const where = `${url}, try ${attempt}, ${failed} of ${TRIES} in a row without progress`;
-      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`);
-      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`);
+      if (err.final || failed === TRIES) throw new Error(`${why(err)} (${where})`, { cause: err });
+      if (Date.now() >= deadline) throw new Error(`${why(err)} (${where}; gave up after ${maxMs / 60_000} min, ${got.bytes} bytes received; SC_DOWNLOAD_MAX_MIN)`, { cause: err });
       const wait = waitMs(Math.max(1, failed));
       const kept = got.bytes ? `, ${got.bytes} bytes kept` : '';
       console.warn(`  try ${attempt} failed (${why(err)}${kept}; ${failed} of ${TRIES} in a row without progress); again in ${wait / 1000} s`);
@@ -174,7 +174,7 @@ export async function downloadFirst(urls, dest, sha256, opts) {
     } catch (err) {
       if (err.checksum || i === urls.length - 1) {
         if (errors.length === 0) throw err;
-        throw new Error([...errors, err.message].join('; then '));
+        throw new Error([...errors, err.message].join('; then '), { cause: err });
       }
       errors.push(err.message);
       console.warn(`  ${err.message}; trying the next source`);

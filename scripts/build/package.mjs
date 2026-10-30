@@ -80,7 +80,7 @@ if (target === hostTarget()) {
     const out = execFileSync(path.join(staging, exe('swarmcast')), ['--probe-intl'], { encoding: 'utf8', env: { ...process.env, SWARMCAST_NO_OPEN: '1' } });
     console.log(`✓ ICU probe: ${out.trim()}`);
   } catch (e) {
-    throw new Error(`the packaged binary lacks what the chat needs from ICU: ${String(e.stdout ?? e.message).trim()}`);
+    throw new Error(`the packaged binary lacks what the chat needs from ICU: ${String(e.stdout ?? e.message).trim()}`, { cause: e });
   }
 }
 

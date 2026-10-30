@@ -21,8 +21,11 @@ export default async function warmBrowsers(config: FullConfig): Promise<void> {
     let browser;
     try {
       browser = await TYPES[name]!.launch(channel ? { channel } : {});
-    } catch {
-      continue; // not installed on this runner (the project is not run here either)
+    } catch (err) {
+      // Not installed on this runner (its project is not run here either). Said, not swallowed: an
+      // engine that is installed but cannot start fails its tests, and this line tells why.
+      console.log(`not warmed ${key.replace(/:$/, '')}: ${String((err as Error).message).split('\n')[0]}`);
+      continue;
     }
     try {
       const page = await browser.newPage();

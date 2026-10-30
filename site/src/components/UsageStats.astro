@@ -36,18 +36,22 @@ const { lang } = Astro.props;
 
   for (const root of document.querySelectorAll<HTMLElement>('.sc-stats')) {
     const lang = (root.dataset.lang ?? 'en') as SiteLang;
-    void loadUsage(root.dataset.stats ?? '').then((u) => {
-      const fill = (id: string, n: number | null) => {
-        const item = root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
-        if (!item || n === null) return false;
-        item.querySelector<HTMLElement>('[data-n]')!.textContent = formatCount(n, lang);
-        item.hidden = false;
-        return true;
-      };
-      const a = fill('stats-downloads', u.downloads);
-      const b = fill('stats-apps', u.appsWeek);
-      root.hidden = !(a || b);
-    });
+    // Busy while stats.json is read: the block changes (or stays hidden) once it is.
+    root.setAttribute('aria-busy', 'true');
+    void loadUsage(root.dataset.stats ?? '')
+      .then((u) => {
+        const fill = (id: string, n: number | null) => {
+          const item = root.querySelector<HTMLElement>(`[data-testid="${id}"]`);
+          if (!item || n === null) return false;
+          item.querySelector<HTMLElement>('[data-n]')!.textContent = formatCount(n, lang);
+          item.hidden = false;
+          return true;
+        };
+        const a = fill('stats-downloads', u.downloads);
+        const b = fill('stats-apps', u.appsWeek);
+        root.hidden = !(a || b);
+      })
+      .finally(() => root.setAttribute('aria-busy', 'false'));
   }
 </script>
 

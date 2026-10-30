@@ -1,6 +1,7 @@
 // Link previews and search: the Open Graph / Twitter tags, canonical and hreflang links, the social
 // card images, the JSON-LD on the landing pages, robots.txt, the sitemap and the 404 page. Runs
-// against the BUILT site (dist/), like site.spec.ts.
+// against the BUILT site (dist/), like site.spec.ts. Cards stay under WhatsApp's ~300 KB limit;
+// a description fits a search result (165 characters); structured data only on the landing pages.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -14,6 +15,7 @@ const ORIGIN = 'https://lucas-angelo.github.io';
 const BASE = '/swarmcast';
 const RELEASES = 'https://github.com/Lucas-Angelo/swarmcast/releases/latest';
 const MAX_CARD_BYTES = 300 * 1024;
+const MAX_DESCRIPTION = 165;
 
 type Lang = 'en' | 'pt-BR';
 interface PageCase {
@@ -62,6 +64,8 @@ function imageSize(buf: Buffer): { type: string; width: number; height: number }
 async function metas(page: Page, key: string): Promise<string[]> {
   return page.locator(`head meta[property="${key}"], head meta[name="${key}"]`).evaluateAll((els) => els.map((e) => e.getAttribute('content') ?? ''));
 }
+
+/** The one, non-empty content of <meta property|name=key> (fails otherwise). */
 async function meta(page: Page, key: string): Promise<string> {
   const values = await metas(page, key);
   expect(values, `exactly one ${key}`).toHaveLength(1);
@@ -69,6 +73,7 @@ async function meta(page: Page, key: string): Promise<string> {
   return values[0];
 }
 
+/** Every tag a link preview reads, by property or name. */
 const REQUIRED = [
   'description',
   'og:type',
@@ -90,36 +95,77 @@ const REQUIRED = [
   'twitter:image:alt',
 ];
 
+/** The canonical link, the hreflang alternates and the theme colours of the page in its head. */
+async function headLinks(page: Page) {
+  return {
+    canonical: await page.locator('head link[rel="canonical"]').evaluateAll((els) => els.map((e) => e.getAttribute('href'))),
+    alternates: await page.locator('head link[rel="alternate"][hreflang]').evaluateAll((els) => Object.fromEntries(els.map((e) => [e.getAttribute('hreflang'), e.getAttribute('href')]))),
+    themes: await page.locator('head meta[name="theme-color"]').evaluateAll((els) => Object.fromEntries(els.map((e) => [e.getAttribute('media'), e.getAttribute('content')]))),
+  };
+}
+
+/** Every indexable HTML page in dist (not the 404 page). */
+function distPages(): { url: string; html: string }[] {
+  const out: { url: string; html: string }[] = [];
+  const walk = (dir: string) => {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        if (!['_astro', 'pagefind', 'og'].includes(e.name)) walk(full);
+      } else if (e.name.endsWith('.html') && full !== path.join(DIST, '404.html')) {
+        const rel = path.relative(DIST, full).split(path.sep).join('/');
+        out.push({ url: `${BASE}/${rel.replace(/index\.html$/, '')}`, html: fs.readFileSync(full, 'utf8') });
+      }
+    }
+  };
+  walk(DIST);
+  return out;
+}
+
+/** The title, meta descriptions, canonical tag and og:image of a built page's head. */
+function headOf(html: string) {
+  const head = html.slice(0, html.indexOf('</head>'));
+  const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+  return {
+    head,
+    titles: [...head.matchAll(/<title>([^<]*)<\/title>/g)].map((m) => decode(m[1])),
+    descriptions: [...head.matchAll(/<meta name="description" content="([^"]*)"/g)].map((m) => decode(m[1])),
+    ogImage: /<meta property="og:image" content="([^"]*)"/.exec(head)?.[1],
+  };
+}
+
+/** Where each 404 block ([data-lang]) starts, from the top of the page. */
+const blockTops = (page: Page) => page.locator('[data-lang]').evaluateAll((els) => Object.fromEntries(els.map((e) => [e.getAttribute('data-lang'), Math.round(e.getBoundingClientRect().top)])));
+
 test.describe('link previews and search tags', () => {
   for (const c of PAGES) {
-    test(`${c.name}: Open Graph, Twitter, canonical, hreflang`, async ({ page }) => {
+    test(`${c.name}: one title and description, every preview tag, canonical, hreflang`, async ({ page }) => {
+      // Arrange
       const own = localized(c.lang, c.path);
+
+      // Act
       await page.goto(own);
+      const links = await headLinks(page);
+
+      // Assert
       await expect(page).toHaveURL(new RegExp(`${own}$`));
       await expect(page.locator('html')).toHaveAttribute('lang', c.lang);
-
-      // One title, one description.
       await expect(page.locator('head title')).toHaveCount(1);
-      const title = await page.title();
-      expect(title).toMatch(c.title);
+      expect(await page.title()).toMatch(c.title);
       for (const key of REQUIRED) await meta(page, key);
+      expect((await meta(page, 'description')).length, 'description fits a search result').toBeLessThanOrEqual(MAX_DESCRIPTION);
+      expect(links.canonical).toEqual([abs(own)]);
+      expect(links.alternates).toEqual({ en: abs(localized('en', c.path)), 'pt-BR': abs(localized('pt-BR', c.path)), 'x-default': abs(localized('en', c.path)) });
+    });
+
+    test(`${c.name}: Open Graph and Twitter agree with the page`, async ({ page }) => {
+      // Act
+      await page.goto(localized(c.lang, c.path));
+      const title = await page.title();
       const description = await meta(page, 'description');
-      expect(description.length, 'description fits a search result').toBeLessThanOrEqual(165);
 
-      // Canonical and alternates: absolute, this page in both languages, English as x-default.
-      const canonical = await page.locator('head link[rel="canonical"]').evaluateAll((els) => els.map((e) => e.getAttribute('href')));
-      expect(canonical).toEqual([abs(own)]);
-      const alternates = await page
-        .locator('head link[rel="alternate"][hreflang]')
-        .evaluateAll((els) => Object.fromEntries(els.map((e) => [e.getAttribute('hreflang'), e.getAttribute('href')])));
-      expect(alternates).toEqual({
-        en: abs(localized('en', c.path)),
-        'pt-BR': abs(localized('pt-BR', c.path)),
-        'x-default': abs(localized('en', c.path)),
-      });
-
-      // Open Graph and Twitter agree with the page.
-      expect(await meta(page, 'og:url')).toBe(abs(own));
+      // Assert
+      expect(await meta(page, 'og:url')).toBe(abs(localized(c.lang, c.path)));
       expect(await meta(page, 'og:title')).toBe(title);
       expect(await meta(page, 'twitter:title')).toBe(title);
       expect(await meta(page, 'og:description')).toBe(description);
@@ -129,45 +175,55 @@ test.describe('link previews and search tags', () => {
       expect(await meta(page, 'og:locale')).toBe(c.lang === 'en' ? 'en_US' : 'pt_BR');
       expect(await meta(page, 'og:locale:alternate')).toBe(c.lang === 'en' ? 'pt_BR' : 'en_US');
       expect(await meta(page, 'twitter:card')).toBe('summary_large_image');
+    });
 
-      // The card of the page's language: an absolute https URL to a real file of the stated size.
+    test(`${c.name}: the card of the page's language is a real 1200×630 file of the stated type and size, served`, async ({ page }) => {
+      // Act
+      await page.goto(localized(c.lang, c.path));
       const image = await meta(page, 'og:image');
+      const file = path.join(DIST, new URL(image).pathname.slice(BASE.length));
+      const served = await page.request.get(new URL(image).pathname);
+
+      // Assert
       expect(image).toBe(abs(`${BASE}/og/${c.lang === 'en' ? 'og-en' : 'og-pt-br'}.png`));
       expect(await meta(page, 'twitter:image')).toBe(image);
       expect(await meta(page, 'twitter:image:alt')).toBe(await meta(page, 'og:image:alt'));
-      const file = path.join(DIST, new URL(image).pathname.slice(BASE.length));
       expect(fs.existsSync(file), `${file} exists`).toBe(true);
       const buf = fs.readFileSync(file);
       expect(buf.length, 'card stays under WhatsApp’s ~300 KB limit').toBeLessThan(MAX_CARD_BYTES);
       const size = imageSize(buf);
       expect(size).toEqual({ type: await meta(page, 'og:image:type'), width: Number(await meta(page, 'og:image:width')), height: Number(await meta(page, 'og:image:height')) });
       expect([size.width, size.height]).toEqual([1200, 630]);
-      const served = await page.request.get(new URL(image).pathname);
       expect(served.status()).toBe(200);
+    });
 
-      // theme-color from the brand tokens (light and dark page background).
+    test(`${c.name}: theme-color from the brand tokens, structured data only on landing pages`, async ({ page }) => {
+      // Arrange
       const tokens = readTokens();
-      const themes = await page
-        .locator('head meta[name="theme-color"]')
-        .evaluateAll((els) => Object.fromEntries(els.map((e) => [e.getAttribute('media'), e.getAttribute('content')])));
-      expect(themes).toEqual({
-        '(prefers-color-scheme: light)': tokens.light['--sc-bg'],
-        '(prefers-color-scheme: dark)': tokens.dark['--sc-bg'],
-      });
 
-      // Structured data only on the landing pages.
+      // Act
+      await page.goto(localized(c.lang, c.path));
+      const { themes } = await headLinks(page);
+
+      // Assert
+      expect(themes).toEqual({ '(prefers-color-scheme: light)': tokens.light['--sc-bg'], '(prefers-color-scheme: dark)': tokens.dark['--sc-bg'] });
       await expect(page.locator('script[type="application/ld+json"]')).toHaveCount(c.landing ? 1 : 0);
     });
   }
 
   for (const lang of ['en', 'pt-BR'] as const) {
     test(`JSON-LD on the ${lang} landing parses and has the required fields`, async ({ page }) => {
+      // Arrange
       const own = localized(lang, '/');
+
+      // Act
       await page.goto(own);
       const text = await page.locator('script[type="application/ld+json"]').textContent();
       const data = JSON.parse(text ?? '') as { '@context': string; '@graph': Record<string, unknown>[] };
-      expect(data['@context']).toBe('https://schema.org');
       const byType = (type: string) => data['@graph'].find((n) => n['@type'] === type) as Record<string, unknown>;
+
+      // Assert
+      expect(data['@context']).toBe('https://schema.org');
       const app = byType('SoftwareApplication');
       expect(app).toMatchObject({
         name: 'SwarmCast',
@@ -190,88 +246,77 @@ test.describe('link previews and search tags', () => {
       expect(app.author).toEqual({ '@id': person['@id'] });
       expect(app.publisher).toEqual({ '@id': person['@id'] });
       expect(byType('WebSite')).toMatchObject({ name: 'SwarmCast', url: abs(`${BASE}/`), inLanguage: ['en', 'pt-BR'] });
-      // No "</script>" can break out of the data block.
-      expect(text).not.toMatch(/<\//);
+      expect(text, 'no "</" can break out of the data block').not.toMatch(/<\//);
     });
   }
 });
 
-/** Every indexable HTML page in dist (not the 404 page). */
-function distPages(): { url: string; html: string }[] {
-  const out: { url: string; html: string }[] = [];
-  const walk = (dir: string) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      const full = path.join(dir, e.name);
-      if (e.isDirectory()) {
-        if (!['_astro', 'pagefind', 'og'].includes(e.name)) walk(full);
-      } else if (e.name.endsWith('.html') && full !== path.join(DIST, '404.html')) {
-        const rel = path.relative(DIST, full).split(path.sep).join('/');
-        out.push({ url: `${BASE}/${rel.replace(/index\.html$/, '')}`, html: fs.readFileSync(full, 'utf8') });
-      }
-    }
-  };
-  walk(DIST);
-  return out;
-}
-
 test.describe('every page in dist', () => {
-  test('has one title and one meta description, both unique, a canonical URL and a card', () => {
-    const pages = distPages();
+  test('has one title and one meta description, both unique, a canonical URL, a card and an x-default', () => {
+    // Act
+    const pages = distPages().map((p) => ({ ...p, ...headOf(p.html) }));
+
+    // Assert
     expect(pages.length).toBeGreaterThan(40);
     const titles = new Map<string, string>();
     const descriptions = new Map<string, string>();
-    const decode = (s: string) => s.replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
     for (const p of pages) {
-      const head = p.html.slice(0, p.html.indexOf('</head>'));
-      const t = [...head.matchAll(/<title>([^<]*)<\/title>/g)].map((m) => decode(m[1]));
-      const d = [...head.matchAll(/<meta name="description" content="([^"]*)"/g)].map((m) => decode(m[1]));
-      expect(t, `${p.url}: one <title>`).toHaveLength(1);
-      expect(d, `${p.url}: one meta description`).toHaveLength(1);
-      expect(d[0].length, `${p.url}: a real description`).toBeGreaterThan(40);
-      expect(d[0].length, `${p.url}: description fits a search result`).toBeLessThanOrEqual(165);
-      expect(titles.get(t[0]), `${p.url}: title "${t[0]}" is unique`).toBeUndefined();
-      expect(descriptions.get(d[0]), `${p.url}: description is unique`).toBeUndefined();
-      titles.set(t[0], p.url);
-      descriptions.set(d[0], p.url);
-      expect(head, `${p.url}: canonical`).toContain(`<link rel="canonical" href="${abs(p.url)}"`);
-      const ogImage = /<meta property="og:image" content="([^"]*)"/.exec(head)?.[1];
-      expect([abs(`${BASE}/og/og-en.png`), abs(`${BASE}/og/og-pt-br.png`)], `${p.url}: og:image`).toContain(ogImage);
-      expect(head, `${p.url}: x-default`).toContain('hreflang="x-default"');
+      expect(p.titles, `${p.url}: one <title>`).toHaveLength(1);
+      expect(p.descriptions, `${p.url}: one meta description`).toHaveLength(1);
+      expect(p.descriptions[0].length, `${p.url}: a real description`).toBeGreaterThan(40);
+      expect(p.descriptions[0].length, `${p.url}: description fits a search result`).toBeLessThanOrEqual(MAX_DESCRIPTION);
+      expect(titles.get(p.titles[0]), `${p.url}: title "${p.titles[0]}" is unique`).toBeUndefined();
+      expect(descriptions.get(p.descriptions[0]), `${p.url}: description is unique`).toBeUndefined();
+      titles.set(p.titles[0], p.url);
+      descriptions.set(p.descriptions[0], p.url);
+      expect(p.head, `${p.url}: canonical`).toContain(`<link rel="canonical" href="${abs(p.url)}"`);
+      expect([abs(`${BASE}/og/og-en.png`), abs(`${BASE}/og/og-pt-br.png`)], `${p.url}: og:image`).toContain(p.ogImage);
+      expect(p.head, `${p.url}: x-default`).toContain('hreflang="x-default"');
     }
   });
 });
 
 test.describe('crawling', () => {
   test('robots.txt allows everything and points at the sitemap', async ({ request }) => {
+    // Act
     const res = await request.get(`${BASE}/robots.txt`);
-    expect(res.status()).toBe(200);
     const text = await res.text();
+
+    // Assert
+    expect(res.status()).toBe(200);
     expect(text).toMatch(/^User-agent: \*$/m);
     expect(text).toMatch(/^Allow: \/$/m);
     expect(text).not.toMatch(/^Disallow: \S/m);
-    const sitemap = text.match(/^Sitemap: (\S+)$/m)?.[1];
-    expect(sitemap).toBe(abs(`${BASE}/sitemap-index.xml`));
+    expect(text.match(/^Sitemap: (\S+)$/m)?.[1]).toBe(abs(`${BASE}/sitemap-index.xml`));
     expect(fs.existsSync(path.join(DIST, 'sitemap-index.xml'))).toBe(true);
   });
 
-  test('the sitemap lists both languages with hreflang alternates, and no 404', () => {
+  test('the sitemap lists both languages with hreflang alternates, every indexable page, and no 404', () => {
+    // Arrange
     const index = fs.readFileSync(path.join(DIST, 'sitemap-index.xml'), 'utf8');
     const files = [...index.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
-    expect(files.length).toBeGreaterThan(0);
+
+    // Act
     const xml = files.map((f) => fs.readFileSync(path.join(DIST, new URL(f).pathname.slice(BASE.length)), 'utf8')).join('\n');
     const locs = [...xml.matchAll(/<loc>([^<]+)<\/loc>/g)].map((m) => m[1]);
+
+    // Assert
+    expect(files.length).toBeGreaterThan(0);
     for (const p of ['/', '/download/', '/install/windows/', '/start/obs/']) {
       expect(locs).toContain(abs(localized('en', p)));
       expect(locs).toContain(abs(localized('pt-BR', p)));
     }
     expect(xml).toContain(`<xhtml:link rel="alternate" hreflang="pt-BR" href="${abs(`${BASE}/pt-br/install/windows/`)}"/>`);
     expect(locs.some((l) => l.includes('404'))).toBe(false);
-    // Every indexable page is in the sitemap.
     for (const p of distPages()) expect(locs, p.url).toContain(abs(p.url));
   });
 
-  test('a missing page shows a helpful 404 in both languages, not indexed', async ({ page }) => {
+  test('a missing page shows a helpful 404 in both languages, English first, not indexed', async ({ page }) => {
+    // Act
     const res = await page.goto(`${BASE}/no-such-page/`);
+    const tops = await blockTops(page);
+
+    // Assert
     expect(res?.status()).toBe(404);
     await expect(page.locator('head meta[name="robots"]')).toHaveAttribute('content', 'noindex');
     await expect(page.locator('head link[rel="canonical"]')).toHaveCount(0);
@@ -280,13 +325,15 @@ test.describe('crawling', () => {
     await expect(page.getByRole('link', { name: 'The guide' })).toHaveAttribute('href', `${BASE}/guide/`);
     await expect(page.getByRole('link', { name: 'O guia' })).toHaveAttribute('href', `${BASE}/pt-br/guide/`);
     await expect(page.getByRole('link', { name: 'Download SwarmCast' }).first()).toBeVisible();
-    // English first; under /pt-br/ the Portuguese block comes first.
-    const order = () => page.locator('[data-lang]').evaluateAll((els) => els.map((e) => [e.getAttribute('data-lang'), Math.round(e.getBoundingClientRect().top)] as const));
-    let blocks = await order();
-    expect(blocks[0][1]).toBeLessThan(blocks[1][1]);
+    expect(tops.en).toBeLessThan(tops['pt-BR']);
+  });
+
+  test('under /pt-br/ the 404 shows the Portuguese block first', async ({ page }) => {
+    // Act
     await page.goto(`${BASE}/pt-br/sem-pagina/`);
-    blocks = await order();
-    const top = Object.fromEntries(blocks);
-    expect(top['pt-BR']).toBeLessThan(top.en);
+    const tops = await blockTops(page);
+
+    // Assert
+    expect(tops['pt-BR']).toBeLessThan(tops.en);
   });
 });
