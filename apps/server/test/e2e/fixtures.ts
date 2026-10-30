@@ -605,7 +605,9 @@ export async function say(page: Page, text: string, shown = text): Promise<void>
 
 /**
  * Another viewer's page shows the message within 5 s. When it does not, the error says what that
- * page was doing (the list renders on animation frames, and only while the page is visible).
+ * page was doing: its visibility and focus, its last rows, and the chat's own counters (lastSeq:
+ * the newest chat item the page received, so a message that never arrived shows as a lower seq;
+ * late: draws the list made from its timer because no animation frame came, render.ts).
  */
 export async function sees(page: Page, text: string): Promise<void> {
   try {
@@ -617,6 +619,7 @@ export async function sees(page: Page, text: string): Promise<void> {
         focus: document.hasFocus(),
         last: [...document.querySelectorAll('[data-testid=chat-list] li')].slice(-5).map((li) => `${li.className}: ${li.textContent?.slice(0, 60)}`),
         unread: document.querySelector('[data-testid=chat-list]')?.parentElement?.querySelector('.pill')?.textContent ?? null,
+        chat: (window as unknown as { __swarmcastChat?: { stats: unknown } }).__swarmcastChat?.stats ?? null,
       }))
       .catch((err: Error) => ({ unavailable: err.message }));
     throw new Error(`${(e as Error).message}\nthe receiving page: ${JSON.stringify(state)}`, { cause: e });
