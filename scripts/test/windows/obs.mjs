@@ -71,9 +71,10 @@ async function obsConnect() {
     call: (requestType, requestData = {}) =>
       new Promise((resolve, reject) => {
         const requestId = crypto.randomUUID();
-        pending.set(requestId, { resolve, reject });
+        // The deadline goes with the answer: no timer outlives a request.
+        const timer = setTimeout(() => pending.delete(requestId) && reject(new Error(`${requestType}: timeout`)), 20_000);
+        pending.set(requestId, { resolve: (v) => (clearTimeout(timer), resolve(v)), reject: (e) => (clearTimeout(timer), reject(e)) });
         ws.send(JSON.stringify({ op: 6, d: { requestType, requestId, requestData } }));
-        setTimeout(() => pending.has(requestId) && (pending.delete(requestId), reject(new Error(`${requestType}: timeout`))), 20_000);
       }),
     close: () => ws.close(),
   };
