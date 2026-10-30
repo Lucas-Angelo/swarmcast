@@ -3,9 +3,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
-import { ADMIN_COOKIE, type DesktopUpdate } from '@swarmcast/shared';
+import { ADMIN_COOKIE, effectiveUpdateChannel, isPrereleaseVersion, type DesktopUpdate, type UpdateChannel } from '@swarmcast/shared';
 import { createAdminServer } from '../../src/admin/server.js';
-import { defaultConfig } from '../../src/core/config.js';
+import { configSchema, defaultConfig } from '../../src/core/config.js';
 import { resolvePaths } from '../../src/core/paths.js';
 import { abortable, QuitAbortError, sleep, withRetries } from '../../src/core/retry.js';
 import { Autostart } from '../../src/desktop/autostart.js';
@@ -178,7 +178,7 @@ describe('desktop admin API', () => {
     const app = await server(39402, bridge);
     try {
       const info = (await app.inject({ method: 'GET', url: '/api/desktop', headers: headers(39402) })).json();
-      expect(info).toEqual({ desktop: true, version: '2.0.0', serverVersion: '1.9.0', autostart: { supported: true, enabled: false }, update: null, updateChecking: false, systemCheck: 'idle' });
+      expect(info).toEqual({ desktop: true, version: '2.0.0', serverVersion: '1.9.0', autostart: { supported: true, enabled: false }, update: null, updateChecking: false, updateChannel: { choice: null, effective: 'stable' }, systemCheck: 'idle' });
 
       let r = await app.inject({ method: 'PUT', url: '/api/desktop/autostart', headers: post(39402), payload: { enabled: true } });
       expect(r.statusCode).toBe(200);
@@ -203,6 +203,86 @@ describe('desktop admin API', () => {
     } finally {
       await app.close();
     }
+  });
+});
+
+describe('desktop update channel ("Get beta versions")', () => {
+  const headers = (port: number) => ({ host: `127.0.0.1:${port}`, cookie: `${ADMIN_COOKIE}=tok` });
+  const put = (port: number) => ({ ...headers(port), origin: `http://127.0.0.1:${port}`, 'content-type': 'application/json' });
+  const setup = async (port: number, version: string, saved?: UpdateChannel) => {
+    const sent: DesktopOutMessage[] = [];
+    const autostart = new Autostart({ exe: '/opt/x', platform: 'linux', home: fs.mkdtempSync(path.join(os.tmpdir(), 'sc-home-')), env: {} });
+    const bridge = new DesktopBridge({ version, serverVersion: version, autostart, send: (m) => sent.push(m) });
+    let stored = saved;
+    const saves: UpdateChannel[] = [];
+    bridge.useUpdateChannel({ get: () => stored, save: (c) => void (saves.push(c), (stored = c)) });
+    const { live } = makeController({} as DirectMode);
+    const app = await createAdminServer({ port, adminDir: '/nonexistent', live, log: silentLog, token: 'tok', onQuit: vi.fn(), checkDirect: vi.fn(), cleanupStale: vi.fn(), desktop: bridge });
+    return { app, bridge, sent, saves };
+  };
+
+  it('the effective channel: the choice, else beta for a pre-release, else stable', () => {
+    expect(effectiveUpdateChannel(null, '0.2.2')).toBe('stable');
+    expect(effectiveUpdateChannel(undefined, '0.3.0-beta.1')).toBe('beta');
+    expect(effectiveUpdateChannel(null, '0.3.0-rc.1+b7')).toBe('beta');
+    expect(effectiveUpdateChannel(null, '0.3.0+b7')).toBe('stable');
+    expect(effectiveUpdateChannel('stable', '0.3.0-beta.1')).toBe('stable');
+    expect(effectiveUpdateChannel('beta', '0.2.2')).toBe('beta');
+    expect(isPrereleaseVersion('0.0.0-test.1')).toBe(true);
+    expect(isPrereleaseVersion('1.2.3')).toBe(false);
+  });
+
+  it('off by default on a stable app; turning it on saves it, tells the shell and shows "checking"', async () => {
+    const { app, bridge, sent, saves } = await setup(39411, '0.2.2');
+    try {
+      bridge.sendUpdateChannel();
+      expect(sent).toEqual([{ type: 'update-channel', channel: null }]);
+      expect((await app.inject({ method: 'GET', url: '/api/desktop', headers: headers(39411) })).json()).toMatchObject({ updateChannel: { choice: null, effective: 'stable' }, updateChecking: false });
+      let r = await app.inject({ method: 'PUT', url: '/api/desktop/update/channel', headers: put(39411), payload: { channel: 'beta' } });
+      expect(r.statusCode).toBe(200);
+      expect(r.json()).toMatchObject({ updateChannel: { choice: 'beta', effective: 'beta' }, updateChecking: true });
+      expect(saves).toEqual(['beta']);
+      expect(sent.at(-1)).toEqual({ type: 'update-channel', channel: 'beta' });
+      // The shell answers after its check.
+      bridge.setUpdate({ status: 'available', version: '0.3.0-beta.1', current: '0.2.2' });
+      expect(bridge.snapshot().updateChecking).toBe(false);
+      r = await app.inject({ method: 'PUT', url: '/api/desktop/update/channel', headers: put(39411), payload: { channel: 'stable' } });
+      expect(r.json()).toMatchObject({ updateChannel: { choice: 'stable', effective: 'stable' }, updateChecking: true });
+      expect(sent.at(-1)).toEqual({ type: 'update-channel', channel: 'stable' });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('a beta app is on beta until the streamer says otherwise; same channel again: no check', async () => {
+    const { app, sent } = await setup(39412, '0.3.0-beta.1');
+    try {
+      expect((await app.inject({ method: 'GET', url: '/api/desktop', headers: headers(39412) })).json().updateChannel).toEqual({ choice: null, effective: 'beta' });
+      const r = await app.inject({ method: 'PUT', url: '/api/desktop/update/channel', headers: put(39412), payload: { channel: 'beta' } });
+      expect(r.json()).toMatchObject({ updateChannel: { choice: 'beta', effective: 'beta' }, updateChecking: false });
+      expect(sent).toEqual([{ type: 'update-channel', channel: 'beta' }]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('validation and auth', async () => {
+    const { app, saves } = await setup(39413, '0.2.2', 'stable');
+    try {
+      for (const payload of [{ channel: 'nightly' }, { channel: null }, {}]) {
+        expect((await app.inject({ method: 'PUT', url: '/api/desktop/update/channel', headers: put(39413), payload })).statusCode).toBe(400);
+      }
+      expect((await app.inject({ method: 'PUT', url: '/api/desktop/update/channel', headers: { ...put(39413), cookie: '' }, payload: { channel: 'beta' } })).statusCode).toBe(401);
+      expect(saves).toEqual([]);
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('config.json: absent is automatic, the choice is kept', () => {
+    expect(defaultConfig().updates).toEqual({});
+    expect(configSchema.parse({ updates: { channel: 'beta' } }).updates.channel).toBe('beta');
+    expect(configSchema.safeParse({ updates: { channel: 'nightly' } }).success).toBe(false);
   });
 });
 

@@ -3,7 +3,7 @@ title: Atualizações
 description: Como o SwarmCast avisa sobre versões novas e se atualiza com um clique, sem perder as configurações.
 ---
 
-O SwarmCast procura uma versão **estável** nova logo depois de abrir e depois a cada 6 horas. Nada é instalado sem o seu OK.
+O SwarmCast procura uma versão **estável** nova logo depois de abrir e depois a cada 6 horas (e versões beta também, se você ligou: veja [Versões beta](#versões-beta)). Nada é instalado sem o seu OK.
 
 ## Quando tem versão nova
 
@@ -26,6 +26,17 @@ Clique em **Procurar atualizações** no cartão **App do SwarmCast** do painel 
 
 ![A mensagem Atualização do SwarmCast: Você já tem a versão mais recente do SwarmCast (0.2.0), com 1 OK.](../../../../assets/guides/app/pt-br/update-latest.webp)
 
+## Versões beta
+
+Uma beta é uma versão antecipada da próxima atualização: novidades antes de todo mundo, mas ela **pode ter defeitos**. As betas são opcionais e vêm desligadas.
+
+- **Para ligar:** no cartão **App do SwarmCast** do painel, marque **Receber versões beta**. O SwarmCast procura na hora e oferece a versão mais nova, beta ou estável. As suas configurações continuam.
+- **Para desligar**, use a mesma chave quando quiser. O SwarmCast nunca instala uma versão mais antiga por cima de uma mais nova, então você **fica na beta** até sair uma versão estável mais nova, que chega como uma atualização normal.
+- Uma versão como **0.3.0-beta.1** aparece com o selo **Beta** ao lado. Se você mesmo instalou uma beta, ela segue as betas sozinha até você desligar a chave.
+- **Conte o que você encontrou** em [Discussions → Beta feedback](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback), ou abra um relato de problema e escolha **Beta** como canal de atualização.
+
+As betas ficam na [página de versões](https://github.com/Lucas-Angelo/swarmcast/releases), marcadas como **Pre-release**. O botão de download deste site sempre dá a versão estável.
+
 ## Se a atualização falhar
 
 A versão que você tem continua funcionando. O SwarmCast tenta baixar de novo algumas vezes sozinho. Se ainda assim falhar, confira a sua internet e clique em **Tentar de novo** mais tarde.
@@ -41,4 +52,4 @@ Se você instalou com script, rode o mesmo script de novo (ou o de um zip de ins
 
 ## Como o SwarmCast procura (privacidade)
 
-Para procurar, o app baixa um arquivinho público (`latest.json`) das versões do SwarmCast no GitHub. Ele não manda nada sobre você nem sobre a sua live. O GitHub conta quantas vezes esse arquivo foi baixado, e é assim que este site consegue estimar quantos apps estão em uso. Mais em [Privacidade e números de uso](/swarmcast/pt-br/about/privacy/).
+Para procurar, o app baixa um arquivinho público (`latest.json`) das versões do SwarmCast no GitHub; com as versões beta ligadas, também `updates/beta.json` deste site. Ele não manda nada sobre você nem sobre a sua live. O GitHub conta quantas vezes esse arquivo foi baixado, e é assim que este site consegue estimar quantos apps estão em uso. Mais em [Privacidade e números de uso](/swarmcast/pt-br/about/privacy/).

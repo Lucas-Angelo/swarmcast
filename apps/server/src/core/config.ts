@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { z } from 'zod';
-import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
+import { DEFAULT_PORTS, DEFAULT_STUN, QUICK_TUNNEL_MAX_VIEWERS, UPDATE_CHANNELS, defaultQualitySettings, qualitySettingsSchema } from '@swarmcast/shared';
 import { writePrivateFile } from './paths.js';
 
 export const tunnelProviderSchema = z.enum(['cloudflare-quick', 'none', 'external']);
@@ -86,6 +86,11 @@ export const configSchema = z.object({
   ffmpegPath: z.string().min(1).optional(),
   /** The admin panel's first-run setup tutorial was finished or skipped (it opens until then). */
   onboardingDone: z.boolean().default(false),
+  /**
+   * Desktop app updates: `channel` is the panel's "Get beta versions" (beta) or its opposite
+   * (stable). Absent = automatic: beta when the installed app is a pre-release, else stable.
+   */
+  updates: z.object({ channel: z.enum(UPDATE_CHANNELS).optional() }).prefault({}),
   /** Log files and old log exports are deleted after this many days (panel: Diagnostics). */
   diagnostics: z
     .object({ logRetentionDays: z.number().int().min(3).max(90).default(14) })

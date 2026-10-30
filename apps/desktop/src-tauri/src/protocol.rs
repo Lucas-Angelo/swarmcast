@@ -27,6 +27,15 @@ pub enum IconState {
     Live,
 }
 
+/// Update channel (docs/DESKTOP.md, "Updates"): `stable` reads the stable feed only, `beta`
+/// also reads the beta feed and takes the higher version.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    Stable,
+    Beta,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LiveState {
@@ -62,6 +71,12 @@ pub enum ServerMessage {
     },
     UpdateCheck,
     UpdateInstall,
+    /// The streamer's update channel (panel "Get beta versions"), at `ready` and on every
+    /// change; `null` = automatic (beta when this version is a pre-release).
+    UpdateChannel {
+        #[serde(default)]
+        channel: Option<Channel>,
+    },
     /// Answer to `export-logs`: the ZIP's path, or why it failed.
     ExportLogs {
         #[serde(default)]
@@ -191,6 +206,19 @@ mod tests {
         );
         assert_eq!(parse_line(r#"@@swarmcast {"type":"update-check"}"#), Line::Message(ServerMessage::UpdateCheck));
         assert_eq!(parse_line("@@swarmcast {\"type\":\"update-install\"}\r"), Line::Message(ServerMessage::UpdateInstall));
+    }
+
+    #[test]
+    fn parses_update_channel() {
+        let channel = |line: &str| match parse_line(line) {
+            Line::Message(ServerMessage::UpdateChannel { channel }) => Some(channel),
+            _ => None,
+        };
+        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":"beta"}"#), Some(Some(Channel::Beta)));
+        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":"stable"}"#), Some(Some(Channel::Stable)));
+        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":null}"#), Some(None));
+        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel"}"#), Some(None));
+        assert!(matches!(parse_line(r#"@@swarmcast {"type":"update-channel","channel":"nightly"}"#), Line::Invalid(_)));
     }
 
     #[test]

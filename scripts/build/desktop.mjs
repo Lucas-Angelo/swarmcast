@@ -38,6 +38,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { debianVersion } from '../releases/semver.mjs';
+import { setDebVersion } from './deb-version.mjs';
 import { hostTarget } from './fetch-binaries.mjs';
 import { writeThirdPartyLicenses } from './licenses.mjs';
 
@@ -323,6 +325,24 @@ collect('macos', (n) => n === 'SwarmCast.app.tar.gz' || n === 'SwarmCast.app.tar
 collect('macos', (n) => n === 'SwarmCast.app');
 collect('deb', (n) => n.includes(`_${version}_`) && (n.endsWith('.deb') || n.endsWith('.deb.sig')));
 collect('appimage', (n) => n.includes(`_${version}_`) && (n.endsWith('.AppImage') || n.endsWith('.AppImage.sig')));
+// Linux, pre-release: the .deb's Version field gets `~` (0.3.0~beta.1), or dpkg would sort the
+// beta above the stable 0.3.0 and apt would refuse that update as a downgrade (deb-version.mjs).
+// The rewritten .deb is signed again for the updater, bound to the SemVer version as before.
+const debVersion = debianVersion(version);
+if (isLinux && debVersion !== version) {
+  for (const deb of collected.filter((f) => f.endsWith('.deb'))) {
+    setDebVersion(deb, debVersion);
+    console.log(`✓ ${rel(deb)}: Debian version ${debVersion}`);
+    if (!updaterArtifacts) continue;
+    fs.rmSync(`${deb}.sig`, { force: true });
+    // The key and its password stay in the environment (never on a command line).
+    const signed = spawnSync(process.execPath, [tauriCli, 'signer', 'sign', '--app-version', version, deb], { stdio: ['ignore', 'ignore', 'inherit'], env });
+    if (signed.status !== 0 || !fs.existsSync(`${deb}.sig`)) throw new Error(`could not sign ${rel(deb)} again after changing its Debian version`);
+    const comment = Buffer.from(fs.readFileSync(`${deb}.sig`, 'utf8').trim(), 'base64').toString('utf8');
+    if (!comment.includes(`\tfile:${path.basename(deb)}\t`) || !comment.includes(`\tversion:${version}`)) throw new Error(`the new signature of ${rel(deb)} is not bound to ${path.basename(deb)} ${version}`);
+    console.log(`✓ ${rel(deb)}.sig (signed again)`);
+  }
+}
 for (const f of collected) console.log(`✓ ${rel(f)}`);
 if (updaterArtifacts && !collected.some((f) => f.endsWith('.sig'))) console.warn('⚠ no updater signature (*.sig) was produced');
 const PRODUCES = { nsis: /-setup\.exe$/, dmg: /\.dmg$/, app: /SwarmCast\.app$/, deb: /\.deb$/, appimage: /\.AppImage$/ };
