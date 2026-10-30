@@ -127,21 +127,27 @@ export class AndroidDevice {
   }
 
   /**
-   * The state of Chrome's activity ("RESUMED", "PAUSED", "STOPPED"...), or null when it has none:
-   * the `state=` line of its record in `dumpsys activity activities`. The record is named after
-   * the activity that started it (ChromeTabbedActivity from a link, the launcher alias Main from
-   * the icon), so any record of the Chrome package counts.
+   * Chrome's activity record in `dumpsys activity activities`: its `state=` (RESUMED, PAUSED,
+   * STOPPED...) and whether it has reported idle after starting (`idle=true`); null when Chrome
+   * has no activity. The record is named after the activity that started it (ChromeTabbedActivity
+   * from a link, the launcher alias Main from the icon), so any record of the Chrome package counts.
    */
-  async chromeState(): Promise<string | null> {
+  async chromeActivity(): Promise<{ state: string | null; idle: boolean } | null> {
     const lines = (await this.shellOut(['dumpsys', 'activity', 'activities'])).split('\n');
     const at = lines.findIndex((l) => /\* Hist\b/.test(l) && l.includes(` ${CHROME}/`));
     if (at < 0) return null;
+    let state: string | null = null;
+    let idle = false;
     for (const l of lines.slice(at + 1)) {
       if (/\* Hist\b/.test(l)) break;
-      const m = /^\s*state=(\w+)/.exec(l);
-      if (m) return m[1]!;
+      state ??= /^\s*state=(\w+)/.exec(l)?.[1] ?? null;
+      if (/\bidle=true\b/.test(l)) idle = true;
     }
-    return null;
+    return { state, idle };
+  }
+
+  async chromeState(): Promise<string | null> {
+    return (await this.chromeActivity())?.state ?? null;
   }
 
   /** Whether Chrome is the activity in front (`topResumedActivity`). */
@@ -175,6 +181,20 @@ export class AndroidDevice {
     // make things easier"), at a moment of its own: the join page's taps landed on the dialog.
     await this.shell(['pm', 'grant', CHROME, 'android.permission.POST_NOTIFICATIONS']);
     await this.rotate('portrait');
+    // Chrome is running before the link arrives, as on a phone where it already is. Handed the
+    // link while it was still starting after a cold boot, Chrome once opened the link's tab and
+    // dropped it a second later for its empty start page (screen recording): the test lost its
+    // page. Started from its icon first, it takes the link in the activity it already has.
+    await this.shell(['am', 'start', '-n', CHROME_LAUNCHER]);
+    let seen: { state: string | null; idle: boolean } | null = null;
+    await until(
+      async () => {
+        const activity = await this.chromeActivity();
+        seen = activity;
+        return activity?.state === 'RESUMED' && activity.idle;
+      },
+      { timeoutMs: 60_000, what: 'Chrome started and idle', detail: () => JSON.stringify(seen) },
+    );
     return new AndroidPhone(this);
   }
 
@@ -224,9 +244,9 @@ export class AndroidDevice {
     };
   }
 
-  /** The last lines of the device log (Chrome's and the system's), for a failed test. */
+  /** The device log since the test's Chrome started (Chrome's and the system's), for a failed test. */
   async logcat(): Promise<string> {
-    return (await run(ADB, ['-s', this.serial, 'logcat', '-d', '-t', '300'], { maxBuffer: 16 * 1024 * 1024 })).stdout;
+    return (await run(ADB, ['-s', this.serial, 'logcat', '-d', '-t', '3000'], { maxBuffer: 64 * 1024 * 1024 })).stdout;
   }
 
   async release(): Promise<void> {
@@ -331,6 +351,12 @@ export class AndroidPhone implements Phone {
 
   screenshot(): Promise<Buffer> {
     return this.device.screenshot();
+  }
+
+  /** The input method service's view: whether the keyboard is shown, and which keyboard app it is. */
+  async keyboardState(): Promise<string> {
+    const lines = (await this.device.shellOut(['dumpsys', 'input_method'])).split('\n').map((l) => l.trim());
+    return lines.filter((l) => /^(mInputShown|mImeWindowVis|mCurMethodId)=/.test(l)).join(' ') || '(no input method state)';
   }
 
   /** The page itself (without system bars), for a failed test's report. */

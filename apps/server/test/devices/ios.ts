@@ -99,6 +99,9 @@ export class IosDevice {
       await simctl(['bootstatus', sim.udid, '-b']);
       booted = true;
     }
+    // Safari running before the first session gives the Web Inspector an application to list
+    // (without it a new simulator answered safaridriver with a timeout: the same source).
+    await simctl(['launch', sim.udid, SAFARI]);
     const rotator: Rotator = await run('xcrun', ['devicectl', 'device', 'orientation', 'get', '--device', sim.udid]).then(
       () => 'devicectl',
       () => 'simulator-app',
@@ -221,6 +224,11 @@ export class IosPhone implements Phone {
 
   screenshot(): Promise<Buffer> {
     return this.device.screenshot();
+  }
+
+  /** iOS gives no keyboard state to the host: the viewport readings around it say what there is. */
+  keyboardState(): Promise<string> {
+    return Promise.resolve('(not available on iOS)');
   }
 
   async close(): Promise<void> {

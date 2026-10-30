@@ -50,7 +50,12 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
           const page = await phone.pageScreenshot();
           if (page) await testInfo.attach('page', { body: page, contentType: 'image/png' });
         }
-        if (device instanceof AndroidDevice) await testInfo.attach('logcat', { body: await device.logcat().catch((e: Error) => e.message) });
+        if (device instanceof AndroidDevice) {
+          // A file next to the recording, so CI's test-results upload keeps it too.
+          const log = testInfo.outputPath('logcat.txt');
+          fs.writeFileSync(log, await device.logcat().catch((e: Error) => e.message));
+          await testInfo.attach('logcat', { path: log, contentType: 'text/plain' });
+        }
       }
       const stopped = await recording?.stop().then(
         () => true,
