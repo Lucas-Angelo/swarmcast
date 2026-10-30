@@ -185,9 +185,12 @@ Key care:
 
 - **Where it lives:** the key pair was made with
   `npx tauri signer generate -w ~/.tauri/swarmcast-updater.key`. The private key is that file, its
-  password is in `~/.tauri/swarmcast-updater.password` on the maintainer's computer (local builds with
-  `node scripts/build/desktop.mjs` read both), and a copy of each is in the two secrets above. Only the
-  public key is in the repository. Never commit the private key or paste it anywhere else.
+  password is in `~/.tauri/swarmcast-updater.password` on the maintainer's computer, and a copy of each
+  is in the two secrets above. A local build signs with them only when asked:
+  `node scripts/build/desktop.mjs --release-key ~/.tauri/swarmcast-updater.key` (it reads the
+  `.password` file next to it); without that flag or `TAURI_SIGNING_PRIVATE_KEY`, `desktop.mjs` builds
+  without updater signatures, so a test build is never signed with the release key. Only the public key
+  is in the repository. Never commit the private key or paste it anywhere else.
 - **Back it up** now, outside this computer: for example both files in a password manager, plus an
   encrypted offline copy. GitHub secrets cannot be read back, so they are not a backup.
 - **If it is lost or leaked:** a new key pair means a new public key in `tauri.conf.json`, and every
