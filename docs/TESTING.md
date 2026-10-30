@@ -165,7 +165,9 @@ Shared pieces, one place each:
 `ports.mjs` (`isListening`, test port blocks), `ffmpeg.mjs` (the test ffmpeg and the OBS-like feed),
 `release-server.mjs` (a release folder over HTTP on 127.0.0.1), `app.mjs` (the bare-OS environment
 of the start scripts, the panel login from their output, the live link), `viewer.mjs` (join, play,
-the player's state, the page state dumped when a check fails), `junit.mjs`; and
+the player's state, the page state dumped when a check fails), `junit.mjs`, `cookie-jar.mjs` (one
+fetch-based browser: cookies by name for every address of a site, redirects never followed; the
+integration tests' `Jar`, the chat bench's bots, the unit tests of the public server); and
 [scripts/test/docker/lib.sh](../scripts/test/docker/lib.sh) (`wait_for`, `gone`) for the bash side.
 
 Each JavaScript harness keeps its own report (the Windows suites' `<out>.json` and Markdown table, the

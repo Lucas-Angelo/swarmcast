@@ -1,12 +1,15 @@
 // The shared helpers of the system harnesses (scripts/test/lib): the release server, the waits
-// that return a value or end at a deadline, the port probe, and the JUnit view of a harness's
-// results. Servers listen on 127.0.0.1 port 0 (no collision, no firewall prompt) and every
-// folder and server a test makes is removed by onTestFinished, servers before their folder.
+// that return a value or end at a deadline, the port probe, the JUnit view of a harness's
+// results and the cookie jar of the fetch-based browsers. Servers listen on 127.0.0.1 port 0 (no
+// collision, no firewall prompt) and every folder and server a test makes is removed by
+// onTestFinished, servers before their folder.
 import fs from 'node:fs';
+import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { serveDir } from '../lib/release-server.mjs';
@@ -226,5 +229,103 @@ describe('junitXml', () => {
 
     // Assert
     expect(out).toContain('name="ffmpeg said [31mred"');
+  });
+});
+
+/** A site on 127.0.0.1 port 0 that answers each request with `answer(url)`, and what it was sent. */
+async function site(answer: (url: string) => { status?: number; headers?: http.OutgoingHttpHeaders }) {
+  const seen: Array<{ url: string; headers: http.IncomingHttpHeaders }> = [];
+  const server = http.createServer((req, res) => {
+    seen.push({ url: req.url ?? '', headers: req.headers });
+    const a = answer(req.url ?? '');
+    res.writeHead(a.status ?? 200, a.headers ?? {}).end();
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  onTestFinished(() => {
+    server.closeAllConnections();
+    return new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  return { base: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, seen };
+}
+
+/** An answer that sets `lines`, one Set-Cookie header each. */
+const setting = (...lines: string[]): Response => new Response(null, { headers: lines.map((l) => ['set-cookie', l] as [string, string]) });
+
+describe('CookieJar', () => {
+  it('sends back the cookies an answer set, on every address of the site', async () => {
+    // Arrange
+    const s = await site((url) => (url === '/login' ? { headers: { 'set-cookie': ['session=s1; Path=/; HttpOnly', 'device=d1; Max-Age=3600'] } } : {}));
+    const jar = new CookieJar(s.base);
+
+    // Act
+    await jar.fetch('/login');
+    await jar.fetch(`${s.base}/watch/live`);
+
+    // Assert
+    expect(s.seen.map((r) => [r.url, r.headers.cookie ?? ''])).toEqual([
+      ['/login', ''],
+      ['/watch/live', 'session=s1; device=d1'],
+    ]);
+    expect(jar.setCookies).toEqual(['session=s1; Path=/; HttpOnly', 'device=d1; Max-Age=3600']);
+  });
+
+  it('never follows a redirect, and sends its own headers with every request (a request\'s own win)', async () => {
+    // Arrange
+    const s = await site((url) => (url === '/join/abc' ? { status: 303, headers: { location: '/join', 'set-cookie': 'ticket=t1; Max-Age=300' } } : {}));
+    const jar = new CookieJar(s.base, { headers: { 'cf-connecting-ip': '198.18.0.7', 'x-from': 'jar' } });
+
+    // Act
+    const opened = await jar.fetch('/join/abc');
+    await jar.fetch('/api/join', { method: 'POST', headers: { 'x-from': 'request' } });
+
+    // Assert
+    expect(opened.status).toBe(303);
+    expect(s.seen.map((r) => r.url)).toEqual(['/join/abc', '/api/join']);
+    expect(s.seen[1]!.headers).toMatchObject({ 'cf-connecting-ip': '198.18.0.7', 'x-from': 'request', cookie: 'ticket=t1' });
+  });
+
+  it('drops a cookie the answer expires: Max-Age 0 or less, or an Expires that has passed', () => {
+    // Arrange
+    const jar = new CookieJar();
+    jar.store(setting('a=1', 'b=2', 'c=3', 'd=4'));
+
+    // Act
+    jar.store(setting('a=; Max-Age=0', 'b=; Expires=Thu, 01 Jan 1970 00:00:00 GMT', 'c=3; Max-Age=-1', 'd=5; Expires=Fri, 01 Jan 2100 00:00:00 GMT'));
+
+    // Assert
+    expect(jar.header()).toBe('d=5');
+    expect([jar.has('a'), jar.get('d')]).toEqual([false, '5']);
+  });
+
+  it('lets Max-Age win over Expires, and ignores an attribute that is not a number or a date', () => {
+    // Arrange
+    const now = Date.parse('2026-10-30T12:00:00Z');
+    const lines = ['a=1; Max-Age=60; Expires=Thu, 01 Jan 1970 00:00:00 GMT', 'b=2; Max-Age=0; Expires=Fri, 01 Jan 2100 00:00:00 GMT', 'c=3; Max-Age=soon', 'd=4; Expires=tomorrow', 'e', ' f = 6 ; Path=/'];
+
+    // Act
+    const parsed = lines.map((l) => parseSetCookie(l, now));
+
+    // Assert
+    expect(parsed).toEqual([
+      { name: 'a', value: '1', expired: false },
+      { name: 'b', value: '2', expired: true },
+      { name: 'c', value: '3', expired: false },
+      { name: 'd', value: '4', expired: false },
+      null,
+      { name: 'f', value: '6', expired: false },
+    ]);
+  });
+
+  it('takes a cookie put in by hand, as one browser handing another its cookie', async () => {
+    // Arrange
+    const s = await site(() => ({}));
+    const jar = new CookieJar(s.base);
+
+    // Act
+    jar.set('sc_verified', 'v1.1.x');
+    await jar.fetch('/api/join/challenge');
+
+    // Assert
+    expect(s.seen[0]!.headers.cookie).toBe('sc_verified=v1.1.x');
   });
 });

@@ -17,7 +17,7 @@ import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import WebSocket from 'ws';
 import { CHAT_MAX_FRAMES_PER_10S, type ServerMessage } from '@swarmcast/shared';
-import { Jar } from '../../../apps/server/test/integration/helpers.js';
+import { CookieJar } from '../lib/cookie-jar.mjs';
 import { CORPUS } from '../../../packages/shared/test/chat/corpus.js';
 import { until } from '../lib/wait.mjs';
 import type { Scenario } from './scenarios.js';
@@ -61,7 +61,8 @@ const FRAME_WINDOW_MS = 11_000;
 const SETTLE_MS = 15_000;
 
 class Bot {
-  readonly jar: Jar;
+  /** Its own browser, behind its own address (as Cloudflare reports it to the local connector). */
+  readonly jar: CookieJar;
   ws: WebSocket | null = null;
   nonce = 0;
   acks = 0;
@@ -76,10 +77,7 @@ class Bot {
     base: string,
     readonly ip: string,
   ) {
-    const jar = new Jar(base);
-    const plain = jar.fetch.bind(jar);
-    jar.fetch = (p, init = {}) => plain(p, { ...init, headers: { ...(init.headers as Record<string, string>), 'cf-connecting-ip': ip } });
-    this.jar = jar;
+    this.jar = new CookieJar(base, { headers: { 'cf-connecting-ip': ip } });
   }
 }
 
