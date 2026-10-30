@@ -102,10 +102,13 @@ describe('name colours on the panel feed', () => {
 
 describe('message tokens (render safety)', () => {
   it('plain text, emoji and :emote: codes; links stay plain text', () => {
-    const tk = messageTokens('oi https://x.example 😀 :gg:');
-    expect(tk).not.toBeNull();
-    expect(tk!.map((t) => t.k)).toContain('j');
-    expect(tk!.some((t) => t.k === 't' && t.v.includes('https://x.example'))).toBe(true);
+    // The whole token list: the address is a plain text token (never a link token), next to an emoji and an emote.
+    expect(messageTokens('oi https://x.example 😀 :gg:')).toEqual([
+      { k: 't', v: 'oi https://x.example ' },
+      { k: 'j', v: '😀' },
+      { k: 't', v: ' ' },
+      { k: 'e', code: 'gg' },
+    ]);
   });
   it('text that breaks the safety invariants is not rendered (bidi override, newline, zalgo)', () => {
     expect(messageTokens('abc‮def')).toBeNull();
