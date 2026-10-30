@@ -68,6 +68,8 @@ export interface App {
    */
   adminPort: number;
   direct: DirectMode;
+  /** The MediaMTX process of the live (its pid while it runs). */
+  mediamtx: MediaMtx;
   reaper: Reaper | null;
   /** Log retention and "Export logs". */
   diagnostics: Diagnostics;
@@ -223,6 +225,7 @@ export async function createApp(opts: AppOptions = {}): Promise<App> {
     log,
     live,
     direct,
+    mediamtx,
     reaper,
     diagnostics,
     admin: undefined as unknown as FastifyInstance,

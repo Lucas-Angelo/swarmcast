@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { DesktopInfo } from '@swarmcast/shared';
 import { isMessageKey } from '@swarmcast/shared/i18n';
 import { checkView, DESKTOP_API, getDesktop, isDesktopInfo, loadDesktop, setDesktop, updateBanner } from '../../src/desktop.js';
@@ -15,55 +15,101 @@ const info = (over: Partial<DesktopInfo> = {}): DesktopInfo => ({
   ...over,
 });
 
+/** Texts the desktop section and the tutorial show. */
+const DESKTOP_KEYS = ['desktop.title', 'desktop.autostart', 'desktop.autostart.tip', 'desktop.update.available', 'desktop.update.now', 'desktop.update.liveWarn', 'onb.sys.checking', 'quality.install.retry', 'quality.install.retrying'];
+
+// The store is module state the panel shares: every test leaves it empty.
+afterEach(() => setDesktop(null));
+
 describe('desktop app state', () => {
-  it('only a real desktop answer shows the section (script mode, older servers and errors hide it)', async () => {
-    expect(isDesktopInfo(info())).toBe(true);
-    expect(isDesktopInfo({ desktop: false })).toBe(false);
-    expect(isDesktopInfo(null)).toBe(false);
-    expect(await loadDesktop(async (p, m) => (expect([p, m]).toEqual([DESKTOP_API, 'GET']), info()))).toEqual(info());
-    expect(await loadDesktop(async () => ({ desktop: false }))).toBeNull();
-    expect(await loadDesktop(async () => Promise.reject(new Error('404')))).toBeNull();
-    setDesktop(info({ version: '9' }));
-    expect(getDesktop()?.version).toBe('9');
-    setDesktop(null);
+  it('only a real desktop answer counts (script mode, older servers and errors do not)', () => {
+    // Act
+    const answers = [isDesktopInfo(info()), isDesktopInfo({ desktop: false }), isDesktopInfo(null)];
+    // Assert
+    expect(answers).toEqual([true, false, false]);
   });
 
-  it('update banner: available (with the live warning), downloading %, installing, failed install', () => {
-    expect(updateBanner(null, 'off')).toBeNull();
-    expect(updateBanner({ status: 'none' }, 'off')).toBeNull();
-    expect(updateBanner({ status: 'available', version: '0.3.0', current: '0.2.0', notes: '  Fixes \n' }, 'live')).toEqual({ kind: 'available', version: '0.3.0', current: '0.2.0', notes: 'Fixes', liveOn: true });
-    expect(updateBanner({ status: 'available', version: '0.3.0', notes: ' ' }, 'off')).toMatchObject({ liveOn: false, notes: undefined });
-    expect(updateBanner({ status: 'available' }, 'off')).toBeNull();
-    expect(updateBanner({ status: 'downloading', version: '0.3.0', progress: 0.424 }, 'off')).toEqual({ kind: 'downloading', version: '0.3.0', percent: 42 });
-    expect(updateBanner({ status: 'downloading' }, 'off')).toMatchObject({ percent: null });
-    expect(updateBanner({ status: 'installing', version: '0.3.0' }, 'off')).toEqual({ kind: 'installing', version: '0.3.0' });
-    expect(updateBanner({ status: 'error', version: '0.3.0', error: 'bad signature' }, 'waiting-obs')).toEqual({ kind: 'error', version: '0.3.0', error: 'bad signature', liveOn: true });
-    // A failed check (offline) only shows in the card.
-    expect(updateBanner({ status: 'error', error: 'offline' }, 'off')).toBeNull();
+  it('loads the state with GET /api/desktop, and hides the section in script mode, on older servers and on errors', async () => {
+    // Arrange
+    const get = vi.fn(async () => info());
+    // Act
+    const loaded = await loadDesktop(get);
+    const script = await loadDesktop(async () => ({ desktop: false }));
+    const failed = await loadDesktop(async () => Promise.reject(new Error('404')));
+    // Assert
+    expect(get).toHaveBeenCalledWith(DESKTOP_API, 'GET');
+    expect(loaded).toEqual(info());
+    expect(script).toBeNull();
+    expect(failed).toBeNull();
+  });
+
+  it('the store keeps the last state', () => {
+    // Act
+    setDesktop(info({ version: '9' }));
+    // Assert
+    expect(getDesktop()?.version).toBe('9');
+  });
+
+  it('update banner: available (with the live warning), downloading %, installing, failed install; a failed check (offline) only shows in the card', () => {
+    // Act
+    const banners = [
+      updateBanner(null, 'off'),
+      updateBanner({ status: 'none' }, 'off'),
+      updateBanner({ status: 'available', version: '0.3.0', current: '0.2.0', notes: '  Fixes \n' }, 'live'),
+      updateBanner({ status: 'available', version: '0.3.0', notes: ' ' }, 'off'),
+      updateBanner({ status: 'available' }, 'off'),
+      updateBanner({ status: 'downloading', version: '0.3.0', progress: 0.424 }, 'off'),
+      updateBanner({ status: 'downloading' }, 'off'),
+      updateBanner({ status: 'installing', version: '0.3.0' }, 'off'),
+      updateBanner({ status: 'error', version: '0.3.0', error: 'bad signature' }, 'waiting-obs'),
+      updateBanner({ status: 'error', error: 'offline' }, 'off'),
+    ];
+    // Assert
+    expect(banners[0]).toBeNull();
+    expect(banners[1]).toBeNull();
+    expect(banners[2]).toEqual({ kind: 'available', version: '0.3.0', current: '0.2.0', notes: 'Fixes', liveOn: true });
+    expect(banners[3]).toMatchObject({ liveOn: false, notes: undefined });
+    expect(banners[4]).toBeNull();
+    expect(banners[5]).toEqual({ kind: 'downloading', version: '0.3.0', percent: 42 });
+    expect(banners[6]).toMatchObject({ percent: null });
+    expect(banners[7]).toEqual({ kind: 'installing', version: '0.3.0' });
+    expect(banners[8]).toEqual({ kind: 'error', version: '0.3.0', error: 'bad signature', liveOn: true });
+    expect(banners[9]).toBeNull();
   });
 
   it('"Check for updates" status line', () => {
-    expect(checkView(info({ updateChecking: true, update: { status: 'none' } }))).toBe('checking');
-    expect(checkView(info({ update: { status: 'none' } }))).toBe('upToDate');
-    expect(checkView(info({ update: { status: 'available', version: '1' } }))).toBe('available');
-    expect(checkView(info({ update: { status: 'downloading' } }))).toBe('busy');
-    expect(checkView(info({ update: { status: 'error', error: 'x' } }))).toBe('error');
-    expect(checkView(info())).toBe('unknown');
+    // Act
+    const views = [
+      checkView(info({ updateChecking: true, update: { status: 'none' } })),
+      checkView(info({ update: { status: 'none' } })),
+      checkView(info({ update: { status: 'available', version: '1' } })),
+      checkView(info({ update: { status: 'downloading' } })),
+      checkView(info({ update: { status: 'error', error: 'x' } })),
+      checkView(info()),
+    ];
+    // Assert
+    expect(views).toEqual(['checking', 'upToDate', 'available', 'busy', 'error', 'unknown']);
   });
 
   it('video converter install state for the tutorial', () => {
-    expect(converterInstall(null)).toBeNull();
-    expect(converterInstall({ install: null })).toBeNull();
-    expect(converterInstall({ install: { phase: 'done' } })).toBeNull();
-    expect(converterInstall({ install: { phase: 'downloading', receivedBytes: 1 } })).toBe('installing');
-    expect(converterInstall({ install: { phase: 'verifying' } })).toBe('installing');
-    expect(converterInstall({ install: { phase: 'retrying', attempt: 2, attempts: 4 } })).toBe('retrying');
-    expect(converterInstall({ install: { phase: 'error', message: 'x' } })).toBe('failed');
+    // Act
+    const states = [
+      converterInstall(null),
+      converterInstall({ install: null }),
+      converterInstall({ install: { phase: 'done' } }),
+      converterInstall({ install: { phase: 'downloading', receivedBytes: 1 } }),
+      converterInstall({ install: { phase: 'verifying' } }),
+      converterInstall({ install: { phase: 'retrying', attempt: 2, attempts: 4 } }),
+      converterInstall({ install: { phase: 'error', message: 'x' } }),
+    ];
+    // Assert
+    expect(states).toEqual([null, null, null, 'installing', 'installing', 'retrying', 'failed']);
   });
 
   it('every desktop text exists in the dictionaries', () => {
-    for (const k of ['desktop.title', 'desktop.autostart', 'desktop.autostart.tip', 'desktop.update.available', 'desktop.update.now', 'desktop.update.liveWarn', 'onb.sys.checking', 'quality.install.retry', 'quality.install.retrying']) {
-      expect(isMessageKey(k), k).toBe(true);
-    }
+    // Act
+    const missing = DESKTOP_KEYS.filter((k) => !isMessageKey(k));
+    // Assert
+    expect(missing).toEqual([]);
   });
 });
