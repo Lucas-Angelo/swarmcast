@@ -3,7 +3,7 @@ dist/
 /build/
 release/
 .cache/
-coverage/
+/coverage/
 playwright-report/
 test-results/
 *.log
@@ -13,7 +13,9 @@ test-results/
 /vendor/
 *.blob
 apps/tray/bin/
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/agents/
 
 # Updater signing key copies (never commit)
 swarmcast-updater.key

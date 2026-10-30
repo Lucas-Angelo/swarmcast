@@ -67,19 +67,24 @@
   outline-offset: 2px;
 }
 
-/* Banner above the player: stage width, at most a quarter of the screen tall. */
+/*
+ * Banner above the player: stage width, 4:1, at most a quarter of the screen tall. The box is its
+ * own (it shows empty as soon as the branding is known): the picture, which comes after the first
+ * fragment, fills it and never moves the player.
+ */
 .brand-banner {
+  width: 100%;
+  aspect-ratio: 4 / 1;
+  max-height: 25vh;
   margin-bottom: var(--sp-4);
   border-radius: var(--sc-radius-lg);
   overflow: hidden;
-  max-height: 25vh;
   background: var(--sc-surface-2);
 }
 .sc-brand-banner-img {
   display: block;
   width: 100%;
-  height: auto;
-  max-height: 25vh;
+  height: 100%;
   object-fit: cover;
 }
 

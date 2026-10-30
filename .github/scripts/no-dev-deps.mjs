@@ -45,7 +45,10 @@ const fromRoot = (p) => posix(path.relative(root, p));
 /** The server bundle that package.mjs hands to pkg: the entry point of every server executable. */
 const SERVER_BUNDLE = 'apps/server/dist/swarmcast.cjs';
 const WEB_APPS = ['viewer', 'admin'];
-const TEST_CODE = /(^|\/)(test|tests|__tests__|__mocks__)\/|\.(test|spec)\.[cm]?[jt]sx?$/;
+/** A test folder anywhere in the path, or a test file name: either one marks first-party test code. */
+const TEST_DIR = /(?:^|\/)(?:test|tests|__tests__|__mocks__)\//;
+const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
+const isTestCode = (relPath) => TEST_DIR.test(relPath) || TEST_FILE.test(relPath);
 const LIST_MAX = 40;
 
 class CheckError extends Error {}
@@ -137,7 +140,7 @@ class Check {
     const pkg = packageOf(relPath);
     if (pkg === 'dir') return;
     if (pkg === null) {
-      if (TEST_CODE.test(relPath)) this.bad(`${source} ${relPath}`, 'test code');
+      if (isTestCode(relPath)) this.bad(`${source} ${relPath}`, 'test code');
       return;
     }
     this.packages.add(pkg.key);
@@ -166,7 +169,12 @@ function checkServer(model) {
     throw new CheckError(`${fromRoot(metaFile)} does not describe ${SERVER_BUNDLE} on disk (${out.bytes} bytes there, ${fs.existsSync(bundle) ? fs.statSync(bundle).size : 'no file'} here): build again`);
   }
   for (const input of Object.keys(meta.inputs ?? {})) {
-    // Namespaced inputs ("ns:path") come from plugins, which build.mjs has none of.
+    // build.mjs's one plugin replaces optional peers with an empty module (no package code at all).
+    if (input.startsWith('optional-peer-absent:')) {
+      check.notes.push(`${input.slice('optional-peer-absent:'.length)}: replaced by an empty module (build.mjs OPTIONAL_PEERS)`);
+      continue;
+    }
+    // Any other namespaced input ("ns:path") comes from a plugin this check does not know.
     if (/^[a-z][\w-]*:/i.test(input) && !/^[a-z]:[\\/]/i.test(input)) {
       check.bad(input, 'an input from an esbuild plugin namespace; no-dev-deps.mjs cannot tell where it comes from');
       continue;

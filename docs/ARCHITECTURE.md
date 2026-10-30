@@ -49,9 +49,10 @@ flowchart TB
 ```
 
 Source map (`apps/server/src`):
-- `core/live.ts` handles start/stop, steps, link and viewer control.
-- `public/server.ts` is the viewer-facing server.
-- `access/access.ts` holds links, tickets, sessions and kicks.
+- `main.ts` reads the flags and `app.ts` wires everything together; `core/live.ts` handles start/stop, steps, link and viewer control.
+- `public/server.ts` is the viewer-facing server; `public/security.ts` builds its CSP and security headers.
+- `access/access.ts` holds links, tickets, sessions and kicks; `access/own-connection.ts` keeps P2P off for viewers on the streamer's own connection.
+- `security/` holds the attack detector, the shield and its reactions, the proof-of-work browser check and the public blocklists; see [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md).
 - `hls/` contains the origin cache, playlists, signed manifest and upload limiter.
 - `tracker/tracker.ts` and `control/control.ts` are the two WebSocket services.
 - `chat/` is the chat: the hub (pipeline, ring, moderation), the batcher, buckets, the flood detector and the event-loop guard; see [CHAT.md](CHAT.md). The panel's chat API is `admin/chat-routes.ts`.
@@ -59,7 +60,9 @@ Source map (`apps/server/src`):
 - `media/mediamtx.ts`, `tunnel/` and `process/children.ts` manage the child processes.
 - `direct/` implements direct mode.
 - `admin/server.ts` is the admin panel server.
-- `quality/` holds the quality ladder (ffmpeg renditions), encoder probing and the adaptive upload cap; see [QUALITY.md](QUALITY.md).
+- `quality/` holds the quality ladder (ffmpeg renditions), encoder probing and the adaptive upload cap; see [QUALITY.md](QUALITY.md). `speedtest/` measures the connection.
+- `desktop/` is desktop mode (the stdio protocol, autostart, the first-run system check); see [DESKTOP.md](DESKTOP.md).
+- `diagnostics/` keeps the logs for a limited time and writes the anonymised "Export logs" ZIP.
 - `tray/tray.ts` drives the tray helper.
 
 ## Media path
@@ -188,7 +191,7 @@ sequenceDiagram
   - on the server, `ControlChannel` hands channels to `TrackerService.openChannel`, which gives bittorrent-tracker an object with the `ws` socket API (`tracker/channel.ts`), so the tracker logic is the same as for a plain socket. A session without P2P gets its channel closed at once (the old `/tracker` answered 403). At most 2 channels per socket and 12 opens per minute;
   - the plain `/tracker` upgrade still exists (same cookie and origin checks) for tools; the viewer page no longer uses it.
 - **Public server hardening**:
-  - CSP without inline scripts (`connect-src 'self' wss://<host> <stun>`), HSTS, `Referrer-Policy: no-referrer`, Permissions-Policy, nosniff, `frame-ancestors 'none'`.
+  - CSP without inline scripts (`connect-src 'self' wss://<host>`, plus the GIF provider's API only while GIFs are on; STUN is not listed, because WebRTC's ICE is outside CSP and browsers reject `stun:` sources), HSTS, `Referrer-Policy: no-referrer`, Permissions-Policy, nosniff, `frame-ancestors 'none'`.
   - WebSocket `Origin` must match `Host`.
   - Rate limits: `/join/*` 20/min/IP, `/api/join` 10/min/IP, 900/min per session overall (300 in direct mode).
   - The client IP is taken from `CF-Connecting-IP` only when the request comes from the local tunnel connector. `X-Forwarded-For` is never read.

@@ -21,18 +21,22 @@ npm run dev        # http://localhost:4321/swarmcast/ (live reload)
 npm run check      # astro check: types of the components, lib/ and the unit tests
 npm run build      # site/dist/; fails on a broken internal link (starlight-links-validator)
 npm run preview    # serves the build
-npm run test:e2e   # Playwright (Chromium) against the BUILT site; SITE_E2E_PORT moves its port (default 43210)
+npm run test:e2e   # Playwright (Google Chrome) against the BUILT site; SITE_E2E_PORT moves its port (default 43210)
 npm run og         # re-render the social preview cards (public/og/), see "Link previews and SEO"
 ```
 
 - **Unit tests** (`test/unit/`: the download picker, the stats reader, the brand tokens and their
   contrast) run with the root vitest: `npx vitest run site/test/unit` from the repository root (or
-  `npm test`, which includes them). They need the root `npm ci`.
+  `npm test`, which includes them). They need the root `npm ci` and this folder's packages too
+  (`npm ci --prefix site` from the root): without them every file fails with "Failed to load tsconfig
+  'astro/tsconfigs/strict'".
 - **E2E tests** (`test/e2e/site.spec.ts`): `test/serve.mjs` serves `dist/` under `/swarmcast/` like
   GitHub Pages; the tests cover the landing pages, light and dark mode, the language redirect and
   switcher, the download button and page per OS (with and without stats), the usage numbers, phone
   widths, alt text and keyboard focus. `test/e2e/seo.spec.ts` covers the link-preview and search tags
-  (see below). Run `npx playwright install chromium` once.
+  (see below). They run in the installed Google Chrome (as on GitHub's runners), never retried;
+  with `PW_CHROMIUM_CHANNEL=''` they use Playwright's own Chromium instead (`npx playwright install
+  chromium` once).
 
 ## Where things live
 

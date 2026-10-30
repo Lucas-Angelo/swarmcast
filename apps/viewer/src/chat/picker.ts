@@ -4,7 +4,7 @@
 import { isMessageKey, t, type MessageKey } from '@swarmcast/shared/i18n';
 import type { Emote } from './emotes.js';
 import { createPopover, type Popover } from './popover.js';
-import { loadPrefs, RECENT_MAX, savePrefs } from './prefs.js';
+import { pagePrefs, RECENT_MAX, type PrefsStore } from './prefs.js';
 
 /** [emoji, label, keywords, five one-tone variants?] */
 export type EmojiRow = [string, string, string, string[]?];
@@ -21,6 +21,8 @@ export interface PickerDeps {
   emojiAllowed(): boolean;
   load(): Promise<EmojiData>;
   onPick(text: string): void;
+  /** Where the tone and the recent picks are kept (the page's chat prefs by default). */
+  prefs?: PrefsStore;
 }
 
 const SEARCH_MAX = 200;
@@ -40,6 +42,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
   button.setAttribute('aria-label', t('chat.viewer.picker'));
   button.title = t('chat.viewer.picker');
   button.dataset.testid = 'chat-picker-button';
+  const prefs = deps.prefs ?? pagePrefs;
 
   const panel = document.createElement('div');
   panel.className = 'chat-pop chat-picker';
@@ -68,13 +71,13 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
   const rows = new Map<string, EmojiRow>();
 
   const withTone = (row: EmojiRow): string => {
-    const tone = loadPrefs().tone;
+    const tone = prefs.load().tone;
     return tone > 0 && row[3] ? (row[3][tone - 1] ?? row[0]) : row[0];
   };
 
   const pick = (insert: string, recentKey: string): void => {
-    const recent = [recentKey, ...loadPrefs().recent.filter((r) => r !== recentKey)].slice(0, RECENT_MAX);
-    savePrefs({ recent });
+    const recent = [recentKey, ...prefs.load().recent.filter((r) => r !== recentKey)].slice(0, RECENT_MAX);
+    prefs.save({ recent });
     deps.onPick(insert);
   };
 
@@ -143,7 +146,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
   const recentButtons = (): HTMLElement[] => {
     const emotes = new Map(deps.emotes().map((e) => [`:${e.code}:`, e]));
     const out: HTMLElement[] = [];
-    for (const r of loadPrefs().recent) {
+    for (const r of prefs.load().recent) {
       const em = emotes.get(r);
       if (em) out.push(emoteButton(em));
       else if (deps.emojiAllowed() && rows.has(r)) out.push(emojiButton(rows.get(r)!));
@@ -184,7 +187,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
   };
 
   const renderTones = (): void => {
-    const current = loadPrefs().tone;
+    const current = prefs.load().tone;
     tones.replaceChildren(
       ...TONE_SWATCHES.map((sw, i) => {
         const b = document.createElement('button');
@@ -195,7 +198,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
         b.setAttribute('aria-checked', String(i === current));
         b.setAttribute('aria-label', i === 0 ? t('chat.viewer.picker.tone.default') : `${t('chat.viewer.picker.tone')} ${i}`);
         b.addEventListener('click', () => {
-          savePrefs({ tone: i });
+          prefs.save({ tone: i });
           renderTones();
           render();
         });

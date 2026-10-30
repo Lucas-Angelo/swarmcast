@@ -130,6 +130,24 @@ schedules and releases are never cancelled.
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
 
+## Coverage
+
+Measured in the test steps that already run the suites (no extra test runs), on every OS that runs
+them. Each job writes its coverage table (with the floors) into its job summary and uploads the
+reports (lcov, json-summary, HTML) as `coverage-*` artifacts, kept 14 days.
+
+| Suite | Jobs | How | Floors checked by |
+|---|---|---|---|
+| unit | quick (Ubuntu), node (macOS, Windows) | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
+| integration | node ×3 | `npm run coverage:integration`: Vitest, V8 (the code the tests run in-process) | Vitest, in the test step (this OS's floors) |
+| e2e server | e2e ×4 | `NODE_V8_COVERAGE` on the Playwright step; `scripts/coverage/e2e-server.mjs` keeps the e2e server's files, c8 maps them onto the sources | `report.mjs --check`, after a passing run (this group's floors, lines) |
+| desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (installed by `taiki-e/install-action`, version pinned; `llvm-tools` from `setup-rust`) | `report.mjs --check` |
+
+The floors are in `scripts/coverage/floors.json`, per suite and, where the tests differ, per OS or
+e2e group. They only go up: when coverage rises, the job summary lists the floors the run allows;
+raise them in the same pull request to the lowest value across the OSes. An OS with no floors yet
+reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
+
 ## Rules
 
 - **No failure is acceptable, and no test is retried.** Every run of every test on every OS must
@@ -177,12 +195,10 @@ schedules and releases are never cancelled.
   (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
-- **Secrets:** only release jobs ask for the updater key: they name the `release` environment and read
-  the secrets only when `release` is true. Pull request runs sign their test builds with a throwaway
-  key. Today the key is still a repository secret, which any workflow run from a branch of this
-  repository could reference; moving it into the `release` environment with a `v*` tag rule is the
-  maintainer's decision (docs/RELEASING.md, section 3). Never reference `secrets.*` outside a release
-  job (the other jobs use `github.token`).
+- **Secrets:** only release jobs see the updater key. They name the `release` environment
+  (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
+  Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
+  a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
   (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because

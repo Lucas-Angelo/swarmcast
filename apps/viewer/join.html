@@ -33,6 +33,12 @@
           >
         </div>
         <input id="nickname" name="nickname" maxlength="64" aria-describedby="error" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
+        <p id="error" class="error" role="alert" hidden></p>
+        <!-- Disabled until join.ts handles it: a click before that would reload this page natively. -->
+        <button id="join" type="submit" title="Join the stream with this nickname." data-i18n="join.watch" data-i18n-title="join.watch.tip" disabled>Watch</button>
+        <!-- Below the button on purpose: it appears and goes away by itself (about a second after
+             the page opens), and above the button it moved "Watch" from under a press in progress,
+             which then did nothing. -->
         <p id="check" class="muted check" role="status" hidden>
           <span data-i18n="join.checking">Checking your browser…</span>
           <progress id="check-progress" max="1" value="0" aria-label="Browser check progress" data-i18n-aria-label="join.checking.progress"></progress>
@@ -43,8 +49,6 @@
             ></span
           >
         </p>
-        <p id="error" class="error" role="alert" hidden></p>
-        <button id="join" type="submit" title="Join the stream with this nickname." data-i18n="join.watch" data-i18n-title="join.watch.tip">Watch</button>
       </form>
     </main>
     <script type="module" src="/src/join.ts"></script>

@@ -1,8 +1,10 @@
 // A small typed stand-in for the server's chat hub (lane A, C2), speaking the /control chat
 // protocol of @swarmcast/shared/chat. Used by the mock UI spec (chat-ui.spec.ts) through
 // Playwright's routeWebSocket, so the viewer UI is tested before the real hub exists and without
-// a stream. Behaviour kept close to plan §4: ack at once, the message comes back in a batch,
-// slow mode rejects with retryMs, colour changes come back as a roster upsert plus chat.you.
+// a stream. Behaviour kept close to plan §4: ack at once, the message comes back in a batch right
+// after (held back while `holdEchoes()` is on, so a test can see the page's "sending…" state for
+// as long as it needs), slow mode rejects with retryMs, colour changes come back as a roster upsert
+// plus chat.you.
 import type { ChatAuthor, ChatItem, ChatPublicSettings, ChatRejectCode, ChatServerMessage, ChatSnapshot, ChatYou } from '@swarmcast/shared/chat';
 import type { ServerMessage } from '@swarmcast/shared';
 
@@ -35,8 +37,14 @@ export class MockHub {
   seq = 0;
   /** Frames the page sent (parsed). */
   received: Array<Record<string, unknown>> = [];
+  /** The frames of type `t` the page sent, in order. */
+  framesOf(t: string): Array<Record<string, unknown>> {
+    return this.received.filter((m) => m.t === t);
+  }
   private sockets = new Set<Send>();
   private lastSendAt = 0;
+  /** Echo batches of the page's own messages, while holdEchoes() is on. */
+  private held: ChatItem[] | null = null;
   /** Reject the next chat.send with this code (once). */
   rejectNext: { code: ChatRejectCode; retryMs?: number } | null = null;
 
@@ -114,6 +122,18 @@ export class MockHub {
     this.broadcast({ t: 'chat.you', you: this.you });
   }
 
+  /** From now on, the page's own messages are acked but not sent back until releaseEchoes(). */
+  holdEchoes(): void {
+    this.held ??= [];
+  }
+
+  /** Sends the held messages back (in order) and stops holding: later ones come back at once. */
+  releaseEchoes(): void {
+    const held = this.held ?? [];
+    this.held = null;
+    if (held.length) this.broadcast({ t: 'chat.batch', items: held });
+  }
+
   /** A frame from the page. */
   onFrame(send: Send, raw: string): void {
     if (raw.startsWith('~')) return; // tracker channel
@@ -143,7 +163,8 @@ export class MockHub {
         const m: ChatItem = { k: 'm', s: ++this.seq, at: now, a: this.you.a, x: String(msg.text) };
         this.items.push(m);
         this.reply(send, { t: 'chat.ack', n, s: m.s });
-        setTimeout(() => this.broadcast({ t: 'chat.batch', items: [m] }), 120);
+        if (this.held) this.held.push(m);
+        else this.broadcast({ t: 'chat.batch', items: [m] });
         return;
       }
       case 'chat.color': {

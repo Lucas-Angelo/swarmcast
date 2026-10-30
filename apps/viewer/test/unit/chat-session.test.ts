@@ -1,4 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
+// The viewer's chat state without DOM (chat/session.ts): server frames become calls on a ChatView,
+// in seq order and without repeats, with a resume request on a gap. Each test starts from a hello
+// whose snapshot holds messages 1 and 2 from Ana, unless it says otherwise.
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, ChatPublicSettings, ChatServerMessage, ChatSnapshot } from '@swarmcast/shared/chat';
 import { ChatSession, RESUME_WAIT_MS, type ChatEntry, type ChatView, type ClientFrame } from '../../src/chat/session.js';
 
@@ -7,12 +10,18 @@ function settings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
 }
 const you = { a: 'me', color: '#0090ff', colorLocked: false, mutedUntil: null };
 const ana = { a: 'k1', n: 'Ana', c: '#e5484d', r: 'viewer' as const };
+const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
 const msg = (s: number, x = `m${s}`, a = 'k1'): ChatItem => ({ k: 'm', s, at: 1000 + s, a, x });
+const batch = (...items: ChatItem[]): ChatServerMessage => ({ t: 'chat.batch', items });
+const SNAPSHOT: ChatSnapshot = { v: 1, settings: settings(), you, roster: [ana], items: [msg(1), msg(2)], lastSeq: 2 };
 
-function setup(snapshot?: Partial<ChatSnapshot>) {
+/**
+ * A ChatView that records what the session asks of it: `shown` the seqs on screen (a reset
+ * replaces them), `entries` every entry handed over, `calls` everything else as short strings.
+ */
+function recordingView() {
   const shown: number[] = [];
   const calls: string[] = [];
-  const sent: ClientFrame[] = [];
   const entries: ChatEntry[] = [];
   const view: ChatView = {
     reset: (e) => {
@@ -36,133 +45,232 @@ function setup(snapshot?: Partial<ChatSnapshot>) {
     unsupported: () => calls.push('unsupported'),
     connection: (o) => calls.push(`conn ${o}`),
   };
+  return { view, shown, calls, entries };
+}
+
+/** A connected session after its hello (`SNAPSHOT` with `snapshot`'s changes; null = chat off). `sent` has the frames it sent. */
+function setup(snapshot: Partial<ChatSnapshot> | null = {}) {
+  const { view, shown, calls, entries } = recordingView();
+  const sent: ClientFrame[] = [];
   const session = new ChatSession(view, (m) => {
     sent.push(m);
     return true;
   });
   session.connection(true);
-  session.hello({ v: 1, settings: settings(), you, roster: [ana], items: [msg(1), msg(2)], lastSeq: 2, ...snapshot });
+  session.hello(snapshot === null ? undefined : { ...SNAPSHOT, ...snapshot });
   return { session, shown, calls, sent, entries };
 }
 
 describe('ChatSession', () => {
-  it('a reconnect delta keeps what is shown and adds only the new items', () => {
+  it('shows the snapshot of the hello', () => {
+    // Act
+    const { shown, calls } = setup();
+
+    // Assert
+    expect(shown).toEqual([1, 2]);
+    expect(calls.filter((c) => c === 'reset')).toHaveLength(1);
+  });
+
+  it('a reconnect delta keeps what is shown and adds only the new items, settings and authors', () => {
+    // Arrange
     const { session, shown, calls } = setup();
-    const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
+
+    // Act
     session.hello({ v: 1, settings: settings({ slowS: 5 }), you, roster: [bia], items: [msg(3, 'oi', 'k2'), msg(4)], lastSeq: 4, delta: true });
+
+    // Assert
     expect(shown).toEqual([1, 2, 3, 4]);
-    expect(calls.filter((c) => c === 'reset')).toHaveLength(1); // only the first hello
+    expect(calls.filter((c) => c === 'reset')).toHaveLength(1);
     expect(session.lastSeq).toBe(4);
     expect(session.settings?.slowS).toBe(5);
     expect(session.roster.get('k2')?.n).toBe('Bia');
     expect(session.roster.get('k1')?.n).toBe('Ana');
-    // An empty delta (nothing new while away) changes nothing.
-    session.hello({ v: 1, settings: settings(), you, roster: [], items: [], lastSeq: 4, delta: true });
-    expect(shown).toEqual([1, 2, 3, 4]);
   });
 
-  it('shows the snapshot, then new items in seq order, ignoring repeats (reconnect)', () => {
+  it('an empty delta (nothing new while away) changes nothing', () => {
+    // Arrange
+    const { session, shown } = setup({ items: [msg(1), msg(2), msg(3), msg(4)], lastSeq: 4 });
+
+    // Act
+    session.hello({ v: 1, settings: settings(), you, roster: [], items: [], lastSeq: 4, delta: true });
+
+    // Assert
+    expect(shown).toEqual([1, 2, 3, 4]);
+    expect(session.lastSeq).toBe(4);
+  });
+
+  it('shows new items in seq order and ignores repeats (a reconnect resends some)', () => {
+    // Arrange
     const { session, shown } = setup();
-    expect(shown).toEqual([1, 2]);
-    session.frame({ t: 'chat.batch', items: [msg(2), msg(3), msg(4)] });
-    session.frame({ t: 'chat.batch', items: [msg(4)] });
+
+    // Act
+    session.frame(batch(msg(2), msg(3), msg(4)));
+    session.frame(batch(msg(4)));
+
+    // Assert
     expect(shown).toEqual([1, 2, 3, 4]);
     expect(session.lastSeq).toBe(4);
   });
 
   it('resolves authors from the roster and reports colour changes', () => {
+    // Arrange
     const { session, entries, calls } = setup();
-    session.frame({ t: 'chat.batch', items: [{ k: 'u', au: { ...ana, c: '#46a758' } }, msg(3)] });
+
+    // Act
+    session.frame(batch({ k: 'u', au: { ...ana, c: '#46a758' } }, msg(3)));
+
+    // Assert
     const last = entries.at(-1);
     expect(last?.kind === 'msg' && last.author.c).toBe('#46a758');
     expect(calls).toContain('author k1 #46a758');
   });
 
   it('asks to resume on a gap and holds newer items until the missing ones come', () => {
+    // Arrange
     const { session, shown, sent } = setup();
-    session.frame({ t: 'chat.batch', items: [msg(5), msg(6)] });
+
+    // Act
+    session.frame(batch(msg(5), msg(6)));
+
+    // Assert
     expect(sent).toEqual([{ t: 'chat.resume', after: 2 }]);
     expect(shown).toEqual([1, 2]);
-    session.frame({ t: 'chat.batch', items: [msg(3), msg(4)] });
+  });
+
+  it('shows the held items once the missing ones come', () => {
+    // Arrange
+    const { session, shown } = setup();
+    session.frame(batch(msg(5), msg(6)));
+
+    // Act
+    session.frame(batch(msg(3), msg(4)));
+
+    // Assert
     expect(shown).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
-  it('accepts the gap when the resume answer never comes', () => {
+  it(`accepts the gap when the resume answer does not come within ${RESUME_WAIT_MS} ms`, () => {
+    // Arrange
     vi.useFakeTimers();
-    try {
-      const { session, shown } = setup();
-      session.frame({ t: 'chat.batch', items: [msg(9)] });
-      expect(shown).toEqual([1, 2]);
-      vi.advanceTimersByTime(RESUME_WAIT_MS);
-      expect(shown).toEqual([1, 2, 9]);
-      expect(session.lastSeq).toBe(9);
-    } finally {
-      vi.useRealTimers();
-    }
+    onTestFinished(() => void vi.useRealTimers());
+    const { session, shown } = setup();
+    session.frame(batch(msg(9)));
+
+    // Act
+    vi.advanceTimersByTime(RESUME_WAIT_MS);
+
+    // Assert
+    expect(shown).toEqual([1, 2, 9]);
+    expect(session.lastSeq).toBe(9);
   });
 
   it('a skip item explains a gap: no resume', () => {
+    // Arrange
     const { session, shown, sent, entries } = setup();
-    session.frame({ t: 'chat.batch', items: [{ k: 'skip', n: 3 }, msg(6)] });
+
+    // Act
+    session.frame(batch({ k: 'skip', n: 3 }, msg(6)));
+
+    // Assert
     expect(sent).toEqual([]);
     expect(shown).toEqual([1, 2, 6]);
     expect(entries.some((e) => e.kind === 'skip' && e.n === 3)).toBe(true);
   });
 
   it('a reset snapshot replaces everything and drops held items', () => {
+    // Arrange
     const { session, shown, calls } = setup();
-    session.frame({ t: 'chat.batch', items: [msg(8)] });
-    session.frame({ t: 'chat.reset', v: 1, settings: settings(), you, roster: [ana], items: [msg(10)], lastSeq: 10 });
-    expect(shown).toEqual([10]);
-    expect(calls.filter((c) => c === 'reset')).toHaveLength(2);
-    session.frame({ t: 'chat.batch', items: [msg(11)] });
+    session.frame(batch(msg(8)));
+
+    // Act
+    session.frame({ t: 'chat.reset', ...SNAPSHOT, items: [msg(10)], lastSeq: 10 });
+    session.frame(batch(msg(11)));
+
+    // Assert
     expect(shown).toEqual([10, 11]);
+    expect(calls.filter((c) => c === 'reset')).toHaveLength(2);
   });
 
   it('deletes and clears are passed on and filter what is about to be shown', () => {
+    // Arrange
     const { session, shown, calls } = setup();
-    session.frame({ t: 'chat.batch', items: [msg(3), { k: 'd', s: [3] }, msg(4), { k: 'clr', s: 4 }, msg(5)] });
+
+    // Act
+    session.frame(batch(msg(3), { k: 'd', s: [3] }, msg(4), { k: 'clr', s: 4 }, msg(5)));
+
+    // Assert
     expect(shown).toEqual([1, 2, 5]);
     expect(calls).toContain('remove 3');
     expect(calls).toContain('clr 4');
   });
 
-  it('passes acks, rejects, settings and you; ignores unknown t and k', () => {
+  it('passes acks, rejects and "you" on', () => {
+    // Arrange
     const { session, calls } = setup();
+
+    // Act
     session.frame({ t: 'chat.ack', n: 7, s: 3 });
     session.frame({ t: 'chat.reject', n: 8, code: 'chat.err.slow', retryMs: 900 });
     session.frame({ t: 'chat.you', you: { ...you, mutedUntil: 'live' } });
-    session.frame({ t: 'chat.future' } as unknown as ChatServerMessage);
-    session.frame({ t: 'chat.batch', items: [{ k: 'zz' } as unknown as ChatItem, msg(3)] });
+
+    // Assert
     expect(calls).toEqual(expect.arrayContaining(['ack 7 3', 'reject 8 chat.err.slow', 'you']));
     expect(session.you?.mutedUntil).toBe('live');
+  });
+
+  it('ignores frames and items of a kind it does not know (a newer server)', () => {
+    // Arrange
+    const { session, calls } = setup();
+    const before = [...calls];
+
+    // Act
+    session.frame({ t: 'chat.future' } as unknown as ChatServerMessage);
+    session.frame(batch({ k: 'zz' } as unknown as ChatItem, msg(3)));
+
+    // Assert
+    expect(calls).toEqual(before);
     expect(session.lastSeq).toBe(3);
   });
 
   it('a snapshot of another protocol version asks for a reload', () => {
+    // Arrange
     const { session, calls } = setup();
+
+    // Act
     session.frame({ t: 'chat.reset', v: 2, settings: settings(), you, roster: [], items: [], lastSeq: 0 });
+
+    // Assert
     expect(calls).toContain('unsupported');
   });
 
   it('chat off at hello, on later: asks for a snapshot', () => {
-    const sent: ClientFrame[] = [];
-    const noop = () => {};
-    const view = { reset: noop, append: noop, remove: noop, clearUpTo: noop, author: noop, settings: noop, you: noop, ack: noop, reject: noop, unsupported: noop, connection: noop };
-    const s = new ChatSession(view, (m) => {
-      sent.push(m);
-      return true;
-    });
-    s.connection(true);
-    s.hello(undefined);
-    expect(s.active).toBe(false);
-    s.frame({ t: 'chat.settings', settings: settings() });
+    // Arrange
+    const { session, sent } = setup(null);
+
+    // Act
+    session.frame({ t: 'chat.settings', settings: settings() });
+
+    // Assert
     expect(sent).toEqual([{ t: 'chat.resume', after: 0 }]);
   });
 
+  it('chat off at hello: the session is not active', () => {
+    // Act
+    const { session } = setup(null);
+
+    // Assert
+    expect(session.active).toBe(false);
+  });
+
   it('does not send while disconnected', () => {
+    // Arrange
     const { session } = setup();
     session.connection(false);
-    expect(session.send({ t: 'chat.send', n: 1, text: 'oi' })).toBe(false);
+
+    // Act
+    const ok = session.send({ t: 'chat.send', n: 1, text: 'oi' });
+
+    // Assert
+    expect(ok).toBe(false);
   });
 });

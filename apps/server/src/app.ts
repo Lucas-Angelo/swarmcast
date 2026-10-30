@@ -239,7 +239,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
   // Port 0 (tests): the OS picks a free port at listen time, never probe-then-bind.
   const adminPort = config.ports.admin === 0 ? 0 : await firstFreePort(config.ports.admin);
   if (adminPort === null) {
-    throw new StartupError('ports-busy', `Ports ${config.ports.admin}-${config.ports.admin + 19} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
+    throw new StartupError('ports-busy', `Ports ${config.ports.admin}-${Math.min(config.ports.admin + 19, 65535)} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
   }
   if (adminPort !== config.ports.admin) log.warn({ wanted: config.ports.admin, using: adminPort }, 'admin port busy, using another one');
   config.ports = { ...config.ports, admin: adminPort };

@@ -187,7 +187,7 @@ const LICENSE_FILE = /^(licen[cs]e|copying|copyright|notice|unlicense)([-_.].*)?
 /** Licence files at the top of a crate's package (and inside a LICENSES/ folder), sorted. */
 export function readLicenseFiles(dir) {
   const out = [];
-  let entries = [];
+  let entries;
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true });
   } catch {

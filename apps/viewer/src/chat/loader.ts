@@ -18,7 +18,20 @@ export interface ChatRouter {
   controlUrl(base: string): string;
 }
 
-export function createChatRouter(opts: { root: HTMLElement; showButton: HTMLButtonElement; nickname: () => string; send(msg: ClientFrame): boolean; debug?: (msg: string) => void }): ChatRouter {
+/** chat.ts mountChat, which the router loads with the chat chunk. */
+export type MountChat = (typeof import('./chat.js'))['mountChat'];
+
+export function createChatRouter(opts: {
+  root: HTMLElement;
+  showButton: HTMLButtonElement;
+  nickname: () => string;
+  send(msg: ClientFrame): boolean;
+  debug?: (msg: string) => void;
+  /** Loads the chat chunk and gives its mountChat (by default the lazy import Vite splits off the main bundle). */
+  loadMountChat?: () => Promise<MountChat>;
+}): ChatRouter {
+  // Only mountChat is taken from the chunk (branding/loader.ts says why a whole namespace is not).
+  const loadMountChat = opts.loadMountChat ?? (() => import('./chat.js').then((m) => m.mountChat));
   let controller: ChatController | null = null;
   let loading = false;
   let failed = false;
@@ -41,9 +54,9 @@ export function createChatRouter(opts: { root: HTMLElement; showButton: HTMLButt
   const load = (): void => {
     if (controller || loading || failed) return;
     loading = true;
-    import('./chat.js')
-      .then((m) => {
-        controller = m.mountChat({ root: opts.root, showButton: opts.showButton, nickname: opts.nickname(), sendFrame: opts.send });
+    loadMountChat()
+      .then((mountChat) => {
+        controller = mountChat({ root: opts.root, showButton: opts.showButton, nickname: opts.nickname(), sendFrame: opts.send });
         controller.connection(open);
         const queued = pending;
         pending = [];

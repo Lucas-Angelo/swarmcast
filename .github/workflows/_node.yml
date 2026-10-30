@@ -59,12 +59,13 @@ jobs:
         timeout-minutes: 5
 
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
+      # With coverage: Vitest fails the step when a floor is not met (scripts/coverage/floors.json).
       - name: Unit tests (macOS, Windows)
         if: runner.os != 'Linux'
         timeout-minutes: 5
         run: |
           npm ci --prefix site --no-audit --no-fund
-          npm test
+          npm run coverage:unit
       - name: Upload the unit test results
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -76,11 +77,12 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # Lifecycle tests that rely on POSIX signals skip themselves on Windows.
+      # Lifecycle tests that rely on POSIX signals skip themselves on Windows. With coverage, and
+      # this OS's floors (vitest.integration.config.ts).
       - name: Integration tests
         timeout-minutes: 5
         if: ${{ !cancelled() }}
-        run: npm run test:integration
+        run: npm run coverage:integration
       # Kept for every run that was not cancelled (green ones too): per-test results and timings,
       # and the fake OBS's ffmpeg stderr (fake-obs.log).
       - name: Upload the integration test results and logs
@@ -95,24 +97,52 @@ jobs:
             !test-results/vitest-unit.json
           if-no-files-found: warn
           retention-days: 14
+      # The coverage tables of this job's Vitest runs (with their floors) in the job summary.
+      - name: Unit and integration coverage
+        if: ${{ !cancelled() }}
+        env:
+          SUITES: ${{ runner.os == 'Linux' && 'integration' || 'unit integration' }}
+        run: |
+          read -ra suites <<<"$SUITES"
+          node scripts/coverage/report.mjs "${suites[@]}"
 
       # ---- apps/desktop/src-tauri ----
       - uses: ./.github/actions/setup-rust
         timeout-minutes: 8
         if: ${{ !cancelled() }}
         with:
-          components: clippy
+          components: clippy,llvm-tools
           cache-key: checks
       - name: cargo clippy
         if: ${{ !cancelled() }}
         timeout-minutes: 6
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
+      # `cargo test --locked` instrumented by cargo-llvm-cov (scripts/coverage/desktop.mjs), then its
+      # table and floors (scripts/coverage/floors.json) in the job summary.
+      - name: cargo-llvm-cov
+        if: ${{ !cancelled() }}
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov@0.9.1
       - name: cargo test
+        id: cargo-test
         if: ${{ !cancelled() }}
         timeout-minutes: 6
-        working-directory: apps/desktop/src-tauri
-        run: cargo test --locked 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+        run: npm run coverage:desktop 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
+      - name: Desktop coverage
+        if: ${{ !cancelled() && steps.cargo-test.outcome == 'success' }}
+        run: node scripts/coverage/report.mjs desktop --check
+      - name: Upload the coverage reports
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-${{ matrix.os }}
+          path: coverage/
+          if-no-files-found: warn
+          retention-days: 14
       # Dependabot alert GHSA-wrw7-89jp-8q8g (glib 0.18, locked by Tauri 2's GTK 3 stack): not
       # exploitable while nothing compiled for Linux uses glib::VariantStrIter. This keeps it so.
       - name: glib advisory guard
