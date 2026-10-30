@@ -1,32 +1,34 @@
-import crypto from 'node:crypto';
-import fs from 'node:fs';
-import path from 'node:path';
-import type { Page, Route } from '@playwright/test';
-import { contrastRatio } from '@swarmcast/shared';
-import { buildPixPayload, defaultBranding, deriveTheme, qrMatrix, type AdminBrandingState, type Branding, type BrandSlot } from '@swarmcast/shared/branding';
-import { adminApi, expect, test } from './fixtures.js';
-
-// "Your page" card in the panel (BR5) and its Pix part (BR6). The panel's branding API is
+// The "Your page" card in the panel (BR5) and its Pix part (BR6). The panel's branding API is
 // mocked with page.route, following docs/BRANDING.md (GET/PUT /api/branding, PUT/DELETE
 // /api/branding/image/:slot with the raw image bytes, the panel file route, POST reset): this
 // spec checks the card, the canvas re-encode and the preview, not the server (integration tests
-// cover the routes). Only fake data: "Ana Plays", a random Pix key from the docs.
+// cover the routes), except one test against the real routes. Only fake data: "Ana Plays", a
+// random Pix key from the docs.
+//
+// Pictures go through the real file input, so each engine's canvas pipeline runs, and the
+// photo's camera make and GPS block never leave the panel (canvas re-encode). WebKit adds its own
+// small EXIF block and Chromium an sRGB profile; the server strips those (BR0), so only Chromium
+// is held to "no EXIF at all". A bad link is explained and never reaches the preview; a custom
+// colour stays readable in both modes; the share preview card stays off by default. A CPF key
+// is shown to everyone, so Save waits for an explicit confirmation; the recommended random key
+// needs none. The Pix QR canvas shows exactly the shared encoder's matrix (whose output lane A's
+// unit tests decode with an independent reader): the test samples the centre of every module,
+// with a quiet zone of 4 modules. Copies are recorded in the page: the test never touches the
+// machine's real clipboard.
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import type { Locator, Page, Route } from '@playwright/test';
+import { contrastRatio } from '@swarmcast/shared';
+import { buildPixPayload, defaultBranding, deriveTheme, qrMatrix, type AdminBrandingState, type Branding, type BrandSlot } from '@swarmcast/shared/branding';
+import { adminApi, expect, openPanel, test } from './fixtures.js';
 
-function env(): { adminLoginUrl: string } {
-  return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as { adminLoginUrl: string };
-}
-
-async function openPanel(page: Page, lang?: string): Promise<void> {
-  const url = env().adminLoginUrl;
-  const origin = new URL(url).origin;
-  await page.goto(url);
-  await expect(page).toHaveURL(`${origin}/`);
-  await expect(page.getByTestId('status')).toBeVisible();
-  if (lang) {
-    await page.goto(`${origin}/?lang=${lang}`);
-    await expect(page.getByTestId('status')).toBeVisible();
-  }
-  await page.getByTestId('brand-card').scrollIntoViewIfNeeded();
+/** The panel (English or `lang`) scrolled to its "Your page" card. */
+async function openBrandCard(page: Page, lang?: 'en' | 'pt-BR'): Promise<Locator> {
+  await openPanel(page, lang);
+  const card = page.getByTestId('brand-card');
+  await card.scrollIntoViewIfNeeded();
+  return card;
 }
 
 interface Upload {
@@ -189,42 +191,82 @@ async function previewContrast(page: Page): Promise<{ button: number; label: num
   return { button: contrastRatio(rgb(c.btn), rgb(c.bg)), label: contrastRatio(rgb(c.label), rgb(c.btn)), link: contrastRatio(rgb(c.link), rgb(c.surface)) };
 }
 
+/** Upload size limits per slot: width, height and KB (BR0). */
+const SIZES: Record<string, [number, number, number]> = { avatar: [256, 256, 64], avatar128: [128, 128, 24], fav32: [32, 32, 6], fav180: [180, 180, 32], banner: [1280, 320, 150], banner640: [640, 160, 50] };
+
+const LINKS: Array<[label: string, typed: string, href: string]> = [
+  ['YouTube', 'youtube.com/@ana', 'https://youtube.com/@ana'],
+  ['Instagram', 'https://www.instagram.com/ana', 'https://www.instagram.com/ana'],
+  ['E-mail', 'ana@example.org', 'mailto:ana@example.org'],
+];
+
+const PIX_KEY = '123e4567-e89b-12d3-a456-426614174000';
+
+/** Width and height of an uploaded picture, decoded by the page's own engine. */
+function decodedSize(page: Page, u: Upload): Promise<number[]> {
+  return page.evaluate(async ([b64, type]) => {
+    const bmp = await createImageBitmap(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type }));
+    return [bmp.width, bmp.height];
+  }, [u.bytes.toString('base64'), u.type] as const);
+}
+
+/** The dark modules of the QR code drawn on `canvas`, sampled at the centre of each module (quiet zone of 4). */
+function drawnQr(canvas: Locator, n: number): Promise<boolean[][]> {
+  return canvas.evaluate((c, size) => {
+    const el = c as HTMLCanvasElement;
+    const scale = el.width / (size + 8);
+    const data = el.getContext('2d')!.getImageData(0, 0, el.width, el.height).data;
+    const rows: boolean[][] = [];
+    for (let y = 0; y < size; y++) {
+      const row: boolean[] = [];
+      for (let x = 0; x < size; x++) {
+        const px = Math.floor((x + 4.5) * scale);
+        const py = Math.floor((y + 4.5) * scale);
+        row.push(data[(py * el.width + px) * 4]! < 128);
+      }
+      rows.push(row);
+    }
+    return rows;
+  }, n);
+}
+
 test('Your page: name, pictures, about, links, colour and Save, with a faithful preview', { tag: '@ui' }, async ({ page, browserName }) => {
+  // Arrange
   const api = await mockBranding(page);
-  await openPanel(page);
-  const card = page.getByTestId('brand-card');
+  const card = await openBrandCard(page);
   const preview = card.getByTestId('brand-preview');
+
+  // Assert
   await expect(card.getByRole('heading', { name: 'Your page' })).toBeVisible();
   await expect(card.getByTestId('brand-save')).toBeDisabled();
 
-  // 1 · Name and pictures (through the real file input: each engine's canvas pipeline runs).
+  // Act
   await card.getByTestId('brand-name').fill('Ana Plays');
-  await expect(preview.locator('.sc-brand-name')).toHaveText('Ana Plays');
   await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'me.jpg', mimeType: 'image/jpeg', buffer: await photoWithGps(page, 900, 700) });
   await card.getByTestId('brand-use-avatar').click();
+
+  // Assert
+  await expect(preview.locator('.sc-brand-name')).toHaveText('Ana Plays');
   await expect.poll(() => api.uploads.map((u) => u.slot)).toEqual(['avatar', 'avatar128', 'fav32', 'fav180']);
   await expect(preview.locator('img.sc-brand-avatar')).toHaveAttribute('src', /^\/api\/branding\/file\/[0-9a-f]{64}\.(webp|png|jpg)$/);
+
+  // Act
   await card.getByTestId('brand-file-banner').setInputFiles({ name: 'banner.jpg', mimeType: 'image/jpeg', buffer: await photoWithGps(page, 1600, 500) });
   await card.getByTestId('brand-use-banner').click();
+
+  // Assert
   await expect.poll(() => api.uploads.length).toBe(6);
   await expect(preview.getByTestId('bp-banner')).toBeVisible();
-  const sizes: Record<string, [number, number, number]> = { avatar: [256, 256, 64], avatar128: [128, 128, 24], fav32: [32, 32, 6], fav180: [180, 180, 32], banner: [1280, 320, 150], banner640: [640, 160, 50] };
   for (const u of api.uploads) {
-    const [w, h, kb] = sizes[u.slot]!;
+    const [w, h, kb] = SIZES[u.slot]!;
     expect(['image/webp', 'image/png', 'image/jpeg'], u.slot).toContain(u.type);
     expect(u.bytes.length, `${u.slot} bytes`).toBeLessThanOrEqual(kb * 1024);
-    // The photo's camera make and GPS block never leave the panel (canvas re-encode). WebKit adds
-    // its own small EXIF block and Chromium an sRGB profile; the server strips those (BR0).
     expect(u.bytes.includes(Buffer.from('SCFIXTURE')), `${u.slot}: original EXIF`).toBe(false);
     if (browserName === 'chromium') expect(u.bytes.includes(Buffer.from('Exif\0\0')), `${u.slot}: EXIF`).toBe(false);
-    const dims = await page.evaluate(async ([b64, type]) => {
-      const bmp = await createImageBitmap(new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type }));
-      return [bmp.width, bmp.height];
-    }, [u.bytes.toString('base64'), u.type] as const);
-    expect(dims, `${u.slot} size`).toEqual([w, h]);
+    expect(await decodedSize(page, u), `${u.slot} size`).toEqual([w, h]);
   }
 
-  // 2 · About you.
+  // Act
   await card.getByTestId('brand-section-about').click();
   await card.getByTestId('brand-tagline').fill('Chill games and chat every Friday');
   await card.getByTestId('brand-about').fill('Hi! I stream cozy games.\nBring tea.');
@@ -232,30 +274,33 @@ test('Your page: name, pictures, about, links, colour and Save, with a faithful 
     await card.getByTestId('brand-tag-input').fill(tag);
     await card.getByTestId('brand-tag-input').press('Enter');
   }
+
+  // Assert
   await expect(preview.locator('.sc-brand-tagline')).toHaveText('Chill games and chat every Friday');
   await expect(preview.locator('.sc-brand-about-text')).toHaveText('Hi! I stream cozy games.\nBring tea.');
   await expect(preview.locator('.sc-brand-tag')).toHaveText(['cozy', 'indie']);
 
-  // 3 · Links and support: a bad link is explained and never reaches the preview.
+  // Act
   await card.getByTestId('brand-section-links').click();
-  const links: Array<[string, string, string]> = [
-    ['YouTube', 'youtube.com/@ana', 'https://youtube.com/@ana'],
-    ['Instagram', 'https://www.instagram.com/ana', 'https://www.instagram.com/ana'],
-    ['E-mail', 'ana@example.org', 'mailto:ana@example.org'],
-  ];
-  for (const [i, [label, url]] of links.entries()) {
+  for (const [i, [label, typed]] of LINKS.entries()) {
     await card.getByTestId('brand-link-add').click();
     await card.getByTestId('brand-link-label').nth(i).fill(label);
-    await card.getByTestId('brand-link-url').nth(i).fill(url);
+    await card.getByTestId('brand-link-url').nth(i).fill(typed);
   }
   await card.getByTestId('brand-link-add').click();
   await card.getByTestId('brand-link-label').nth(3).fill('Trap');
   await card.getByTestId('brand-link-url').nth(3).fill('javascript:alert(1)');
+
+  // Assert
   await expect(card.getByTestId('brand-link-error')).toHaveText('Only https:// links (or an e-mail address) are allowed.');
   await expect(card.getByTestId('brand-save')).toBeDisabled();
   await expect(preview.locator('a.sc-brand-link')).toHaveCount(3);
+
+  // Act
   await card.getByTestId('brand-link-row').nth(3).getByRole('button', { name: 'Remove' }).click();
-  for (const [i, [, , href]] of links.entries()) {
+
+  // Assert
+  for (const [i, [, , href]] of LINKS.entries()) {
     const a = preview.locator('a.sc-brand-link').nth(i);
     await expect(a).toHaveAttribute('href', href);
     if (href.startsWith('https:')) {
@@ -264,34 +309,50 @@ test('Your page: name, pictures, about, links, colour and Save, with a faithful 
     }
   }
   await expect(preview.locator('a[href^="javascript"]')).toHaveCount(0);
+
+  // Act
   await card.getByTestId('brand-support-link').check();
   await card.getByTestId('brand-support-url').fill('ko-fi.com/ana');
+
+  // Assert
   await expect(preview.locator('a.sc-brand-support')).toHaveText('Support');
   await expect(preview.locator('a.sc-brand-support')).toHaveAttribute('href', 'https://ko-fi.com/ana');
 
-  // 4 · Colours: a custom colour, readable in both modes.
+  // Act
   await card.getByTestId('brand-section-colours').click();
   await card.getByTestId('brand-preset-custom').click();
   await card.getByTestId('brand-accent').fill('#f5d90a');
+
+  // Assert
   await expect(card.getByTestId('brand-theme-adjusted')).toBeVisible();
-  for (const mode of ['bp-light', 'bp-dark'] as const) {
-    await card.getByTestId(mode).click();
+  for (const mode of ['light', 'dark'] as const) {
+    await card.getByTestId(`bp-${mode}`).click();
+    await expect(preview).toHaveAttribute('data-mode', mode);
     const c = await previewContrast(page);
-    expect(c.button, `${mode} button vs page`).toBeGreaterThanOrEqual(3);
-    expect(c.label, `${mode} button label`).toBeGreaterThanOrEqual(4.5);
-    expect(c.link, `${mode} link`).toBeGreaterThanOrEqual(4.5);
+    expect(c.button, `${mode}: button vs page`).toBeGreaterThanOrEqual(3);
+    expect(c.label, `${mode}: button label`).toBeGreaterThanOrEqual(4.5);
+    expect(c.link, `${mode}: link`).toBeGreaterThanOrEqual(4.5);
   }
 
-  // 5 · Share: preview card stays off by default, the credit can be hidden.
+  // Act
   await card.getByTestId('brand-section-share').click();
-  await expect(card.getByTestId('brand-preview-card')).not.toBeChecked();
   await card.getByTestId('brand-ended').fill('Thanks! Back on Friday at 8 pm');
   await card.getByTestId('bp-tab-ended').click();
+
+  // Assert
+  await expect(card.getByTestId('brand-preview-card')).not.toBeChecked();
   await expect(preview.getByTestId('bp-ended')).toHaveText('Thanks! Back on Friday at 8 pm');
+
+  // Act
   await card.getByTestId('bp-tab-join').click();
+
+  // Assert
   await expect(preview.getByTestId('bp-join-title')).toHaveText("Join Ana Plays's stream");
 
+  // Act
   await card.getByTestId('brand-save').click();
+
+  // Assert
   await expect(card.getByTestId('brand-saved')).toBeVisible();
   expect(api.puts).toHaveLength(1);
   expect(api.puts[0]).toMatchObject({
@@ -300,7 +361,7 @@ test('Your page: name, pictures, about, links, colour and Save, with a faithful 
     tagline: 'Chill games and chat every Friday',
     about: 'Hi! I stream cozy games.\nBring tea.',
     tags: ['cozy', 'indie'],
-    links: links.map(([label, , url]) => ({ label, url })),
+    links: LINKS.map(([label, , url]) => ({ label, url })),
     support: { enabled: true, label: 'support', mode: 'link', url: 'https://ko-fi.com/ana' },
     theme: { preset: 'custom', accent: '#f5d90a', corners: 'round' },
     preview: { enabled: false },
@@ -311,136 +372,169 @@ test('Your page: name, pictures, about, links, colour and Save, with a faithful 
 });
 
 test('Your page: Pix with copy key, "copia e cola" and a QR code, and the privacy warning', { tag: '@ui' }, async ({ page }) => {
-  // Copies are recorded in the page: the test never touches the machine's real clipboard.
+  // Arrange
   await page.addInitScript(() => {
     const w = window as unknown as { __copied: string[] };
     w.__copied = [];
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (s: string) => void w.__copied.push(s) } });
   });
   await mockBranding(page);
-  await openPanel(page);
-  const card = page.getByTestId('brand-card');
+  const card = await openBrandCard(page);
   await card.getByTestId('brand-name').fill('Ana Plays');
   await card.getByTestId('brand-section-links').click();
+  const expected = buildPixPayload({ key: PIX_KEY, name: 'Ana Lima', city: 'São Paulo' });
+  if (!expected.ok) throw new Error('fixture payload');
+
+  // Act
   await card.getByTestId('brand-support-pix').check();
+
+  // Assert
   await expect(card.getByTestId('brand-pix-warning')).toHaveText('Anyone who sends you a Pix sees your full legal name and part of your CPF. If you want to stay anonymous, use a tip service instead.');
 
-  // A CPF key is shown to everyone: Save waits for an explicit confirmation.
+  // Act
   await card.getByTestId('brand-pix-type').selectOption('cpf');
   await card.getByTestId('brand-pix-key').fill('529.982.247-25');
   await card.getByTestId('brand-pix-name').fill('Ana Lima');
   await card.getByTestId('brand-pix-city').fill('São Paulo');
+
+  // Assert
   await expect(card.getByTestId('brand-pix-confirm')).toBeVisible();
   await expect(card.getByTestId('brand-save')).toBeDisabled();
+
+  // Act
   await card.getByTestId('brand-pix-confirm').check();
+
+  // Assert
   await expect(card.getByTestId('brand-save')).toBeEnabled();
 
-  // The recommended random key needs no confirmation.
-  const key = '123e4567-e89b-12d3-a456-426614174000';
+  // Act
   await card.getByTestId('brand-pix-type').selectOption('evp');
-  await card.getByTestId('brand-pix-key').fill(key);
+  await card.getByTestId('brand-pix-key').fill(PIX_KEY);
+
+  // Assert
   await expect(card.getByTestId('brand-pix-confirm')).toHaveCount(0);
-  const expected = buildPixPayload({ key, name: 'Ana Lima', city: 'São Paulo' });
-  if (!expected.ok) throw new Error('fixture payload');
   await expect(card.getByTestId('brand-pix-code')).toHaveText(expected.payload);
   await expect(card.getByTestId('brand-pix-qr')).toBeVisible();
 
-  // The viewer's Pix sheet in the preview.
-  const preview = card.getByTestId('brand-preview');
-  await preview.getByTestId('bp-support').click();
-  const sheet = preview.getByTestId('bp-pix-sheet');
-  await expect(sheet.getByTestId('bp-pix-key')).toHaveText(key);
+  // Act
+  const sheet = card.getByTestId('brand-preview').getByTestId('bp-pix-sheet');
+  await card.getByTestId('brand-preview').getByTestId('bp-support').click();
+
+  // Assert
+  await expect(sheet.getByTestId('bp-pix-key')).toHaveText(PIX_KEY);
   await expect(sheet.getByTestId('bp-pix-code')).toHaveText(expected.payload);
   await expect(sheet.getByTestId('bp-pix-qr')).toBeVisible();
-  // The canvas shows exactly the shared encoder's matrix (whose output lane A's unit tests decode
-  // with an independent reader): sample the centre of every module, quiet zone of 4 modules.
   const matrix = qrMatrix(expected.payload);
-  const drawn = await sheet.getByTestId('bp-pix-qr').evaluate((c, n) => {
-    const canvas = c as HTMLCanvasElement;
-    const scale = canvas.width / (n + 8);
-    const data = canvas.getContext('2d')!.getImageData(0, 0, canvas.width, canvas.height).data;
-    const rows: boolean[][] = [];
-    for (let y = 0; y < n; y++) {
-      const row: boolean[] = [];
-      for (let x = 0; x < n; x++) {
-        const px = Math.floor((x + 4.5) * scale);
-        const py = Math.floor((y + 4.5) * scale);
-        row.push(data[(py * canvas.width + px) * 4]! < 128);
-      }
-      rows.push(row);
-    }
-    return rows;
-  }, matrix.length);
-  expect(drawn).toEqual(matrix);
+  expect(await drawnQr(sheet.getByTestId('bp-pix-qr'), matrix.length)).toEqual(matrix);
+
+  // Act
   await sheet.getByTestId('bp-pix-copy-code').click();
+
+  // Assert
   await expect(sheet.getByTestId('bp-pix-copy-code')).toHaveText('Copied ✓');
+
+  // Act
   await sheet.getByTestId('bp-pix-copy-key').click();
+
+  // Assert
   await expect(sheet.getByTestId('bp-pix-copy-key')).toHaveText('Copied ✓');
-  expect(await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied)).toEqual([expected.payload, key]);
+  expect(await page.evaluate(() => (window as unknown as { __copied: string[] }).__copied)).toEqual([expected.payload, PIX_KEY]);
 });
 
 test('Your page is translated to pt-BR (support button "Apoiar")', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
   await mockBranding(page);
-  await openPanel(page, 'pt-BR');
-  const card = page.getByTestId('brand-card');
+  const card = await openBrandCard(page, 'pt-BR');
+
+  // Assert
   await expect(card.getByRole('heading', { name: 'Sua página' })).toBeVisible();
+
+  // Act
   await card.getByTestId('brand-name').fill('Ana Plays');
   await card.getByTestId('brand-section-links').click();
   await card.getByTestId('brand-support-link').check();
   await card.getByTestId('brand-support-url').fill('https://livepix.gg/ana');
+
+  // Assert
   await expect(card.getByTestId('brand-preview').locator('.sc-brand-support')).toHaveText('Apoiar');
+
+  // Act
   await card.getByTestId('brand-link-add').click();
   await card.getByTestId('brand-link-label').fill('Roteador');
   await card.getByTestId('brand-link-url').fill('https://192.168.0.1');
+
+  // Assert
   await expect(card.getByTestId('brand-link-error')).toHaveText('Esse endereço aponta para um aparelho da sua rede, os espectadores não conseguem abrir.');
+
+  // Act
   await card.getByTestId('brand-support-pix').check();
+
+  // Assert
   await expect(card.getByTestId('brand-pix-warning')).toHaveText('Quem te mandar um Pix vê seu nome completo e parte do seu CPF. Se quiser ficar anônimo, use um serviço de gorjetas.');
+
+  // Act
   await card.getByTestId('brand-section-identity').click();
   await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'logo.svg', mimeType: 'image/svg+xml', buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+
+  // Assert
   await expect(card.getByTestId('brand-image-error-avatar')).toHaveText('SVG não é aceito. Exporte seu logo como PNG.');
 });
 
-test('Your page against the real server routes: the name and a picture are saved, then reset', { tag: '@ui' }, async ({ page }) => {
-  // No mock: the panel's calls must match apps/server/src/branding/admin-routes.ts.
-  await adminApi('POST', '/api/branding/reset', {});
-  await openPanel(page);
-  const card = page.getByTestId('brand-card');
+test('Your page against the real server routes: the name and a picture are saved, then reset', { tag: '@ui' }, async ({ page, branding }) => {
+  // Arrange
+  const card = await openBrandCard(page);
+  branding.markChanged();
+
+  // Act
   await card.getByTestId('brand-name').fill('Ana Plays');
   await card.getByTestId('brand-save').click();
+
+  // Assert
   await expect(card.getByTestId('brand-saved')).toBeVisible();
   await expect.poll(async () => (await adminApi<AdminBrandingState>('GET', '/api/branding')).branding.name).toBe('Ana Plays');
+
+  // Act
   await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'me.jpg', mimeType: 'image/jpeg', buffer: await photoWithGps(page, 600, 600) });
   await card.getByTestId('brand-use-avatar').click();
+
+  // Assert
   await expect.poll(async () => Object.keys((await adminApi<AdminBrandingState>('GET', '/api/branding')).images).sort()).toEqual(['avatar', 'avatar128', 'fav180', 'fav32']);
-  await expect(card.getByTestId('brand-preview').locator('img.sc-brand-avatar')).toHaveAttribute('src', /^\/api\/branding\/file\/[0-9a-f]{64}\.(webp|png|jpg)$/);
-  // The preview's picture is served by the panel's own file route.
-  const src = (await card.getByTestId('brand-preview').locator('img.sc-brand-avatar').getAttribute('src'))!;
-  expect((await page.request.get(new URL(src, page.url()).href)).status()).toBe(200);
-  await adminApi('POST', '/api/branding/reset', {});
+  const avatar = card.getByTestId('brand-preview').locator('img.sc-brand-avatar');
+  await expect(avatar).toHaveAttribute('src', /^\/api\/branding\/file\/[0-9a-f]{64}\.(webp|png|jpg)$/);
+  expect((await page.request.get(new URL((await avatar.getAttribute('src'))!, page.url()).href)).status(), "the panel's own file route serves it").toBe(200);
 });
 
 test('Your page without branding routes on the server: defaults, a note, nothing breaks', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
   await page.route(/\/api\/branding(\/.*)?$/, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: '{"error":"Not Found"}' }));
-  await openPanel(page);
-  const card = page.getByTestId('brand-card');
-  await expect(card.getByTestId('brand-unavailable')).toBeVisible();
+  const card = await openBrandCard(page);
+
+  // Act
   await card.getByTestId('brand-name').fill('Ana Plays');
+
+  // Assert
+  await expect(card.getByTestId('brand-unavailable')).toBeVisible();
   await expect(card.getByTestId('brand-preview').locator('.sc-brand-name')).toHaveText('Ana Plays');
   await expect(card.getByTestId('brand-save')).toBeDisabled();
   await expect(page.getByTestId('error')).toHaveCount(0);
 });
 
-// Screenshots of the card for the site guides: only when asked (BRAND_SCREENSHOTS=<dir>).
+const SHOTS = process.env.BRAND_SCREENSHOTS;
+
+/** Screenshots of the card for the site guides, only when asked: BRAND_SCREENSHOTS=<dir> (Chromium). */
 test('Your page screenshots', { tag: '@ui' }, async ({ page, browserName }) => {
-  const dir = process.env.BRAND_SCREENSHOTS;
-  test.skip(!dir || browserName !== 'chromium', 'set BRAND_SCREENSHOTS=<dir> (chromium) to capture the card');
+  // Arrange
+  test.skip(!SHOTS || browserName !== 'chromium', 'set BRAND_SCREENSHOTS=<dir> (chromium) to capture the card');
+  fs.mkdirSync(SHOTS!, { recursive: true });
+  const shot = (name: string): string => path.join(SHOTS!, name);
+
   for (const lang of ['en', 'pt-BR'] as const) {
     for (const scheme of ['light', 'dark'] as const) {
+      // Arrange
       await page.emulateMedia({ colorScheme: scheme });
       await page.setViewportSize({ width: 1280, height: 1000 });
       await mockBranding(page);
-      await openPanel(page, lang === 'en' ? undefined : lang);
-      const card = page.getByTestId('brand-card');
+      const card = await openBrandCard(page, lang === 'en' ? undefined : lang);
       await card.getByTestId('brand-name').fill('Ana Plays');
       await card.getByTestId('brand-file-avatar').setInputFiles({ name: 'me.jpg', mimeType: 'image/jpeg', buffer: await photoWithGps(page, 600, 600) });
       await card.getByTestId('brand-use-avatar').click();
@@ -462,22 +556,23 @@ test('Your page screenshots', { tag: '@ui' }, async ({ page, browserName }) => {
       await card.getByTestId('brand-link-add').click();
       await card.getByTestId('brand-link-label').nth(1).fill('Instagram');
       await card.getByTestId('brand-link-url').nth(1).fill('instagram.com/anaplays');
-      await card.getByTestId('bp-' + scheme).click();
-      fs.mkdirSync(dir!, { recursive: true });
-      await card.screenshot({ path: path.join(dir!, `your-page-${lang}-${scheme}-links.png`) });
+      await card.getByTestId(`bp-${scheme}`).click();
+
+      // Act
+      await card.screenshot({ path: shot(`your-page-${lang}-${scheme}-links.png`) });
       await card.getByTestId('brand-support-pix').check();
-      await card.getByTestId('brand-pix-key').fill('123e4567-e89b-12d3-a456-426614174000');
+      await card.getByTestId('brand-pix-key').fill(PIX_KEY);
       await card.getByTestId('brand-pix-name').fill('Ana Lima');
       await card.getByTestId('brand-pix-city').fill('Sao Paulo');
       await card.getByTestId('bp-support').click();
       await expect(card.getByTestId('bp-pix-sheet')).toBeVisible();
-      await card.screenshot({ path: path.join(dir!, `your-page-${lang}-${scheme}-pix.png`) });
+      await card.screenshot({ path: shot(`your-page-${lang}-${scheme}-pix.png`) });
       await card.getByTestId('bp-phone').click();
       await card.getByTestId('brand-section-colours').click();
       await card.getByTestId('brand-preset-ocean').click();
-      await card.getByTestId('brand-preview').screenshot({ path: path.join(dir!, `your-page-${lang}-${scheme}-phone-preview.png`) });
+      await card.getByTestId('brand-preview').screenshot({ path: shot(`your-page-${lang}-${scheme}-phone-preview.png`) });
       await card.getByTestId('bp-tab-join').click();
-      await card.getByTestId('brand-preview').screenshot({ path: path.join(dir!, `your-page-${lang}-${scheme}-join.png`) });
+      await card.getByTestId('brand-preview').screenshot({ path: shot(`your-page-${lang}-${scheme}-join.png`) });
       await page.unrouteAll({ behavior: 'ignoreErrors' });
     }
   }
