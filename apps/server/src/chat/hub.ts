@@ -281,7 +281,7 @@ export class ChatHub {
   // Budget
   // ---------------------------------------------------------------------------
 
-  /** B_chat: a share of the upload cap, clamped to 128–768 kbps, in bytes per second. */
+  /** B_chat: a share of the upload cap (5 % by default), clamped to 128–960 kbps, in bytes per second. */
   budgetBps(): number {
     const kbps = Math.min(CHAT_BUDGET_MAX_KBPS, Math.max(CHAT_BUDGET_MIN_KBPS, this.d.settings().budgetShare * this.d.uploadCapMbps() * 1000));
     return (kbps * 1000) / 8;

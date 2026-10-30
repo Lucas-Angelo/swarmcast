@@ -79,12 +79,15 @@ export const CHAT_MUTE_MAX_MIN = 1440;
 /** Messages the streamer may delete in one request. */
 export const CHAT_DELETE_MAX = 100;
 
-/** Share of the upload cap chat may use, and its clamp in kbps (plan §6.1). */
-export const CHAT_BUDGET_SHARE_DEFAULT = 0.04;
+/**
+ * Share of the upload cap chat may use, and its clamp in kbps (plan §6.1, raised from 4 % and
+ * 768 kbps: a lively chat of 3 msg/s to 120 viewers needs about 408 kbps on a 10 Mbps cap).
+ */
+export const CHAT_BUDGET_SHARE_DEFAULT = 0.05;
 export const CHAT_BUDGET_SHARE_MIN = 0.01;
 export const CHAT_BUDGET_SHARE_MAX = 0.1;
 export const CHAT_BUDGET_MIN_KBPS = 128;
-export const CHAT_BUDGET_MAX_KBPS = 768;
+export const CHAT_BUDGET_MAX_KBPS = 960;
 
 /** Global accepted messages per second: floor and ceiling of G. */
 export const CHAT_GLOBAL_MIN_PER_S = 1;

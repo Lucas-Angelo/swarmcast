@@ -348,7 +348,7 @@ describe('ChatHub: snapshots, resume, history', () => {
     }
     const full = hub.snapshot(a.s)!;
     expect(full.items).toHaveLength(50);
-    // A reconnect storm: 120 hellos within a second (4 % of 10 Mbps = 50 KB/s).
+    // A reconnect storm: 120 hellos within a second (5 % of 10 Mbps = 62.5 KB/s).
     const bytes = JSON.stringify({ t: 'hello', chat: full }).length;
     for (let i = 0; i < 120; i++) hub.accountSent(bytes);
     const shrunk = hub.snapshot(a.s)!;
@@ -426,10 +426,10 @@ describe('ChatHub: limits and protection', () => {
   it('the global limit G comes from the upload budget and the audience', () => {
     const many = setup({}, 120).hub;
     const few = setup({}, 5).hub;
-    // 4 % of 10 Mbps = 400 kbps = 50,000 B/s; / (120 × 70 B) ≈ 6 msg/s; few viewers hit the cap 20.
-    expect(many.globalPerS()).toBeCloseTo(50_000 / (120 * 70), 5);
+    // 5 % of 10 Mbps = 500 kbps = 62,500 B/s; / (120 × 70 B) ≈ 7.4 msg/s; few viewers hit the cap 20.
+    expect(many.globalPerS()).toBeCloseTo(62_500 / (120 * 70), 5);
     expect(few.globalPerS()).toBe(20);
-    expect(many.budgetBps()).toBe(50_000);
+    expect(many.budgetBps()).toBe(62_500);
   });
 
   it('new-viewer wait and lockdown', () => {
