@@ -74,7 +74,7 @@ The panel changes them with `PUT /api/chat/settings`; viewers get the effective 
 | `announceMutes` | off | on/off | A system line "X was muted" in the chat |
 | `scripts` | `any` | `any`, `latin` | `latin`: every grapheme must be Latin, Common or Inherited, else `text.script` |
 | `autoProtect` | on | on/off | Automatic flood protection (below) |
-| `budgetShare` | 0.04 | 0.01–0.1 | Share of the upload cap chat may use. `config.json` only, no panel control |
+| `budgetShare` | 0.05 | 0.01–0.1 | Share of the upload cap chat may use. `config.json` only, no panel control |
 | `gif.provider` | `klipy` | `klipy`, `giphy` | GIPHY is a fallback |
 | `gif.key` | "" | `[A-Za-z0-9_-]{8,128}` | The streamer's own key. GIFs stay off without one |
 | `gif.rating` | `pg` | `g`, `pg`, `pg-13` | Mapped to KLIPY's `content_filter` (`high`, `medium`, `low`) or GIPHY's `rating` |
@@ -319,7 +319,7 @@ Kick, "Remove from P2P" and "New link" work as before; mute is a separate state.
 
 ## Flood protection and the video budget
 
-**Upload budget.** `B_chat = clamp(budgetShare × upload cap, 128 kbps, 768 kbps)`. The global rate
+**Upload budget.** `B_chat = clamp(budgetShare × upload cap, 128 kbps, 960 kbps)` (5 % by default: lively chat at 120 viewers on a 10 Mbps cap needs about 408 kbps). The global rate
 `G = clamp(B_chat / (viewers × 70 B), 1, 20)` messages per second, so slow mode effectively rises as
 the audience grows. The guard halves G while it degrades.
 

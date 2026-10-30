@@ -43,6 +43,8 @@ class Bot {
   acks = 0;
   gifAcks = 0;
   closing = false;
+  /** Highest chat seq this bot has seen: a reconnect asks for what came after it, like the page. */
+  lastSeq = 0;
   constructor(
     readonly i: number,
     base: string,
@@ -85,7 +87,10 @@ function isObserver(bot: Bot): boolean {
 }
 
 async function connect(bot: Bot): Promise<void> {
-  const ws = new WebSocket(`${base.replace('http', 'ws')}/control`, { origin: base, headers: { cookie: bot.jar.header(), 'cf-connecting-ip': bot.ip } });
+  // The watch page reconnects with /control?chatAfter=<last seq shown> and gets only the delta in
+  // hello.chat (a server without it ignores the parameter and sends the full snapshot).
+  const query = bot.lastSeq > 0 ? `?chatAfter=${bot.lastSeq}` : '';
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/control${query}`, { origin: base, headers: { cookie: bot.jar.header(), 'cf-connecting-ip': bot.ip } });
   bot.ws = ws;
   const hello = new Promise<void>((resolve, reject) => {
     ws.once('error', reject);
@@ -93,8 +98,18 @@ async function connect(bot: Bot): Promise<void> {
       const text = String(d);
       if (text.startsWith('~')) return;
       const m = JSON.parse(text) as ServerMessage;
-      if (m.t === 'hello') resolve();
-      else if (m.t === 'chat.ack') {
+      const seen = (seq: number | undefined): void => {
+        if (seq !== undefined && seq > bot.lastSeq) bot.lastSeq = seq;
+      };
+      if (m.t === 'hello') {
+        seen(m.chat?.lastSeq);
+        resolve();
+        return;
+      }
+      if (m.t === 'chat.reset') seen(m.lastSeq);
+      if (m.t === 'chat.batch') for (const it of m.items) if (it.k === 'm' || it.k === 'sys') seen(it.s);
+      if (m.t === 'chat.ack') {
+        seen(m.s);
         bot.acks++;
         stats.acks++;
       } else if (m.t === 'chat.reject') rejects.set(String(m.code), (rejects.get(String(m.code)) ?? 0) + 1);

@@ -22,7 +22,7 @@ export interface Scenario {
   behaviour: Behaviour;
   /** Seconds of chat after a 5 s calm baseline. */
   seconds: number;
-  /** Upload cap of the live (the chat budget is 4 % of it, 128–768 kbps). */
+  /** Upload cap of the live (the chat budget is 5 % of it, 128–960 kbps). */
   uploadMbps: number;
   chat?: Partial<ChatSettings>;
   /** Bots 0..n-1 stop reading their socket (a slow consumer). */

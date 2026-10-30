@@ -203,7 +203,7 @@ sequenceDiagram
 The chat (v0.4.0) rides on `/control`: **it adds no WebSocket and no held request**, so the tunnel arithmetic below is unchanged (one socket per viewer). The `ChatHub` (`apps/server/src/chat/`) runs in the same process and event loop as the public server, with bounded work per message:
 
 - every message goes through the shared Unicode pipeline (`packages/shared/src/chat/text.ts`) before anyone sees it, and clients render with `textContent` only;
-- per-device, per-IP and global token buckets run before `JSON.parse`; the global rate comes from a chat upload budget (4 % of the upload cap, 128–768 kbps);
+- per-device, per-IP and global token buckets run before `JSON.parse`; the global rate comes from a chat upload budget (5 % of the upload cap, 128–960 kbps);
 - items are batched every 250 ms (500 ms above 40 viewers, 1 s under pressure): one `JSON.stringify` per batch, the same string to every socket with less than 64 KB buffered; slower sockets are skipped and told how many messages they missed;
 - the video limiter leaves the chat only what it really sends (at most its budget), and an event-loop guard slows or pauses chat before video suffers;
 - a chat flood alone raises the attack shield to "suspicious" at most (the light browser check for new joins), never to the reactions that drop viewers or rotate the link;

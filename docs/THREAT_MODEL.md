@@ -123,7 +123,7 @@ Details in [CHAT.md](CHAT.md).
 | T9 | Known OS/font crash strings (Effective Power, Telugu, Black Dot, Sindhi) | Structural rules (RFC 5892 joiner contexts, bidi-mark and mark caps) and a regression corpus |
 | T10 | Lone surrogates or invalid UTF-8 | Rejected (`isWellFormed`); `ws` validates UTF-8 |
 | T11 | ReDoS in validation | Linear scanners and single code-point tests; a test rejects quantified groups in every regex of `chat/` |
-| T12 | Message storm, join storm, slow consumers | Raw size (2 KB) and a separate chat frame budget (20 per 10 s) before parsing; per-device, per-IP and global buckets; a chat upload budget; batched fan-out that skips slow sockets; a bounded ring and queue; automatic slow mode and protection; an event-loop guard |
+| T12 | Message storm, join storm, slow consumers | Raw size (2 KB) and a separate chat frame budget (20 per 10 s) before parsing; per-device, per-IP and global buckets; a chat upload budget (5 % of the upload cap, 128–960 kbps); batched fan-out that skips slow sockets; a bounded ring and queue; automatic slow mode and protection; an event-loop guard |
 | T13 | Image attacks (decoding bombs, SVG scripts, tracking pixels) | No URL in a message ever becomes an image. GIFs are a provider id + size, rendered from a fixed URL template on an allowlisted host. No SVG anywhere |
 | T14 | IP harvesting through chat ("click my link", tracking images) | Links are never clickable and never previewed; no `<img>` from user-supplied URLs; the streamer can block links |
 | T15 | Moderation evasion: rejoin after a mute | Mutes are keyed by device cookie and session and survive rejoin within the live; rejoining costs the proof-of-work; an optional new-viewer wait; a new link for the rest |
