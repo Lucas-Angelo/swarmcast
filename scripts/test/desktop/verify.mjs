@@ -121,6 +121,8 @@ async function nothingLeft(what) {
 // ---------------------------------------------------------------- the app and its panel
 
 let child = null;
+/** Where this start of the app begins in app-output.log (the file collects every start). */
+let childLogStart = 0;
 let debPackage = '';
 /** The variables every app start in this test gets (and the updated app inherits). */
 const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1' });
@@ -128,7 +130,9 @@ const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMP
 /** Starts the installed app (without waiting for it). */
 function spawnApp(exe, env = {}, argv = []) {
   fs.rmSync(loginFile, { force: true });
-  const out = fs.openSync(path.join(work, 'app-output.log'), 'a');
+  const log = path.join(work, 'app-output.log');
+  childLogStart = fs.existsSync(log) ? fs.statSync(log).size : 0;
+  const out = fs.openSync(log, 'a');
   child = spawn(exe, argv, { stdio: ['ignore', out, out], env: { ...process.env, ...testEnv(), ...env } });
   child.on('error', (err) => console.log(`spawn error: ${err.message}`));
 }
@@ -202,11 +206,44 @@ async function checkAutostart(panel) {
   step('turning it off removes the entry', off.autostart?.enabled === false && !autostartPresent(), JSON.stringify(off.autostart));
 }
 
+/** How the app ended (`null` while it runs). */
+function childExit() {
+  if (child.exitCode === null && child.signalCode === null) return null;
+  return child.signalCode ? `signal ${child.signalCode}` : `exit code ${child.exitCode}`;
+}
+
+/** What a crashing app leaves in its output (macOS / Rust / glibc). */
+const CRASH_MARKERS = /uncaught exception|libc\+\+abi: terminating|panicked at|fatal runtime error|Segmentation fault|Abort trap|EXC_BAD_ACCESS/;
+
+/**
+ * Called when the app is already gone before this test killed it. That is fine only if it
+ * demonstrably did not crash (exit code 0, nothing crash-like in its output); otherwise the
+ * test fails here, and the caller prints app-output.log.
+ */
+async function checkGoneBeforeKill() {
+  await until(() => childExit() !== null, 10_000, 'the exit status of the app').catch(() => {});
+  const log = path.join(work, 'app-output.log');
+  const output = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').slice(childLogStart) : '';
+  const crash = output.match(CRASH_MARKERS);
+  if (child.exitCode !== 0 || child.signalCode !== null || crash) {
+    throw new Error(`the app crashed before the test killed it (${childExit() ?? 'exit status unknown'}${crash ? `, output: "${crash[0]}"` : ''}): see app-output.log below`);
+  }
+  console.log('note: the app had already exited cleanly (exit code 0, no crash in its output) before the kill');
+}
+
 /** Killing the app (no clean quit) must take its server and tools down too. */
 async function killApp(what) {
   const pid = child.pid;
-  if (OS === 'windows') run('taskkill', ['/F', '/PID', String(pid)], { allowFail: true });
-  else process.kill(pid, 'SIGKILL');
+  if (childExit() !== null) await checkGoneBeforeKill();
+  else if (OS === 'windows') run('taskkill', ['/F', '/PID', String(pid)], { allowFail: true });
+  else {
+    try {
+      process.kill(pid, 'SIGKILL');
+    } catch (err) {
+      if (err.code !== 'ESRCH') throw err;
+      await checkGoneBeforeKill();
+    }
+  }
   await nothingLeft(what);
 }
 
