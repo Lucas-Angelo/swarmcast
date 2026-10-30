@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -18,131 +17,234 @@ import {
   WINDOWS_RUN_KEY,
   type Runner,
 } from '../../src/desktop/autostart.js';
+import { tempDir } from './helpers.js';
 
-const tmpHome = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'sc-home-'));
+// "Start with the computer" for the desktop app: a Run value (Windows), a LaunchAgent (macOS), an
+// XDG autostart entry (Linux). The OS entry is the source of truth: status() reads it back.
+
+/** A REG_SZ value as `reg export` writes it: backslashes and quotes escaped. */
+const regString = (value: string): string => `"${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+
+/** Paths that need every escape of the Desktop Entry spec (spaces, quotes, $, `, \, %) or none. */
+const LINUX_EXES = ['/opt/Swarm Cast/swarmcast-desktop', '/home/a"b/$x`y`/100%/c\\d', '/home/zé/Apps/SwarmCast.AppImage'];
 
 describe('autostart entries (pure)', () => {
-  it('Windows: quoted exe + --background, read back from a reg export', () => {
+  it('Windows: the Run command quotes the exe and adds --background; the exe reads back from it', () => {
+    // Arrange
     const exe = 'C:\\Users\\João Silva\\AppData\\Local\\Programs\\SwarmCast\\SwarmCast.exe';
+    // Act
     const cmd = windowsRunCommand(exe);
+    // Assert
     expect(cmd).toBe(`"${exe}" --background`);
     expect(windowsCommandExe(cmd)).toBe(exe);
     expect(windowsCommandExe('C:\\x\\a.exe --flag')).toBe('C:\\x\\a.exe');
-    // How `reg export` writes the value (backslashes and quotes escaped).
-    const reg = `\uFEFFWindows Registry Editor Version 5.00\r\n\r\n[${WINDOWS_RUN_KEY.replace('HKCU', 'HKEY_CURRENT_USER')}]\r\n"OneDrive"="\\"C:\\\\od.exe\\" /background"\r\n"SwarmCast"="${cmd.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"\r\n`;
-    expect(parseRegExport(reg)).toBe(cmd);
-    expect(parseRegExport(reg.replace('"SwarmCast"', '"Other"'))).toBeNull();
-    expect(parseRegExport('"SwarmCast"=hex(2):43,00')).toBe('');
-    expect(() => windowsRunCommand('C:\\a"b.exe')).toThrow();
-    expect(() => windowsRunCommand('relative\\a.exe')).toThrow();
+  });
+
+  it('Windows: reads the SwarmCast value back from a reg export, and nothing else', () => {
+    // Arrange
+    const cmd = windowsRunCommand('C:\\Users\\João Silva\\SwarmCast.exe');
+    const reg = `\uFEFFWindows Registry Editor Version 5.00\r\n\r\n[${WINDOWS_RUN_KEY.replace('HKCU', 'HKEY_CURRENT_USER')}]\r\n"OneDrive"=${regString('"C:\\od.exe" /background')}\r\n"SwarmCast"=${regString(cmd)}\r\n`;
+    // Act
+    const ours = parseRegExport(reg);
+    const others = parseRegExport(reg.replace('"SwarmCast"', '"Other"'));
+    const notAString = parseRegExport('"SwarmCast"=hex(2):43,00');
+    // Assert
+    expect(ours).toBe(cmd);
+    expect(others).toBeNull();
+    expect(notAString).toBe('');
+  });
+
+  it.each(['C:\\a"b.exe', 'relative\\a.exe'])('Windows: refuses %s as the exe', (exe) => {
+    // Act
+    const act = () => windowsRunCommand(exe);
+    // Assert
+    expect(act).toThrow();
   });
 
   it('macOS: LaunchAgent plist with the label, the args and RunAtLoad; XML-escaped paths read back', () => {
+    // Arrange
     const exe = '/Applications/My "Apps" & <Tools>/SwarmCast.app/Contents/MacOS/SwarmCast';
+    // Act
     const plist = macLaunchAgentPlist(exe);
+    // Assert
     expect(plist).toContain(`<string>${APP_ID}</string>`);
     expect(plist).toContain('<key>RunAtLoad</key>\n  <true/>');
     expect(plist).toContain('<string>--background</string>');
     expect(plist).toContain('My &quot;Apps&quot; &amp; &lt;Tools&gt;');
     expect(macPlistExe(plist)).toBe(exe);
-    expect(macPlistExe('<plist><dict><key>Program</key><string>/x/y</string></dict></plist>')).toBe('/x/y');
-    expect(macPlistExe('<plist/>')).toBeNull();
   });
 
-  it('Linux: Exec quoting per the Desktop Entry spec (spaces, quotes, $, `, \\, %)', () => {
-    expect(desktopExecValue('/opt/Swarm Cast/swarmcast-desktop')).toBe('"/opt/Swarm Cast/swarmcast-desktop" --background');
-    expect(desktopExecValue('/home/a"b/$x`y`/100%/c\\d')).toBe('"/home/a\\\\"b/\\\\$x\\\\`y\\\\`/100%%/c\\\\\\\\d" --background');
-    for (const exe of ['/opt/Swarm Cast/swarmcast-desktop', '/home/a"b/$x`y`/100%/c\\d', '/home/zé/Apps/SwarmCast.AppImage']) {
-      const entry = linuxDesktopEntry(exe);
-      expect(entry).toMatch(/^\[Desktop Entry\]\nType=Application\n/);
-      expect(entry).toContain('X-GNOME-Autostart-enabled=true');
-      expect(linuxEntryExe(entry)).toBe(exe);
-      // TryExec: the bare path (string escaping only), so a removed app is skipped at login.
-      expect(entry).toContain(`\nTryExec=${exe.replace(/\\/g, '\\\\')}\nExec=`);
-    }
-    expect(desktopTryExecValue('/opt/Swarm Cast/swarmcast-desktop')).toBe('/opt/Swarm Cast/swarmcast-desktop');
-    expect(desktopTryExecValue('/home/a"b/$x`y`/100%/c\\d')).toBe('/home/a"b/$x`y`/100%/c\\\\d');
-    expect(linuxDesktopEntry('/usr/bin/swarmcast-desktop')).toContain('\nTryExec=/usr/bin/swarmcast-desktop\nExec="/usr/bin/swarmcast-desktop" --background\n');
-    expect(linuxEntryExe('[Desktop Entry]\nExec=/usr/bin/swarmcast-desktop --background\n')).toBe('/usr/bin/swarmcast-desktop');
-    expect(linuxEntryExe('[Desktop Entry]\nExec=/x --background\nHidden=true\n')).toBeNull();
-    expect(linuxEntryExe('[Desktop Entry]\nExec=/x\nX-GNOME-Autostart-enabled=false\n')).toBeNull();
-    expect(linuxEntryExe('[Other]\nExec=/x\n')).toBeNull();
+  it('macOS: reads Program from a plist; none without one', () => {
+    // Act
+    const program = macPlistExe('<plist><dict><key>Program</key><string>/x/y</string></dict></plist>');
+    const none = macPlistExe('<plist/>');
+    // Assert
+    expect(program).toBe('/x/y');
+    expect(none).toBeNull();
   });
 
-  it('refuses relative paths and control characters', () => {
-    expect(() => checkExePath('swarmcast')).toThrow();
-    expect(() => checkExePath('/a\nb')).toThrow();
-    expect(() => linuxDesktopEntry('/a\tb')).toThrow();
-    expect(() => macLaunchAgentPlist('')).toThrow();
+  it.each([
+    ['/opt/Swarm Cast/swarmcast-desktop', '"/opt/Swarm Cast/swarmcast-desktop" --background'],
+    ['/home/a"b/$x`y`/100%/c\\d', '"/home/a\\\\"b/\\\\$x\\\\`y\\\\`/100%%/c\\\\\\\\d" --background'],
+  ])('Linux: Exec of %s is quoted per the Desktop Entry spec', (exe, exec) => {
+    // Act
+    const value = desktopExecValue(exe);
+    // Assert
+    expect(value).toBe(exec);
+  });
+
+  it.each([
+    ['/opt/Swarm Cast/swarmcast-desktop', '/opt/Swarm Cast/swarmcast-desktop'],
+    ['/home/a"b/$x`y`/100%/c\\d', '/home/a"b/$x`y`/100%/c\\\\d'],
+  ])('Linux: TryExec of %s is the bare path, string escaping only', (exe, tryExec) => {
+    // Act
+    const value = desktopTryExecValue(exe);
+    // Assert
+    expect(value).toBe(tryExec);
+  });
+
+  // TryExec holds the bare path, so the session skips the entry at login once the app is removed.
+  it.each(LINUX_EXES)('Linux: the entry for %s starts the app at login and reads back', (exe) => {
+    // Act
+    const entry = linuxDesktopEntry(exe);
+    // Assert
+    expect(entry).toMatch(/^\[Desktop Entry\]\nType=Application\n/);
+    expect(entry).toContain('X-GNOME-Autostart-enabled=true');
+    expect(entry).toContain(`\nTryExec=${exe.replace(/\\/g, '\\\\')}\nExec=`);
+    expect(linuxEntryExe(entry)).toBe(exe);
+  });
+
+  it('Linux: a plain path is written as is', () => {
+    // Act
+    const entry = linuxDesktopEntry('/usr/bin/swarmcast-desktop');
+    // Assert
+    expect(entry).toContain('\nTryExec=/usr/bin/swarmcast-desktop\nExec="/usr/bin/swarmcast-desktop" --background\n');
+  });
+
+  it.each([
+    ['an unquoted Exec', '[Desktop Entry]\nExec=/usr/bin/swarmcast-desktop --background\n', '/usr/bin/swarmcast-desktop'],
+    ['a hidden entry', '[Desktop Entry]\nExec=/x --background\nHidden=true\n', null],
+    ['an entry GNOME turned off', '[Desktop Entry]\nExec=/x\nX-GNOME-Autostart-enabled=false\n', null],
+    ['another section', '[Other]\nExec=/x\n', null],
+  ])('Linux: reads %s back', (_what, entry, exe) => {
+    // Act
+    const read = linuxEntryExe(entry);
+    // Assert
+    expect(read).toBe(exe);
+  });
+
+  it.each([
+    ['a relative path', () => checkExePath('swarmcast')],
+    ['a newline', () => checkExePath('/a\nb')],
+    ['a tab', () => linuxDesktopEntry('/a\tb')],
+    ['no path', () => macLaunchAgentPlist('')],
+  ])('refuses %s', (_what, act) => {
+    // Assert
+    expect(act).toThrow();
   });
 });
 
 describe('Autostart (file-based OSes, temporary HOME)', () => {
   it('is unsupported without the app path, and off by default', async () => {
-    const home = tmpHome();
-    expect(await new Autostart({ platform: 'linux', home }).status()).toEqual({ supported: false, enabled: false });
-    await expect(new Autostart({ platform: 'linux', home }).set(true)).rejects.toThrow(/desktop app/);
-    expect(await new Autostart({ platform: 'linux', home, exe: '/opt/sc/swarmcast-desktop', env: {} }).status()).toEqual({ supported: true, enabled: false });
+    // Arrange
+    const home = tempDir('sc-home-');
+    const noExe = new Autostart({ platform: 'linux', home });
+    const withExe = new Autostart({ platform: 'linux', home, exe: '/opt/sc/swarmcast-desktop', env: {} });
+    // Act
+    const unsupported = await noExe.status();
+    const turnOn = noExe.set(true);
+    const off = await withExe.status();
+    // Assert
+    expect(unsupported).toEqual({ supported: false, enabled: false });
+    await expect(turnOn).rejects.toThrow(/desktop app/);
+    expect(off).toEqual({ supported: true, enabled: false });
     expect(fs.readdirSync(home)).toEqual([]);
   });
 
   it('macOS: writes and removes the LaunchAgent; an entry for another copy is stale and rewritten', async () => {
-    const home = tmpHome();
+    // Arrange
+    const home = tempDir('sc-home-');
     const exe = '/Applications/Swarm Cast.app/Contents/MacOS/SwarmCast';
     const a = new Autostart({ platform: 'darwin', home, exe });
     const file = path.join(home, 'Library', 'LaunchAgents', `${APP_ID}.plist`);
+    // Act
+    const on = await a.set(true);
+    // Assert
     expect(a.entryFile()).toBe(file);
-    expect(await a.set(true)).toEqual({ supported: true, enabled: true });
+    expect(on).toEqual({ supported: true, enabled: true });
     expect(macPlistExe(fs.readFileSync(file, 'utf8'))).toBe(exe);
-
+    // Act
     fs.writeFileSync(file, macLaunchAgentPlist('/Volumes/Old/SwarmCast.app/Contents/MacOS/SwarmCast'));
-    expect(await a.status()).toEqual({ supported: true, enabled: true, stale: true });
-    expect(await a.set(true)).toEqual({ supported: true, enabled: true });
+    const stale = await a.status();
+    const rewritten = await a.set(true);
+    // Assert
+    expect(stale).toEqual({ supported: true, enabled: true, stale: true });
+    expect(rewritten).toEqual({ supported: true, enabled: true });
     expect(macPlistExe(fs.readFileSync(file, 'utf8'))).toBe(exe);
-
-    expect(await a.set(false)).toEqual({ supported: true, enabled: false });
+    // Act
+    const off = await a.set(false);
+    const offAgain = await a.set(false);
+    // Assert
+    expect(off).toEqual({ supported: true, enabled: false });
     expect(fs.existsSync(file)).toBe(false);
-    expect(await a.set(false)).toEqual({ supported: true, enabled: false });
+    expect(offAgain).toEqual({ supported: true, enabled: false });
   });
 
-  it('Linux: honours XDG_CONFIG_HOME (absolute only), defaults to ~/.config', async () => {
-    const home = tmpHome();
+  it('Linux: defaults to ~/.config, also for a relative XDG_CONFIG_HOME', () => {
+    // Arrange
+    const home = tempDir('sc-home-');
     const exe = '/home/me/Apps/SwarmCast x64.AppImage';
-    const def = new Autostart({ platform: 'linux', home, exe, env: {} });
-    expect(def.entryFile()).toBe(path.join(home, '.config', 'autostart', 'swarmcast.desktop'));
-    expect(new Autostart({ platform: 'linux', home, exe, env: { XDG_CONFIG_HOME: 'relative' } }).entryFile()).toBe(def.entryFile());
+    // Act
+    const byDefault = new Autostart({ platform: 'linux', home, exe, env: {} }).entryFile();
+    const relative = new Autostart({ platform: 'linux', home, exe, env: { XDG_CONFIG_HOME: 'relative' } }).entryFile();
+    // Assert
+    expect(byDefault).toBe(path.join(home, '.config', 'autostart', 'swarmcast.desktop'));
+    expect(relative).toBe(byDefault);
+  });
 
+  it('Linux: honours an absolute XDG_CONFIG_HOME; an entry the desktop turned off reads as off', async () => {
+    // Arrange
+    const home = tempDir('sc-home-');
+    const exe = '/home/me/Apps/SwarmCast x64.AppImage';
     const xdg = path.join(home, 'xdg');
     const a = new Autostart({ platform: 'linux', home, exe, env: { XDG_CONFIG_HOME: xdg } });
     const file = path.join(xdg, 'autostart', 'swarmcast.desktop');
+    // Act
+    const on = await a.set(true);
+    // Assert
     expect(a.entryFile()).toBe(file);
-    expect(await a.set(true)).toEqual({ supported: true, enabled: true });
+    expect(on).toEqual({ supported: true, enabled: true });
     expect(linuxEntryExe(fs.readFileSync(file, 'utf8'))).toBe(exe);
-    // Turned off by the desktop's own settings app: reads as off.
+    // Act
     fs.appendFileSync(file, 'Hidden=true\n');
-    expect(await a.status()).toEqual({ supported: true, enabled: false });
-    expect(await a.set(false)).toEqual({ supported: true, enabled: false });
+    const hidden = await a.status();
+    const off = await a.set(false);
+    // Assert
+    expect(hidden).toEqual({ supported: true, enabled: false });
+    expect(off).toEqual({ supported: true, enabled: false });
     expect(fs.existsSync(file)).toBe(false);
   });
 });
 
 describe('Autostart on Windows (reg.exe faked)', () => {
-  /** A fake registry Run key driven through the same reg.exe arguments. */
+  /**
+   * A fake HKCU Run key behind the reg.exe arguments Autostart uses: `export` writes the key as
+   * UTF-16 with a BOM (as reg.exe does), `add` sets the SwarmCast value, `delete` removes it.
+   * Anything else fails like reg.exe would. Every call is recorded.
+   */
   function fakeReg(initial?: string): { run: Runner; calls: string[][]; value: () => string | undefined } {
     let value = initial;
     const calls: string[][] = [];
     const run: Runner = async (command, args) => {
       calls.push([command, ...args]);
-      expect(command).toBe('reg.exe');
-      expect(args[1]).toBe(WINDOWS_RUN_KEY);
+      if (command !== 'reg.exe' || args[1] !== WINDOWS_RUN_KEY) return { code: 1, stdout: '', stderr: 'ERROR: unexpected command' };
       if (args[0] === 'export') {
         const lines = ['Windows Registry Editor Version 5.00', '', '[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]'];
-        if (value !== undefined) lines.push(`"SwarmCast"="${value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
+        if (value !== undefined) lines.push(`"SwarmCast"=${regString(value)}`);
         fs.writeFileSync(args[2]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(lines.join('\r\n') + '\r\n', 'utf16le')]));
         return { code: 0, stdout: '', stderr: '' };
       }
       if (args[0] === 'add') {
-        expect(args.slice(2)).toEqual(['/v', 'SwarmCast', '/t', 'REG_SZ', '/d', args[7], '/f']);
         value = args[7];
         return { code: 0, stdout: '', stderr: '' };
       }
@@ -150,39 +252,78 @@ describe('Autostart on Windows (reg.exe faked)', () => {
         value = undefined;
         return { code: 0, stdout: '', stderr: '' };
       }
-      return { code: 1, stdout: '', stderr: 'unexpected' };
+      return { code: 1, stdout: '', stderr: 'ERROR: unexpected command' };
     };
     return { run, calls, value: () => value };
   }
 
-  it('adds, reads back (UTF-16, accents), rewrites a stale entry and deletes the Run value', async () => {
-    const exe = 'C:\\Users\\João\\AppData\\Local\\Programs\\SwarmCast\\SwarmCast.exe';
+  const EXE = 'C:\\Users\\João\\AppData\\Local\\Programs\\SwarmCast\\SwarmCast.exe';
+
+  it('adds the Run value with reg add and reads it back (UTF-16 export, accents)', async () => {
+    // Arrange
     const reg = fakeReg();
-    const a = new Autostart({ platform: 'win32', exe, run: reg.run });
-    expect(await a.status()).toEqual({ supported: true, enabled: false });
-    expect(await a.set(true)).toEqual({ supported: true, enabled: true });
-    expect(reg.value()).toBe(`"${exe}" --background`);
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    // Act
+    const before = await a.status();
+    const on = await a.set(true);
+    // Assert
+    expect(before).toEqual({ supported: true, enabled: false });
+    expect(on).toEqual({ supported: true, enabled: true });
+    expect(reg.value()).toBe(`"${EXE}" --background`);
+    expect(reg.calls.filter((c) => c[1] === 'add')).toEqual([['reg.exe', 'add', WINDOWS_RUN_KEY, '/v', 'SwarmCast', '/t', 'REG_SZ', '/d', `"${EXE}" --background`, '/f']]);
+  });
 
+  it('an entry for another copy is stale and rewritten; the same path in another case is the same file', async () => {
+    // Arrange
     const old = fakeReg('"D:\\Old\\SwarmCast.exe" --background');
-    const b = new Autostart({ platform: 'win32', exe, run: old.run });
-    expect(await b.status()).toEqual({ supported: true, enabled: true, stale: true });
-    // Same path in another case is the same file on Windows.
-    expect(await new Autostart({ platform: 'win32', exe: exe.toUpperCase(), run: reg.run }).status()).toEqual({ supported: true, enabled: true });
-    await b.set(true);
-    expect(old.value()).toBe(`"${exe}" --background`);
+    const tmpDir = tempDir('sc-reg-');
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: old.run, tmpDir });
+    // Act
+    const stale = await a.status();
+    await a.set(true);
+    const upperCase = await new Autostart({ platform: 'win32', exe: EXE.toUpperCase(), run: old.run, tmpDir }).status();
+    // Assert
+    expect(stale).toEqual({ supported: true, enabled: true, stale: true });
+    expect(old.value()).toBe(`"${EXE}" --background`);
+    expect(upperCase).toEqual({ supported: true, enabled: true });
+  });
 
-    expect(await a.set(false)).toEqual({ supported: true, enabled: false });
-    expect(reg.value()).toBeUndefined();
-    // Nothing to delete: no reg delete call.
-    const before = reg.calls.length;
+  it('deletes the Run value, and calls no reg delete when there is nothing to delete', async () => {
+    // Arrange
+    const reg = fakeReg(`"${EXE}" --background`);
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    // Act
+    const off = await a.set(false);
+    const callsAfterDelete = reg.calls.length;
     await a.set(false);
-    expect(reg.calls.slice(before).map((c) => c[1])).not.toContain('delete');
+    // Assert
+    expect(off).toEqual({ supported: true, enabled: false });
+    expect(reg.value()).toBeUndefined();
+    expect(reg.calls.slice(0, callsAfterDelete).filter((c) => c[1] === 'delete')).toHaveLength(1);
+    expect(reg.calls.slice(callsAfterDelete).map((c) => c[1])).not.toContain('delete');
+  });
+
+  it('every reg.exe call targets the Run key of the current user', async () => {
+    // Arrange
+    const reg = fakeReg();
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    // Act
+    await a.set(true);
+    await a.set(false);
+    // Assert
+    expect(reg.calls.length).toBeGreaterThan(0);
+    expect(reg.calls.every((c) => c[0] === 'reg.exe' && c[2] === WINDOWS_RUN_KEY)).toBe(true);
   });
 
   it('reports reg.exe failures', async () => {
+    // Arrange
     const run: Runner = async (_c, args) => (args[0] === 'export' ? { code: 1, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'Access is denied.' });
-    const a = new Autostart({ platform: 'win32', exe: 'C:\\SwarmCast\\SwarmCast.exe', run });
-    expect(await a.status()).toEqual({ supported: true, enabled: false });
-    await expect(a.set(true)).rejects.toThrow(/Access is denied/);
+    const a = new Autostart({ platform: 'win32', exe: 'C:\\SwarmCast\\SwarmCast.exe', run, tmpDir: tempDir('sc-reg-') });
+    // Act
+    const status = await a.status();
+    const turnOn = a.set(true);
+    // Assert
+    expect(status).toEqual({ supported: true, enabled: false });
+    await expect(turnOn).rejects.toThrow(/Access is denied/);
   });
 });

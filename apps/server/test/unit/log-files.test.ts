@@ -1,19 +1,12 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { createLogger } from '../../src/core/logger.js';
 import { isPrunable, localDay, pruneLogs, retentionDays, RotatingLogFile, serverLogName } from '../../src/core/log-files.js';
+import { tempDir } from './helpers.js';
 
-const dirs: string[] = [];
-function tmp(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-logs-'));
-  dirs.push(d);
-  return d;
-}
-afterEach(() => {
-  for (const d of dirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
-});
+// The log files in <data>/logs: one per local day, cut by size, pruned by age and total size.
+// The day is the local one: the times below are local times, so the tests hold in every time zone.
 
 const DAY = 24 * 60 * 60 * 1000;
 const NOON = new Date(2026, 9, 26, 12, 0, 0).getTime();
@@ -22,73 +15,91 @@ function lines(file: string): string[] {
   return fs.readFileSync(file, 'utf8').split('\n').filter(Boolean);
 }
 
+/** A RotatingLogFile in `dir`, ended when the test finishes (before `dir` goes: Windows cannot delete an open file's folder). */
+function logFile(dir: string, o: ConstructorParameters<typeof RotatingLogFile>[1]): RotatingLogFile {
+  const f = new RotatingLogFile(dir, o);
+  onTestFinished(() => f.end());
+  return f;
+}
+
 describe('RotatingLogFile', () => {
   it('writes swarmcast-YYYY-MM-DD.log in the local day', () => {
-    const dir = tmp();
-    const f = new RotatingLogFile(dir, { now: () => NOON });
+    // Arrange
+    const f = logFile(tempDir('sc-logs-'), { now: () => NOON });
+    // Act
     f.write('hello\n');
     f.flushSync();
+    // Assert
     expect(path.basename(f.file)).toBe('swarmcast-2026-10-26.log');
-    expect(serverLogName(NOON)).toBe('swarmcast-2026-10-26.log');
-    expect(localDay(NOON)).toBe('2026-10-26');
     expect(lines(f.file)).toEqual(['hello']);
-    f.end();
+  });
+
+  it('names the file and the day from the local date', () => {
+    // Act
+    const name = serverLogName(NOON);
+    const day = localDay(NOON);
+    // Assert
+    expect(name).toBe('swarmcast-2026-10-26.log');
+    expect(day).toBe('2026-10-26');
   });
 
   it('cuts the file by size while running, keeping every line whole and in order', () => {
-    const dir = tmp();
-    const f = new RotatingLogFile(dir, { now: () => NOON, maxBytes: 1000, keep: 3 });
-    const all: string[] = [];
-    for (let i = 0; i < 60; i++) {
-      const line = JSON.stringify({ n: i, pad: 'x'.repeat(40) });
-      all.push(line);
-      f.write(`${line}\n`);
-    }
+    // Arrange
+    const dir = tempDir('sc-logs-');
+    const f = logFile(dir, { now: () => NOON, maxBytes: 1000, keep: 3 });
+    const all = Array.from({ length: 60 }, (_, i) => JSON.stringify({ n: i, pad: 'x'.repeat(40) }));
+    // Act
+    for (const line of all) f.write(`${line}\n`);
     f.flushSync();
+    // Assert
     const base = path.join(dir, 'swarmcast-2026-10-26.log');
-    // keep = 3: .1 .2 .3 exist, .4 was never kept.
     for (const n of [1, 2, 3]) expect(fs.statSync(`${base}.${n}`).size).toBeLessThanOrEqual(1000);
     expect(fs.existsSync(`${base}.4`)).toBe(false);
     expect(fs.statSync(base).size).toBeLessThanOrEqual(1000);
-    // Oldest part first: .3, .2, .1, then the current file. No line lost, split or reordered.
     const kept = [`${base}.3`, `${base}.2`, `${base}.1`, base].flatMap(lines);
     for (const l of kept) expect(() => JSON.parse(l)).not.toThrow();
     expect(kept).toEqual(all.slice(all.length - kept.length));
-    f.end();
   });
 
   it('starts a new file at local midnight', () => {
-    const dir = tmp();
+    // Arrange
+    const dir = tempDir('sc-logs-');
     let now = NOON;
-    const f = new RotatingLogFile(dir, { now: () => now });
+    const f = logFile(dir, { now: () => now });
     f.write('day one\n');
+    // Act
     now = NOON + DAY;
     f.write('day two\n');
     f.flushSync();
+    // Assert
     expect(lines(path.join(dir, 'swarmcast-2026-10-26.log'))).toEqual(['day one']);
     expect(lines(path.join(dir, 'swarmcast-2026-10-27.log'))).toEqual(['day two']);
     expect(path.basename(f.file)).toBe('swarmcast-2026-10-27.log');
-    f.end();
   });
 
   it('appends to the file of the day after a restart and rotates it once it is full', () => {
-    const dir = tmp();
+    // Arrange
+    const dir = tempDir('sc-logs-');
     const file = path.join(dir, serverLogName(NOON));
     fs.writeFileSync(file, 'x'.repeat(998) + '\n');
-    const f = new RotatingLogFile(dir, { now: () => NOON, maxBytes: 1000 });
+    const f = logFile(dir, { now: () => NOON, maxBytes: 1000 });
+    // Act
     f.write('next\n');
     f.flushSync();
+    // Assert
     expect(fs.statSync(`${file}.1`).size).toBe(999);
     expect(lines(file)).toEqual(['next']);
-    f.end();
   });
 
   it('is the logger file destination (multistream), with secrets still redacted', () => {
-    const dir = tmp();
+    // Arrange
     let file: RotatingLogFile | undefined;
-    const log = createLogger({ logsDir: dir, stdout: false, onFile: (f) => (file = f) });
+    const log = createLogger({ logsDir: tempDir('sc-logs-'), stdout: false, onFile: (f) => (file = f) });
+    onTestFinished(() => file?.end());
+    // Act
     log.info({ streamKey: 'sc_abcdefghijklmnopqrstuvwx' }, 'joined via https://x.trycloudflare.com/join/SECRETtoken123');
     file!.flushSync();
+    // Assert
     const text = fs.readFileSync(file!.file, 'utf8');
     expect(path.basename(file!.file)).toMatch(/^swarmcast-\d{4}-\d{2}-\d{2}\.log$/);
     expect(text).toContain('/join/[redacted]');
@@ -107,8 +118,9 @@ describe('pruneLogs', () => {
   }
 
   it('deletes log files and old exports past the retention, and nothing else', () => {
-    const logs = tmp();
-    const exports = tmp();
+    // Arrange
+    const logs = tempDir('sc-logs-');
+    const exports = tempDir('sc-logs-');
     touch(logs, 'swarmcast-2026-10-01.log', 25);
     touch(logs, 'swarmcast-2026-10-01.log.2', 25);
     touch(logs, 'swarmcast.log.1', 30);
@@ -118,7 +130,9 @@ describe('pruneLogs', () => {
     touch(logs, 'notes.txt', 400);
     touch(exports, 'SwarmCast-logs-0.1.0-20260901-1200.zip', 40);
     touch(exports, 'SwarmCast-logs-0.1.0-20261025-1200.zip', 1);
+    // Act
     const deleted = pruneLogs({ dirs: [logs, exports], maxAgeDays: 14, now: NOON, protect: (f) => path.basename(f) === 'desktop.log' });
+    // Assert
     expect(deleted.map((f) => path.basename(f)).sort()).toEqual([
       'SwarmCast-logs-0.1.0-20260901-1200.zip',
       'desktop.log.2',
@@ -131,33 +145,60 @@ describe('pruneLogs', () => {
   });
 
   it('caps the total size by deleting the oldest files first', () => {
-    const logs = tmp();
+    // Arrange
+    const logs = tempDir('sc-logs-');
     touch(logs, 'swarmcast-2026-10-21.log', 5, 400);
     touch(logs, 'swarmcast-2026-10-22.log', 4, 400);
     touch(logs, 'swarmcast-2026-10-23.log', 3, 400);
     touch(logs, 'swarmcast-2026-10-26.log', 0, 400);
+    // Act
     const deleted = pruneLogs({ dirs: [logs], maxAgeDays: 14, maxTotalBytes: 1000, now: NOON });
+    // Assert
     expect(deleted.map((f) => path.basename(f))).toEqual(['swarmcast-2026-10-21.log', 'swarmcast-2026-10-22.log']);
-    // The protected (current) file stays even if it alone is over the cap.
-    const deleted2 = pruneLogs({ dirs: [logs], maxAgeDays: 14, maxTotalBytes: 100, now: NOON, protect: (f) => f.endsWith('10-26.log') });
-    expect(deleted2.map((f) => path.basename(f))).toEqual(['swarmcast-2026-10-23.log']);
+  });
+
+  it('the protected (current) file stays even if it alone is over the cap', () => {
+    // Arrange
+    const logs = tempDir('sc-logs-');
+    touch(logs, 'swarmcast-2026-10-23.log', 3, 400);
+    touch(logs, 'swarmcast-2026-10-26.log', 0, 400);
+    // Act
+    const deleted = pruneLogs({ dirs: [logs], maxAgeDays: 14, maxTotalBytes: 100, now: NOON, protect: (f) => f.endsWith('10-26.log') });
+    // Assert
+    expect(deleted.map((f) => path.basename(f))).toEqual(['swarmcast-2026-10-23.log']);
     expect(fs.readdirSync(logs)).toEqual(['swarmcast-2026-10-26.log']);
   });
 
-  it('ignores missing folders, and knows what it may delete', () => {
-    expect(pruneLogs({ dirs: [path.join(os.tmpdir(), 'sc-missing-xyz')], maxAgeDays: 3 })).toEqual([]);
-    expect(isPrunable('desktop.log.1')).toBe(true);
-    expect(isPrunable('swarmcast-2026-10-26.log')).toBe(true);
-    expect(isPrunable('config.json')).toBe(false);
-    expect(isPrunable('secrets.json')).toBe(false);
-    expect(isPrunable('SwarmCast-logs-0.1.0-20261026-1200.zip')).toBe(true);
-    expect(isPrunable('holiday.zip')).toBe(false);
+  it('ignores missing folders', () => {
+    // Act
+    const deleted = pruneLogs({ dirs: [path.join(tempDir('sc-logs-'), 'missing')], maxAgeDays: 3 });
+    // Assert
+    expect(deleted).toEqual([]);
   });
 
-  it('clamps the retention setting to 3..90 days', () => {
-    expect(retentionDays(undefined)).toBe(14);
-    expect(retentionDays(1)).toBe(3);
-    expect(retentionDays(365)).toBe(90);
-    expect(retentionDays(30)).toBe(30);
+  it.each([
+    ['desktop.log.1', true],
+    ['swarmcast-2026-10-26.log', true],
+    ['config.json', false],
+    ['secrets.json', false],
+    ['SwarmCast-logs-0.1.0-20261026-1200.zip', true],
+    ['holiday.zip', false],
+  ])('knows what it may delete: %s → %s', (name, prunable) => {
+    // Act
+    const p = isPrunable(name);
+    // Assert
+    expect(p).toBe(prunable);
+  });
+
+  it.each([
+    [undefined, 14],
+    [1, 3],
+    [365, 90],
+    [30, 30],
+  ])('clamps the retention setting to 3..90 days: %s → %i', (days, clamped) => {
+    // Act
+    const d = retentionDays(days);
+    // Assert
+    expect(d).toBe(clamped);
   });
 });
