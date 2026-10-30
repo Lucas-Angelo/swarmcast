@@ -1268,7 +1268,7 @@ export const en = {
   'admin.chat.gif.rating.g': 'Strict (everyone)',
   'admin.chat.gif.rating.pg': 'Moderate',
   'admin.chat.gif.rating.pg-13': 'Relaxed (teens and up)',
-  'admin.chat.gif.consent.tip': 'Each viewer taps "Load GIFs" once before their browser contacts KLIPY. This is always on, to protect their privacy.',
+  'admin.chat.gif.consent.tip': 'A GIF first shows as "GIF from KLIPY. Tap to show GIFs…": each viewer taps it, or "Allow GIFs from KLIPY" in the GIF picker, before their browser contacts KLIPY. This is always on, to protect their privacy.',
   'admin.chat.emotes.builtin.tip': 'The bee emotes that come with SwarmCast (:gg:, :love:, :wow:…). They are served by your own computer.',
   'admin.chat.save': 'Save chat settings',
   'admin.chat.save.tip': 'Applies to everyone watching within a second.',
