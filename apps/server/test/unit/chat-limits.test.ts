@@ -86,6 +86,38 @@ describe('chat detector', () => {
     expect(e.signals(t, 100).level).toBe(1);
   });
 
+  it('the start of a live is an audience arriving, not a raid: 30 viewers who joined in the first minute chat normally', () => {
+    const d = new ChatDetector();
+    const start = 10_000_000;
+    d.start(start);
+    const joined = Array.from({ length: 30 }, (_, i) => start + 2000 * i); // all within the first minute
+    let t = start + 65_000;
+    for (let s = 0; s < 120; s++, t += 1000) {
+      // Every viewer says something about once every 15 s (2 messages per second overall).
+      for (let i = s % 15; i < 30; i += 15) d.accepted(t, `dev${i}`, `hello ${i} ${s}`, joined[i]!);
+      d.frame(t);
+      d.frame(t);
+      d.tick(t, 30);
+    }
+    expect(d.level).toBe(0);
+  });
+
+  it('a real raid later in the live (fresh joiners against an established audience) still triggers', () => {
+    const d = new ChatDetector();
+    const start = 10_000_000;
+    d.start(start);
+    let t = start + 30 * 60_000;
+    // An established audience of 8 chatters from the first minutes…
+    for (let i = 0; i < 8; i++) d.accepted(t, `old${i}`, `hi ${i}`, start + 1000 * i);
+    // …and 40 accounts that joined in the last 30 seconds, all chatting at once.
+    for (let s = 0; s < 4; s++, t += 1000) {
+      for (let i = 0; i < 40; i++) d.accepted(t, `new${i}`, `raid ${i} ${s}`, t - 30_000);
+      d.tick(t, 48);
+    }
+    expect(d.signals(t, 48)).toMatchObject({ level: 2 });
+    expect(d.level).toBe(2);
+  });
+
   it('honest slow-mode retries are not counted as rejects', () => {
     const d = new ChatDetector();
     const t = 5_000_000;
@@ -240,6 +272,52 @@ describe('batcher', () => {
     expect(skip?.n).toBeGreaterThan(0);
     expect(batch.items.filter((i) => i.k === 'm').length + skip!.n!).toBe(40);
     expect(b.droppedForBudget).toBe(skip!.n);
+  });
+
+  it('a quiet chat to a big audience is delivered: 3 messages with roster items, 120 sockets, 50 KB/s', () => {
+    const socks = Array.from({ length: 120 }, () => new Sock());
+    let t = 10_000;
+    const b = new ChatBatcher({ transport: { sockets: () => socks }, budgetBps: () => 50_000, slow: () => false, resync: () => {}, now: () => t });
+    for (let i = 0; i < 3; i++) {
+      b.push({ k: 'u', au: { a: `a${i}`, n: `Viewer ${i}`, c: '#e5484d', r: 'viewer', tag: 'abcd' } }, true);
+      b.push({ k: 'm', s: i + 1, at: t, a: `a${i}`, x: 'boa noite, chat! tudo certo por aí? 😀' }, false);
+    }
+    b.flush();
+    expect(socks[0]!.sent).toHaveLength(1);
+    const items = (JSON.parse(socks[0]!.sent[0]!) as { items: Array<{ k: string }> }).items;
+    expect(items.filter((i) => i.k === 'm')).toHaveLength(3);
+    expect(items.some((i) => i.k === 'skip')).toBe(false);
+    expect(socks[0]!.sent[0]!.length * 120).toBeGreaterThan(50_000); // larger than the whole 1 s bucket
+    // Quiet chat keeps flowing: one message every 2 s for a minute, nothing skipped.
+    for (let s = 0; s < 30; s++) {
+      t += 2000;
+      b.push({ k: 'm', s: 100 + s, at: t, a: 'a1', x: 'kkkkk 😂' }, false);
+      b.flush();
+    }
+    expect(b.droppedForBudget).toBe(0);
+    expect(socks[7]!.sent).toHaveLength(31);
+  });
+
+  it('a sustained flood stays within B_chat on average (bounded debt), and priority items always go', () => {
+    const socks = Array.from({ length: 120 }, () => new Sock());
+    let t = 10_000;
+    const budget = 50_000;
+    const b = new ChatBatcher({ transport: { sockets: () => socks }, budgetBps: () => budget, slow: () => false, resync: () => {}, now: () => t });
+    let seq = 0;
+    const seconds = 120;
+    for (let tick = 0; tick < seconds * 4; tick++) {
+      for (let i = 0; i < 20; i++) b.push({ k: 'm', s: ++seq, at: t, a: 'k', x: `flood message number ${seq}` }, false);
+      if (tick % 40 === 0) b.push({ k: 'd', s: [seq] }, true);
+      b.flush();
+      t += 250;
+    }
+    const sent = socks.reduce((n, s) => n + s.sent.reduce((m, x) => m + x.length, 0), 0);
+    // Average over the run: at most the budget, plus one second of capacity and the debt bound.
+    expect(sent).toBeLessThanOrEqual(budget * seconds + budget + 4 * budget);
+    expect(sent).toBeGreaterThan(budget * seconds * 0.5);
+    expect(b.droppedForBudget).toBeGreaterThan(0);
+    const deletes = socks[0]!.sent.flatMap((x) => (JSON.parse(x) as { items: Array<{ k: string }> }).items).filter((i) => i.k === 'd');
+    expect(deletes).toHaveLength(seconds / 10);
   });
 
   it('the pending queue is capped at 500 items', () => {

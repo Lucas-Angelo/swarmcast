@@ -8,7 +8,11 @@ export type ChatThreat = 0 | 1 | 2; // normal, suspicious, attack
 const ESCALATE_AFTER_S = 3;
 /** Calm seconds before stepping down one level. */
 const CALM_STEP_DOWN_S = 120;
-/** A sender who joined less than this ago counts as new. */
+/**
+ * A sender who joined less than this ago counts as new, but only once the live has been on for
+ * longer than this: at the start of a live everyone has just joined, and that is an audience
+ * arriving, not a raid. Later, a burst of fresh joiners against the established audience is.
+ */
 const NEW_SENDER_MS = 2 * 60_000;
 /** Distinct keys tracked per 10 s window for the duplicate signal. */
 const MAX_KEYS = 2000;
@@ -37,6 +41,13 @@ export class ChatDetector {
   private pending: ChatThreat = 0;
   private pendingFor = 0;
   private calmFor = 0;
+  /** When the live began (newness only counts for viewers who joined after its first window). */
+  private liveStartedAt = 0;
+
+  /** A live begins. */
+  start(now: number): void {
+    this.liveStartedAt = now;
+  }
 
   frame(now: number): void {
     this.offered.add(now);
@@ -57,7 +68,8 @@ export class ChatDetector {
     let set = this.win.keys.get(key);
     if (!set && this.win.keys.size < MAX_KEYS) this.win.keys.set(key, (set = new Set()));
     set?.add(sender);
-    this.win.senders.set(sender, now - joinedAt < NEW_SENDER_MS);
+    // New: joined in the last window, and after the live's own first window (the initial audience).
+    this.win.senders.set(sender, now - joinedAt < NEW_SENDER_MS && joinedAt >= this.liveStartedAt + NEW_SENDER_MS);
   }
 
   private rotate(now: number): void {

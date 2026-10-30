@@ -91,7 +91,11 @@ export const CHAT_FRAME_PREFIX = '{"t":"chat.';
 export const chatLinksSchema = z.enum(['text', 'block']);
 export const chatScriptsSchema = z.enum(['any', 'latin']);
 export const gifRatingSchema = z.enum(['g', 'pg', 'pg-13']);
-export const gifConsentSchema = z.enum(['ask', 'auto']);
+/**
+ * Every viewer agrees before their browser contacts the GIF provider (user decision): there is no
+ * "load automatically" mode, so the only value is 'ask'.
+ */
+export const gifConsentSchema = z.enum(['ask']);
 export const chatProtectSchema = z.enum(['off', 'slow', 'lockdown']);
 export type ChatProtect = z.infer<typeof chatProtectSchema>;
 
