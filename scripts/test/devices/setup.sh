@@ -222,7 +222,8 @@ install_ios() {
     runtime="$(ios_runtimes | tail -n 1 | cut -f2)"
     [ -n "$runtime" ] || die "no iOS runtime after the download"
   fi
-  udid="$(sim_udids | awk -F '\t' -v n="$SIM_NAME" '$2 == n { print $1; exit }')"
+  # awk reads everything (no early exit): the writer of a pipe closed early gets EPIPE.
+  udid="$(sim_udids | awk -F '\t' -v n="$SIM_NAME" '$2 == n && !found { print $1; found = 1 }')"
   if [ -z "$udid" ]; then
     udid="$(xcrun simctl create "$SIM_NAME" "$SIM_TYPE" "$runtime")" || die "cannot create $SIM_NAME ($SIM_TYPE, $runtime)"
     record sim-device "$udid"
@@ -335,7 +336,8 @@ remove_windows() {
     say "Removing the VM $WIN_VM_NAME ($(size_of "$UTM_DOCUMENTS/$WIN_VM_NAME.utm"))"
     rm -rf "${UTM_DOCUMENTS:?}/${WIN_VM_NAME:?}.utm"
   fi
-  if recorded cask | grep -qx utm; then
+  # grep without -q reads all its input: with pipefail, a writer cut off early fails the pipeline.
+  if recorded cask | grep -x utm >/dev/null; then
     pkill -x UTM 2>/dev/null || true
     brew uninstall --cask utm || die "brew uninstall --cask utm failed"
     # UTM's own data (its VM list, settings), made by the UTM this script installed.

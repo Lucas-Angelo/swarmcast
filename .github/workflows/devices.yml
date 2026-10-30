@@ -6,7 +6,7 @@ name: Devices
 # watches, unmutes, chats with a desktop viewer, checks the on-screen keyboard, turns the phone
 # and sends the browser to the background and back.
 #
-# Start it: the `devices` label on a pull request (remove and add it again for another run), by
+# Start it: the `devices` label on a pull request (remove and add it again for another run), or by
 # hand once this file is on the default branch. It reports separately: `ci-ok` (pipeline.yml)
 # does not wait for it. No schedule yet: a scheduled run reports on main's commit, so it starts
 # only once the suite has had its run of consecutive green dispatches (docs/TESTING.md).
@@ -59,10 +59,13 @@ jobs:
         run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer && npm run build -w @swarmcast/admin
       - run: npm run fetch-bins
         timeout-minutes: 5
+      # Read into a variable first: `xcodebuild -version | grep -q` stops reading at the first line,
+      # and xcodebuild then dies writing the second (NSFileHandleOperationException: Broken pipe).
       - name: Xcode 26 (the image's default)
         run: |
-          xcodebuild -version
-          xcodebuild -version | grep -q '^Xcode 26\.' || { echo "::error::the default Xcode is not 26: safaridriver may not find the simulator (see the comment on runs-on)"; exit 1; }
+          version="$(xcodebuild -version)"
+          echo "$version"
+          [[ "$version" == "Xcode 26."* ]] || { echo "::error::the default Xcode is not 26: safaridriver may not find the simulator (see the comment on runs-on)"; exit 1; }
       - name: The iPhone simulator (newest iOS runtime of the image)
         timeout-minutes: 10
         run: scripts/test/devices/setup.sh install ios
@@ -168,6 +171,9 @@ jobs:
       # The action runs each line of `script` in its own `sh -c`: one command, the suite. The suite
       # uses the emulator the action started (the one connected device). No hardware keyboard
       # (enable-hw-keyboard is false by default): the on-screen keyboard is part of the checks.
+      # No ram-size, disk-size or cores here: the AVD has them from its creation, and the action
+      # appends whatever it is given to config.ini each time, which made the boot snapshot "a
+      # different AVD configuration" (a cold boot instead).
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       - name: Device tests, Android
         timeout-minutes: 25
@@ -177,9 +183,6 @@ jobs:
           target: google_apis
           arch: x86_64
           profile: pixel_7
-          ram-size: 4096M
-          disk-size: 6000M
-          cores: 4
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
           disable-animations: true
