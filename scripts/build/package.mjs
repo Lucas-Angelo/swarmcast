@@ -73,6 +73,17 @@ execFileSync(
   { stdio: 'inherit', cwd: root },
 );
 
+// 2b. The chat's Unicode pipeline needs full ICU data matching the generated tables
+// (packages/shared/src/chat/ucd.generated.ts). Prove it on every binary this machine can run.
+if (target === hostTarget()) {
+  try {
+    const out = execFileSync(path.join(staging, exe('swarmcast')), ['--probe-intl'], { encoding: 'utf8', env: { ...process.env, SWARMCAST_NO_OPEN: '1' } });
+    console.log(`✓ ICU probe: ${out.trim()}`);
+  } catch (e) {
+    throw new Error(`the packaged binary lacks what the chat needs from ICU: ${String(e.stdout ?? e.message).trim()}`);
+  }
+}
+
 // 3. Third-party binaries, verified against pinned SHA-256 values.
 await fetchBinaries(target, path.join(staging, 'bin'));
 for (const f of fs.readdirSync(path.join(staging, 'bin'))) {

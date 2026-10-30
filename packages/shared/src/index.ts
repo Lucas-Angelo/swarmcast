@@ -6,3 +6,4 @@ export * from './quality.js';
 export * from './diagnostics.js';
 export * from './mux.js';
 export * from './playback.js';
+export * from './chat/index.js';

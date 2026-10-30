@@ -7,6 +7,14 @@ import fs from 'node:fs';
  * O_NONBLOCK: opening a FIFO put at that path does not hang (it is then not a regular file).
  */
 export function readSmallFile(file: string, maxBytes: number): string | null {
+  return readSmallBinary(file, maxBytes)?.toString('utf8') ?? null;
+}
+
+/**
+ * Binary twin of readSmallFile: the bytes of a small regular file, or null. Same guarantees: the
+ * size is checked on the opened descriptor, and at most `maxBytes + 1` bytes are ever read.
+ */
+export function readSmallBinary(file: string, maxBytes: number): Buffer | null {
   let fd: number;
   try {
     fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NONBLOCK ?? 0));
@@ -23,7 +31,7 @@ export function readSmallFile(file: string, maxBytes: number): string | null {
       if (got === 0) break;
       n += got;
     }
-    return n > maxBytes ? null : buf.toString('utf8', 0, n);
+    return n > maxBytes ? null : buf.subarray(0, n);
   } catch {
     return null;
   } finally {

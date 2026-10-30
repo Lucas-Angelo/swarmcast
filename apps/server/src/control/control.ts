@@ -2,6 +2,9 @@ import type { IncomingMessage } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import {
+  CHAT_FRAME_MAX_BYTES,
+  CHAT_FRAME_PREFIX,
+  CHAT_MAX_FRAMES_PER_10S,
   CONTROL_MAX_MESSAGE,
   HASH_FAILURE_THRESHOLD,
   MAX_TRACKER_CHANNELS,
@@ -15,6 +18,7 @@ import {
 import type { AccessControl, Session } from '../access/access.js';
 import type { Logger } from '../core/logger.js';
 import type { TrackerChannel } from '../tracker/channel.js';
+import type { ChatHost, ChatHub } from '../chat/hub.js';
 
 type ControlSocket = WebSocket & {
   sessionId: string;
@@ -24,6 +28,8 @@ type ControlSocket = WebSocket & {
   frames: { n: number; at: number };
   /** Tracker channel opens in the current minute. */
   opens: { n: number; at: number };
+  /** Chat frames in the current 10 s window (their own budget: chat never costs the control one). */
+  chatFrames: { n: number; at: number };
   upgradeReq: IncomingMessage;
   channels: Map<number, TrackerChannel>;
 };
@@ -37,6 +43,8 @@ export interface TrackerChannelHost {
 const MAX_FRAMES_PER_10S = 200;
 /** Tracker channel opens per control socket per minute (p2p-media-loader reconnects with back-off). */
 const MAX_CHANNEL_OPENS_PER_MIN = 12;
+/** Raw bytes that start every chat frame (the viewer serialises `t` first). */
+const CHAT_PREFIX = Buffer.from(CHAT_FRAME_PREFIX);
 
 /**
  * Control channel: server → viewer orders (kick, P2P revoke, block peers, end) and
@@ -48,9 +56,13 @@ const MAX_CHANNEL_OPENS_PER_MIN = 12;
  * 200-requests-in-flight limit, so one socket per viewer instead of two doubles the audience
  * it can hold.
  */
-export class ControlChannel {
+export class ControlChannel implements ChatHost {
   /** Set by the live: tracker channels are refused until then. */
   tracker: TrackerChannelHost | null = null;
+  /** Set by the live: chat frames are ignored until then. */
+  chat: ChatHub | null = null;
+  /** Revision of the streamer's page (undefined while branding is off), sent in hello. */
+  brandRev: () => number | undefined = () => undefined;
   private readonly wss: WebSocketServer;
   private readonly conns = new Map<string, Set<ControlSocket>>();
   /** Peer ids every viewer must refuse to talk to. */
@@ -81,6 +93,7 @@ export class ControlChannel {
       s.msgs = { n: 0, at: Date.now() };
       s.frames = { n: 0, at: Date.now() };
       s.opens = { n: 0, at: Date.now() };
+      s.chatFrames = { n: 0, at: Date.now() };
       s.upgradeReq = req;
       s.channels = new Map();
       let set = this.conns.get(session.id);
@@ -97,9 +110,10 @@ export class ControlChannel {
         if (current) current.connections = set.size;
         if (set.size === 0) this.onPresence(session, false);
       });
-      s.on('message', (data, isBinary) => this.onMessage(s, data.toString(), isBinary));
+      s.on('message', (data, isBinary) => this.onMessage(s, toBuffer(data), isBinary));
       const block = this.access.p2pBlock(session);
-      this.sendTo(s, {
+      const chat = this.chat?.snapshot(session);
+      const hello = JSON.stringify({
         t: 'hello',
         sessionId: session.id,
         nickname: session.nickname,
@@ -108,15 +122,26 @@ export class ControlChannel {
         ...(block ? { p2pBlock: block } : {}),
         blockedPeers: [...this.blockedPeers],
         viewerCount: this.viewerCount(),
-      });
+        ...(chat ? { chat } : {}),
+        ...(this.brandRev() !== undefined ? { brandRev: this.brandRev() } : {}),
+      } satisfies ServerMessage);
+      if (s.readyState === s.OPEN) s.send(hello);
+      // The history in hello counts against the chat's upload budget.
+      if (chat) this.chat?.accountSent(hello.length);
     });
   }
 
-  private onMessage(s: ControlSocket, text: string, isBinary: boolean): void {
+  private onMessage(s: ControlSocket, frame: Buffer | string, isBinary: boolean): void {
+    const data = typeof frame === 'string' ? Buffer.from(frame) : frame;
     const now = Date.now();
     if (now - s.frames.at > 10_000) s.frames = { n: 0, at: now };
     if (++s.frames.n > MAX_FRAMES_PER_10S || isBinary) {
       s.terminate();
+      return;
+    }
+    // Chat frames: their own budget, the raw size checked before the bytes are even decoded.
+    if (data.length >= CHAT_PREFIX.length && data.subarray(0, CHAT_PREFIX.length).equals(CHAT_PREFIX)) {
+      this.onChatFrame(s, data, now);
       return;
     }
     const session = this.access.sessions.get(s.sessionId);
@@ -124,6 +149,7 @@ export class ControlChannel {
       s.close(4001, 'session ended');
       return;
     }
+    const text = data.toString();
     if (isTrackerFrame(text)) {
       this.onTrackerFrame(s, text, session, now);
       return;
@@ -176,6 +202,39 @@ export class ControlChannel {
       case 'pong':
         break;
     }
+  }
+
+  private onChatFrame(s: ControlSocket, data: Buffer, now: number): void {
+    if (!s.chatFrames || now - s.chatFrames.at > 10_000) s.chatFrames = { n: 0, at: now };
+    // 4× what the chat UI can send: only scripts get here, and they lose the socket.
+    if (++s.chatFrames.n > CHAT_MAX_FRAMES_PER_10S) {
+      this.chat?.terminated();
+      s.terminate();
+      return;
+    }
+    const chat = this.chat;
+    if (!chat) return;
+    if (data.length > CHAT_FRAME_MAX_BYTES) {
+      chat.tooBig(s);
+      return;
+    }
+    const session = this.access.sessions.get(s.sessionId);
+    if (!session) {
+      s.close(4001, 'session ended');
+      return;
+    }
+    session.lastSeenAt = now;
+    chat.frame(session, s, data.toString());
+  }
+
+  /** ChatHost: every open viewer socket. */
+  *sockets(): IterableIterator<ControlSocket> {
+    for (const set of this.conns.values()) yield* set;
+  }
+
+  /** ChatHost: the sockets of one session. */
+  socketsOf(sessionId: string): Iterable<ControlSocket> {
+    return this.conns.get(sessionId) ?? [];
   }
 
   private onTrackerFrame(s: ControlSocket, text: string, session: Session, now: number): void {
@@ -278,4 +337,11 @@ export class ControlChannel {
     clearInterval(this.pingTimer);
     this.closeAll('ended');
   }
+}
+
+/** `ws` hands text frames as a Buffer (or fragments); make it one Buffer without copying when possible. */
+function toBuffer(data: Buffer | ArrayBuffer | Buffer[]): Buffer {
+  if (Buffer.isBuffer(data)) return data;
+  if (Array.isArray(data)) return Buffer.concat(data);
+  return Buffer.from(data);
 }

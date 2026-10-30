@@ -14,18 +14,18 @@
     </header>
     <main class="card">
       <h1 data-i18n="join.title">Join the stream</h1>
-      <p class="muted" data-i18n="join.intro">Pick a nickname so the streamer knows who is watching.</p>
+      <p class="muted" data-i18n="join.intro">Pick a nickname. The streamer and the other viewers see it.</p>
       <form id="join-form" novalidate>
         <div class="label-row">
           <label for="nickname" data-i18n="join.nickname">Nickname</label>
           <span class="tip"
             ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
             ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="join.nickname.tip"
-              >Only the streamer sees it, not other viewers. Up to 24 characters: letters, numbers, spaces, "-", "_" or ".".</span
+              >Everyone in the live sees it in the chat. 2 to 24 characters: letters (from one alphabet), numbers, spaces, "-", "_" or ".". No emoji.</span
             ></span
           >
         </div>
-        <input id="nickname" name="nickname" maxlength="24" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
+        <input id="nickname" name="nickname" maxlength="64" aria-describedby="error" autocomplete="nickname" autocapitalize="off" spellcheck="false" required autofocus />
         <p id="check" class="muted check" role="status" hidden>
           <span data-i18n="join.checking">Checking your browser…</span>
           <progress id="check-progress" max="1" value="0" aria-label="Browser check progress" data-i18n-aria-label="join.checking.progress"></progress>

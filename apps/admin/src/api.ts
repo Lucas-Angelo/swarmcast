@@ -75,6 +75,8 @@ export function subscribe(
       const msg = JSON.parse(String(ev.data)) as AdminSocketMessage;
       if (isLogMessage(msg)) onLog(msg);
       else if (isDesktopMessage(msg)) onDesktop(msg);
+      // Chat items have their own handler (the chat card); never mistake them for a state snapshot.
+      else if ('type' in msg && msg.type === 'chat') return;
       else onState(msg);
     };
     ws.onclose = () => {

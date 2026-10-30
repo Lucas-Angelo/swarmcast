@@ -245,8 +245,19 @@ await section('9. installer zip: Explorer "Extract All" of a downloaded zip, no 
       const app = await startApp({ entry: 'cmd', dir: dl, home, args: ['--yes', '--skip-speedtest', '--no-tunnel'], label: blocked ? 'bundle-offline' : 'bundle' });
       onCleanup(() => killUnder(home));
       const out = app.inst.out();
-      check(`[${variant}] installs from the local bundle without downloading`, has(out, 'Install source: local bundle') && has(out, 'from the local bundle (no download)') && has(out, `Installed SwarmCast v${V}`));
-      check(`[${variant}] report: online release not needed`, has(out, 'Online release') && (has(out, 'not reachable (fine)') || has(out, 'nothing newer')));
+      // With github.com reachable, the installer looks once at the real latest release, whose
+      // version this test does not control: when it is newer than the bundle, the installer
+      // (correctly) uses it instead. Read the online version from its output instead of assuming.
+      const newer = !blocked ? /A newer version v(\d+\.\d+\.\d+\S*) is available online .* using it instead of the local bundle v([\d.]+\S*)\./.exec(out) : null;
+      if (newer) {
+        info(`[${variant}] the online release is newer than the bundle`, `online v${newer[1]}, bundle v${newer[2]}`);
+        check(`[${variant}] prefers the newer online release`, newer[2] === V && has(out, 'Install source: local bundle') && has(out, `Installed SwarmCast v${newer[1]}`));
+        check(`[${variant}] report: newer online release`, has(out, 'Online release') && has(out, `newer v${newer[1]} available`));
+      } else {
+        check(`[${variant}] installs from the local bundle without downloading`, has(out, 'Install source: local bundle') && has(out, 'from the local bundle (no download)') && has(out, `Installed SwarmCast v${V}`));
+        // Offline must say "not reachable"; online, the release is the same version or older.
+        check(`[${variant}] report: online release not needed`, has(out, 'Online release') && (blocked ? has(out, 'not reachable (fine)') : has(out, 'nothing newer') || has(out, 'not reachable (fine)')));
+      }
       const exeMotw = ps(`[bool](Get-Item -LiteralPath '${path.join(home, 'app', 'current', 'swarmcast.exe')}' -Stream Zone.Identifier -ErrorAction SilentlyContinue)`);
       check(`[${variant}] installed binaries carry no Mark of the Web`, exeMotw === 'False');
       await quickStreamCheck(app, browser, `bundle, ${blocked ? 'offline' : 'online'}`);
