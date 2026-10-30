@@ -118,16 +118,34 @@ Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, a
 
 ```sh
 npm ci
+npm ci --prefix site      # the website's packages: `npm test` also runs its unit tests (site/test/unit)
 npm run fetch-bins        # MediaMTX + cloudflared for this OS into vendor/<os-arch>/ (SHA-256 pinned)
 npm run build             # shared → viewer → admin → server
 npm test                  # unit tests (vitest)
 npm run test:integration  # real MediaMTX + ffmpeg test stream
 npm run test:e2e          # Playwright: Chrome, Firefox, WebKit (npx playwright install first; SWARMCAST_E2E_PORT_OFFSET=N moves its ports)
+npm run coverage          # unit + integration with coverage, checked against their floors (below)
 npm run dev               # run the app from source (tsx)
 npm run lint && npm run typecheck
 ```
 
 Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
+
+### Coverage
+
+```sh
+npm run coverage          # unit, then integration (same setup as the tests), then the tables
+npm run coverage:unit     # one suite (also coverage:integration); reports in coverage/<suite>/ (lcov, json-summary, HTML)
+npm run coverage:e2e      # the Playwright suite with the e2e server's coverage (arguments go to playwright test)
+npm run coverage:desktop  # the Rust tests under cargo-llvm-cov (cargo install cargo-llvm-cov --locked; rustup component add llvm-tools)
+node scripts/coverage/report.mjs  # the tables again, for every suite under coverage/
+```
+
+- **What counts:** every source file, tested or not: `apps/*/src`, `packages/shared`, `scripts/{build,coverage,releases,stats}` and the website's scripts. Not tests and their helpers, type declarations, the generated Unicode tables, configs or the test harness.
+- **Floors** (`scripts/coverage/floors.json`): the lowest coverage each suite may have. Unit has one for the whole run and one per area; integration and the Rust tests have one per OS, because the tests that run differ (the ACME test needs Docker, which only the Linux runners have; Windows skips the POSIX-signal ones); the e2e server has one per e2e group. A floor stops regressions (code that lost its tests); it is not a target, and a high number says little about how good the tests are. Floors only go up: when coverage rises, CI's job summary lists the floors the run allows; raise them in the same pull request to the lowest value across the OSes. Never lower one to make CI pass: add the missing tests.
+- **Integration** counts the code the tests run in their own process (createApp, bootApp). A SwarmCast they start as a child runs the bundle, which has no source map.
+- **e2e server:** `NODE_V8_COVERAGE` collects the coverage of every Node process; only the e2e server's counts, mapped onto the sources by c8. c8 counts every line (comments too) and only the functions and branches V8 compiled, so this suite has a floor on lines only, and its numbers are not comparable with the Vitest suites. Linux and macOS only (the server writes its coverage when SIGTERM stops it). The browser side is not measured: Chromium only, and the shipped bundles have no source maps.
+- **Rust:** stable Rust reports lines, functions and regions (no branches); the `#[cfg(test)]` modules are part of the files and count too.
 
 ## Website
 

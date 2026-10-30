@@ -39,10 +39,12 @@ Setup, build and test commands are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 request, run what your change touches:
 
 ```sh
+npm ci && npm ci --prefix site   # once: `npm test` also runs the website's unit tests
 npm run lint && npm run typecheck
 npm test                  # unit
 npm run test:integration  # needs ffmpeg
 npm run test:e2e          # Playwright
+npm run coverage          # unit + integration coverage, which must stay above its floors
 ```
 
 - Desktop app (in `apps/desktop/src-tauri`): `cargo fmt --check`,

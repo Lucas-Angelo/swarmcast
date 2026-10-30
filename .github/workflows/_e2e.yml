@@ -94,6 +94,8 @@ jobs:
         timeout-minutes: 13
         env:
           GROUP: ${{ matrix.group }}
+          # Server-side coverage: every Node process writes its V8 coverage here when it exits.
+          NODE_V8_COVERAGE: ${{ runner.temp }}/v8-e2e
         run: |
           if [ "$GROUP" = media ]; then
             grep=(--grep @media --grep-invert "$MEDIA_WITH_UI")
@@ -101,6 +103,25 @@ jobs:
             grep=(--grep "^(?!.*@media)|$MEDIA_WITH_UI")
           fi
           npx playwright test "${grep[@]}" --fail-on-flaky-tests
+      # The e2e server's coverage (scripts/coverage/e2e-server.mjs keeps that process's files, c8
+      # maps them onto the sources), its table in the job summary and this group's floors
+      # (scripts/coverage/floors.json). Only after a passing run: a failed one covers less.
+      - name: e2e server coverage
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          node scripts/coverage/e2e-server.mjs "$RUNNER_TEMP/v8-e2e"
+          node scripts/coverage/report.mjs e2e-server --key "$GROUP" --check
+      - name: Upload the e2e server coverage
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-e2e-server-${{ matrix.os }}-${{ matrix.group }}
+          path: coverage/e2e-server/
+          if-no-files-found: ignore
+          retention-days: 14
       # The viewer chat UI against a mock hub (apps/viewer/test/chat: the built watch page, no
       # server, no network): every engine plus an iPhone in a few seconds, so it rides along with
       # the ui group instead of a job of its own. The same flows against the real server are in

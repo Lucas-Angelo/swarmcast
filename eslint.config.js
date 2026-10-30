@@ -4,7 +4,7 @@ import globals from 'globals';
 
 export default tseslint.config(
   {
-    ignores: ['.claude/**', 'apps/server/shims/**', '**/dist/**', '**/build/**', 'release/**', 'vendor/**', 'node_modules/**', 'playwright-report/**', 'test-results/**', 'apps/tray/**', 'site/.astro/**', 'site/node_modules/**', 'site/playwright-report/**', 'site/test-results/**', 'apps/desktop/src-tauri/target/**', 'apps/desktop/src-tauri/staged/**', 'apps/desktop/src-tauri/gen/**'],
+    ignores: ['.claude/**', 'apps/server/shims/**', '**/dist/**', '**/build/**', 'release/**', 'vendor/**', 'node_modules/**', 'playwright-report/**', 'test-results/**', 'coverage/**', 'apps/tray/**', 'site/.astro/**', 'site/node_modules/**', 'site/playwright-report/**', 'site/test-results/**', 'apps/desktop/src-tauri/target/**', 'apps/desktop/src-tauri/staged/**', 'apps/desktop/src-tauri/gen/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
