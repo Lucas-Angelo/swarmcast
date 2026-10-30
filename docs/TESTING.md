@@ -13,6 +13,10 @@ These hold for every test on every OS (macOS arm64 and x64, Windows, Linux x64 a
   runs with `retries: 0`, there is no `--retries`, no `toPass` loop around an action, no re-run of a
   job to get it green, and no "flaky" result counts as acceptable. A failure is a bug to fix at its
   root, in the test or in the product. Soak runs ([below](#soak)) only say how much evidence there is.
+- **Pass or fail, nothing in between.** A check either passes or fails the run: there is no
+  "warning" or "known bug" verdict that lets a job stay green. What a suite cannot judge (a
+  measurement, an outcome nothing documents) is recorded as information, never in place of a check
+  (the Windows suites' `record()` and `junit.mjs` refuse any other verdict).
 - **Arrange / Act / Assert.** Inside a test body the only comments are `// Arrange`, `// Act` and
   `// Assert` (a pure function may need only Act and Assert; a flow repeats Act/Assert pairs). Why a
   value or a wait is what it is goes into the test's name, a named constant, a helper's doc comment

@@ -91,12 +91,16 @@ export const sectionRuns = [];
 let currentSection = '';
 let currentRep = 1;
 
-/** status: pass | fail | warn (a finding that does not fail the job) | skip | info */
+/**
+ * status: pass | fail | skip | info. There is no third verdict: what a suite can judge is a check
+ * (pass or fail), and a measurement or an outcome nothing documents is info.
+ */
 export function record(name, status, detail = '') {
+  if (!['pass', 'fail', 'skip', 'info'].includes(status)) throw new Error(`record(${JSON.stringify(name)}): unknown status ${status}`);
   const r = { section: currentSection, name, status, detail: String(detail ?? '').slice(0, 1500) };
   if (REPEAT > 1) r.rep = currentRep;
   results.push(r);
-  const sym = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', skip: 'SKIP', info: 'INFO' }[status] ?? status;
+  const sym = { pass: 'PASS', fail: 'FAIL', skip: 'SKIP', info: 'INFO' }[status];
   log(`${sym} [${currentSection}] ${name}${r.detail ? ` -- ${r.detail}` : ''}`);
   return status === 'pass';
 }
@@ -320,9 +324,9 @@ export function finish() {
   fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, run, repeat: REPEAT, sectionsFilter: SECTIONS, sections: sectionRuns, results }, null, 2));
   // The same checks as JUnit next to it (<out>.junit.xml), for the CI summary; info rows are facts, not checks.
   writeJunit(out.replace(/\.json$/, '') + '.junit.xml', `${SUITE} on ${RUNNER}`, results.filter((r) => r.status !== 'info').map((r) => ({ group: r.section, name: r.rep ? `${r.name} (run ${r.rep})` : r.name, status: r.status, detail: r.detail })));
-  const icon = { pass: '✅', fail: '❌', warn: '⚠️', skip: '⏭️', info: 'ℹ️' };
+  const icon = { pass: '✅', fail: '❌', skip: '⏭️', info: 'ℹ️' };
   const md = [
-    `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'warn').length} findings`,
+    `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed`,
     '',
     '| | Section | Check | Detail |',
     '|---|---|---|---|',
@@ -566,16 +570,29 @@ export async function uninstallAndVerify({ dir, home, args = [], label, envHome 
 }
 
 /**
- * The panel's capacity line and the adaptive upload cap (docs/QUALITY.md). Flags the case of a
- * "your upload is too low" warning while the measured upload is far above the stream bitrate.
+ * A measured upload at which "your upload is too low" (capacity.tooLow: not one direct viewer,
+ * packages/shared/src/capacity.ts) cannot come from the uplink: the 75 % of it SwarmCast uses,
+ * 37.5 Mbps, carries five viewers of a 6 Mbps stream with the 15 % per-viewer overhead, and the
+ * suites' feeds are slower still. Below it the warning can be right.
+ */
+const FAST_UPLINK_MBPS = 50;
+/**
+ * The panel's capacity line and the adaptive upload cap (docs/QUALITY.md): on a fast uplink, a
+ * "too low" warning comes from the cap, which is a bug. Reads the state once the app's own speed
+ * test (at start, then every 15 min while off) is not running; without a measurement of at least
+ * FAST_UPLINK_MBPS the line cannot be judged, and that is recorded instead.
  */
 export async function uploadCapCheck(app, label) {
-  const s = await app.state();
+  const s = await until(async () => {
+    const x = await app.state();
+    return x.speedTestRunning ? null : x;
+  }, 120_000, "the app's speed test to finish");
   const q = await app.api('/api/quality').catch(() => null);
   const u = q?.upload ?? {};
-  const detail = `capacity "${s.capacity?.code}" (${s.capacity?.directViewers} direct viewers); measured upload ${s.speedTest?.uploadMbps ?? '?'} Mbps; cap ${u.capMbps} Mbps (${u.mode}/${u.phase}), ceiling ${u.ceilingMbps}; last back-off: ${u.lastBackoff ? `${u.lastBackoff.reason} ${u.lastBackoff.fromMbps}->${u.lastBackoff.toMbps}` : 'none'}; rtt ${u.signals?.rttMs}/${u.signals?.baseRttMs} ms`;
-  const bogus = s.capacity?.code === 'capacity.tooLow' && (s.speedTest?.uploadMbps ?? 0) >= 50;
-  record(`${label}: no "upload too low" warning on a fast uplink`, bogus ? 'warn' : 'pass', bogus ? `BUG: ${detail}` : detail);
+  const up = s.speedTest?.uploadMbps;
+  const detail = `capacity "${s.capacity?.code}" (${s.capacity?.directViewers} direct viewers); measured upload ${up ?? '?'} Mbps; cap ${u.capMbps} Mbps (${u.mode}/${u.phase}), ceiling ${u.ceilingMbps}; last back-off: ${u.lastBackoff ? `${u.lastBackoff.reason} ${u.lastBackoff.fromMbps}->${u.lastBackoff.toMbps}` : 'none'}; rtt ${u.signals?.rttMs}/${u.signals?.baseRttMs} ms`;
+  if (!(up >= FAST_UPLINK_MBPS)) return info(`${label}: "upload too low" warning not judged`, `the speed test measured ${up === undefined ? 'nothing' : `${up} Mbps`} (needs ${FAST_UPLINK_MBPS} Mbps); ${detail}`);
+  check(`${label}: no "upload too low" warning on a fast uplink`, s.capacity?.code !== 'capacity.tooLow', detail);
 }
 
 export function copyAppLogs(home, tag) {

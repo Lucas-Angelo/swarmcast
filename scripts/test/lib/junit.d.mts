@@ -2,8 +2,8 @@ export interface JunitCase {
   /** The classname: a section, a scenario (default: the suite). */
   group?: string;
   name: string;
-  /** 'fail' → <failure>, 'skip' → <skipped>, 'warn' → passed with a system-out note, else passed. */
-  status: string;
+  /** 'fail' → <failure>, 'skip' → <skipped>, 'pass' → a plain case; anything else throws. */
+  status: 'pass' | 'fail' | 'skip';
   detail?: string;
   seconds?: number;
 }

@@ -158,7 +158,9 @@ describe('orTimeout', () => {
   it('is the fallback once the time passed', async () => {
     // Arrange
     vi.useFakeTimers();
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
     const never = new Promise<number>(() => {});
     const result = orTimeout(never, 45_000, 'timeout');
 
@@ -188,25 +190,34 @@ describe('isListening', () => {
 });
 
 describe('junitXml', () => {
-  it('makes a failure of a failed check, keeps a finding as a passed case, and escapes text', () => {
+  it('makes a failure of a failed check and a skipped case of a skip, and escapes text', () => {
     // Arrange
     const cases = [
       { group: '1. local mode', name: 'viewer plays in <Firefox>', status: 'fail', detail: 'page.waitForURL: Timeout 60000ms exceeded.\nmore' },
-      { group: '1. local mode', name: 'tray helper', status: 'warn', detail: 'no "tray icon ready"' },
       { group: '3. tunnel', name: 'uninstaller', status: 'skip', detail: 'not in this release' },
       { group: '3. tunnel', name: 'cloudflared gone', status: 'pass' },
-    ];
+    ] as const;
 
     // Act
     const out = junitXml('app on windows-2025', cases);
 
     // Assert
-    expect(out).toContain('<testsuite name="app on windows-2025" tests="4" failures="1" skipped="1">');
+    expect(out).toContain('<testsuite name="app on windows-2025" tests="3" failures="1" skipped="1">');
     expect(out).toContain('<testcase classname="1. local mode" name="viewer plays in &lt;Firefox&gt;" time="0.000">');
     expect(out).toContain('<failure message="page.waitForURL: Timeout 60000ms exceeded.">page.waitForURL: Timeout 60000ms exceeded.\nmore</failure>');
-    expect(out).toContain('<system-out>WARN: no &quot;tray icon ready&quot;</system-out>');
     expect(out).toContain('<skipped message="not in this release"/>');
     expect(out).toContain('<testcase classname="3. tunnel" name="cloudflared gone" time="0.000"/>');
+  });
+
+  it('refuses a verdict other than pass, fail or skip', () => {
+    // Arrange
+    const cases = [{ name: 'tray helper', status: 'warn' }] as unknown as Parameters<typeof junitXml>[1];
+
+    // Act
+    const write = () => junitXml('s', cases);
+
+    // Assert
+    expect(write).toThrow('junitXml: "tray helper" has status "warn" (pass, fail or skip)');
   });
 
   it('drops the control characters XML 1.0 cannot hold', () => {

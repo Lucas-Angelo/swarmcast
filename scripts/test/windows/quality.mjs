@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, installerResult, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
-  opt, orTimeout, processesUnder, pushStream, quitAndVerify, readText, record, repoRoot, runInstaller, section, serve, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
+  opt, orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, runInstaller, section, serve, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -149,8 +149,8 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
     const m = /\/hls\/(?:[^/]*_)?(v\d+)/.exec(r.url());
     if (m) seen.add(m[1]);
   });
-  // F4/B9 evidence: every hls.js level event, error and instance change (stall recovery can
-  // reload the source, which makes a new hls.js), plus the viewer's stall-recovery log lines.
+  // F4/B9 evidence: every hls.js level event and error, any new hls.js instance (a reload of
+  // the source keeps the same one), plus the viewer's stall-recovery log lines.
   await installHlsProbe(v.page);
   v.page.on('console', (m) => {
     if (/stall recovery|reload/i.test(m.text())) log(`[ladder-viewer] ${m.text().slice(0, 300)}`);
@@ -181,8 +181,39 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
     log(`hls.js events around the 480p pick: ${probe.events.map((e) => `${e.t}ms #${e.inst} ${e.ev}${e.level !== undefined ? ` L${e.level}` : ''}${e.details ? ` ${e.details}` : ''}`).join(', ').slice(0, 4000)}`);
     const detail = `${!low ? 'no manual "480p" entry in the menu' : state ? `ABR off, currentLevel and loadLevel at 480p in ${Math.round((Date.now() - t0) / 1000)} s` : `after 20 s: currentLevel ${probe.cur ?? '?'}p, loadLevel ${probe.load ?? '?'}p, auto ${probe.auto}, 480p video fragments ${probe.frag480 - fragsBefore} since the pick`}; hls.js instances ${probe.instances}; stall recoveries ${probe.stallRecoveries}; v480 requested: ${seen.has('v480')}; menu ${opts.map(([, t]) => t).join(' / ')}`;
     check('viewer quality menu switches to 480p (player state)', !!state, detail);
-    // B9: a reload by the stall watchdog must not drop the viewer's manual choice.
-    if (probe.instances > 1) record('manual 480p kept across a source reload', probe.cur === 480 ? 'pass' : 'warn', probe.cur === 480 ? `${probe.instances} hls.js instances, still 480p` : `BUG? ${probe.instances} hls.js instances and the level is ${probe.cur}p after the reload (B9)`);
+    // B9: the stall watchdog's last resort, and the answer to vanished playlists, loads the
+    // source again (watch.ts reloadSource), which hls.js starts on automatic quality; the menu
+    // puts the pick back once the playlists are parsed (quality-menu.ts, the remembered height).
+    // Reloaded here the way the watchdog does it; then ABR is off, 480p is played and loaded, a
+    // 480p video fragment arrives after the reload, and the menu shows 480p.
+    if (state) {
+      // The 480p fragments counted when the playlists are parsed again (null: not within 30 s).
+      const fragsAtReload = await v.page.evaluate(
+        () =>
+          new Promise((resolve) => {
+            const h = window.__hls;
+            const late = setTimeout(() => resolve(null), 30_000);
+            h.once('hlsManifestParsed', () => {
+              clearTimeout(late);
+              resolve(window.__scHls.frag480);
+            });
+            h.loadSource(h.url);
+          }),
+      );
+      const kept =
+        fragsAtReload !== null &&
+        (await v.page
+          .waitForFunction(({ before, el }) => {
+            const h = window.__hls;
+            const lv = h.levels;
+            return !h.autoLevelEnabled && lv[h.currentLevel]?.height === 480 && lv[h.loadLevel]?.height === 480 && window.__scHls.frag480 > before && el.selectedOptions[0]?.textContent?.trim() === '480p';
+          }, { before: fragsAtReload, el: menu }, { timeout: 30_000, polling: 250 })
+          .then(() => true, () => false));
+      const after = await hlsProbe(v.page);
+      const shown = await menu.evaluate((el) => el.selectedOptions[0]?.textContent?.trim());
+      const why = fragsAtReload === null ? 'the playlists were not parsed again within 30 s of the reload' : `30 s after the reload: currentLevel ${after.cur ?? '?'}p, loadLevel ${after.load ?? '?'}p, auto ${after.auto}, 480p fragments since ${after.frag480 - fragsAtReload}, menu "${shown}"`;
+      check('manual 480p kept across a source reload', kept, kept ? 'ABR off, 480p played and loaded, a 480p fragment after the reload, menu on 480p' : why);
+    }
     if (low) await menu.selectOption(opts[0][0]);
   } else {
     info('viewer quality menu', 'not in this viewer build (watch.ts integration pending): testing hls.js automatic switching instead');
@@ -201,7 +232,7 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
   for (const rung of qNow.plan.rungs.filter((r) => !r.source)) {
     const got = qNow.variants.find((x) => x.height === rung.height)?.bandwidthKbps ?? 0;
     const target = rung.kbps + 128;
-    record(`${rung.height}p rendition bitrate close to its target (${qNow.plan.encoder})`, got > 0 && got <= target * 1.5 ? 'pass' : 'warn', `measured ${got} kbps vs target ~${target} kbps (video ${rung.kbps} + audio); source ${qNow.variants.find((x) => x.height === qNow.plan.rungs[0].height)?.bandwidthKbps} kbps`);
+    info(`${rung.height}p rendition bitrate (${qNow.plan.encoder})`, `measured ${got} kbps vs target ~${target} kbps (video ${rung.kbps} + audio)${got > 0 ? `, ${(got / target).toFixed(2)}x` : ''}; source ${qNow.variants.find((x) => x.height === qNow.plan.rungs[0].height)?.bandwidthKbps} kbps`);
   }
   // "Continued" = the video advances again. A snapshot of video.paused is not that: after a stall
   // the viewer's adaptive delay pauses on purpose for a few seconds (a hold, adaptive-delay.ts)

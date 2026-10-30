@@ -58,6 +58,7 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   const chrome = await launchBrowser('chrome');
   const edge = await launchBrowser('msedge');
   const firefox = await launchBrowser('firefox');
+  const startedAt = Date.now();
   const app = await start(undefined, 'local');
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
@@ -106,11 +107,16 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   check('every TCP listener of SwarmCast/MediaMTX is on 127.0.0.1 (no firewall prompt)', exposed.length === 0, socks.tcp.map((t) => `${t.LocalAddress}:${t.LocalPort}`).join(' '));
   info('UDP endpoints of SwarmCast processes', socks.udp.map((t) => `${t.LocalAddress}:${t.LocalPort}`).join(' ') || 'none');
 
-  // Tray helper (needs the runner's interactive desktop).
+  // Tray helper (needs the runner's interactive desktop). The server logs "tray icon ready" when
+  // the helper reports its icon up (apps/server/src/tray/tray.ts), well within a second of the
+  // start; "tray helper exited" when it died (restarted once, then panel only). Only this run's
+  // lines count (pino's "time", against the start: --repeat runs this section again).
   const trayProc = processesUnder(home).find((p) => /swarmcast-tray/i.test(p.name));
-  const trayReady = /tray icon ready/.test(appLog(home));
   check('tray helper running next to the app', !!trayProc, describeProcs(processesUnder(home)));
-  record('tray helper reports "tray icon ready"', trayReady ? 'pass' : 'warn', trayReady ? 'icon up in the runner session' : `no "tray icon ready" in the log; tray lines: ${appLog(home).split('\n').filter((l) => /tray/.test(l)).slice(-3).join(' ')}`);
+  const trayLines = () => appLog(home).split('\n').filter((l) => /tray/.test(l) && Number(/"time":(\d+)/.exec(l)?.[1]) >= startedAt);
+  const trayReady = await until(() => trayLines().some((l) => l.includes('"msg":"tray icon ready"')), 30_000, '"tray icon ready" in the app log').then(() => true, () => false);
+  const trayExits = trayLines().filter((l) => l.includes('tray helper exited'));
+  check('tray helper reports "tray icon ready" and never exited', trayReady && trayExits.length === 0, trayReady && !trayExits.length ? 'icon up in the runner session' : `tray lines: ${trayLines().slice(-4).join(' ') || 'none'}`);
 
   await uploadCapCheck(app, 'panel with one viewer');
 
