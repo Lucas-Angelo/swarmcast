@@ -6,14 +6,15 @@
 // busy ports and the uninstaller (when present).
 //
 // Usage: node scripts/test/windows/installer.mjs --work <dir from make-release.mjs> [--newer V2] [--out results.json]
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import {
   ART, addSweepPath, adminLogin, appLog, check, copyAppLogs, descendants, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
-  launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
-  runInstaller, section, serve, sha256File, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
+  launchBrowser, must, occupy, onCleanup, opt, orTimeout, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
+  runInstaller, section, serve, sha256File, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -193,19 +194,22 @@ await section('8. one-liner: irm <local>/start-windows.ps1 | iex', async () => {
   child.stdout.on('data', (d) => (o += d));
   child.stderr.on('data', (d) => (o += d));
   onCleanup(() => killTree(child.pid));
-  // Wait for the error itself (or an early exit), then 5 s more: a host that survives that long
-  // after the error has kept the window open. Waiting the full 90 s for an exit that never comes
-  // proved nothing more.
+  // After the error (or an early exit), a command typed into the window: a host that runs it
+  // has kept the window open; one that exits instead had its window closed by the script. The
+  // command builds its output, so the echo of the command line cannot pass for the answer.
   const tErr = Date.now();
   await until(() => child.exitCode !== null || has(o, 'Could not download SwarmCast'), 90_000, 'piped setup error').catch(() => {});
-  if (child.exitCode === null) await sleep(5000);
-  const gone = child.exitCode !== null;
+  const word = `sc-host-alive-${crypto.randomBytes(4).toString('hex')}`;
+  if (child.exitCode === null) child.stdin.write(`Write-Output ('${word.slice(0, 8)}' + '${word.slice(8)}')\n`);
+  const answer = await until(() => (has(o, word) ? 'answered' : child.exitCode !== null ? 'exited' : null), 30_000, 'the host to run a command after the error, or to exit').catch(() => 'silent');
+  const gone = answer === 'exited' || child.exitCode !== null;
   const errShown = has(o, 'Could not download SwarmCast');
-  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s (shown: ${errShown}; host ${gone ? `exited ${child.exitCode}` : 'alive 5 s later'})`);
+  const host = gone ? `exited ${child.exitCode}` : answer === 'answered' ? 'ran a command typed after it' : 'still running 30 s after it, without running a command typed after it';
+  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s (shown: ${errShown}; host ${host})`);
   if (gone) {
     record('piped run: an error keeps the PowerShell window open', 'warn', `BUG: after "${errShown ? 'Could not download SwarmCast…' : 'error'}" the script calls "exit ${child.exitCode}", which closes the interactive PowerShell window of a user who pasted the one-liner, so the message disappears. (start-windows.ps1 Stop-Setup/exit)`);
   } else {
-    check('piped run: an error keeps the PowerShell window open', errShown, 'host still alive after the error');
+    check('piped run: an error keeps the PowerShell window open', errShown, `host ${host}`);
     child.stdin.end('exit\n');
   }
 });
@@ -221,10 +225,14 @@ await section('9. installer zip: Explorer "Extract All" of a downloaded zip, no 
   fs.copyFileSync(zip, dlZip);
   // Mark of the Web, as a browser download has.
   ps(`Set-Content -LiteralPath '${dlZip}' -Stream Zone.Identifier -Value "[ZoneTransfer]\`r\`nZoneId=3\`r\`nHostUrl=https://github.com/"`);
-  const how = ps(`Add-Type -AssemblyName System.IO.Compression.FileSystem; $c = ([IO.Compression.ZipFile]::OpenRead('${dlZip}')).Entries.Count
+  // Explorer copies in the background and says nothing when it is done (Folder.CopyHere): done
+  // is every file of the zip there, at its full size, and no longer open for writing.
+  const how = ps(`Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $z = [IO.Compression.ZipFile]::OpenRead('${dlZip}'); $entries = @($z.Entries | Where-Object { $_.Name } | ForEach-Object { @{ Path = (Join-Path '${dl}' $_.FullName); Length = $_.Length } }); $z.Dispose()
+    $done = { foreach ($e in $entries) { try { $f = [IO.File]::Open($e.Path, 'Open', 'Read', 'None'); $n = $f.Length; $f.Dispose(); if ($n -ne $e.Length) { return $false } } catch { return $false } }; $true }
     try { $sh = New-Object -ComObject Shell.Application; $sh.NameSpace('${dl}').CopyHere($sh.NameSpace('${dlZip}').Items(), 0x14)
-      $end = (Get-Date).AddSeconds(120); while ((Get-ChildItem -LiteralPath '${dl}').Count -lt $c -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 500 }
-      Start-Sleep 2; 'Shell.Application' } catch { Expand-Archive -LiteralPath '${dlZip}' -DestinationPath '${dl}' -Force; "Expand-Archive ($($_.Exception.Message))" }`);
+      $end = (Get-Date).AddSeconds(120); while (-not (& $done) -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 200 }
+      if (& $done) { 'Shell.Application' } else { 'Shell.Application (not complete after 120 s)' } } catch { Expand-Archive -LiteralPath '${dlZip}' -DestinationPath '${dl}' -Force; "Expand-Archive ($($_.Exception.Message))" }`);
   info('extracted with', how);
   const motw = ps(`[bool](Get-Item -LiteralPath '${path.join(dl, 'start-windows.ps1')}' -Stream Zone.Identifier -ErrorAction SilentlyContinue)`);
   info('Mark of the Web propagated to the extracted files', motw);
@@ -426,8 +434,7 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
     for (const f of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, f), path.join(dest, f));
   }
   if (wrapperProc && wrapperAlive()) killTree(wrapperProc.pid);
-  await sleep(1500);
-  const left = processesUnder(home);
+  const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 15_000, 'no process left').catch(() => processesUnder(home));
   check('Basic User run: no process left', left.length === 0, describeProcs(left));
   copyAppLogs(home, 'basic-user');
 });
@@ -442,7 +449,7 @@ await section('14. uninstaller (-KeepSettings while live, reinstall keeps the st
   const app0 = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'uninstall-right-after-start' });
   onCleanup(() => killUnder(homeU));
   await uninstallAndVerify({ dir: relDir, home: homeU, args: ['-KeepSettings'], label: 'uninstall -KeepSettings within 10 s of the start' });
-  const script0 = await Promise.race([app0.inst.exit.then(() => 'exited'), sleep(15_000).then(() => 'running')]);
+  const script0 = await orTimeout(app0.inst.exit.then(() => 'exited'), 15_000, 'running');
   check('uninstall within 10 s of the start: the start script did not restart SwarmCast', script0 === 'exited' && !/Trying again in/.test(app0.inst.out()), `start script ${script0}; ${(/SwarmCast stopped right away[^\n]*/.exec(app0.inst.out()) ?? ['no restart attempt'])[0]}`);
   const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'before-uninstall-keep' });
   onCleanup(() => killUnder(homeU));

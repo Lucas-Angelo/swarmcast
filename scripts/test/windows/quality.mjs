@@ -10,7 +10,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, installerResult, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
-  opt, processesUnder, pushStream, quitAndVerify, readText, record, repoRoot, runInstaller, section, serve, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
+  opt, orTimeout, processesUnder, pushStream, quitAndVerify, readText, record, repoRoot, runInstaller, section, serve, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -219,8 +219,8 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
 
   const stop = await app.api('/api/live/stop', {});
   check('"Stop everything" verified (includes the converter)', stop.verified === true);
-  await sleep(1500);
-  check('no ffmpeg left after stop', ffmpegLeft().length === 0, describeProcs(ffmpegLeft()));
+  const ffLeft = await until(() => (ffmpegLeft().length === 0 ? [] : null), 15_000, 'no ffmpeg left').catch(() => ffmpegLeft());
+  check('no ffmpeg left after stop', ffLeft.length === 0, describeProcs(ffLeft));
   feed.stop();
 });
 
@@ -240,7 +240,7 @@ await section('5. taskkill /F during conversion: the reaper removes ffmpeg', asy
   const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 20_000, 'reaper').catch(() => processesUnder(home));
   check('after taskkill /F: ffmpeg, MediaMTX and the reaper are gone', left.length === 0, left.length ? describeProcs(left) : `were: ${describeProcs(before)}`);
   check('port 1935 free', !(await listening(1935)));
-  await Promise.race([app.inst.exit, sleep(10_000)]);
+  await orTimeout(app.inst.exit, 10_000, 'timeout');
 });
 
 await section('6. quit during conversion leaves nothing', async () => {

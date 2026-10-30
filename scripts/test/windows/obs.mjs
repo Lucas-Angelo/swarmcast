@@ -14,7 +14,7 @@ import WebSocket from 'ws';
 import { download } from '../../build/fetch-binaries.mjs';
 import {
   ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, onCleanup, openPanel, opt, ps,
-  quitAndVerify, readText, uninstallAndVerify, uploadCapCheck, repoRoot, section, serve, sha256File, sleep, startApp, until, waitLiveLink, waitPhase,
+  quitAndVerify, readText, uninstallAndVerify, uploadCapCheck, repoRoot, section, serve, sha256File, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
 const OBS = { version: '33.0.0', url: 'https://github.com/obsproject/obs-studio/releases/download/33.0.0/OBS-Studio-33.0.0-Windows-x64.zip', sha256: '3369a3ecd67b5669a8a08d77357f87cc786d1fba42fbbd1054d841a69f6271a7' };
@@ -173,9 +173,15 @@ await section('2. SwarmCast installed by the start script, OBS streams into it, 
   info('OBS graphics', adapter);
 
   await obs.call('CreateInput', { sceneName: SCENE, inputName: 'Test video', inputKind: 'ffmpeg_source', inputSettings: { local_file: media, looping: true, restart_on_activate: true, is_local_file: true }, sceneItemEnabled: true });
-  await sleep(2000);
-  const shot = await obs.call('GetSourceScreenshot', { sourceName: SCENE, imageFormat: 'png', imageWidth: 320 }).catch((e) => ({ imageData: '', err: e.message }));
-  const png = Buffer.from(String(shot.imageData ?? '').replace(/^data:image\/png;base64,/, ''), 'base64');
+  // The Media Source starts decoding on its own thread: the program shows it once a screenshot
+  // of the scene is more than a blank frame (a blank 320 px PNG is far below 5 KB).
+  let shot = { imageData: '' };
+  const pngOf = (x) => Buffer.from(String(x.imageData ?? '').replace(/^data:image\/png;base64,/, ''), 'base64');
+  await until(async () => {
+    shot = await obs.call('GetSourceScreenshot', { sourceName: SCENE, imageFormat: 'png', imageWidth: 320 }).catch((e) => ({ imageData: '', err: e.message }));
+    return pngOf(shot).length > 5000;
+  }, 30_000, 'a program screenshot that is not blank').catch(() => {});
+  const png = pngOf(shot);
   if (png.length) fs.writeFileSync(path.join(ART, 'obs-program.png'), png);
   check('OBS renders the Media Source (program screenshot is not blank)', png.length > 5000, `${png.length} bytes PNG at 320 px wide${shot.err ? `; ${shot.err}` : ''}`);
   await obs.call('SetStreamServiceSettings', { streamServiceType: 'rtmp_custom', streamServiceSettings: { server: s0.rtmpUrl, key: s0.streamKey, use_auth: false, bwtest: false } });
@@ -216,9 +222,10 @@ await section('2. SwarmCast installed by the start script, OBS streams into it, 
     () => check('panel notices OBS stopped', true),
     () => check('panel notices OBS stopped', false),
   );
-  // Uninstall while OBS is open and streaming: SwarmCast goes away, OBS and its settings stay.
+  // Uninstall while OBS is open and streaming into SwarmCast: SwarmCast goes away, OBS and its
+  // settings stay. Streaming means OBS's output is active and SwarmCast sees OBS again.
   await obs.call('StartStream').catch(() => {});
-  await sleep(5000);
+  await until(async () => (await obs.call('GetStreamStatus')).outputActive && (await app.state()).obsConnected, 60_000, 'OBS streaming into SwarmCast again').catch((e) => info('before the uninstall', e.message));
   const snap = () => {
     const files = [];
     (function walk(d) {
