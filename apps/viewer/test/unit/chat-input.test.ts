@@ -3,7 +3,7 @@
 // with the server, and the box itself. Time comes from an injected clock (NOW, moved by `tick`).
 import { describe, expect, it } from 'vitest';
 import type { ChatPublicSettings, ChatYou } from '@swarmcast/shared/chat';
-import { ChatInput, inputBlock, lengthState, oneLine } from '../../src/chat/input.js';
+import { ANSWER_WAIT_MS, ChatInput, inputBlock, lengthState, oneLine } from '../../src/chat/input.js';
 
 function settings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
   return { enabled: true, content: ['text', 'emotes'], slowS: 0, autoSlow: false, maxGraphemes: 200, maxEmoji: 30, newViewerWaitS: 0, colors: 'choose', linksBlocked: false, emotes: [], builtinEmotes: true, protect: 'off', streamerName: '', ...over };
@@ -11,14 +11,19 @@ function settings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
 const you: ChatYou = { a: 'me', color: '#0090ff', colorLocked: false, mutedUntil: null };
 const NOW = 1_700_000_000_000;
 
-/** A chat box in the page. `type` puts text in it like the viewer does; `tick` moves its clock; `sent` has what it sent. */
+/**
+ * A chat box in the page. `type` puts text in it like the viewer does; `tick` moves its clock; `sent`
+ * has what it sent; `setSettings` changes the settings as a message from the server does (the page
+ * then calls update()).
+ */
 function makeInput(over: { settings?: ChatPublicSettings; connected?: boolean } = {}) {
   document.body.replaceChildren();
   const sent: string[] = [];
   let n = 0;
   let now = NOW;
+  let current = over.settings ?? settings();
   const input = new ChatInput({
-    settings: () => over.settings ?? settings(),
+    settings: () => current,
     you: () => you,
     connected: () => over.connected ?? true,
     send: (text) => {
@@ -33,7 +38,10 @@ function makeInput(over: { settings?: ChatPublicSettings; connected?: boolean } 
     input.textarea.dispatchEvent(new Event('input'));
   };
   const key = (k: string, o: KeyboardEventInit = {}): void => void input.textarea.dispatchEvent(new KeyboardEvent('keydown', { key: k, cancelable: true, ...o }));
-  return { input, sent, type, key, tick: (ms: number) => (now += ms) };
+  const setSettings = (s: ChatPublicSettings): void => {
+    current = s;
+  };
+  return { input, sent, type, key, tick: (ms: number) => (now += ms), setSettings };
 }
 
 describe('inputBlock: why the viewer cannot send', () => {
@@ -213,7 +221,7 @@ describe('ChatInput', () => {
     expect(input.textarea.value).toBe('segunda');
   });
 
-  it('slow mode: after a send, Send waits and the line counts down', () => {
+  it('slow mode: after a send, Send waits and the line says for how long', () => {
     // Arrange
     const { input, type } = makeInput({ settings: settings({ slowS: 5 }) });
     type('um');
@@ -225,21 +233,6 @@ describe('ChatInput', () => {
     // Assert
     expect(input.sendButton.disabled).toBe(true);
     expect(input.status.textContent).toBe('You can send again in 5 s.');
-  });
-
-  it('slow mode: Send comes back once the wait is over', () => {
-    // Arrange
-    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
-    type('um');
-    input.submit();
-    type('dois');
-
-    // Act
-    tick(5000);
-    input.update();
-
-    // Assert
-    expect(input.sendButton.disabled).toBe(false);
   });
 
   it("slow mode counts from the server's ack: a send that took a while to arrive does not end the wait early", () => {
@@ -274,6 +267,113 @@ describe('ChatInput', () => {
 
     // Assert
     expect(input.sendButton.disabled).toBe(false);
+  });
+
+  it('slow mode: Send stays held while the send waits for its answer, even past slowS', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    type('dois');
+
+    // Act
+    tick(6000);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(true);
+  });
+
+  it('slow mode: while the send waits for its answer the line shows the whole wait (the countdown starts at the ack)', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+
+    // Act
+    tick(2000);
+    input.update();
+
+    // Assert
+    expect(input.status.textContent).toBe('You can send again in 5 s.');
+  });
+
+  it('slow mode: a GIF waiting for its answer holds Send too', () => {
+    // Arrange
+    const { input, type } = makeInput({ settings: settings({ slowS: 5 }) });
+
+    // Act
+    input.noteSent(7);
+    type('oi');
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(true);
+  });
+
+  it('slow mode: a GIF sent during a running wait leaves its countdown as it is', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    tick(300);
+    input.acked(1);
+    tick(2000);
+
+    // Act
+    input.noteSent(2);
+
+    // Assert
+    expect(input.status.textContent).toBe('You can send again in 3 s.');
+  });
+
+  it('slow mode: a send the server never answers holds Send for ANSWER_WAIT_MS at most', () => {
+    // Arrange
+    const { input, type, tick } = makeInput({ settings: settings({ slowS: 5 }) });
+    type('um');
+    input.submit();
+    type('dois');
+
+    // Act
+    tick(ANSWER_WAIT_MS);
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(false);
+  });
+
+  it('without slow mode a send waiting for its answer does not hold Send', () => {
+    // Arrange
+    const { input, type } = makeInput();
+    type('um');
+    input.submit();
+
+    // Act
+    type('dois');
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(false);
+  });
+
+  it.each([
+    ['turned on after a send: Send waits as the server will', 0, 10, 1000, true],
+    ['lowered: Send comes back as soon as the server takes the next one', 30, 5, 5300, false],
+    ['turned off: Send comes back at once', 5, 0, 1000, false],
+  ] as const)('slow mode %s (the wait follows the slowS in force, from the ack)', (_case, before, after, at, held) => {
+    // Arrange
+    const { input, type, tick, setSettings } = makeInput({ settings: settings({ slowS: before }) });
+    type('um');
+    input.submit();
+    tick(300);
+    input.acked(1);
+    tick(at - 300);
+    type('dois');
+
+    // Act
+    setSettings(settings({ slowS: after }));
+    input.update();
+
+    // Assert
+    expect(input.sendButton.disabled).toBe(held);
   });
 
   it('a GIF the server took starts the slow-mode wait too', () => {

@@ -17,6 +17,9 @@ export interface InputDeps {
 
 export type InputBlock = { key: MessageKey; params?: MessageParams; typing: boolean } | null;
 
+/** A send the server never answers (its reject coalesced away, the socket gone) holds Send at most this long. */
+export const ANSWER_WAIT_MS = 10_000;
+
 const seconds = (ms: number): string => t('time.secondsShort', { count: Math.max(1, Math.ceil(ms / 1000)) });
 
 /** Why the viewer cannot send right now (null: they can). `typing`: the box stays usable. */
@@ -62,12 +65,14 @@ export class ChatInput {
   readonly status: HTMLParagraphElement;
   /** Where chat.ts puts the emoji/emote picker button. */
   readonly tools: HTMLDivElement;
-  private cooldownUntil = 0;
-  /** When the slow-mode wait of the last message the server took ends (counted from its ack). */
-  private slowUntil = 0;
+  /** When the server last took a message from this page (its ack, on this page's clock); null: never. */
+  private takenAt: number | null = null;
+  /** Until when the last refusal said to wait (its retryMs). */
+  private retryUntil = 0;
   private errorText: string | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
-  private readonly sent = new Map<number, string>();
+  /** Sends still waiting for their answer: the text to give back on a reject ('' for a GIF), and when they went. */
+  private readonly sent = new Map<number, { text: string; at: number }>();
   private readonly now: () => number;
 
   constructor(private readonly deps: InputDeps) {
@@ -140,12 +145,9 @@ export class ChatInput {
       this.update();
       return;
     }
-    this.sent.set(n, text);
-    if (this.sent.size > 20) this.sent.delete(this.sent.keys().next().value as number);
+    this.track(n, text);
     this.textarea.value = '';
     this.errorText = null;
-    const slowS = this.deps.settings()?.slowS ?? 0;
-    if (slowS > 0) this.cooldownUntil = this.now() + slowS * 1000;
     this.update();
   }
 
@@ -154,43 +156,58 @@ export class ChatInput {
     return this.sent.keys().next().value;
   }
 
-  /** A send that did not come from the box (a GIF): tracked for acks and rejects. */
+  /** A send that did not come from the box (a GIF): tracked for acks and rejects, and in slow mode it holds Send like one. */
   noteSent(n: number): void {
-    this.sent.set(n, '');
+    this.track(n, '');
+    this.update();
+  }
+
+  private track(n: number, text: string): void {
+    this.sent.set(n, { text, at: this.now() });
+    if (this.sent.size > 20) this.sent.delete(this.sent.keys().next().value as number);
   }
 
   acked(n: number): void {
     this.sent.delete(n);
-    // The server's slow-mode wait starts when it took the message, a moment after this page sent
-    // it: counted again from the ack, the next send never reaches the server before that wait is
-    // over (it was refused with chat.err.slow right as this page's countdown ended). A GIF counts
-    // too: the server paces every message.
-    const slowS = this.deps.settings()?.slowS ?? 0;
-    if (slowS > 0) {
-      this.slowUntil = Math.max(this.slowUntil, this.now() + slowS * 1000);
-      this.cooldownUntil = Math.max(this.cooldownUntil, this.slowUntil);
-      this.update();
-    }
+    // The server's slow-mode wait starts when it takes a message (a GIF too), a moment after this
+    // page sent it, so the page counts it from the ack: the next send never reaches the server
+    // before that wait is over (one sent as the page's own countdown ended was refused).
+    this.takenAt = this.now();
+    this.update();
   }
 
   rejected(n: number | undefined, code: MessageKey, params: MessageParams | undefined, retryMs: number | undefined): void {
     this.errorText = tc({ code, params: params ?? null }, t('chat.viewer.err.generic'));
-    const text = n === undefined ? undefined : this.sent.get(n);
+    const text = n === undefined ? undefined : this.sent.get(n)?.text;
     if (n !== undefined) this.sent.delete(n);
     if (text !== undefined && this.textarea.value.trim() === '') this.textarea.value = text;
     // retryMs counts from now, a moment after the server measured it, so a retry never comes early.
-    // A refused message starts no wait (the guard submit() set for it goes), nor does it end the
-    // wait of a message the server took: a GIF refused during that wait (lockdown, busy) ended it.
-    const retryUntil = typeof retryMs === 'number' && retryMs > 0 ? this.now() + Math.min(retryMs, 3_600_000) : 0;
-    this.cooldownUntil = Math.max(this.slowUntil, retryUntil);
+    // A refused message starts no slow-mode wait, and leaves the one of a message the server took.
+    this.retryUntil = typeof retryMs === 'number' && retryMs > 0 ? this.now() + Math.min(retryMs, 3_600_000) : 0;
     this.update();
+  }
+
+  /**
+   * When the next send can go, counted as the server will: slow mode from the last ack with the slowS
+   * in force now (raised, lowered or turned off since), and the last refusal's retryMs. In slow mode
+   * a send still waiting for its answer holds Send too: if the server took it, its wait starts at the
+   * ack, so until then the line shows the whole wait (a countdown that is already running goes on).
+   */
+  private waitUntil(slowS: number, now: number): number {
+    const until = Math.max(slowS > 0 && this.takenAt !== null ? this.takenAt + slowS * 1000 : 0, this.retryUntil);
+    return slowS > 0 && until <= now && this.awaitingAnswer(now) ? now + slowS * 1000 : until;
+  }
+
+  private awaitingAnswer(now: number): boolean {
+    for (const { at } of this.sent.values()) if (now - at < ANSWER_WAIT_MS) return true;
+    return false;
   }
 
   /** Re-read settings / you / connection and redraw. */
   update(): void {
     const s = this.deps.settings();
     const now = this.now();
-    const block = inputBlock(s, this.deps.you(), this.deps.connected(), now, this.cooldownUntil);
+    const block = inputBlock(s, this.deps.you(), this.deps.connected(), now, this.waitUntil(s?.slowS ?? 0, now));
     const len = lengthState(this.textarea.value, s);
     const emotesOnly = !!s && !s.content.includes('text') && s.content.includes('emotes');
     this.textarea.placeholder = t(emotesOnly ? 'chat.viewer.placeholder.emotes' : 'chat.viewer.placeholder');
