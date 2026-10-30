@@ -77,6 +77,10 @@ export function thirdPartyLicenses({ desktop } = {}) {
     '== Fredoka font (https://github.com/hafontia/Fredoka-One), in web/*/assets — SIL Open Font License 1.1 ==',
     fs.readFileSync(FREDOKA_OFL, 'utf8').trim(),
     '',
+    "== Emoji names and keywords of the viewer's chat emoji picker — from emojibase-data (MIT, listed below), ==",
+    'which builds them from the Unicode CLDR annotations: Unicode License v3, https://www.unicode.org/license.txt.',
+    'Copyright © 1991-2025 Unicode, Inc. The emoji themselves are drawn by the operating system, not shipped.',
+    '',
   ];
   let pkgs = [];
   try {
