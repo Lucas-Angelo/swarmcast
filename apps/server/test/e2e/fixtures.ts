@@ -91,11 +91,12 @@ export async function setPlaylistWindow(seconds: number): Promise<void> {
 }
 
 /**
- * Make the fake OBS reconnect with these options (null = the defaults: 640x360 at 1.2 Mbps; a
- * pre-encoded clip either way). The next test's gate puts the defaults back by itself.
+ * Makes the fake OBS reconnect with the 720p feed (`'hd'`, server.ts HD_FEED: a bigger picture
+ * is when a new rendition plan applies) or the default one (null). The next test's gate puts the
+ * default back by itself.
  */
-export async function reconnectObs(options: { size?: string; kbps?: number } | null): Promise<void> {
-  await control('POST', '/obs', options);
+export async function reconnectObs(feed: 'hd' | null): Promise<void> {
+  await control('POST', '/obs', feed === null ? null : { feed });
 }
 
 /**
@@ -372,18 +373,6 @@ export class Audience {
   async close(): Promise<void> {
     for (const c of this.contexts.splice(0)) await c.close();
   }
-}
-
-/** The old free join of the specs not on the `viewers` fixture yet (it goes once they all are). */
-export async function join(browser: Browser, nickname: string, link?: string, setup?: (context: BrowserContext) => Promise<void>): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext();
-  await setup?.(context);
-  const page = await context.newPage();
-  recordConsole(page);
-  await page.goto(link ?? (await liveLink()));
-  await expect(page).toHaveURL(/\/join$/);
-  await joinFrom(page, nickname);
-  return { context, page };
 }
 
 // ---------------------------------------------------------------------------------------------

@@ -87,8 +87,8 @@ let stopping = false;
 // fake OBS (it restarts by itself, like OBS's own reconnect) uses the same options.
 const PUSH_FILE = path.join('test-results', 'e2e-push.json');
 type PushOptions = { size?: string; kbps?: number };
-/** The 720p feed the ladder scenarios ask for (quality.spec, barely-delivers). */
-export const HD_FEED = { size: '1280x720', kbps: 2500 } as const;
+/** The 720p feed the ladder scenarios ask for with POST /obs {feed: 'hd'} (quality.spec, barely-delivers). */
+const HD_FEED = { size: '1280x720', kbps: 2500 } as const;
 /** How long the fake OBS waits before it publishes again after its ffmpeg exited, like OBS's reconnect delay. */
 const OBS_RECONNECT_MS = 1000;
 const pushOptions = (): PushOptions => {
@@ -336,7 +336,7 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
 // - GET /env: the panel's address and login path (fixtures.ts signs in with them);
 // - POST /reset[?hard=1] {test?}: back to the starting state (reset() above);
 // - GET /health?waitMs=&minPlaylistS=&qualities=: the stream's health, waiting up to waitMs for it;
-// - POST /obs {options | null}: the fake OBS reconnects with these push options;
+// - POST /obs {feed: 'hd'} | null: the fake OBS reconnects with the 720p feed or the default one;
 // - POST /pow-level/<0|1|2>: the level the attack shield would choose by itself, without
 //   flooding the server;
 // - POST /playlist-window/<seconds>: how many seconds every playlist keeps (p2p.spec.ts
@@ -370,7 +370,9 @@ const control = http.createServer((req, res) => {
       return json(res, 200, h);
     }
     if (post && url.pathname === '/obs') {
-      reconnectObs(((await readJson(req)) as PushOptions | null) ?? null);
+      const body = (await readJson(req)) as { feed?: unknown } | null;
+      if (body !== null && body.feed !== 'hd') return json(res, 400, { error: 'POST /obs takes {"feed":"hd"} or null' });
+      reconnectObs(body === null ? null : HD_FEED);
       return json(res, 200, { options: pushOptions() });
     }
     const w = /^\/playlist-window\/(\d+)$/.exec(url.pathname);
