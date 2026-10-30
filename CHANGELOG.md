@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-30
+
+Chat and your own page: talk with your viewers next to the video, moderate from the panel, and give your stream page your name, picture, links and a support button or Pix.
+
 ### Added
 
 - **Chat.** Viewers can talk to you and to each other next to the video, and you can write from the panel with a "Streamer" badge nobody else can get. It is on by default and uses the connection viewers already have. Chat uses at most 5 % of your upload (between 128 and 960 kbps), and if your computer gets busy the chat slows down first, so it never takes room from the video. Nothing is saved: the chat is wiped when you stop.
@@ -184,7 +188,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.0...v0.2.1
