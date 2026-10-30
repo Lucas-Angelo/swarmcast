@@ -28,6 +28,7 @@ import {
 import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
+import { createChatRouter } from './chat/loader.js';
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 const video = $<HTMLVideoElement>('video');
@@ -45,6 +46,15 @@ const viewerCountEl = $<HTMLSpanElement>('viewer-count');
 const playerControls = $<HTMLDivElement>('player-controls');
 const delayWrap = $<HTMLSpanElement>('delay-wrap');
 const delayEl = $<HTMLSpanElement>('delay');
+
+// Chat: a separate, lazily loaded chunk (chat/loader.ts); the player never depends on it.
+const chat = createChatRouter({
+  root: $<HTMLElement>('chat'),
+  showButton: $<HTMLButtonElement>('chat-show'),
+  nickname: () => $('nick').textContent ?? '',
+  send: (msg) => sendControl(msg),
+  debug: (msg) => debugLog(msg),
+});
 
 let tipSeq = 0;
 /** An (i) tooltip like the static ones in watch.html (installTooltips() handles it). */
@@ -566,8 +576,10 @@ async function main(): Promise<void> {
   });
 }
 
-function sendControl(msg: unknown): void {
-  if (control?.readyState === WebSocket.OPEN) control.send(JSON.stringify(msg));
+function sendControl(msg: unknown): boolean {
+  if (control?.readyState !== WebSocket.OPEN) return false;
+  control.send(JSON.stringify(msg));
+  return true;
 }
 
 /** The line under the P2P switch while P2P is not allowed: who turned it off, and why. */
@@ -587,6 +599,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
     ws.onopen = () => {
       attempts = 0;
       trackerMux.attach(ws);
+      chat.connection(true);
     };
     ws.onmessage = (ev) => {
       const text = String(ev.data);
@@ -597,8 +610,10 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
       } catch {
         return;
       }
+      if (chat.frame(msg)) return;
       switch (msg.t) {
         case 'hello':
+          chat.hello(msg.chat);
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
           handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
@@ -631,6 +646,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
     ws.onclose = (ev) => {
       control = null;
       trackerMux.detach(ws);
+      chat.connection(false);
       if (ended) return;
       if (ev.code === 4003) {
         endScreen('watch.removed.title', 'watch.removed.text');

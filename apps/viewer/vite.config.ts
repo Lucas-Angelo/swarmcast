@@ -1,10 +1,11 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import { fontLicenses } from '@swarmcast/shared/web/font-licenses';
+import { emojiDataPlugin } from './scripts/emoji-data.mjs';
 
 // Multi-page build. No inline scripts are emitted, so the strict CSP (script-src 'self') holds.
 export default defineConfig({
-  plugins: [fontLicenses()],
+  plugins: [fontLicenses(), emojiDataPlugin()],
   base: '/',
   build: {
     outDir: 'dist',

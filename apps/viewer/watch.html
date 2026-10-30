@@ -42,9 +42,11 @@
         </div>
         <div class="bar-actions">
           <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>LIVE</button>
+          <button id="chat-show" type="button" class="secondary chat-show" data-testid="chat-show" hidden data-i18n="chat.viewer.show">Show chat</button>
           <button id="unmute" type="button" class="secondary sc-ico-volume" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">Unmute</button>
         </div>
       </section>
+      <aside id="chat" class="chat" data-testid="chat" hidden></aside>
       <section class="panel">
         <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
         <div class="toggle-row">
@@ -72,7 +74,7 @@
           <p class="muted small"><span data-i18n="watch.watchingAs">Watching as</span> <strong id="nick"></strong>.</p>
           <span class="tip"
             ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Only the streamer sees it.</span></span
+            ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Everyone in the live sees it in the chat.</span></span
           >
         </div>
       </section>
