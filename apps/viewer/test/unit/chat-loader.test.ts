@@ -1,78 +1,123 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// The chat router in the watch page's main bundle (chat/loader.ts): it routes `chat.*` frames and
+// loads the chat chunk only when the live has the chat on. Each test gives it a fake chunk of its
+// own (createChatRouter's loadChunk), which records what the router hands the mounted chat.
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatSnapshot } from '@swarmcast/shared/chat';
+import { createChatRouter, type ChatChunk } from '../../src/chat/loader.js';
 
-const calls: string[] = [];
-let failMount = false;
-vi.mock('../../src/chat/chat.js', () => ({
-  mountChat: () => {
-    if (failMount) throw new Error('old browser');
-    return {
-      hello: (s: unknown) => calls.push(`hello ${s ? 'snapshot' : 'none'}`),
-      frame: (m: { t: string }) => calls.push(`frame ${m.t}`),
-      connection: (o: boolean) => calls.push(`conn ${o}`),
-    };
-  },
-}));
+const SNAPSHOT = { v: 1 } as ChatSnapshot;
 
-const { createChatRouter } = await import('../../src/chat/loader.js');
-
-const snapshot = { v: 1 } as ChatSnapshot;
-const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
-
-function router() {
+/**
+ * A router over a fake chat chunk. `calls` lists what reached the mounted chat, in order;
+ * `mounted` resolves once the chunk is mounted and what came meanwhile was replayed; `failed`
+ * resolves with the router's debug line when the chunk fails to load (`fail: 'load'`) or to start
+ * (`fail: 'mount'`, an old browser).
+ */
+function router(o: { fail?: 'load' | 'mount' } = {}) {
   document.body.replaceChildren();
   const root = document.createElement('aside');
   root.hidden = true;
   const showButton = document.createElement('button');
-  return { r: createChatRouter({ root, showButton, nickname: () => 'Bia', send: () => true }), root, showButton };
+  const calls: string[] = [];
+  let onMounted: () => void = () => {};
+  const mounted = new Promise<void>((resolve) => (onMounted = resolve));
+  let onFailed: (line: string) => void = () => {};
+  const failed = new Promise<string>((resolve) => (onFailed = resolve));
+  const chunk = {
+    mountChat: () => {
+      if (o.fail === 'mount') throw new Error('old browser');
+      // Whoever awaits `mounted` resumes after the router's own callback (mount, then replay) ends.
+      onMounted();
+      return {
+        hello: (s: unknown) => calls.push(`hello ${s ? 'snapshot' : 'none'}`),
+        frame: (m: { t: string }) => calls.push(`frame ${m.t}`),
+        connection: (open: boolean) => calls.push(`conn ${open}`),
+        lastSeq: () => 0,
+      };
+    },
+  } as unknown as ChatChunk;
+  const loadChunk = vi.fn(() => (o.fail === 'load' ? Promise.reject(new Error('offline')) : Promise.resolve(chunk)));
+  const r = createChatRouter({ root, showButton, nickname: () => 'Bia', send: () => true, loadChunk, debug: (line) => onFailed(line) });
+  return { r, root, showButton, calls, loadChunk, mounted, failed };
 }
 
 describe('chat router in the main bundle', () => {
-  beforeEach(() => {
-    calls.length = 0;
-    failMount = false;
+  it('takes only chat.* frames; the others go on to the page', () => {
+    // Arrange
+    const { r } = router();
+
+    // Act
+    const taken = [r.frame({ t: 'viewers' }), r.frame({ t: 'chat.batch' })];
+
+    // Assert
+    expect(taken).toEqual([false, true]);
   });
 
-  it('only chat.* frames are taken; non-chat frames go on to the page', () => {
-    const { r } = router();
-    expect(r.frame({ t: 'viewers' })).toBe(false);
-    expect(r.frame({ t: 'chat.batch' })).toBe(true);
-  });
+  it('chat off at hello: the chunk is not loaded and chat frames are dropped', () => {
+    // Arrange
+    const { r, loadChunk } = router();
 
-  it('chat off at hello: the chunk is not loaded and chat frames are dropped', async () => {
-    const { r } = router();
+    // Act
     r.hello(undefined);
     r.frame({ t: 'chat.batch' });
-    await tick();
-    expect(calls).toEqual([]);
+
+    // Assert
+    expect(loadChunk).not.toHaveBeenCalled();
   });
 
   it('loads the chunk on a hello with a snapshot and replays what came meanwhile, in order', async () => {
-    const { r } = router();
+    // Arrange
+    const { r, calls, loadChunk, mounted } = router();
+
+    // Act
     r.connection(true);
-    r.hello(snapshot);
+    r.hello(SNAPSHOT);
     r.frame({ t: 'chat.batch' });
     r.frame({ t: 'chat.ack' });
-    await tick();
+    await mounted;
+
+    // Assert
+    expect(loadChunk).toHaveBeenCalledTimes(1);
     expect(calls).toEqual(['conn true', 'hello snapshot', 'frame chat.batch', 'frame chat.ack']);
+  });
+
+  it('once mounted, frames go straight to the chat', async () => {
+    // Arrange
+    const { r, calls, mounted } = router();
+    r.hello(SNAPSHOT);
+    await mounted;
+
+    // Act
     r.frame({ t: 'chat.you' });
+
+    // Assert
     expect(calls.at(-1)).toBe('frame chat.you');
   });
 
-  it('turned on later (chat.settings enabled): loads then', async () => {
-    const { r } = router();
+  it('turned on later (chat.settings enabled): loads then, and the chat gets that frame', async () => {
+    // Arrange
+    const { r, calls, mounted } = router();
     r.hello(undefined);
+
+    // Act
     r.frame({ t: 'chat.settings', settings: { enabled: true } } as { t: string });
-    await tick();
+    await mounted;
+
+    // Assert
     expect(calls).toContain('frame chat.settings');
   });
 
-  it('a chunk that fails to start leaves the chat hidden and the page alone', async () => {
-    failMount = true;
-    const { r, root, showButton } = router();
-    r.hello(snapshot);
-    await tick();
+  it.each(['load', 'mount'] as const)('a chunk that fails to %s leaves the chat hidden and the page alone', async (fail) => {
+    // Arrange
+    const { r, root, showButton, failed } = router({ fail });
+
+    // Act
+    r.hello(SNAPSHOT);
+    const line = await failed;
+
+    // Assert
+    expect(line).toMatch(/^chat chunk failed: Error: (offline|old browser)$/);
     expect(root.hidden).toBe(true);
     expect(showButton.hidden).toBe(true);
     expect(() => r.frame({ t: 'chat.batch' })).not.toThrow();
