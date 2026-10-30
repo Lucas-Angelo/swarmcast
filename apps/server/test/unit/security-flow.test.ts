@@ -66,6 +66,21 @@ async function startedLive(o: { direct?: DirectMode; blocklists?: PublicBlocklis
   return { live, advance };
 }
 
+/**
+ * Eight seconds of a flood of invalid /join links on `live`'s public server: 30 at once each
+ * second, then one shield sample (`advance`). The statuses the flood got.
+ */
+async function floodInvalidLinks(live: LiveController, advance: () => void): Promise<number[]> {
+  const base = `http://127.0.0.1:${live.publicPort}`;
+  const statuses: number[] = [];
+  for (let s = 0; s < 8; s++) {
+    const res = await Promise.all(Array.from({ length: 30 }, (_, j) => fetch(`${base}/join/not-the-secret-${s}-${j}`)));
+    statuses.push(...res.map((r) => r.status));
+    advance();
+  }
+  return statuses;
+}
+
 /** Resolves once the panel shows the warning `code`. */
 function warningShown(live: LiveController, code: string): Promise<void> {
   return until(() => live.snapshot().warningCodes.some((w) => w.code === code), { timeoutMs: REACTION_TIMEOUT_MS, what: `the "${code}" warning`, on: [[live, 'state']] });
@@ -167,18 +182,12 @@ describe('settings round-trip: admission limits and protection switches', () => 
 });
 
 describe('attack flow through the real public server', () => {
-  it('a flood of invalid /join links → warning, tighter limits and proof-of-work; a real viewer still joins', async () => {
+  it('a flood of invalid /join links → warning, tighter limits and proof-of-work', async () => {
     // Arrange
     freezePeriodicWork();
     const { live, advance } = await startedLive();
-    const base = `http://127.0.0.1:${live.publicPort}`;
-    const statuses: number[] = [];
     // Act
-    for (let s = 0; s < 8; s++) {
-      const res = await Promise.all(Array.from({ length: 30 }, (_, j) => fetch(`${base}/join/not-the-secret-${s}-${j}`)));
-      statuses.push(...res.map((r) => r.status));
-      advance();
-    }
+    const statuses = await floodInvalidLinks(live, advance);
     // Assert
     expect(statuses.filter((x) => x === 404).length).toBeLessThanOrEqual(120);
     expect(statuses.filter((x) => x === 429).length).toBeGreaterThan(100);
@@ -189,8 +198,14 @@ describe('attack flow through the real public server', () => {
     expect(snap.security).toMatchObject({ threat: 'attack', browserCheck: 2, tightened: true, effectiveMaxSessionsPerDevice: 1 });
     expect(snap.security.effectiveMaxViewers).toBeLessThan(snap.settings.maxViewers!);
     expect(live.activity.list().map((e) => e.code)).toEqual(expect.arrayContaining(['log.attackDetected', 'log.react.tightened', 'log.react.browserCheck']));
+  });
 
+  it('under that attack a viewer with the real link solves the strong check, once; "End alert" goes back to normal', async () => {
     // Arrange
+    freezePeriodicWork();
+    const { live, advance } = await startedLive();
+    await floodInvalidLinks(live, advance);
+    const base = `http://127.0.0.1:${live.publicPort}`;
     const cookie = `${TICKET_COOKIE}=${await live.access.issueTicket()}; ${DEVICE_COOKIE}=device-abcdefghijklmnop`;
     const post = (body: unknown): Promise<Response> => fetch(`${base}/api/join`, { method: 'POST', headers: { cookie, 'content-type': 'application/json' }, body: JSON.stringify(body) });
     // Act
@@ -201,7 +216,6 @@ describe('attack flow through the real public server', () => {
     expect(challenge.required).toBe(true);
     expect(refused.status).toBe(403);
     expect(refusedBody.code).toBe('viewer.err.checkRequired');
-
     // Act
     const pow = { challenge: refusedBody.pow, solution: await solveChallenge({ challenge: refusedBody.pow, deriveKey }) };
     const ok = await post({ nickname: 'Ana', pow });
@@ -210,7 +224,6 @@ describe('attack flow through the real public server', () => {
     expect(ok.status).toBe(200);
     expect([...live.access.sessions.values()].map((s) => s.nickname)).toEqual(['Ana']);
     expect(replay.status).toBe(403);
-
     // Act
     live.clearAttackAlert();
     // Assert

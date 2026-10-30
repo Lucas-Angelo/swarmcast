@@ -3,8 +3,7 @@ import WebSocket from 'ws';
 import type { ChatItem, ServerMessage } from '@swarmcast/shared';
 import { defaultConfig, type AppConfig } from '../../src/core/config.js';
 import type { LiveController, LiveDeps } from '../../src/core/live.js';
-import type { DirectMode } from '../../src/direct/direct.js';
-import { makeController } from '../unit/live-helpers.js';
+import { inactiveDirect, makeController } from '../unit/live-helpers.js';
 import { until, type Jar } from './helpers.js';
 
 // The viewer side of a live in this process: a LiveController with its real public server
@@ -18,11 +17,8 @@ import { until, type Jar } from './helpers.js';
  */
 export const MESSAGE_TIMEOUT_MS = 10_000;
 
-/**
- * Direct mode of a live that never turns it on. The real one talks to the router (UPnP,
- * NAT-PMP) and to public-address services: systems outside this machine, not ours to call.
- */
-export const NO_DIRECT = { noteViewer: () => {}, snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
+/** Direct mode of a live that never turns it on (live-helpers' inactiveDirect). */
+export const NO_DIRECT = inactiveDirect();
 
 export type Hello = Extract<ServerMessage, { t: 'hello' }>;
 type Of<K extends ServerMessage['t']> = Extract<ServerMessage, { t: K }>;
