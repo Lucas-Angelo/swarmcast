@@ -54,6 +54,8 @@ Source map (`apps/server/src`):
 - `access/access.ts` holds links, tickets, sessions and kicks.
 - `hls/` contains the origin cache, playlists, signed manifest and upload limiter.
 - `tracker/tracker.ts` and `control/control.ts` are the two WebSocket services.
+- `chat/` is the chat: the hub (pipeline, ring, moderation), the batcher, buckets, the flood detector and the event-loop guard; see [CHAT.md](CHAT.md). The panel's chat API is `admin/chat-routes.ts`.
+- `branding/` is "Your page": the store, the image validator, the viewer and panel routes and the link-preview page; see [BRANDING.md](BRANDING.md).
 - `media/mediamtx.ts`, `tunnel/` and `process/children.ts` manage the child processes.
 - `direct/` implements direct mode.
 - `admin/server.ts` is the admin panel server.
@@ -126,7 +128,7 @@ flowchart TB
   1. Disconnect viewers and peers.
   2. Close the tunnel and the direct-mode port.
   3. Stop MediaMTX.
-  4. Delete the cache.
+  4. Delete the cache. The chat (ring, roster, mutes) is wiped too.
   5. Verify that no child pid is alive, that ports 1935/8888/8080 are closed and that the old public URL no longer answers with our marker. Only then does the panel show "Off".
 - **Auto stop**: after `autoStopMinutes` (default 10) without new video.
 - **Tunnel drop**: cloudflared is restarted with backoff. The address usually changes, so the panel and a desktop notification ask the streamer to send the new link.
@@ -135,7 +137,7 @@ flowchart TB
 ## Access control
 
 - **Link**: `/join/<secret>`, where the secret is 256-bit, compared in constant time and generated anew on every Start or "Generate new link". The old link stops new joins; people already watching stay.
-- **Join**: opening the link sets a 10-min join-ticket cookie and redirects with 303 to `/join`, so the secret leaves the address bar. The viewer then chooses a nickname (1–24 characters: letters, digits, spaces, `_`, `-`, `.`).
+- **Join**: opening the link sets a 10-min join-ticket cookie and redirects with 303 to `/join`, so the secret leaves the address bar. The viewer then chooses a nickname. Nicknames are **visible to everyone in the live** (they appear in the chat), so since v0.4.0 they follow stricter rules: 2–24 graphemes and at most 64 UTF-8 bytes; letters (from one alphabet) and digits, spaces, `_`, `-`, `.`; no emoji or invisible characters; not a reserved name such as "Streamer"; and not a look-alike of a name already in the live (confusable skeleton). Details: [CHAT.md](CHAT.md#nicknames-rules-v2).
 - **Session**: a JWT (HS256) signed with a per-live random key, valid 10 minutes and renewed while the viewer is active. The cookie is HttpOnly, Secure (except in plain-HTTP local testing), SameSite=Lax. All state lives in memory and is wiped on Stop.
 - **Browser check**: when the protection asks for it (on by default; stronger under attack), the join page solves an ALTCHA proof-of-work in a worker. A solve sets `sc_verified` (30 days, HttpOnly, SameSite=Lax; HMAC with `browserCheckKey` from `secrets.json`, bound to `sc_device`, records the solved level), and later joins skip the check while it covers the level required. Unlike the per-live session key, this key survives Stop and restarts: the cookie only says that this browser did the work, and says nothing about access.
 - **Kick**: drops the session immediately, blocks the device cookie until the stream ends and blocks the viewer's peer ids. IPs are never banned, because mobile CGNAT shares one IP among many people.
@@ -176,9 +178,10 @@ sequenceDiagram
 
 - **Tracker**: an embedded `bittorrent-tracker` 11, WebSocket only. The filter rejects announces from sessions without a valid session or P2P permission, and accepts only the infohashes for this live. Each connection's peer id is pinned at its first announce, which stops spoofed "stopped" events. Each connection is limited to 60 messages per 10 s and 64 KB per message.
 - **Control channel** `/control` (WebSocket, because quick tunnels do not support SSE):
-  - from the server: hello, kick, P2P on/off, block or unblock peers, ended;
-  - from viewers: stats and hash-fail reports;
-  - limits: 30 control messages per 10 s and 4 KB per control message; 200 frames of any kind per 10 s.
+  - from the server: hello, kick, P2P on/off, block or unblock peers, ended, `branding` (the streamer's page changed), and the chat messages (`chat.batch`, `chat.ack`, `chat.reject`, `chat.settings`, `chat.you`, `chat.reset`);
+  - from viewers: stats and hash-fail reports, and `chat.send`, `chat.color`, `chat.resume`;
+  - limits: 30 control messages per 10 s and 4 KB per control message; 200 frames of any kind per 10 s;
+  - chat frames (they start with `{"t":"chat.`) have **their own budget**: 20 per 10 s per socket (frame 21 terminates the socket) and 2 KB per frame, checked on the raw bytes before they are decoded. Chat never costs the control budget, and kicks and peer blocks never wait behind a chat batch.
 - **One WebSocket per viewer.** A quick tunnel counts every open WebSocket against its 200-requests-in-flight limit (measured, see [Quick tunnel limit](#quick-tunnel-limit-measured-2026-10-26)). So the tracker connection rides on `/control` as a channel (`packages/shared/src/mux.ts`):
   - control messages stay JSON objects; tracker frames start with `~`: `~o<id>` opens a channel, `~d<id> <payload>` carries one tracker message, `~c<id>` closes it;
   - in the viewer, `new WebSocket(trackerUrl)` (p2p-media-loader's own call) returns a `ChannelSocket`, a WebSocket look-alike (`apps/viewer/src/tracker-mux.ts`, installed by `peer-guard.ts`). It opens when the control socket is open, closes when it drops, and p2p-media-loader reconnects with its usual back-off. The peer guard filters each message before the library sees it;
@@ -194,6 +197,30 @@ sequenceDiagram
   - accepts only `Host` 127.0.0.1/localhost:8081, and the `Origin` must match on every non-GET request (blocks DNS rebinding and CSRF);
   - authenticates with a per-run token cookie that the app or tray sets by opening `/auth/<token>`;
   - pushes live state over a WebSocket.
+
+## Chat
+
+The chat (v0.4.0) rides on `/control`: **it adds no WebSocket and no held request**, so the tunnel arithmetic below is unchanged (one socket per viewer). The `ChatHub` (`apps/server/src/chat/`) runs in the same process and event loop as the public server, with bounded work per message:
+
+- every message goes through the shared Unicode pipeline (`packages/shared/src/chat/text.ts`) before anyone sees it, and clients render with `textContent` only;
+- per-device, per-IP and global token buckets run before `JSON.parse`; the global rate comes from a chat upload budget (4 % of the upload cap, 128–768 kbps);
+- items are batched every 250 ms (500 ms above 40 viewers, 1 s under pressure): one `JSON.stringify` per batch, the same string to every socket with less than 64 KB buffered; slower sockets are skipped and told how many messages they missed;
+- the video limiter leaves the chat only what it really sends (at most its budget), and an event-loop guard slows or pauses chat before video suffers;
+- a chat flood alone raises the attack shield to "suspicious" at most (the light browser check for new joins), never to the reactions that drop viewers or rotate the link;
+- history is a memory ring of 200 messages (256 KB), wiped by Stop. Nothing is written to disk and logs never contain message text.
+
+The panel gets chat items over its `/ws` as a separate message type and acts through `/api/chat/*`. GIFs (off by default) are loaded by each viewer's browser directly from KLIPY with the streamer's own key, after that viewer agrees; the viewer CSP lists the provider's hosts only while GIFs are on. Full description: [CHAT.md](CHAT.md).
+
+## Your page (branding)
+
+The streamer's name, picture, banner, bio, links, support button and theme colour (v0.4.0, `apps/server/src/branding/`, [BRANDING.md](BRANDING.md)):
+
+- **Members only.** `GET /api/brand`, `/brand/theme.css` and `/brand/<sha256>.<ext>` need a join ticket or a session. `/`, the invalid-link page, 404s and `/healthz` stay stock, so a hostname scanner cannot learn whose stream it is; `/healthz` returns the live marker only to the app's own probe header.
+- **Caching.** Every branded answer is `Cache-Control: private` (images `private, max-age=31536000, immutable`, content-addressed names): Cloudflare caches images and CSS by extension and ignores cookies in its cache key, so `public` would bypass the gate. `/api/brand` has an `ETag` per revision and live.
+- **Images** are re-encoded by the panel's canvas and validated and stripped of metadata by the server; they are held in memory and sent through the upload limiter like video. The banner loads after the first segment and is skipped (`lite`) under attack or a saturated uplink.
+- **Theme** is a generated same-origin stylesheet with validated hex values only; the viewer CSP is byte-identical with and without branding.
+- **Updates**: a save sends `{t: 'branding', rev}` on `/control` (coalesced, 2 s); `hello` carries `brandRev`.
+- **Link previews**: on `/join/<secret>`, known preview fetchers get a small Open Graph page (no cookie); browsers still get the 303.
 
 ## Direct mode (opt-in)
 
@@ -319,5 +346,6 @@ What this means:
 - **The limit is exactly 200 per tunnel, and every open WebSocket takes one slot for its whole life.** HTTP headroom is 200 − open WebSockets. A request is in flight until its response body ends (slow downloads count). Idle keep-alive connections do not count (hundreds stayed open between waves).
 - The 429 comes from Cloudflare's edge (`server: cloudflare`, empty body, no `Retry-After`); the request never reaches cloudflared or the origin, so only viewers can report it (`http429` in their stats). Sockets already open are not dropped when the limit is hit.
 - With the old two WebSockets per viewer (`/control` + `/tracker`), 100 viewers filled the tunnel before any video request. Now each viewer holds one (the tracker rides on `/control`), so the tunnel holds 200 − V − (video requests in flight). Video requests in flight per viewer are an estimate, not yet measured with real viewers: about 0.5 at peaks with P2P (a playlist every ~2 s, segment downloads not served by peers) and 1.5–3 without. **Practical maximum: about 120 viewers** (`QUICK_TUNNEL_MAX_VIEWERS`, the default `maxViewers`; about 80 if most viewers turn P2P off). The panel shows `warn.tunnelLimit` at 80 % of 200, from the measured open WebSockets + HTTP peak (`tunnelInFlight`) or that estimate, whichever is higher.
+- The chat and "Your page" (v0.4.0) add no WebSocket and no held request: chat rides on `/control`, and branding is a few short GETs at join (JSON, theme, avatar, favicon, then the banner after the first segment). The arithmetic above is unchanged.
 - Side observation: under our heaviest load (about 40 Mbit/s up), the tunnel's single QUIC connection timed out once ("no recent network activity") and reconnected in about 1 s to another edge (`gig08`) with the same hostname. Every open WebSocket (150) dropped at once and the requests in flight failed (502 / connection reset). Viewers reconnect `/control` with back-off; this is one more reason not to run the tunnel near its limit.
 - For a bigger audience: a named tunnel on your own domain (no documented in-flight cap), Direct mode, or another provider (`tunnel.provider`).
