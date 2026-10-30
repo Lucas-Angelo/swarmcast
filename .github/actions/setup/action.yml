@@ -1,7 +1,10 @@
 name: Set up SwarmCast build tools
 description: >-
   Node.js (with the npm cache), optionally Go for the tray helper and ffmpeg for the tests,
-  then `npm ci`. Run actions/checkout first.
+  then `npm ci`. Run actions/checkout first. A cache is a speed-up, never a requirement: a cache
+  restore that fails is a warning (continue-on-error), and its download gives up after 2 minutes
+  (SEGMENT_DOWNLOAD_TIMEOUT_MINS) instead of eating the step's time limit; the job then
+  downloads or installs what it needs.
 
 inputs:
   go:
@@ -79,6 +82,9 @@ runs:
     - name: Restore the .deb cache (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       id: apt-debs-cache
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb
@@ -99,6 +105,8 @@ runs:
     # file is part of the key: that moves past those empty entries (they are never restored
     # again and expire), and a change here that changes what the cache holds starts a new one.
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       with:
         node-version: 24.x
         cache: ${{ inputs.npm-ci == 'true' && 'npm' || '' }}
@@ -132,6 +140,9 @@ runs:
     - name: Restore the download cache
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
       id: dl-cache
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/sc-cache/downloads
@@ -140,6 +151,9 @@ runs:
     - name: Restore the pkg cache
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
       id: pkg-cache
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/sc-cache/pkg
@@ -163,6 +177,8 @@ runs:
 
     - if: inputs.go == 'true'
       uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       with:
         go-version: 1.27.x
         cache-dependency-path: apps/tray/go.sum

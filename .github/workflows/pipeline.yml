@@ -1,8 +1,8 @@
 name: Pipeline
 
-# The one CI entry point for pull requests, the merge queue and main (.github/README.md):
+# The one CI entry point for pull requests and main (.github/workflows/README.md):
 #
-#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ──────────┐
+#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×5, windows ×5 ──────────┐
 #            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
 #            │                              └─ desktop <target> ×5: build ─ clean-machine┤
 #            ├─ site (when the site changed) ──────────────────────────────────────────┤
@@ -16,14 +16,17 @@ name: Pipeline
 # - build runs in parallel with quick; the test jobs download its artifacts (build once, test
 #   the same bytes everywhere).
 # - ci-ok is the one required check: it always reports, and it is red when any stage failed or
-#   was cancelled, or did not run although the change needed it.
+#   was cancelled, or did not run although the change needed it, and on any re-run (a failure is
+#   fixed, not re-run until green). `changes` checks that ci-ok waits for every job.
+# - No test is retried anywhere (README.md, "Rules"); retries are for the network only.
 #
 # Also runs monthly with everything (catches rot: dead downloads, runner image changes, and
 # ubuntu-latest as a canary), by hand (workflow_dispatch, with the Windows options below), and
 # from release.yml with `release: true` (fat LTO desktop builds signed with the updater key).
+# No merge_group: GitHub offers the merge queue to organization-owned repositories only, and this
+# one belongs to a user (https://github.blog/changelog/2023-07-12-pull-request-merge-queue-is-now-generally-available/).
 on:
   pull_request:
-  merge_group:
   push:
     branches: [main]
   schedule:
@@ -64,7 +67,7 @@ jobs:
   changes:
     name: changes
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     outputs:
       app: ${{ steps.changes.outputs.app }}
       site: ${{ steps.changes.outputs.site }}
@@ -82,6 +85,18 @@ jobs:
         run: |
           all=(); [ "$ALL" = true ] && all=(--all)
           .github/scripts/changes.sh "${all[@]}" | tee -a "$GITHUB_OUTPUT"
+      # ci-ok is the only required check, so a job it does not wait for would gate nothing.
+      - name: ci-ok waits for every job
+        shell: bash
+        run: |
+          file=.github/workflows/pipeline.yml
+          jobs="$(awk '/^jobs:/ { in_jobs = 1; next } in_jobs && /^  [A-Za-z0-9_-]+:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$file" | grep -vx ci-ok | sort)"
+          needs="$(sed -n '/^  ci-ok:/,/^  [A-Za-z0-9_-]*:/ s/^    needs: *\[\(.*\)\]/\1/p' "$file" | tr ',' '\n' | tr -d ' ' | sort)"
+          if [ -z "$jobs" ] || [ "$jobs" != "$needs" ]; then
+            echo "::error file=$file,title=ci-ok::ci-ok must need every other job (one line, needs: [...]). Missing: $(comm -23 <(echo "$jobs") <(echo "$needs") | xargs); unknown: $(comm -13 <(echo "$jobs") <(echo "$needs") | xargs)"
+            exit 1
+          fi
+          echo "ci-ok waits for: $(echo "$needs" | xargs)"
 
   quick:
     name: quick
@@ -184,22 +199,29 @@ jobs:
     uses: ./.github/workflows/_docker.yml
 
   # ---------------------------------------------------------------- the required check
+  # The verdict and nothing else: one shell step, no checkout, no action, no artifact. Anything
+  # more would make the one required check depend on GitHub's services a second time (an artifact
+  # download that retries for minutes, a checkout during an Actions incident) and add to the
+  # little it does. Each stage's jobs write their own results to their summaries.
   ci-ok:
     name: ci-ok
     needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site, docker]
     if: always()
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
-      # Red when a stage failed or was cancelled, when `changes` itself did not succeed, or when a
-      # stage the change needs did not run (skipped). Green with every stage skipped for a
-      # docs-only change.
+      # Red when a stage failed or was cancelled, when `changes` itself did not succeed, when a
+      # stage the change needs did not run (skipped), or when this is a re-run: GitHub shows only
+      # the latest attempt on the pull request, so a green re-run would hide the failure. A
+      # failure is fixed and pushed (or, after a GitHub outage, a new run is started), never
+      # re-run until green. Green with every stage skipped for a docs-only change.
       - name: Verdict
         env:
           NEEDS: ${{ toJSON(needs) }}
           APP: ${{ needs.changes.outputs.app }}
           SITE: ${{ needs.changes.outputs.site }}
           DOCKER: ${{ needs.changes.outputs.docker }}
+          ATTEMPT: ${{ github.run_attempt }}
         run: |
           app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node e2e windows'
           bad=0
@@ -229,54 +251,12 @@ jobs:
             echo "| $stage | $result | $mark |" >> "$GITHUB_STEP_SUMMARY"
             printf '%-22s %-10s %s\n' "$stage" "$result" "$verdict"
           done
+          if [ "$ATTEMPT" != 1 ]; then
+            bad=$((bad + 1))
+            echo "| (run attempt) | $ATTEMPT | ❌ a re-run cannot pass: fix the failure and push, or start a new run |" >> "$GITHUB_STEP_SUMMARY"
+            echo "run attempt $ATTEMPT: a re-run cannot pass"
+          fi
           if [ "$bad" -gt 0 ]; then
             echo "::error title=ci-ok::$bad stage(s) failed, were cancelled or did not run (see the table above)"
             exit 1
           fi
-
-      # The Windows suites' table (scripts/test/windows/summarize.mjs), after failed suites too.
-      # A suite that stopped before writing its result file gets a line instead of a silent gap.
-      # Reporting only: these steps come after the verdict and cannot change it; a problem here is
-      # a warning on this job, not a failed check. (A full checkout: summarize.mjs imports shared
-      # helpers from scripts/test/lib.)
-      - name: Windows suites summary (checkout)
-        if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Windows suites summary (results)
-        if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
-        continue-on-error: true
-        uses: ./.github/actions/fetch-artifact
-        with:
-          pattern: win-*
-          path: results
-      - name: Windows suites summary
-        if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
-        continue-on-error: true
-        env:
-          RUNNERS: ${{ inputs.windows-runners || '["windows-latest"]' }}
-          SUITES: ${{ inputs.windows-suites || '["installer","app","quality","direct","obs"]' }}
-        run: |
-          mkdir -p results
-          node scripts/test/windows/summarize.mjs results ||
-            echo "::warning title=Windows summary::summarize.mjs failed (exit $?); the verdict above does not depend on it"
-          missing=()
-          for suite in $(jq -r '.[]' <<<"$SUITES"); do
-            for os in $(jq -r '.[]' <<<"$RUNNERS"); do
-              [ -f "results/win-$suite-$os/results-$suite-$os.json" ] || missing+=("- ⚠️ **$suite** on $os: no results (the suite failed or stopped before writing them; see its job log)")
-            done
-          done
-          if [ "${#missing[@]}" -gt 0 ]; then
-            printf '\n### Suites without results\n\n%s\n' "$(printf '%s\n' "${missing[@]}")" | tee -a results/summary.md >> "$GITHUB_STEP_SUMMARY"
-            printf '%s\n' "${missing[@]}"
-          fi
-      - name: Windows suites summary (upload)
-        if: ${{ !cancelled() && needs.windows.result != 'skipped' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: windows-e2e-summary
-          path: results/summary.md
-          if-no-files-found: ignore

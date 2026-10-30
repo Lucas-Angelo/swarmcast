@@ -33,7 +33,7 @@ jobs:
     # After a Release run: only when it published (it fails before publishing otherwise).
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       # Only to push the `stats` data branch (the job never pushes anything else).
       contents: write

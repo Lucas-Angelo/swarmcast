@@ -63,73 +63,71 @@ SwarmCast uses **trunk-based GitHub Flow**:
   is dropped, and the branch is deleted. A branch may have as many commits as it likes. Titles follow
   [CONTRIBUTING.md](../CONTRIBUTING.md#pull-request-titles); a release pull request is titled
   `SwarmCast vX.Y.Z`.
-- **Releases are tags on `main`** (section 4). There is no `develop` branch and no branch per release.
+- **Stable releases are tags on `main`** (section 4); a beta is a tag on the head of its minor's release
+  pull request branch, `release/X.Y.Z`, which is merged only with the stable version. There is no
+  `develop` branch.
 - **`release/X.Y` maintenance branches** are made only when a stable fix cannot ship from `main`
-  (section 4, "Hotfixes"). The `release/` prefix is kept for them. The orphan `stats` branch is data, not
-  code (section 6).
+  (section 4, "Hotfixes"). They share the `release/` prefix with the short-lived release pull request
+  branches (`release/X.Y.Z`, three numbers). The orphan `stats` branch is data, not code (section 6).
 
-**Protection.** Two rulesets, in **Settings → Rules → Rulesets** (or with
-`gh api -X POST repos/Lucas-Angelo/swarmcast/rulesets --input <file>.json`).
-
-`main` and the maintenance lines:
+**Protection.** One ruleset, in **Settings → Rules → Rulesets** (or with
+`gh api -X POST repos/Lucas-Angelo/swarmcast/rulesets --input <file>.json`). This is the live ruleset
+(read with `gh api repos/Lucas-Angelo/swarmcast/rulesets`, 2026-10-30):
 
 ```json
 {
-  "name": "main and release lines",
+  "name": "main: nothing red lands",
   "target": "branch",
   "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH", "refs/heads/release/*"], "exclude": [] } },
+  "conditions": { "ref_name": { "include": ["~DEFAULT_BRANCH"], "exclude": [] } },
   "bypass_actors": [],
   "rules": [
     { "type": "deletion" },
     { "type": "non_fast_forward" },
-    { "type": "required_linear_history" },
     { "type": "pull_request", "parameters": {
         "required_approving_review_count": 0,
         "dismiss_stale_reviews_on_push": false,
         "require_code_owner_review": false,
         "require_last_push_approval": false,
-        "required_review_thread_resolution": true,
+        "require_extra_approval_for_unattributed_changes": true,
+        "required_review_thread_resolution": false,
+        "required_reviewers": [],
         "allowed_merge_methods": ["squash"] } },
     { "type": "required_status_checks", "parameters": {
-        "strict_required_status_checks_policy": false,
-        "do_not_enforce_on_create": true,
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
         "required_status_checks": [ { "context": "ci-ok", "integration_id": 15368 } ] } }
   ]
 }
 ```
 
 - **0 approvals:** there is one maintainer, and agents work with the maintainer's account, so a required
-  approval would only block every merge. Open review threads must be resolved before merging.
+  approval would only block every merge. The ruleset does not require resolved review threads; resolve
+  them anyway before merging ([CONTRIBUTING.md](../CONTRIBUTING.md#branches-and-pull-requests)).
 - **Required check `ci-ok`:** one check that sums up every CI job of a pull request and always reports,
   also when a docs-only change skips the app suites. GitHub only offers a check in the picker after it
   has run once. `15368` is the GitHub Actions app; the picker shows the source of each check.
-- **"Up to date" is off:** a merge queue is not available on a user-owned repository, and requiring
-  up-to-date branches would mean a rebase and a full multi-OS rerun for every parallel pull request. CI on
-  `main` after the merge catches the rare clash.
+- **"Up to date" is on** (`strict_required_status_checks_policy`): a pull request merges only when it
+  contains the latest `main` and `ci-ok` passed on that head. Bring a branch up to date by merging `main`
+  into it (the **Update branch** button), never by rebasing or force-pushing what is already pushed. Every
+  update runs the pipeline again, so parallel pull requests merge one after another.
 - **No bypass.** In an emergency, edit the ruleset for a moment; the change shows in the audit log.
-- `do_not_enforce_on_create` lets you create `release/X.Y` from a tag.
+- **Only `main` is covered** (`~DEFAULT_BRANCH`). The `release/X.Y.Z` and `release/X.Y` branches are not
+  protected by a ruleset: never force-push or delete one while it is in use.
 
-Release tags:
-
-```json
-{
-  "name": "release tags",
-  "target": "tag",
-  "enforcement": "active",
-  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
-  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ],
-  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" }, { "type": "non_fast_forward" } ]
-}
-```
-
-Only the admin role (`actor_id` 5; check it in the bypass picker) can create, move or delete `v*` tags,
-so a stray `git push --tags` or `--force` cannot change a release tag.
+**Release tags are not protected by a ruleset** (none exists): anyone with write access could create,
+move or delete a `v*` tag, so only the maintainer tags releases. Once a release is published, release
+immutability (section 1) keeps its tag from being moved or deleted; a tag whose release was not
+published yet can still be moved (section 4, "If the release workflow fails").
 
 **CI.** One workflow, `pipeline.yml`, runs automatically on every pull request and push to `main`
 (standard runners are free on a public repository), again on the 1st of every month with everything (to
 catch dead third-party downloads or runner image changes), and by hand from **Actions → Pipeline → Run
-workflow**; the **Re-run** button repeats a run. A newer push to a pull request cancels its older run;
+workflow**; the **Re-run** button repeats a run, but never use it to turn a failed run green: a failure
+is a bug, fixed at its cause (network steps already retry by themselves,
+[.github/workflows/README.md](../.github/workflows/README.md#rules)), and `ci-ok` fails on any re-run
+(a run attempt after the first), so a re-run cannot turn the required check green either. A newer push to a pull request
+cancels its older run;
 runs on `main` and tags are never cancelled. Its stages, how it builds once and tests the same bytes
 everywhere, and what each change runs are in [.github/workflows/README.md](../.github/workflows/README.md).
 
@@ -168,26 +166,35 @@ The desktop app installs an update only when its signature matches the public ke
 (`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`). The release workflow refuses to
 start without these two secrets, because a release without signatures could never reach installed apps.
 
-**They live in the `release` environment**, not in the repository secrets:
+**Where they are today (checked 2026-10-30): repository secrets.** The `release` environment exists, but
+it holds no secrets and has no deployment rule. The workflows ask for the key only in release jobs (they
+name `environment: release` and read the secrets only when `release` is true), but a repository secret
+reaches every workflow run started from a branch of this repository, pull requests from such branches
+included: a workflow changed on a branch **can** read it. Pull requests from forks cannot.
+
+**The intended setup** (the maintainer's decision; the workflows already work with it, nothing in them
+changes):
 
 - **Settings → Environments → `release`**: "Deployment branches and tags" is **Selected branches and
   tags**, with one **tag** rule `v*` and no branch rule. No required reviewer and no wait timer. The two
-  secrets above are **environment secrets** of `release`.
-- GitHub gives environment secrets only to a job that names the environment (`environment: release`),
-  and only after the environment's rules pass. So only release jobs started by a `v*` tag can read the
-  key. Pull request runs, including ones from branches of this repository that edit a workflow, cannot.
-  (Repository secrets, by contrast, reach every same-repository pull request.)
+  secrets above become **environment secrets** of `release`, and the repository copies are deleted.
+- GitHub then gives the secrets only to a job that names the environment (`environment: release`), and
+  only after the environment's rules pass, so only release jobs started by a `v*` tag can read the key.
 - In a reusable workflow, the job inside the called workflow is the one that must declare
   `environment: release`; the caller still passes the secrets down.
-- The tag rule pairs with the tag ruleset (section 2): only the admin can create `v*` tags.
+- The tag rule is only as strong as the tags: with no tag ruleset (section 2), anyone with write access
+  can push a `v*` tag.
 
 Key care:
 
 - **Where it lives:** the key pair was made with
   `npx tauri signer generate -w ~/.tauri/swarmcast-updater.key`. The private key is that file, its
-  password is in `~/.tauri/swarmcast-updater.password` on the maintainer's computer (local builds with
-  `node scripts/build/desktop.mjs` read both), and a copy of each is in the two secrets above. Only the
-  public key is in the repository. Never commit the private key or paste it anywhere else.
+  password is in `~/.tauri/swarmcast-updater.password` on the maintainer's computer, and a copy of each
+  is in the two secrets above. A local build signs with them only when asked:
+  `node scripts/build/desktop.mjs --release-key ~/.tauri/swarmcast-updater.key` (it reads the
+  `.password` file next to it); without that flag or `TAURI_SIGNING_PRIVATE_KEY`, `desktop.mjs` builds
+  without updater signatures, so a test build is never signed with the release key. Only the public key
+  is in the repository. Never commit the private key or paste it anywhere else.
 - **Back it up** now, outside this computer: for example both files in a password manager, plus an
   encrypted offline copy. GitHub secrets cannot be read back, so they are not a backup.
 - **If it is lost or leaked:** a new key pair means a new public key in `tauri.conf.json`, and every
@@ -211,8 +218,9 @@ patch bumps (`0.2.2`) for fixes.
 
 **Pre-releases** (the opt-in beta channel, since 0.3.0): `X.Y.Z-beta.N`, and optionally `X.Y.Z-rc.N`
 for a final frozen build. Always put a dot before the number (`beta.2`, not `beta2`), so `beta.11` sorts
-after `beta.2`. No alpha: the release workflow refuses any other pre-release identifier. They are tags on
-`main` like any release, and are published as a **GitHub pre-release** that is never **Latest**, so
+after `beta.2`. No alpha: the release workflow refuses any other pre-release identifier. A beta is tagged
+on the head of its minor's release pull request branch (`release/X.Y.Z`, merged into `main` only with the
+stable version; see "Steps"), not on `main`, and is published as a **GitHub pre-release** that is never **Latest**, so
 `/releases/latest` and its `latest.json` (stable apps, the start scripts and the site's download button)
 never return them. Desktop apps with **Get beta versions** on read the beta feed
 `https://lucas-angelo.github.io/swarmcast/updates/beta.json`, which the website build copies from the
@@ -304,7 +312,7 @@ Then the stable version: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (
 than every beta), and stable apps from the stable feed.
 
 **If the release workflow fails** before publishing, fix the problem on `main` (a normal pull request),
-then move the tag (the admin bypass of the tag ruleset allows it):
+then move the tag (no ruleset protects tags, and an unpublished release does not lock its tag):
 `git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`, tag the fixed commit and push it again. Once
 a release is **published**, never re-use its version: ship `X.Y.Z+1` instead.
 

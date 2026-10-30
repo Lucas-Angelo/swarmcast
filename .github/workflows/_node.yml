@@ -7,6 +7,9 @@ name: node
 # When they changed (input scripts): the start and uninstall scripts against a fake release on
 # 127.0.0.1 (scripts/test/run.sh; run.ps1 on Windows PowerShell 5.1). They need only Node.js and
 # run here rather than in the clean-machine jobs, which are on the pipeline's critical path.
+# Vitest writes its own job summary; cargo test and the script tests go through
+# .github/scripts/test-summary.mjs. Test steps have their own time limit (2 to 7 times their
+# slowest run), so a hung one fails and the steps that upload its results still run.
 on:
   workflow_call:
     inputs:
@@ -32,7 +35,7 @@ jobs:
         # moves to 26.04 from 2026-10-19). The monthly run adds ubuntu-latest as a canary.
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest","macos-latest"]' || '["ubuntu-24.04","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash
@@ -53,16 +56,20 @@ jobs:
       # values pinned in scripts/build/versions.json (the integration tests run them). Before the
       # unit tests, so a unit failure does not leave the integration tests without them.
       - run: npm run fetch-bins
+        timeout-minutes: 5
 
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
       - name: Unit tests (macOS, Windows)
         if: runner.os != 'Linux'
+        timeout-minutes: 5
         run: |
           npm ci --prefix site --no-audit --no-fund
           npm test
       - name: Upload the unit test results
         if: ${{ !cancelled() && runner.os != 'Linux' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: vitest-unit-${{ matrix.os }}
           path: test-results/vitest-unit.json
@@ -71,6 +78,7 @@ jobs:
 
       # Lifecycle tests that rely on POSIX signals skip themselves on Windows.
       - name: Integration tests
+        timeout-minutes: 5
         if: ${{ !cancelled() }}
         run: npm run test:integration
       # Kept for every run that was not cancelled (green ones too): per-test results and timings,
@@ -78,6 +86,8 @@ jobs:
       - name: Upload the integration test results and logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: integration-${{ matrix.os }}
           path: |
@@ -95,12 +105,14 @@ jobs:
           cache-key: checks
       - name: cargo clippy
         if: ${{ !cancelled() }}
+        timeout-minutes: 6
         working-directory: apps/desktop/src-tauri
         run: cargo clippy --locked --all-targets -- -D warnings
       - name: cargo test
         if: ${{ !cancelled() }}
+        timeout-minutes: 6
         working-directory: apps/desktop/src-tauri
-        run: cargo test --locked
+        run: cargo test --locked 2>&1 | tee "$RUNNER_TEMP/cargo-test.log"
       # Dependabot alert GHSA-wrw7-89jp-8q8g (glib 0.18, locked by Tauri 2's GTK 3 stack): not
       # exploitable while nothing compiled for Linux uses glib::VariantStrIter. This keeps it so.
       - name: glib advisory guard
@@ -115,14 +127,33 @@ jobs:
       # ---- start and uninstall scripts ----
       - name: Install scripts (macOS / Linux)
         if: ${{ !cancelled() && inputs.scripts && runner.os != 'Windows' }}
+        timeout-minutes: 6
         run: |
-          bash scripts/test/run.sh
-          bash scripts/test/uninstall.sh
+          {
+            bash scripts/test/run.sh
+            bash scripts/test/uninstall.sh
+          } 2>&1 | tee "$RUNNER_TEMP/install-scripts.log"
+      # From Git Bash (as soak.yml runs them), so the output also goes to the log for the summary.
       - name: Install scripts (Windows PowerShell 5.1)
         if: ${{ !cancelled() && inputs.scripts && runner.os == 'Windows' }}
-        shell: cmd
+        timeout-minutes: 6
         run: |
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\run.ps1 || exit /b 1
-          powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts\test\uninstall.ps1
-      - uses: ./.github/actions/setup/save
+          {
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\test\run.ps1'
+            powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\test\uninstall.ps1'
+          } 2>&1 | tee "$RUNNER_TEMP/install-scripts.log"
+      - name: Results in the job summary (cargo test, install scripts)
         if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          OS: ${{ matrix.os }}
+          SCRIPTS: ${{ inputs.scripts }}
+        run: |
+          node .github/scripts/test-summary.mjs --title "cargo test ($OS)" --cargo "$RUNNER_TEMP/cargo-test.log"
+          if [ "$SCRIPTS" = true ]; then
+            node .github/scripts/test-summary.mjs --title "Start and uninstall scripts ($OS)" --lines "$RUNNER_TEMP/install-scripts.log"
+          fi
+      - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
