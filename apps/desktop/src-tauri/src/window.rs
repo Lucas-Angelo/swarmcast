@@ -141,38 +141,78 @@ mod tests {
         Url::parse(s).unwrap()
     }
 
+    /// Tauri's own origins only: plain localhost or a look-alike host is not the splash.
     #[test]
     fn splash_is_local() {
-        assert!(is_local(&u("tauri://localhost/index.html")));
-        assert!(is_local(&u("http://tauri.localhost/index.html")));
-        assert!(!is_local(&u("http://localhost/")));
-        assert!(!is_local(&u("https://tauri.localhost.evil.com/")));
+        // Arrange
+        let urls = [
+            u("tauri://localhost/index.html"),
+            u("http://tauri.localhost/index.html"),
+            u("http://localhost/"),
+            u("https://tauri.localhost.evil.com/"),
+        ];
+
+        // Act
+        let local = urls.map(|url| is_local(&url));
+
+        // Assert
+        assert_eq!(local, [true, true, false, false]);
     }
 
     #[test]
     fn splash_url_is_the_local_index_page() {
+        // Act
         let url = splash_url();
+
+        // Assert
         assert!(is_local(&url), "{url}");
         assert_eq!(url.path(), "/index.html");
     }
 
+    /// The admin origin (scheme, host and port) and the splash stay; other http(s) and mailto
+    /// links open in the browser, other schemes are blocked. Before `ready` there is no admin
+    /// origin: the panel's address opens in the browser too.
     #[test]
     fn only_the_admin_origin_stays_in_the_window() {
+        // Arrange
         let admin = u("http://127.0.0.1:8081/auth/x").origin();
-        assert_eq!(navigation_policy(&u("http://127.0.0.1:8081/"), Some(&admin)), Nav::Allow);
-        assert_eq!(navigation_policy(&u("http://127.0.0.1:8080/watch"), Some(&admin)), Nav::External);
-        assert_eq!(navigation_policy(&u("http://localhost:8081/"), Some(&admin)), Nav::External);
-        assert_eq!(navigation_policy(&u("https://obsproject.com/forum/"), Some(&admin)), Nav::External);
-        assert_eq!(navigation_policy(&u("http://127.0.0.1:8081/"), None), Nav::External);
-        assert_eq!(navigation_policy(&u("tauri://localhost/index.html"), Some(&admin)), Nav::Allow);
-        assert_eq!(navigation_policy(&u("mailto:a@b.c"), Some(&admin)), Nav::External);
-        assert_eq!(navigation_policy(&u("file:///etc/passwd"), Some(&admin)), Nav::Block);
-        assert_eq!(navigation_policy(&u("javascript:alert(1)"), Some(&admin)), Nav::Block);
+        let cases = [
+            ("http://127.0.0.1:8081/", Nav::Allow),
+            ("http://127.0.0.1:8080/watch", Nav::External),
+            ("http://localhost:8081/", Nav::External),
+            ("https://obsproject.com/forum/", Nav::External),
+            ("tauri://localhost/index.html", Nav::Allow),
+            ("mailto:a@b.c", Nav::External),
+            ("file:///etc/passwd", Nav::Block),
+            ("javascript:alert(1)", Nav::Block),
+        ];
+
+        // Act
+        let decided: Vec<(&str, Nav)> = cases.iter().map(|(url, _)| (*url, navigation_policy(&u(url), Some(&admin)))).collect();
+        let before_ready = navigation_policy(&u("http://127.0.0.1:8081/"), None);
+
+        // Assert
+        assert_eq!(decided, cases.into_iter().collect::<Vec<_>>());
+        assert_eq!(before_ready, Nav::External);
     }
 
     #[test]
     fn webview2_args_keep_wry_defaults() {
-        assert_eq!(webview2_args("pt-BR"), "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --lang=pt-BR");
-        assert_eq!(webview2_args("pt-BR --evil"), "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --lang=pt-BR--evil");
+        // Act
+        let args = webview2_args("pt-BR");
+
+        // Assert
+        assert_eq!(args, "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --lang=pt-BR");
+    }
+
+    /// The locale comes from the OS or SWARMCAST_LOCALE: anything but letters, digits and "-" is
+    /// dropped, so it cannot add a browser argument of its own.
+    #[test]
+    fn a_locale_cannot_add_webview2_args() {
+        // Act
+        let args = webview2_args("pt-BR --evil");
+
+        // Assert
+        assert_eq!(args, "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --lang=pt-BR--evil");
     }
 }

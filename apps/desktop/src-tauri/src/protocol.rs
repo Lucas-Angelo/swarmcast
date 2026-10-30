@@ -170,90 +170,153 @@ pub fn encode(msg: &ShellMessage) -> String {
 mod tests {
     use super::*;
 
+    /// Server log lines (pino JSON), a prefix with a typo and an empty line are copied to the log.
     #[test]
     fn ordinary_lines_are_logs() {
-        assert_eq!(parse_line("{\"level\":30,\"msg\":\"hello\"}"), Line::Log);
-        assert_eq!(parse_line("@@swarmcas {}"), Line::Log);
-        assert_eq!(parse_line(""), Line::Log);
+        // Arrange
+        let lines = ["{\"level\":30,\"msg\":\"hello\"}", "@@swarmcas {}", ""];
+
+        // Act
+        let parsed = lines.map(parse_line);
+
+        // Assert
+        assert_eq!(parsed, [Line::Log, Line::Log, Line::Log]);
     }
 
     #[test]
     fn parses_ready() {
+        // Arrange
         let line = r#"@@swarmcast {"type":"ready","adminUrl":"http://127.0.0.1:8081/auth/abc","version":"0.2.0"}"#;
+
+        // Act
+        let parsed = parse_line(line);
+
+        // Assert
         assert_eq!(
-            parse_line(line),
+            parsed,
             Line::Message(ServerMessage::Ready { admin_url: "http://127.0.0.1:8081/auth/abc".into(), version: "0.2.0".into() })
         );
     }
 
+    /// A newer server may add fields: they are ignored, not an invalid message.
     #[test]
-    fn parses_state_with_defaults_and_unknown_fields() {
+    fn parses_a_state_and_ignores_unknown_fields() {
+        // Arrange
         let line = r#"@@swarmcast {"type":"state","state":"live","tooltip":"x","canStart":false,"canStop":true,"phase":"waiting-obs","viewers":4,"extra":1}"#;
-        let Line::Message(ServerMessage::State(s)) = parse_line(line) else { panic!("not a state") };
+
+        // Act
+        let parsed = parse_line(line);
+
+        // Assert
+        let Line::Message(ServerMessage::State(s)) = &parsed else { panic!("not a state: {parsed:?}") };
         assert_eq!(s.state, IconState::Live);
         assert_eq!(s.phase, Phase::WaitingObs);
         assert_eq!(s.viewers, 4);
         assert!(s.can_stop && !s.can_start);
-        let Line::Message(ServerMessage::State(s)) = parse_line(r#"@@swarmcast {"type":"state"}"#) else { panic!() };
-        assert_eq!(s, LiveState::default());
     }
 
     #[test]
-    fn parses_fatal_and_update_requests() {
-        assert_eq!(
-            parse_line(r#"@@swarmcast {"type":"fatal","code":"ports-in-use","message":"busy"}"#),
-            Line::Message(ServerMessage::Fatal { code: "ports-in-use".into(), message: "busy".into() })
-        );
-        assert_eq!(parse_line(r#"@@swarmcast {"type":"update-check"}"#), Line::Message(ServerMessage::UpdateCheck));
-        assert_eq!(parse_line("@@swarmcast {\"type\":\"update-install\"}\r"), Line::Message(ServerMessage::UpdateInstall));
+    fn a_bare_state_gets_the_defaults() {
+        // Act
+        let parsed = parse_line(r#"@@swarmcast {"type":"state"}"#);
+
+        // Assert
+        assert_eq!(parsed, Line::Message(ServerMessage::State(LiveState::default())));
     }
 
+    #[test]
+    fn parses_fatal() {
+        // Act
+        let parsed = parse_line(r#"@@swarmcast {"type":"fatal","code":"ports-in-use","message":"busy"}"#);
+
+        // Assert
+        assert_eq!(parsed, Line::Message(ServerMessage::Fatal { code: "ports-in-use".into(), message: "busy".into() }));
+    }
+
+    /// The `\r` is a CRLF line end (a Windows server's stdout): the message still parses.
+    #[test]
+    fn parses_update_requests_with_or_without_a_crlf() {
+        // Act
+        let check = parse_line(r#"@@swarmcast {"type":"update-check"}"#);
+        let install = parse_line("@@swarmcast {\"type\":\"update-install\"}\r");
+
+        // Assert
+        assert_eq!(check, Line::Message(ServerMessage::UpdateCheck));
+        assert_eq!(install, Line::Message(ServerMessage::UpdateInstall));
+    }
+
+    /// `null` or no channel is "automatic"; a channel this shell does not know is invalid.
     #[test]
     fn parses_update_channel() {
+        // Arrange
         let channel = |line: &str| match parse_line(line) {
             Line::Message(ServerMessage::UpdateChannel { channel }) => Some(channel),
             _ => None,
         };
-        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":"beta"}"#), Some(Some(Channel::Beta)));
-        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":"stable"}"#), Some(Some(Channel::Stable)));
-        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel","channel":null}"#), Some(None));
-        assert_eq!(channel(r#"@@swarmcast {"type":"update-channel"}"#), Some(None));
-        assert!(matches!(parse_line(r#"@@swarmcast {"type":"update-channel","channel":"nightly"}"#), Line::Invalid(_)));
+
+        // Act
+        let beta = channel(r#"@@swarmcast {"type":"update-channel","channel":"beta"}"#);
+        let stable = channel(r#"@@swarmcast {"type":"update-channel","channel":"stable"}"#);
+        let null = channel(r#"@@swarmcast {"type":"update-channel","channel":null}"#);
+        let missing = channel(r#"@@swarmcast {"type":"update-channel"}"#);
+        let unknown = parse_line(r#"@@swarmcast {"type":"update-channel","channel":"nightly"}"#);
+
+        // Assert
+        assert_eq!([beta, stable, null, missing], [Some(Some(Channel::Beta)), Some(Some(Channel::Stable)), Some(None), Some(None)]);
+        assert!(matches!(unknown, Line::Invalid(_)), "{unknown:?}");
     }
 
     #[test]
     fn export_logs_round_trip() {
-        assert_eq!(encode(&ShellMessage::ExportLogs), "{\"type\":\"export-logs\"}\n");
+        // Act
+        let request = encode(&ShellMessage::ExportLogs);
+        let done = parse_line(r#"@@swarmcast {"type":"export-logs","ok":true,"path":"/home/a/Downloads/SwarmCast-logs.zip"}"#);
+        let failed = parse_line(r#"@@swarmcast {"type":"export-logs","ok":false,"error":"disk full"}"#);
+
+        // Assert
+        assert_eq!(request, "{\"type\":\"export-logs\"}\n");
         assert_eq!(
-            parse_line(r#"@@swarmcast {"type":"export-logs","ok":true,"path":"/home/a/Downloads/SwarmCast-logs.zip"}"#),
+            done,
             Line::Message(ServerMessage::ExportLogs { ok: true, path: Some("/home/a/Downloads/SwarmCast-logs.zip".into()), error: None })
         );
-        assert_eq!(
-            parse_line(r#"@@swarmcast {"type":"export-logs","ok":false,"error":"disk full"}"#),
-            Line::Message(ServerMessage::ExportLogs { ok: false, path: None, error: Some("disk full".into()) })
-        );
+        assert_eq!(failed, Line::Message(ServerMessage::ExportLogs { ok: false, path: None, error: Some("disk full".into()) }));
     }
 
+    /// An unknown type, broken JSON, and a `ready` without its required adminUrl.
     #[test]
     fn rejects_unknown_or_broken_messages() {
-        assert!(matches!(parse_line(r#"@@swarmcast {"type":"nope"}"#), Line::Invalid(_)));
-        assert!(matches!(parse_line("@@swarmcast {"), Line::Invalid(_)));
-        assert!(matches!(parse_line(r#"@@swarmcast {"type":"ready"}"#), Line::Invalid(_)));
+        // Arrange
+        let lines = [r#"@@swarmcast {"type":"nope"}"#, "@@swarmcast {", r#"@@swarmcast {"type":"ready"}"#];
+
+        // Act
+        let parsed = lines.map(parse_line);
+
+        // Assert
+        assert!(parsed.iter().all(|p| matches!(p, Line::Invalid(_))), "{parsed:?}");
     }
 
+    /// One JSON object per stdin line; optional update fields are left out, not sent as null.
     #[test]
     fn encodes_shell_messages() {
-        assert_eq!(encode(&ShellMessage::Quit), "{\"type\":\"quit\"}\n");
-        assert_eq!(encode(&ShellMessage::Click { id: ClickId::Start }), "{\"type\":\"click\",\"id\":\"start\"}\n");
-        let update = ShellMessage::Update(UpdateInfo {
+        // Arrange
+        let downloading = ShellMessage::Update(UpdateInfo {
             status: UpdateStatus::Downloading,
             current: "0.2.0".into(),
             version: Some("0.3.0".into()),
             progress: Some(0.5),
             ..Default::default()
         });
+
+        // Act
+        let quit = encode(&ShellMessage::Quit);
+        let click = encode(&ShellMessage::Click { id: ClickId::Start });
+        let update = encode(&downloading);
+
+        // Assert
+        assert_eq!(quit, "{\"type\":\"quit\"}\n");
+        assert_eq!(click, "{\"type\":\"click\",\"id\":\"start\"}\n");
         assert_eq!(
-            encode(&update),
+            update,
             "{\"type\":\"update\",\"status\":\"downloading\",\"current\":\"0.2.0\",\"version\":\"0.3.0\",\"progress\":0.5}\n"
         );
     }
