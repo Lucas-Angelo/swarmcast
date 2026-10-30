@@ -272,12 +272,15 @@ async function onPath(name: string, env: NodeJS.ProcessEnv): Promise<string | nu
   return null;
 }
 
-/** check_obs / Find-Obs. */
-export async function findObs(platform: Platform, o: { env?: NodeJS.ProcessEnv; home?: string; exec?: Exec } = {}): Promise<string | null> {
+/**
+ * check_obs / Find-Obs. `applications`: the macOS system Applications folder (default
+ * /Applications; tests pass a folder of their own).
+ */
+export async function findObs(platform: Platform, o: { env?: NodeJS.ProcessEnv; home?: string; exec?: Exec; applications?: string } = {}): Promise<string | null> {
   const env = o.env ?? process.env;
   const run = o.exec ?? execWith();
   if (platform === 'darwin') {
-    for (const p of ['/Applications/OBS.app', path.join(o.home ?? os.homedir(), 'Applications', 'OBS.app')]) {
+    for (const p of [path.join(o.applications ?? '/Applications', 'OBS.app'), path.join(o.home ?? os.homedir(), 'Applications', 'OBS.app')]) {
       if (fs.existsSync(p)) return p;
     }
     return null;

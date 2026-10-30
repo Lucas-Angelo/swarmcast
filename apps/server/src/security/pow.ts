@@ -64,6 +64,11 @@ export const powPayloadSchema = z.object({
 });
 export type PowPayload = z.infer<typeof powPayloadSchema>;
 
+/** A secret counter drawn uniformly from lo..hi, both ends included. */
+export function randomCounter(lo: number, hi: number): number {
+  return crypto.randomInt(lo, hi + 1);
+}
+
 export class JoinPow {
   private hmacSecret = '';
   private keySecret = '';
@@ -73,6 +78,8 @@ export class JoinPow {
   constructor(
     private readonly now: () => number = Date.now,
     private readonly maxUsed = 50_000,
+    /** Picks the secret counter of a new challenge within its level's range (tests pin it: the same work every run). */
+    private readonly pickCounter: (lo: number, hi: number) => number = randomCounter,
   ) {
     this.reset();
   }
@@ -89,7 +96,7 @@ export class JoinPow {
     return createChallenge({
       algorithm: 'SHA-256',
       cost: 1,
-      counter: crypto.randomInt(lo, hi + 1),
+      counter: this.pickCounter(lo, hi),
       // Signed with the challenge: the level is what the "verified" cookie records; max lets the
       // page show progress (the real counter stays secret).
       data: { level, max: hi },

@@ -283,7 +283,11 @@ export class SecurityShield implements PublicSecurity {
     this.d.changed();
   }
 
-  private setAutoPow(level: PowLevel): void {
+  /**
+   * The automatic browser-check level (on top of the streamer's own setting): the lever the
+   * reaction policy pulls on an attack. Tests set it directly instead of staging an attack.
+   */
+  setAutoPow(level: PowLevel): void {
     if (level === this.autoPow) return;
     const before = this.powLevel();
     this.autoPow = level;

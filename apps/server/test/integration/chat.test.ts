@@ -1,226 +1,271 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import WebSocket from 'ws';
-import type { ChatItem, ServerMessage } from '@swarmcast/shared';
-import { defaultConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
-import type { DirectMode } from '../../src/direct/direct.js';
-import { makeController } from '../unit/live-helpers.js';
 import { Jar, joinAs } from './helpers.js';
+import { goLive, openControl, startViewerLive, stopViewerLives, upgradeStatus, viewerLive, type ControlClient } from './viewers.js';
 
-// The chat on the real public server: real joins, real /control sockets, real batches.
+// The chat on the real public server: real joins, real /control sockets, real batches (a
+// LiveController in this process; MediaMTX is stood in, see viewers.ts).
+//
+// Latencies are measured from the action to the message's arrival at the viewer (each wait is
+// on the message itself): a chat message reaches the other viewers within CHAT_LATENCY_MS, a
+// kick reaches its target within KICK_LATENCY_MS even while the chat is flooded.
 
-const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
-const lives: LiveController[] = [];
-const sockets: WebSocket[] = [];
-afterEach(async () => {
-  for (const ws of sockets.splice(0)) ws.terminate();
-  for (const l of lives.splice(0)) await l.stop().catch(() => {});
-});
+/** A chat message reaches the others within this: the 250 ms batch window plus delivery. */
+const CHAT_LATENCY_MS = 600;
+/** A kick reaches its target within this, flood or not (control messages are never batched). */
+const KICK_LATENCY_MS = 1000;
+/**
+ * Flood messages the target has received before the kick: the flood runs through the server
+ * (the three flooders are accepted, batched and delivered), not just from the test.
+ */
+const FLOOD_UNDER_WAY = 6;
 
-async function startLive(chat: Partial<ReturnType<typeof defaultConfig>['chat']> = {}) {
-  const config = defaultConfig();
-  config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
-  config.security.requireBrowserCheck = false;
-  config.chat = { ...config.chat, ...chat };
-  const { live } = makeController(direct, { config });
-  lives.push(live);
-  await live.start();
-  const base = `http://127.0.0.1:${live.publicPort}`;
-  return { live, base, link: live.liveLink! };
+/** Nicknames refused while "ana" and "cope" watch, and why. */
+const NICKNAME_REFUSALS = [
+  ['Ana', 'nickname.taken'],
+  // All Cyrillic, so one script, but it looks like "cope".
+  ['\u{441}\u{43E}\u{440}\u{435}', 'nickname.taken'],
+  ['\u{430}na', 'nickname.mixed'],
+  ['Streamer', 'nickname.reserved'],
+  ['Ana😀', 'nickname.chars'],
+  ['A', 'nickname.tooShort'],
+  ['\u{3164}\u{3164}', 'nickname.chars'],
+] as const;
+
+afterEach(stopViewerLives);
+
+/** What the viewer page sends for message `n`. */
+const say = (n: number, text: string) => ({ t: 'chat.send', n, text });
+
+/** A viewer on a fresh join: the socket and its hello. */
+async function viewer(base: string, link: string, nickname: string, jar?: Jar): Promise<ControlClient> {
+  return openControl(base, await joinAs(base, link, nickname, jar));
 }
 
-type Viewer = { ws: WebSocket; messages: ServerMessage[]; closed: Promise<number>; send: (m: object) => void; items: () => ChatItem[] };
-
-async function openControl(base: string, jar: Jar, query = ''): Promise<Viewer> {
-  const ws = new WebSocket(`${base.replace('http', 'ws')}/control${query}`, { origin: base, headers: { cookie: jar.header() } });
-  sockets.push(ws);
-  const messages: ServerMessage[] = [];
-  ws.on('message', (d) => {
-    const text = String(d);
-    if (!text.startsWith('~')) messages.push(JSON.parse(text) as ServerMessage);
-  });
-  const closed = new Promise<number>((resolve) => ws.once('close', (code) => resolve(code)));
-  await new Promise((resolve, reject) => {
-    ws.once('open', resolve);
-    ws.once('error', reject);
-  });
-  await vi.waitFor(() => expect(messages.some((m) => m.t === 'hello')).toBe(true));
-  return {
-    ws,
-    messages,
-    closed,
-    // The viewer always serialises `t` first, as the server's cheap pre-parse checks expect.
-    send: (m) => ws.send(JSON.stringify(m)),
-    items: () => messages.flatMap((m) => (m.t === 'chat.batch' ? m.items : m.t === 'chat.reset' ? m.items : [])),
-  };
+/**
+ * A round trip on the viewer's socket (a message and its ack): whatever the server sent the
+ * viewer before it answered has arrived by then. Needs slow mode not to hold this message back.
+ */
+async function roundTrip(v: ControlClient, n: number): Promise<void> {
+  v.send(say(n, `round trip ${n}`));
+  await v.next('chat.ack', (m) => m.n === n);
 }
 
-const hello = (v: Viewer) => v.messages.find((m) => m.t === 'hello') as Extract<ServerMessage, { t: 'hello' }>;
-const lastOf = <T extends ServerMessage['t']>(v: Viewer, t: T) => v.messages.filter((m) => m.t === t).at(-1) as Extract<ServerMessage, { t: T }> | undefined;
+/** Every flooder sends a message every `everyMs`, until the returned function is called. */
+function flood(flooders: ControlClient[], everyMs = 50): () => void {
+  let n = 0;
+  const timer = setInterval(() => {
+    for (const f of flooders) f.send(say(++n, `flood ${n}`));
+  }, everyMs);
+  return () => clearInterval(timer);
+}
+
+/**
+ * 60 chat lines (seq 1 to 60): the streamer's anti-mistake limit lets 5 of their 60 messages
+ * through, so 55 system lines posted through the hub follow them.
+ */
+function fillHistory(live: LiveController): void {
+  for (let i = 0; i < 60; i++) live.chat.sendAsStreamer({ text: `m${i}` });
+  for (let i = 0; i < 55; i++) live.chat.system('chat.sys.protectOff');
+}
 
 describe('chat over /control', () => {
-  it('two viewers: a message from A reaches B within 600 ms with seq, author and colour; A gets an ack', async () => {
-    const { base, link } = await startLive();
-    const a = await openControl(base, await joinAs(base, link, 'Ana'));
-    const b = await openControl(base, await joinAs(base, link, 'Bia'));
-    expect(hello(b).chat).toMatchObject({ v: 1, lastSeq: 0, settings: { enabled: true, slowS: 2, maxGraphemes: 200 } });
-    const t0 = Date.now();
-    a.send({ t: 'chat.send', n: 1, text: 'boa noite chat 😀' });
-    await vi.waitFor(() => expect(b.items().some((i) => i.k === 'm')).toBe(true), { timeout: 2000, interval: 10 });
-    expect(Date.now() - t0).toBeLessThanOrEqual(600);
-    expect(lastOf(a, 'chat.ack')).toEqual({ t: 'chat.ack', n: 1, s: 1 });
+  it(`two viewers: a message from A reaches B within ${CHAT_LATENCY_MS} ms with seq, author and colour; A gets an ack`, async () => {
+    // Arrange
+    const { base, link } = await startViewerLive();
+    const a = await viewer(base, link, 'Ana');
+    const b = await viewer(base, link, 'Bia');
+    // Act
+    const sentAt = Date.now();
+    a.send(say(1, 'boa noite chat 😀'));
+    await b.until(() => b.items().some((i) => i.k === 'm'), 'the message at B');
+    const latencyMs = Date.now() - sentAt;
+    const ack = await a.next('chat.ack');
+    // Assert
+    expect(b.hello.chat).toMatchObject({ v: 1, lastSeq: 0, settings: { enabled: true, slowS: 2, maxGraphemes: 200 } });
+    expect(latencyMs).toBeLessThanOrEqual(CHAT_LATENCY_MS);
+    expect(ack).toEqual({ t: 'chat.ack', n: 1, s: 1 });
     const msg = b.items().find((i) => i.k === 'm')!;
-    const au = b.items().find((i) => i.k === 'u');
     expect(msg).toMatchObject({ s: 1, x: 'boa noite chat 😀' });
-    expect(au).toMatchObject({ au: { a: msg.k === 'm' ? msg.a : '', n: 'Ana', r: 'viewer', c: expect.stringMatching(/^#[0-9a-f]{6}$/) } });
+    expect(b.items().find((i) => i.k === 'u')).toMatchObject({ au: { a: msg.k === 'm' ? msg.a : '', n: 'Ana', r: 'viewer', c: expect.stringMatching(/^#[0-9a-f]{6}$/) } });
   });
 
-  it('slow mode answers with chat.err.slow and retryMs; the socket stays open', async () => {
-    const { base, link } = await startLive();
-    const a = await openControl(base, await joinAs(base, link, 'Ana'));
-    a.send({ t: 'chat.send', n: 1, text: 'one' });
-    a.send({ t: 'chat.send', n: 2, text: 'two' });
-    await vi.waitFor(() => expect(lastOf(a, 'chat.reject')).toMatchObject({ n: 2, code: 'chat.err.slow', retryMs: expect.any(Number) }));
+  it('slow mode answers with chat.err.slow and retryMs; the socket stays open and keeps answering', async () => {
+    // Arrange
+    const { base, link } = await startViewerLive();
+    const a = await viewer(base, link, 'Ana');
+    // Act
+    a.send(say(1, 'one'));
+    a.send(say(2, 'two'));
+    const slow = await a.next('chat.reject', (m) => m.n === 2);
+    a.send(say(3, 'three'));
+    const again = await a.next('chat.reject', (m) => m.n === 3);
+    // Assert
+    expect(slow).toMatchObject({ n: 2, code: 'chat.err.slow', retryMs: expect.any(Number) });
+    expect(again).toMatchObject({ code: 'chat.err.slow' });
     expect(a.ws.readyState).toBe(WebSocket.OPEN);
   });
 
   it('a script sending 21 chat frames in 10 s loses the socket; a legitimate burst never does', async () => {
-    const { base, link } = await startLive({ slowModeS: 0, duplicateWindowS: 0 });
-    const ok = await openControl(base, await joinAs(base, link, 'Ana'));
-    for (let i = 1; i <= 5; i++) ok.send({ t: 'chat.send', n: i, text: `m${i}` });
-    await vi.waitFor(() => expect(ok.messages.filter((m) => m.t === 'chat.ack')).toHaveLength(5));
-    const bot = await openControl(base, await joinAs(base, link, 'Bot'));
-    for (let i = 1; i <= 21; i++) bot.send({ t: 'chat.send', n: i, text: `spam ${i}` });
-    expect(await bot.closed).toBe(1006);
+    // Arrange
+    const { base, link } = await startViewerLive({ chat: { slowModeS: 0, duplicateWindowS: 0 } });
+    const ok = await viewer(base, link, 'Ana');
+    const bot = await viewer(base, link, 'Bot');
+    // Act
+    for (let i = 1; i <= 5; i++) ok.send(say(i, `m${i}`));
+    await ok.until(() => ok.all('chat.ack').length === 5, 'five acks');
+    for (let i = 1; i <= 21; i++) bot.send(say(i, `spam ${i}`));
+    const botClosedWith = await bot.closed;
+    // Assert
+    expect(botClosedWith).toBe(1006);
     expect(ok.ws.readyState).toBe(WebSocket.OPEN);
   });
 
   it('mute for 1 min survives leaving and rejoining from the same device; unmute applies at once', async () => {
-    const { live, base, link } = await startLive({ slowModeS: 0 });
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0 } });
     const jar = await joinAs(base, link, 'Ana');
-    let a = await openControl(base, jar);
-    const sid = hello(a).sessionId;
-    expect(live.chat.mute(sid, 1)).toBe(true);
-    await vi.waitFor(() => expect(lastOf(a, 'chat.you')?.you.mutedUntil).toEqual(expect.any(Number)));
-    a.ws.close();
-    await joinAs(base, link, 'Ana', jar);
-    a = await openControl(base, jar);
-    expect(hello(a).chat?.you.mutedUntil).toEqual(expect.any(Number));
-    a.send({ t: 'chat.send', n: 1, text: 'hi' });
-    await vi.waitFor(() => expect(lastOf(a, 'chat.reject')).toMatchObject({ code: 'chat.err.muted' }));
-    live.chat.unmute(hello(a).sessionId);
-    a.send({ t: 'chat.send', n: 2, text: 'free' });
-    await vi.waitFor(() => expect(lastOf(a, 'chat.ack')).toMatchObject({ n: 2 }));
+    const first = await openControl(base, jar);
+    // Act
+    const muted = live.chat.mute(first.hello.sessionId, 1);
+    await first.next('chat.you', (m) => typeof m.you.mutedUntil === 'number');
+    first.ws.close();
+    await first.closed;
+    const back = await viewer(base, link, 'Ana', jar);
+    back.send(say(1, 'hi'));
+    const refused = await back.next('chat.reject');
+    // Assert
+    expect(muted).toBe(true);
+    expect(back.hello.chat?.you.mutedUntil).toEqual(expect.any(Number));
+    expect(refused).toMatchObject({ code: 'chat.err.muted' });
+    // Act
+    live.chat.unmute(back.hello.sessionId);
+    back.send(say(2, 'free'));
+    const ack = await back.next('chat.ack');
+    // Assert
+    expect(ack).toMatchObject({ n: 2 });
   });
 
   it('nicknames: look-alikes of a live viewer are taken (with a suggestion); reserved names are refused', async () => {
-    const { base, link } = await startLive();
-    await openControl(base, await joinAs(base, link, 'ana'));
-    await openControl(base, await joinAs(base, link, 'cope'));
-    for (const [nick, code] of [
-      ['Ana', 'nickname.taken'],
-      // All Cyrillic, so one script, but it looks like "cope".
-      ['\u{441}\u{43E}\u{440}\u{435}', 'nickname.taken'],
-      ['\u{430}na', 'nickname.mixed'],
-      ['Streamer', 'nickname.reserved'],
-      ['Ana😀', 'nickname.chars'],
-      ['A', 'nickname.tooShort'],
-      ['\u{3164}\u{3164}', 'nickname.chars'],
-    ] as const) {
+    // Arrange
+    const { base, link } = await startViewerLive();
+    await viewer(base, link, 'ana');
+    await viewer(base, link, 'cope');
+    // Act
+    const answers = [];
+    for (const [nickname] of NICKNAME_REFUSALS) {
       const jar = new Jar(base);
       await jar.fetch(link);
-      const res = await jar.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: nick }) });
-      expect(res.status, nick).toBe(400);
-      const body = (await res.json()) as { code: string; params?: { suggestion?: string } };
-      expect(body.code, nick).toBe(code);
-      if (code === 'nickname.taken') expect(body.params?.suggestion).toBe(`${nick}2`);
+      const res = await jar.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname }) });
+      answers.push({ nickname, status: res.status, ...((await res.json()) as object) });
     }
+    // Assert
+    expect(answers).toMatchObject(
+      NICKNAME_REFUSALS.map(([nickname, code]) => ({ nickname, status: 400, code, ...(code === 'nickname.taken' ? { params: { suggestion: `${nickname}2` } } : {}) })),
+    );
   });
 
-  it('a settings change reaches every socket once (coalesced)', async () => {
-    const { live, base, link } = await startLive();
-    const a = await openControl(base, await joinAs(base, link, 'Ana'));
-    const b = await openControl(base, await joinAs(base, link, 'Bia'));
+  it('two settings changes in a row reach every socket once, with the last values (coalesced)', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const viewers = [await viewer(base, link, 'Ana'), await viewer(base, link, 'Bia')];
+    // Act
     live.updateChatSettings({ ...live.chatSettings(), slowModeS: 10 });
     live.updateChatSettings({ ...live.chatSettings(), slowModeS: 30 });
-    await vi.waitFor(() => expect(lastOf(b, 'chat.settings')?.settings.slowS).toBe(30), { timeout: 3000 });
-    await new Promise((r) => setTimeout(r, 1200));
-    for (const v of [a, b]) expect(v.messages.filter((m) => m.t === 'chat.settings').length).toBeLessThanOrEqual(2);
-    expect(() => live.updateChatSettings({ ...live.chatSettings(), streamerName: 'Str\u{202E}eamer' })).toThrow();
+    for (const v of viewers) await v.next('chat.settings', (m) => m.settings.slowS === 30);
+    for (const v of viewers) await roundTrip(v, 1);
+    // Assert
+    expect(viewers.map((v) => v.all('chat.settings').map((m) => m.settings.slowS))).toEqual([[30], [30]]);
+  });
+
+  it('refuses a streamer chat name with a bidi override', () => {
+    // Arrange
+    const live = viewerLive();
+    // Act
+    const save = () => live.updateChatSettings({ ...live.chatSettings(), streamerName: 'Str\u{202E}eamer' });
+    // Assert
+    expect(save).toThrow();
   });
 
   it('chat.resume returns the missing items; history on join is 50 and 0 under lockdown', async () => {
-    const { live, base, link } = await startLive({ slowModeS: 0, duplicateWindowS: 0 });
-    for (let i = 0; i < 60; i++) live.chat.sendAsStreamer({ text: `m${i}` });
-    // (the anti-mistake limit lets 5 through; post the rest as system lines through the hub)
-    for (let i = 0; i < 55; i++) live.chat.system('chat.sys.protectOff');
-    const a = await openControl(base, await joinAs(base, link, 'Ana'));
-    expect(hello(a).chat?.items).toHaveLength(50);
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0, duplicateWindowS: 0 } });
+    fillHistory(live);
+    const a = await viewer(base, link, 'Ana');
+    // Act
     a.send({ t: 'chat.resume', after: 55 });
-    await vi.waitFor(() => expect(a.messages.some((m) => m.t === 'chat.batch' && m.items.some((i) => i.k === 'sys' && i.s === 56))).toBe(true));
+    const resumed = await a.next('chat.batch');
     live.chat.setProtect('lockdown');
-    const b = await openControl(base, await joinAs(base, link, 'Bia'));
-    expect(hello(b).chat?.items).toHaveLength(0);
-    expect(hello(b).chat?.settings.protect).toBe('lockdown');
+    const b = await viewer(base, link, 'Bia');
+    // Assert
+    expect(a.hello.chat?.items).toHaveLength(50);
+    expect(resumed.items.flatMap((i) => ('s' in i && typeof i.s === 'number' ? [i.s] : []))).toEqual([56, 57, 58, 59, 60]);
+    expect(b.hello.chat?.items).toHaveLength(0);
+    expect(b.hello.chat?.settings.protect).toBe('lockdown');
   });
 
-  it('a kick during a chat flood reaches the target within 1 s', async () => {
-    const { live, base, link } = await startLive({ slowModeS: 0, duplicateWindowS: 0 });
-    const target = await openControl(base, await joinAs(base, link, 'Tia'));
-    const flooders = await Promise.all(['Fa', 'Fb', 'Fc'].map(async (n) => openControl(base, await joinAs(base, link, n))));
-    let n = 0;
-    const flood = setInterval(() => {
-      for (const f of flooders) f.send({ t: 'chat.send', n: ++n, text: `flood ${n}` });
-    }, 50);
-    await new Promise((r) => setTimeout(r, 300));
-    const t0 = Date.now();
-    live.kick(hello(target).sessionId);
-    await vi.waitFor(() => expect(target.messages.some((m) => m.t === 'kicked')).toBe(true), { timeout: 2000, interval: 5 });
-    clearInterval(flood);
-    expect(Date.now() - t0).toBeLessThanOrEqual(1000);
+  it(`a kick during a chat flood reaches the target within ${KICK_LATENCY_MS} ms`, async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0, duplicateWindowS: 0 } });
+    const target = await viewer(base, link, 'Tia');
+    const flooders = await Promise.all(['Fa', 'Fb', 'Fc'].map((n) => viewer(base, link, n)));
+    onTestFinished(flood(flooders));
+    await target.until(() => target.items().filter((i) => i.k === 'm').length >= FLOOD_UNDER_WAY, 'the flood at the target');
+    // Act
+    const kickedAt = Date.now();
+    live.kick(target.hello.sessionId);
+    await target.next('kicked');
+    const latencyMs = Date.now() - kickedAt;
+    // Assert
+    expect(latencyMs).toBeLessThanOrEqual(KICK_LATENCY_MS);
   });
 
   it('a reconnect with ?chatAfter gets only the delta, and does not count as an upgrade for the shield', async () => {
-    const { live, base, link } = await startLive({ slowModeS: 0, duplicateWindowS: 0 });
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0, duplicateWindowS: 0 } });
     const jar = await joinAs(base, link, 'Ana');
     const upgrade = vi.spyOn(live.shield, 'upgrade');
-    let a = await openControl(base, jar);
-    expect(upgrade).toHaveBeenCalledTimes(1);
+    const first = await openControl(base, jar);
+    const afterFirstConnect = upgrade.mock.calls.length;
     for (let i = 1; i <= 3; i++) {
-      a.send({ t: 'chat.send', n: i, text: `m${i}` });
-      await vi.waitFor(() => expect(lastOf(a, 'chat.ack')).toMatchObject({ n: i }));
+      first.send(say(i, `m${i}`));
+      await first.next('chat.ack', (m) => m.n === i);
     }
-    a.ws.close();
-    await a.closed;
+    first.ws.close();
+    await first.closed;
     live.chat.sendAsStreamer({ text: 'while you were away' });
-    a = await openControl(base, jar, '?chatAfter=3');
-    const chat = hello(a).chat!;
+    // Act
+    const back = await openControl(base, jar, { query: '?chatAfter=3' });
+    const afterReconnect = upgrade.mock.calls.length;
+    const stranger = await upgradeStatus(`${base.replace('http', 'ws')}/control`, { origin: base });
+    const afterStranger = upgrade.mock.calls.length;
+    // Assert
+    const chat = back.hello.chat!;
     expect(chat.delta).toBe(true);
     expect(chat.items.map((i) => (i.k === 'm' ? i.x : i.k))).toEqual(['while you were away']);
     expect(chat.lastSeq).toBe(4);
-    // The reconnect of a known session is not an attack signal.
-    expect(upgrade).toHaveBeenCalledTimes(1);
-    // A refused upgrade (no session) still counts.
-    const stranger = new WebSocket(`${base.replace('http', 'ws')}/control`, { origin: base });
-    sockets.push(stranger);
-    await new Promise((r) => stranger.once('error', r));
-    expect(upgrade).toHaveBeenCalledTimes(2);
+    expect(stranger).toBe(401);
+    expect({ afterFirstConnect, afterReconnect, afterStranger }).toEqual({ afterFirstConnect: 1, afterReconnect: 1, afterStranger: 2 });
   });
 
   it('Stop wipes the chat; the next live starts at seq 1', async () => {
-    const { live, base, link } = await startLive();
-    const a = await openControl(base, await joinAs(base, link, 'Ana'));
-    a.send({ t: 'chat.send', n: 1, text: 'hi' });
-    await vi.waitFor(() => expect(lastOf(a, 'chat.ack')).toBeDefined());
-    live.chat.mute(hello(a).sessionId, null);
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const a = await viewer(base, link, 'Ana');
+    a.send(say(1, 'hi'));
+    await a.next('chat.ack');
+    live.chat.mute(a.hello.sessionId, null);
+    // Act
     await live.stop();
-    expect(live.chat.lastSeq).toBe(0);
-    expect(live.chat.moderation.muteCount).toBe(0);
-    await live.start();
-    const base2 = `http://127.0.0.1:${live.publicPort}`;
-    const b = await openControl(base2, await joinAs(base2, live.liveLink!, 'Ana'));
-    expect(hello(b).chat?.lastSeq).toBe(0);
-    b.send({ t: 'chat.send', n: 1, text: 'again' });
-    await vi.waitFor(() => expect(lastOf(b, 'chat.ack')).toMatchObject({ s: 1 }));
+    const wiped = { lastSeq: live.chat.lastSeq, mutes: live.chat.moderation.muteCount };
+    const next = await goLive(live);
+    const b = await viewer(next.base, next.link, 'Ana');
+    b.send(say(1, 'again'));
+    const ack = await b.next('chat.ack');
+    // Assert
+    expect(wiped).toEqual({ lastSeq: 0, mutes: 0 });
+    expect(b.hello.chat?.lastSeq).toBe(0);
+    expect(ack).toMatchObject({ s: 1 });
   });
 });
