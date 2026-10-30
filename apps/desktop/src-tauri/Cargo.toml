@@ -49,5 +49,11 @@ insecure-updates = []
 codegen-units = 1
 lto = true
 opt-level = "s"
-panic = "abort"
+# Must stay "unwind" (src/main.rs refuses to build otherwise). WebKit throws an Objective-C
+# exception ("This task has already been stopped") when a tauri:// or ipc:// response reaches a
+# request the page already dropped (it navigated away, e.g. splash -> panel). Tauri answers those
+# from a tokio thread, so that race cannot be avoided; wry catches the exception with
+# objc2::exception::catch, which cannot work with panic = "abort": the app died instead
+# (NSInternalInconsistencyException, macOS). Rust panics still end the app: see the panic hook.
+panic = "unwind"
 strip = true
