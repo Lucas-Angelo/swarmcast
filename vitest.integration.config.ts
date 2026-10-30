@@ -13,6 +13,8 @@ const shared = {
   // Every test file gets its own ports (scripts/test/lib/ports.mjs: one block per worker) and
   // its own processes, data folder and HOME, so files can run side by side.
   isolate: true,
+  // A test passes on its first run or it has a bug to fix: never re-run a failed test.
+  retry: 0,
 } as const;
 
 export default defineConfig({

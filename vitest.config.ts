@@ -9,5 +9,7 @@ export default defineConfig({
     reporters: process.env.GITHUB_ACTIONS ? ['default', 'github-actions', 'json'] : ['default', 'json'],
     outputFile: { json: 'test-results/vitest-unit.json' },
     testTimeout: 15_000,
+    // A test passes on its first run or it has a bug to fix: never re-run a failed test.
+    retry: 0,
   },
 });
