@@ -85,6 +85,24 @@ describe('the join page markup', () => {
     expect(el.button.disabled).toBe(false);
   });
 
+  it('keeps Watch disabled while the page is not shown yet, even with the form wired', async () => {
+    // Arrange
+    const el = joinPage();
+    let show: () => void = () => {};
+    const shown = new Promise<void>((resolve) => (show = resolve));
+    startJoinForm(el, { fetch: server({ 'GET /api/join/challenge': [noCheck] }).fetch, solve: solver().solve, go: () => {}, shown });
+    await Promise.resolve();
+    const beforeShown = el.button.disabled;
+
+    // Act
+    show();
+    await shown;
+
+    // Assert
+    expect(beforeShown).toBe(true);
+    expect(el.button.disabled).toBe(false);
+  });
+
   it('puts the browser-check line after Watch, so showing or hiding it never moves the button', () => {
     // Act
     const el = joinPage();

@@ -43,7 +43,8 @@ body:not(.watch) .site-head {
 /* ---- branding: the join page shows once its branding is known ---- */
 /*
  * The join page (it links the streamer's theme) stays invisible and untouchable until
- * join-brand.ts marks its branding known (body.brand-known, after at most JOIN_BRAND_WAIT_MS):
+ * join-brand.ts marks its branding known (body.brand-known, after at most JOIN_BRAND_WAIT_MS; "Watch"
+ * stays disabled until then too, join.ts pageShown):
  * the streamer's taller header, title and tagline must not move the form under a press
  * (branding/loader.ts startJoinBranding). Should the script never run, it shows after 3 s anyway.
  */

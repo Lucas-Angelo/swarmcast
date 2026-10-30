@@ -27,6 +27,13 @@ export interface JoinFormDeps {
   go(url: string): void;
   /** Milliseconds, for how long the check line has been up (performance.now). */
   now?: () => number;
+  /**
+   * Settles once the page is visible and takes clicks: the join page stays invisible and
+   * untouchable until its branding is known (style.css, branding/loader.ts). "Watch" stays
+   * disabled until then, so it never looks clickable to anyone or anything while a click on it
+   * would land nowhere. Without it, "Watch" is enabled as soon as the form handles it.
+   */
+  shown?: Promise<void>;
 }
 
 export interface JoinForm {
@@ -159,7 +166,12 @@ export function startJoinForm(el: JoinFormElements, d: JoinFormDeps): JoinForm {
     }
   });
 
-  // Wired: "Watch" now joins (before this, a click would have submitted the form natively).
-  el.button.disabled = false;
+  // Wired: "Watch" now joins (before this, a click would have submitted the form natively), once
+  // the page itself takes clicks.
+  const enable = (): void => {
+    el.button.disabled = false;
+  };
+  if (d.shown) void d.shown.then(enable);
+  else enable();
   return { ready };
 }
