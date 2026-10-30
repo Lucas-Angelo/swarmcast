@@ -47,6 +47,17 @@ public static class ScCon {
   [DllImport("user32.dll")] static extern bool SetCursorPos(int x, int y);
   [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT p);
   [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint n, INPUT[] inputs, int size);
+  [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int index);
+
+  // How long the left button stays down in the click: part of a person's click, not a wait.
+  const int ClickHoldMs = 120;
+  // Polls cond every 20 ms until it holds or ms passed; true when it held.
+  static bool WaitFor(Func<bool> cond, int ms) {
+    DateTime end = DateTime.UtcNow.AddMilliseconds(ms);
+    while (!cond()) { if (DateTime.UtcNow >= end) return false; Thread.Sleep(20); }
+    return true;
+  }
+  static bool IsTopmost(IntPtr hWnd) { return (GetWindowLong(hWnd, -20) & 0x8) != 0; } // GWL_EXSTYLE, WS_EX_TOPMOST
   [DllImport("user32.dll")] static extern IntPtr OpenInputDesktop(uint flags, bool inherit, uint access);
   [DllImport("user32.dll")] static extern bool CloseDesktop(IntPtr h);
 
@@ -104,7 +115,7 @@ public static class ScCon {
   [DllImport("user32.dll")] static extern int GetSystemMetrics(int i);
   // Moves hWnd so its whole title bar is on the primary screen, its X 20 px from the right edge.
   // A window wider than the screen (Windows Terminal opens 1044 px wide on the runners' 1024 px
-  // screen) is narrowed so its X fits too.
+  // screen) is narrowed so its X fits too. Returns once the window is there (or after 2 s).
   public static string MoveIntoView(IntPtr hWnd) {
     RECT r; GetWindowRect(hWnd, out r);
     int screen = GetSystemMetrics(0), width = r.Right - r.Left, height = r.Bottom - r.Top;
@@ -112,7 +123,8 @@ public static class ScCon {
     if (width > screen - 40) width = screen - 40; else flags |= 0x0001; // SWP_NOSIZE
     int x = Math.Max(0, screen - width - 20), y = 60;
     SetWindowPos(hWnd, IntPtr.Zero, x, y, width, height, flags);
-    return String.Format("{0},{1} ({2} px wide)", x, y, width);
+    bool there = WaitFor(delegate { RECT now; GetWindowRect(hWnd, out now); return now.Left == x && now.Top == y; }, 2000);
+    return String.Format("{0},{1} ({2} px wide{3})", x, y, width, there ? "" : ", not there after 2 s");
   }
   static bool OffScreen(RECT r) { return r.Left < 0 || r.Top < 0 || r.Right > GetSystemMetrics(0) || r.Top + 60 > GetSystemMetrics(1); }
 
@@ -126,11 +138,11 @@ public static class ScCon {
     IntPtr desk = OpenInputDesktop(0, false, 0x0100);
     if (desk == IntPtr.Zero) return "no input desktop (locked or non-interactive session)";
     CloseDesktop(desk);
-    if (IsIconic(hWnd)) { ShowWindow(hWnd, 9); Thread.Sleep(300); }
+    if (IsIconic(hWnd)) { ShowWindow(hWnd, 9); WaitFor(delegate { return !IsIconic(hWnd); }, 2000); }
     // On top of every other window, so the click lands on it (no foreground rights needed).
     IntPtr TOPMOST = new IntPtr(-1), NOTOPMOST = new IntPtr(-2);
     SetWindowPos(hWnd, TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0040);
-    Thread.Sleep(300);
+    WaitFor(delegate { return IsTopmost(hWnd); }, 2000);
     // Find the close button by asking the window itself (WM_NCHITTEST = HTCLOSE) along the top
     // edge of its frame, so the click is on the X whatever the theme, DPI or caption size.
     RECT w; GetWindowRect(hWnd, out w);
@@ -138,7 +150,6 @@ public static class ScCon {
     if (atX < 0 && OffScreen(w)) {
       // Its title bar must be on the screen to be clicked.
       moved = "moved to " + MoveIntoView(hWnd) + "; ";
-      Thread.Sleep(300);
       GetWindowRect(hWnd, out w);
     }
     POINT p; string where;
@@ -164,14 +175,15 @@ public static class ScCon {
     IntPtr under = GetAncestor(WindowFromPoint(p), 2); // GA_ROOT
     if (!Ours(hWnd, WindowFromPoint(p))) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + ": covered by window " + Describe(under) + ", not clicked"; }
     SetCursorPos(p.X, p.Y);
-    Thread.Sleep(150);
+    POINT target = p;
+    WaitFor(delegate { POINT c; GetCursorPos(out c); return c.X == target.X && c.Y == target.Y; }, 1000);
     POINT now; GetCursorPos(out now);
     if (now.X != p.X || now.Y != p.Y) { SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002); return where + String.Format(": the cursor stopped at {0},{1} (point off the screen?), not clicked", now.X, now.Y); }
     INPUT[] down = new INPUT[1]; down[0].type = 0; down[0].u.mi.dwFlags = 0x0002; // MOUSEEVENTF_LEFTDOWN
     INPUT[] up = new INPUT[1]; up[0].type = 0; up[0].u.mi.dwFlags = 0x0004;       // MOUSEEVENTF_LEFTUP
     int size = Marshal.SizeOf(typeof(INPUT));
     uint a = SendInput(1, down, size);
-    Thread.Sleep(120);
+    Thread.Sleep(ClickHoldMs);
     uint b = SendInput(1, up, size);
     int err = Marshal.GetLastWin32Error();
     if (IsWindow(hWnd)) SetWindowPos(hWnd, NOTOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002);
@@ -204,6 +216,12 @@ function Get-UiaCloseButtonPoint([IntPtr]$Hwnd) {
     if ($best) { return @([int]($best.X + $best.Width / 2), [int]($best.Y + $best.Height / 2)) }
   } catch { }
   return $null
+}
+
+# The console event reached its programs once the target has stopped: up to `Ms`, the time the
+# harness gives a clean shutdown. Until then this helper stays attached (it ignores the event).
+function Wait-TargetExit([int]$Ms) {
+  try { return (Get-Process -Id $TargetPid -ErrorAction Stop).WaitForExit($Ms) } catch { return $true }
 }
 
 [void][ScCon]::FreeConsole()
@@ -254,7 +272,6 @@ switch ($Action) {
               # and try once more. A full-screen overlay (windows-11-arm has a 1024 x 768
               # PickerHost window) still covers it; then UI Automation closes it instead.
               $at = [ScCon]::MoveIntoView($target)
-              Start-Sleep -Milliseconds 300
               $note = "$note; moved to ${at}: $([ScCon]::Click($target))"
             }
           }
@@ -287,15 +304,15 @@ switch ($Action) {
   }
   'ctrlc' {
     $ok = [ScCon]::GenerateConsoleCtrlEvent(0, 0)
-    Start-Sleep -Milliseconds 500
+    $exited = Wait-TargetExit 30000
     [void][ScCon]::FreeConsole()
-    Write-Output ("console window 0x{0:x}: CTRL_C_EVENT sent={1}" -f $hwnd.ToInt64(), $ok)
+    Write-Output ("console window 0x{0:x}: CTRL_C_EVENT sent={1}; target exited={2}" -f $hwnd.ToInt64(), $ok, $exited)
   }
   'ctrlbreak' {
     $ok = [ScCon]::GenerateConsoleCtrlEvent(1, 0)
-    Start-Sleep -Milliseconds 500
+    $exited = Wait-TargetExit 30000
     [void][ScCon]::FreeConsole()
-    Write-Output ("console window 0x{0:x}: CTRL_BREAK_EVENT sent={1}" -f $hwnd.ToInt64(), $ok)
+    Write-Output ("console window 0x{0:x}: CTRL_BREAK_EVENT sent={1}; target exited={2}" -f $hwnd.ToInt64(), $ok, $exited)
   }
   'probe' {
     [void][ScCon]::FreeConsole()

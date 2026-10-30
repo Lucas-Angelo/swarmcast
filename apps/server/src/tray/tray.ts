@@ -13,8 +13,8 @@ import { exe } from '../core/paths.js';
  * The icon itself is drawn by `swarmcast-tray`, a tiny Go helper (apps/tray) shipped next to
  * MediaMTX and cloudflared in binDir. We talk to it with JSON lines over its stdin/stdout;
  * it exits by itself when its stdin closes, so it never outlives SwarmCast. If the helper is
- * missing or keeps failing (e.g. a Linux desktop without a tray host), SwarmCast just runs
- * with the browser panel only.
+ * missing, says the desktop cannot show a tray icon (exit code 3: no desktop session, or no
+ * D-Bus session bus on Linux) or keeps failing, SwarmCast just runs with the browser panel only.
  */
 export interface TrayHandle {
   update(): void;
@@ -91,6 +91,17 @@ export function decodeTrayEvent(line: string): TrayEvent | null {
 
 /** Crashes are not retried in a loop: one restart, then panel only. */
 const MAX_RESTARTS = 1;
+/**
+ * The helper's exit code when this desktop cannot show a tray icon (apps/tray session.go). Its
+ * reason is on its stderr; starting it again would only fail the same way.
+ */
+export const TRAY_EXIT_NO_TRAY = 3;
+
+/** After the helper exited by itself (`restarts` so far): start it again, or the panel only. Pure, unit-tested. */
+export function afterTrayExit(code: number | null | undefined, restarts: number): 'restart' | 'no-tray' | 'panel-only' {
+  if (code === TRAY_EXIT_NO_TRAY) return 'no-tray';
+  return restarts < MAX_RESTARTS ? 'restart' : 'panel-only';
+}
 const RESTART_DELAY_MS = 1000;
 /** After asking the helper to quit, kill it if it is still there after this long. */
 const QUIT_GRACE_MS = 1500;
@@ -126,7 +137,7 @@ class TrayHelper {
     if (pid) reaper?.register(pid);
 
     let gone = false;
-    const onGone = (reason: Record<string, unknown>): void => {
+    const onGone = (reason: { code?: number | null; signal?: NodeJS.Signals | null; err?: string }): void => {
       if (gone) return;
       gone = true;
       if (pid) reaper?.unregister(pid);
@@ -135,7 +146,10 @@ class TrayHelper {
         this.ready = false;
       }
       if (this.closed) return;
-      if (this.restarts < MAX_RESTARTS) {
+      const next = afterTrayExit(reason.code, this.restarts);
+      if (next === 'no-tray') {
+        log.info('no tray icon on this desktop, panel only');
+      } else if (next === 'restart') {
         this.restarts++;
         log.warn(reason, 'tray helper exited, restarting it once');
         this.restartTimer = setTimeout(() => {

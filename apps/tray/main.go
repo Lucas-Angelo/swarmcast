@@ -7,9 +7,9 @@
 //	stdout: {"type":"ready"}                                   once the icon is up
 //	        {"type":"click","id":"open"|"start"|"stop"|"quit"} on menu clicks
 //
-// It exits when stdin closes, so it never outlives SwarmCast.
+// It exits when stdin closes, so it never outlives SwarmCast. Where the desktop cannot show a
+// tray icon it says why on stderr and exits with code 3 before showing anything (session.go).
 package main
-
 
 import (
 	"bufio"
@@ -98,9 +98,9 @@ func main() {
 		quit()
 	}()
 
-	if runtime.GOOS == "linux" && os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" && os.Getenv("DISPLAY") == "" && os.Getenv("WAYLAND_DISPLAY") == "" {
-		fmt.Fprintln(os.Stderr, "no desktop session (no D-Bus/X11/Wayland): running without a tray icon")
-		os.Exit(3)
+	if why := noTray(runtime.GOOS, os.Getenv, connectSessionBus); why != "" {
+		fmt.Fprintf(os.Stderr, "%s: running without a tray icon\n", why)
+		os.Exit(exitNoTray)
 	}
 
 	hideFromDock()
@@ -116,13 +116,6 @@ func quit() {
 		go func() {
 			time.Sleep(3 * time.Second)
 			os.Exit(0)
-		}()
-		// On Linux without a usable D-Bus session, fyne's shutdown can panic on a nil
-		// connection; we are quitting anyway, so exit cleanly instead of crashing.
-		defer func() {
-			if r := recover(); r != nil {
-				os.Exit(0)
-			}
 		}()
 		systray.Quit()
 	})

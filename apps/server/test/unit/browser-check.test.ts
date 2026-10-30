@@ -3,6 +3,7 @@ import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
+import { CookieJar } from '../../../../scripts/test/lib/cookie-jar.mjs';
 import type { LiveController } from '../../src/core/live.js';
 import { inactiveDirect, startController } from './live-helpers.js';
 
@@ -21,33 +22,21 @@ afterEach(() => {
 });
 
 /**
- * One browser: its own cookies, for every address of `live` (cookies are not tied to a port, so a
- * new live on another port is still the same site to it). `setCookies` keeps every Set-Cookie line.
- * The jar keeps Secure cookies over plain HTTP too (a real browser would not), so a live with
- * Secure cookies can still be joined here.
+ * One browser: its own cookie jar (scripts/test/lib/cookie-jar.mjs) for every address of `live`.
+ * The jar keeps cookies by name, not per port, so a new live on another port is still the same
+ * site to it, and Secure ones over plain HTTP too (a real browser would not), so a live with
+ * Secure cookies can still be joined here. `jar.setCookies` keeps every Set-Cookie line.
  */
 class Browser {
-  cookies = new Map<string, string>();
-  setCookies: string[] = [];
+  readonly jar = new CookieJar();
   constructor(private readonly live: LiveController) {}
 
   private get base(): string {
     return `http://127.0.0.1:${this.live.publicPort}`;
   }
 
-  async fetch(p: string, init: RequestInit = {}): Promise<Response> {
-    const cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
-    const res = await fetch(this.base + p, { ...init, redirect: 'manual', headers: { ...(init.headers as Record<string, string>), cookie } });
-    for (const line of res.headers.getSetCookie()) {
-      this.setCookies.push(line);
-      const [pair] = line.split(';');
-      const eq = pair!.indexOf('=');
-      const k = pair!.slice(0, eq);
-      const v = pair!.slice(eq + 1);
-      if (/max-age=0|expires=thu, 01 jan 1970/i.test(line) || v === '') this.cookies.delete(k);
-      else this.cookies.set(k, v);
-    }
-    return res;
+  fetch(p: string, init: RequestInit = {}): Promise<Response> {
+    return this.jar.fetch(this.base + p, init);
   }
 
   /** Opens the live link of now (a 303 to the join page when the link is valid). */
@@ -100,7 +89,7 @@ describe('browser check: on by default, remembered per browser', () => {
     expect(required).toBe(true);
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as { code: string }).code).toBe('viewer.err.checkRequired');
-    expect(a.cookies.has(VERIFIED_COOKIE)).toBe(false);
+    expect(a.jar.has(VERIFIED_COOKIE)).toBe(false);
   });
 
   it('a solved check sets the "verified" cookie: BROWSER_CHECK_TTL_S long, HttpOnly, Lax, site-wide, level 1', async () => {
@@ -111,13 +100,13 @@ describe('browser check: on by default, remembered per browser', () => {
     const joined = await a.join('Ana');
     // Assert
     expect(joined).toMatchObject({ status: 200, solved: true });
-    const set = a.setCookies.find((c) => c.startsWith(`${VERIFIED_COOKIE}=`))!;
+    const set = a.jar.setCookies.find((c) => c.startsWith(`${VERIFIED_COOKIE}=`))!;
     expect(set).toMatch(new RegExp(`Max-Age=${BROWSER_CHECK_TTL_S}`));
     expect(set).toMatch(/HttpOnly/);
     expect(set).toMatch(/SameSite=Lax/);
     expect(set).toMatch(/Path=\//);
     expect(set).not.toMatch(/Secure/);
-    expect(a.cookies.get(VERIFIED_COOKIE)).toMatch(/^v1\.1\./);
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.1\./);
   });
 
   it('a second tab (same cookies) opening the same link skips the check', async () => {
@@ -158,7 +147,7 @@ describe('browser check: on by default, remembered per browser', () => {
     const b = new Browser(l);
     await b.open();
     // Act
-    b.cookies.set(VERIFIED_COOKIE, a.cookies.get(VERIFIED_COOKIE)!);
+    b.jar.set(VERIFIED_COOKIE, a.jar.get(VERIFIED_COOKIE)!);
     const required = await b.challengeRequired();
     const joined = await b.post('Bia');
     // Assert
@@ -195,7 +184,7 @@ describe('browser check: on by default, remembered per browser', () => {
     expect(required).toBe(true);
     expect(withLevel1Cookie.status).toBe(403);
     expect(solvedAgain).toMatchObject({ status: 200, solved: true });
-    expect(a.cookies.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
     // Act
     await a.open();
     const remembered = await a.join('Ana3');
@@ -213,7 +202,7 @@ describe('browser check: on by default, remembered per browser', () => {
     await a.open();
     const joined = await a.join('Ana4');
     // Assert
-    expect(a.cookies.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
     expect(joined).toMatchObject({ status: 200, solved: false });
   });
 
@@ -244,7 +233,7 @@ describe('browser check: on by default, remembered per browser', () => {
     // Assert
     expect(required).toBe(false);
     expect(joined).toMatchObject({ status: 200, solved: false });
-    expect(b.cookies.has(VERIFIED_COOKIE)).toBe(false);
+    expect(b.jar.has(VERIFIED_COOKIE)).toBe(false);
   });
 
   it('the cookie is Secure when the other cookies are', async () => {
@@ -255,7 +244,7 @@ describe('browser check: on by default, remembered per browser', () => {
     const joined = await a.join('Ana');
     // Assert
     expect(joined).toMatchObject({ status: 200, solved: true });
-    const set = a.setCookies.filter((c) => /^sc_(verified|device|session)=/.test(c));
+    const set = a.jar.setCookies.filter((c) => /^sc_(verified|device|session)=/.test(c));
     expect(set).toHaveLength(3);
     for (const c of set) expect(c).toMatch(/; Secure/);
   });
@@ -264,7 +253,7 @@ describe('browser check: on by default, remembered per browser', () => {
     // Arrange
     const a = await new Browser(await live()).verified('Ana');
     // Act
-    a.cookies.set(VERIFIED_COOKIE, a.cookies.get(VERIFIED_COOKIE)!.replace(/^v1\.1\./, 'v1.2.'));
+    a.jar.set(VERIFIED_COOKIE, a.jar.get(VERIFIED_COOKIE)!.replace(/^v1\.1\./, 'v1.2.'));
     await a.open();
     const required = await a.challengeRequired();
     const joined = await a.post('Ana2');

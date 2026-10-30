@@ -22,7 +22,8 @@
 //    the server is ready, while the window is still on the splash or opening the panel (that
 //    crashed the macOS shell: wry panicked in WebviewWindow::url()).
 //
-// The panel login URL comes from SWARMCAST_TEST_LOGIN_FILE (written by the server).
+// The panel login URL comes from SWARMCAST_TEST_LOGIN_FILE (written by the server). --junit FILE
+// also writes the steps as JUnit XML.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -30,6 +31,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debianVersion, isPrerelease } from '../../releases/semver.mjs';
+import { writeJunit } from '../lib/junit.mjs';
+import { poll } from '../lib/wait.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const args = process.argv.slice(2);
@@ -55,28 +58,17 @@ const autostartEntry = {
 }[OS];
 
 let failures = 0;
+const steps = [];
 function step(name, ok, detail = '') {
+  steps.push({ group: `desktop ${OS}`, name, status: ok ? 'pass' : 'fail', detail });
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ` (${detail})` : ''}`);
   if (!ok) {
     failures += 1;
     throw new Error(`${name} failed${detail ? `: ${detail}` : ''}`);
   }
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-async function until(fn, ms, what, every = 500) {
-  const end = Date.now() + ms;
-  let last;
-  while (Date.now() < end) {
-    try {
-      last = await fn();
-      if (last) return last;
-    } catch (err) {
-      last = err;
-    }
-    await sleep(every);
-  }
-  throw new Error(`timed out (${ms / 1000} s) waiting for ${what}${last instanceof Error ? `: ${last.message}` : ''}`);
-}
+/** `fn`'s first truthy value, polled every `every` ms (scripts/test/lib/wait.mjs poll: a throw means "not yet"). */
+const until = (fn, ms, what, every = 500) => poll(fn, { timeoutMs: ms, what, everyMs: every });
 function run(cmd, argv, o = {}) {
   console.log(`$ ${cmd} ${argv.join(' ')}`);
   const r = spawnSync(cmd, argv, { stdio: 'inherit', timeout: 300_000, ...o });
@@ -281,14 +273,25 @@ async function quitFromPanel(panel) {
 
 // ---------------------------------------------------------------- install / uninstall per OS
 
-/** `hdiutil detach`, retried: right after a mount, macOS services (XProtect, Spotlight) can keep
- * the volume busy for a few seconds ("Resource busy"). The last try forces it. */
+/** Pauses before the next `hdiutil detach` while the volume is busy; then it is forced. */
+const DETACH_BUSY_PAUSES_MS = [2000, 4000, 8000];
+
+/**
+ * `hdiutil detach`. Infra recovery, not a retry of SwarmCast: right after a mount, macOS
+ * services of the runner (XProtect, Spotlight) can keep the new volume busy for a few seconds
+ * ("Resource busy"). Only that is waited out (logged), then the detach is forced; any other
+ * failure fails at once.
+ */
 async function detach(mnt) {
-  for (const [i, wait] of [2000, 4000, 8000, 0].entries()) {
-    const force = wait === 0;
-    if (run('hdiutil', ['detach', ...(force ? ['-force'] : []), mnt], { allowFail: !force }) === 0) return;
-    console.log(`::warning title=hdiutil::detach of ${mnt} failed (try ${i + 1} of 4), retrying in ${wait / 1000} s`);
-    await sleep(wait);
+  for (let i = 0; ; i++) {
+    const force = i === DETACH_BUSY_PAUSES_MS.length;
+    console.log(`$ hdiutil detach ${force ? '-force ' : ''}${mnt}`);
+    const r = spawnSync('hdiutil', ['detach', ...(force ? ['-force'] : []), mnt], { encoding: 'utf8', timeout: 120_000 });
+    process.stdout.write(`${r.stdout ?? ''}${r.stderr ?? ''}`);
+    if (r.status === 0) return;
+    if (force || !/Resource busy/i.test(`${r.stdout}${r.stderr}`)) throw new Error(`hdiutil detach ${mnt} exited with ${r.status ?? r.signal}`);
+    console.log(`infra recovery: hdiutil detach of ${mnt}: the volume is still busy (try ${i + 1} of ${DETACH_BUSY_PAUSES_MS.length + 1}), next try in ${DETACH_BUSY_PAUSES_MS[i] / 1000} s`);
+    await new Promise((r) => setTimeout(r, DETACH_BUSY_PAUSES_MS[i]));
   }
 }
 
@@ -558,22 +561,44 @@ async function updateTest(dirA, dirB, port) {
 // SC_DESKTOP_SCREENSHOTS=<dir> (Windows only, artifacts for the website guide, no checks): runs
 // the installer with its normal pages (Enter on each), captures each page and the app window,
 // then removes everything again so the real test starts from a clean machine.
+// -Signature prints the texts of the window's controls instead (a new page has other texts).
 const WIN_SHOT_PS = String.raw`
-param([string]$Out, [int]$ProcId = 0, [string]$Keys = '')
+param([string]$Out = '', [int]$ProcId = 0, [string]$Keys = '', [switch]$Signature)
 Add-Type -AssemblyName System.Drawing, System.Windows.Forms
 Add-Type @"
-using System; using System.Runtime.InteropServices;
+using System; using System.Runtime.InteropServices; using System.Text; using System.Threading;
 public class ScWin {
   [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
   [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
   [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern bool UpdateWindow(IntPtr h);
   [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("dwmapi.dll")] public static extern int DwmFlush();
+  public delegate bool EnumProc(IntPtr h, IntPtr l);
+  [DllImport("user32.dll")] static extern bool EnumChildWindows(IntPtr h, EnumProc cb, IntPtr l);
+  [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr h, StringBuilder sb, int n);
+  // The texts of every control of the window, in order.
+  public static string Texts(IntPtr h) {
+    StringBuilder all = new StringBuilder();
+    EnumChildWindows(h, delegate (IntPtr c, IntPtr l) { StringBuilder sb = new StringBuilder(512); GetWindowText(c, sb, 512); all.Append(sb).Append('|'); return true; }, IntPtr.Zero);
+    return all.ToString();
+  }
+  // In front (or 2 s passed), repainted, and on the screen: the next composed frame is shown.
+  public static void Front(IntPtr h) {
+    SetForegroundWindow(h);
+    DateTime end = DateTime.UtcNow.AddSeconds(2);
+    while (GetForegroundWindow() != h && DateTime.UtcNow < end) Thread.Sleep(20);
+    UpdateWindow(h);
+    DwmFlush();
+  }
 }
 "@
 [ScWin]::SetProcessDPIAware() | Out-Null
 $h = [IntPtr]::Zero
 if ($ProcId -gt 0) { $p = Get-Process -Id $ProcId -ErrorAction SilentlyContinue; if ($p) { $h = $p.MainWindowHandle } }
-if ($h -ne [IntPtr]::Zero) { [ScWin]::SetForegroundWindow($h) | Out-Null; Start-Sleep -Milliseconds 400 }
+if ($Signature) { if ($h -ne [IntPtr]::Zero) { [ScWin]::Texts($h) }; exit 0 }
+if ($h -ne [IntPtr]::Zero) { [ScWin]::Front($h) }
 $b = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
 $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height
 $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Location, [System.Drawing.Point]::Empty, $b.Size)
@@ -593,30 +618,49 @@ async function windowsGuideShots(dir, out) {
   fs.writeFileSync(ps1, WIN_SHOT_PS);
   const shot = (name, pid = 0, keys = '') =>
     spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-Out', path.join(out, name), '-ProcId', String(pid), ...(keys ? ['-Keys', keys] : [])], { stdio: 'inherit', timeout: 60_000 });
+  /** The texts of the controls of `pid`'s window ('' while it has no window). */
+  const signature = (pid) => (spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', ps1, '-ProcId', String(pid), '-Signature'], { encoding: 'utf8', timeout: 60_000 }).stdout ?? '').trim();
   const pidOf = (name) => {
     const r = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Process ${name} -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1).Id`], { encoding: 'utf8' });
     return Number(r.stdout.trim()) || 0;
   };
-  const killAll = () => run('powershell.exe', ['-NoProfile', '-Command', 'Get-Process SwarmCast,swarmcast-server,mediamtx,cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force'], { allowFail: true });
+  const killAll = async () => {
+    run('powershell.exe', ['-NoProfile', '-Command', 'Get-Process SwarmCast,swarmcast-server,mediamtx,cloudflared -ErrorAction SilentlyContinue | Stop-Process -Force'], { allowFail: true });
+    await until(() => ours().length === 0, 30_000, 'no SwarmCast process').catch((err) => console.log(err.message));
+  };
+  const desktopLog = path.join(dataDir, 'logs', 'desktop.log');
+  const logLength = () => (fs.existsSync(desktopLog) ? fs.statSync(desktopLog).size : 0);
+  /** The app's window is there and its server is ready (desktop.log after byte `from`): its pid. */
+  const appShown = (from) =>
+    until(() => {
+      const pid = pidOf('SwarmCast');
+      return pid && fs.existsSync(desktopLog) && fs.readFileSync(desktopLog, 'utf8').slice(from).includes('ready, opening the panel') ? pid : 0;
+    }, 120_000, 'the app window with its panel').catch(() => pidOf('SwarmCast'));
   console.log('\n=== guide screenshots (Windows installer pages and the app window)');
+  let from = logLength();
   const setup = spawn(file(dir, /_x64-setup\.exe$/), [], { stdio: 'ignore' });
+  let page = '';
   for (let i = 1; i <= 10 && setup.exitCode === null; i++) {
-    await sleep(3000);
+    // The next page: other texts in the installer's window (or the installer is gone).
+    const now = await until(() => {
+      if (setup.exitCode !== null) return 'closed';
+      const sig = signature(setup.pid);
+      return sig && sig !== page ? sig : null;
+    }, 60_000, `installer page ${i}`).catch(() => 'closed');
+    if (now === 'closed') break;
+    page = now;
     shot(`installer-${String(i).padStart(2, '0')}`, setup.pid, '{ENTER}');
   }
   await until(() => setup.exitCode !== null, 120_000, 'the installer to close').catch(() => setup.kill());
   // The last page starts the app ("Run SwarmCast" is ticked by default).
-  await sleep(20_000);
-  shot('app-en', pidOf('SwarmCast'));
-  killAll();
-  await sleep(3000);
+  shot('app-en', await appShown(from));
+  await killAll();
   const exe = path.join(winInstallDir, 'SwarmCast.exe');
   if (fs.existsSync(exe)) {
-    const app = spawn(exe, [], { stdio: 'ignore', env: { ...process.env, SWARMCAST_LOCALE: 'pt-BR', SWARMCAST_NO_OPEN: '1' } });
-    await sleep(20_000);
-    shot('app-pt-BR', app.pid);
-    killAll();
-    await sleep(3000);
+    from = logLength();
+    spawn(exe, [], { stdio: 'ignore', env: { ...process.env, SWARMCAST_LOCALE: 'pt-BR', SWARMCAST_NO_OPEN: '1' } });
+    shot('app-pt-BR', await appShown(from));
+    await killAll();
     run(path.join(winInstallDir, 'uninstall.exe'), ['/S'], { allowFail: true });
     await until(() => !fs.existsSync(exe), 60_000, 'the uninstaller').catch(() => {});
   }
@@ -649,4 +693,8 @@ try {
     }
   }
   if (failures) console.log(`${failures} check(s) failed`);
+  if (opt('junit')) {
+    if (process.exitCode && !failures) steps.push({ group: `desktop ${OS}`, name: 'desktop test (outside a check)', status: 'fail', detail: 'failed before or between checks: see the output' });
+    writeJunit(path.resolve(opt('junit')), `desktop ${OS}-${os.arch()}`, steps);
+  }
 }

@@ -21,8 +21,9 @@ const JOIN_HTML = readFileSync(path.join(import.meta.dirname, '..', '..', 'join.
 
 /** The join page's body as served, without its scripts and stylesheets (the form is started by the test). */
 function joinPage(): JoinFormElements {
-  const body = /<body>([\s\S]*)<\/body>/.exec(JOIN_HTML)![1]!.replace(/<script[\s\S]*?<\/script>/g, '').replace(/<link[^>]*>/g, '');
-  document.body.innerHTML = body;
+  const page = new DOMParser().parseFromString(JOIN_HTML, 'text/html');
+  for (const el of page.querySelectorAll('script, link')) el.remove();
+  document.body.replaceChildren(...Array.from(page.body.childNodes, (node) => document.importNode(node, true)));
   const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
   return { form: $('join-form'), input: $('nickname'), button: $('join'), error: $('error'), check: $('check'), progress: $('check-progress') };
 }

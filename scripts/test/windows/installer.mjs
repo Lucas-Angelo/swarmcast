@@ -6,14 +6,15 @@
 // busy ports and the uninstaller (when present).
 //
 // Usage: node scripts/test/windows/installer.mjs --work <dir from make-release.mjs> [--newer V2] [--out results.json]
+import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
 import {
   ART, addSweepPath, adminLogin, appLog, check, copyAppLogs, descendants, describeProcs, editConfig, environmentFacts, finish, info, installerResult, joinAndPlay, killTree, killUnder,
-  launchBrowser, must, occupy, onCleanup, opt, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
-  runInstaller, section, serve, sha256File, sleep, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
+  launchBrowser, must, occupy, onCleanup, opt, orTimeout, pkgVersion, powershellExe, processes, processesUnder, ps, pushStream, quitAndVerify, readText, record, repoRoot,
+  runInstaller, section, serve, sha256File, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase, bareEnv,
 } from './lib.mjs';
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
@@ -27,6 +28,10 @@ const isFile = (p) => fs.existsSync(p) && fs.statSync(p).isFile();
 const ver = (home, which = 'current') => readText(path.join(home, 'app', which, 'VERSION')).trim();
 const has = (text, needle) => text.toLowerCase().includes(needle.toLowerCase());
 const yesNoTunnel = ['-Yes', '-SkipSpeedtest', '-NoTunnel'];
+/** What start-windows.ps1 prints when its window runs as administrator (Test-Elevated), then goes on. */
+const ADMIN_NOTE = 'Note: this window runs as administrator. That is not needed: SwarmCast installs and runs for your user only. Continuing.';
+/** The error of a run whose release server cannot be reached and nothing is installed (Install-OrUpdate). */
+const UNREACHABLE = 'Could not download SwarmCast: the release server is unreachable.';
 
 const srv = await serve(relDir);
 const srvNew = V2 ? await serve(path.join(work, 'rel-new')) : null;
@@ -70,7 +75,10 @@ await section('1. PowerShell 5.1 -File: clean install into "Test José Ção" + 
   check('setup log written', isFile(path.join(homeU, 'logs', 'install.log')));
   if (/system-check/.test(helpText)) check('system check saved for the panel tutorial (system-check.json)', isFile(path.join(homeU, 'system-check.json')));
   check('-SkipSpeedtest honored', has(out, 'Speed test skipped'));
-  record('elevated note shown (runner is admin)', has(out, 'runs as administrator') ? 'pass' : 'warn', has(out, 'runs as administrator') ? 'warning printed, setup continued' : 'no elevation note although the runner is elevated');
+  // The script's own test (Test-Elevated) on the token it runs with: this harness's. GitHub's
+  // runners are elevated administrators; section 13 runs with a Basic User token.
+  const elevated = ps('([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)') === 'True';
+  check(elevated ? 'elevated run: the administrator note is shown' : 'non-elevated run: no administrator note', has(out, ADMIN_NOTE) === elevated, `${elevated ? 'elevated' : 'not elevated'}; note ${has(out, ADMIN_NOTE) ? 'shown' : 'not shown'}`);
   check('report lists ports 1935/8080/8081 free', /Ports 1935\/8080\/8081\s+free/.test(out));
   const s = await waitLiveLink(app);
   check('-NoTunnel honored (local link, no cloudflared)', /^http:\/\/127\.0\.0\.1:\d+\/join\//.test(s.liveLink) && !processesUnder(homeU).some((p) => /cloudflared/i.test(p.name)));
@@ -91,7 +99,7 @@ await section('2. cmd /c start-windows.cmd (double-click equivalent): second run
   await quitAndVerify(app, homeU, 'cmd entry');
 });
 
-await section('3. update while SwarmCast is running is refused cleanly', async () => {
+await section('3. update while SwarmCast is running: what happens, and a refusal changes nothing', async () => {
   if (!V2) return record('needs a second package (--newer)', 'skip');
   const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home: homeU, args: yesNoTunnel, label: 'running-app' });
   onCleanup(() => killUnder(homeU));
@@ -99,16 +107,33 @@ await section('3. update while SwarmCast is running is refused cleanly', async (
   const exeHash = sha256File(path.join(homeU, 'app', 'current', 'swarmcast.exe'));
   const r = await installerResult(runInstaller({ entry: 'ps', dir: relDir, releaseUrl: srvNew.url, home: homeU, args: ['-Yes', '-SkipSpeedtest', '-InstallOnly'], label: 'update-while-running' }));
   check('report warns that SwarmCast ports are in use', has(r.out, 'in use') && has(r.out, 'Maybe SwarmCast is already running'));
+  // What should happen is documented nowhere (docs/DESKTOP.md covers the desktop app, whose
+  // updater stops the server first), so the outcome is recorded, not judged. So far Windows has
+  // always denied renaming app\current while its programs run, and the script stopped with
+  // "Could not replace the installed version". A refusal must leave the install as it was: the
+  // swap is atomic (scripts/README.md).
   const refused = r.code !== 0 && has(r.out, 'Could not replace the installed version') && has(r.out, 'close it and run this again');
-  if (!refused && r.code === 0) {
-    record('update while running', 'warn', `the swap succeeded while swarmcast.exe was running (current=${ver(homeU)}, previous=${ver(homeU, 'previous')}); output tail: ${r.out.slice(-600)}`);
-  } else {
-    check('update refused with a clear message', refused, `exit ${r.code}; ${r.out.slice(-500)}`);
+  const swapped = r.code === 0 && ver(homeU) === V2;
+  info(
+    'update while running: outcome (not documented)',
+    swapped
+      ? `the swap succeeded while swarmcast.exe was running (current=${ver(homeU)}, previous=${ver(homeU, 'previous')})`
+      : refused
+        ? `refused: ${/Could not replace the installed version: ([^\r\n]*)/.exec(r.out)?.[1] ?? ''}`
+        : `exit ${r.code}`,
+  );
+  if (!swapped) {
+    check('the refusal says why and what to do', refused, `exit ${r.code}; ${r.out.slice(-500)}`);
     check('nothing changed (current still the running version)', ver(homeU) === V && sha256File(path.join(homeU, 'app', 'current', 'swarmcast.exe')) === exeHash);
   }
   check('no staging folder left behind', !fs.readdirSync(path.join(homeU, 'app')).some((d) => d.startsWith('.staging-')));
   check('running app unaffected (panel still answers)', (await app.state()).phase !== undefined);
-  await quitAndVerify(app, homeU, 'after refused update');
+  await quitAndVerify(app, homeU, 'after the update attempt');
+  // Section 4 updates v<V> to v<V2>: after a swap, v<V> goes back (nothing runs from app\ now).
+  if (swapped) {
+    fs.rmSync(path.join(homeU, 'app', 'current'), { recursive: true, force: true });
+    fs.renameSync(path.join(homeU, 'app', 'previous'), path.join(homeU, 'app', 'current'));
+  }
 });
 
 await section('4. update to a newer version keeps settings and the previous version', async () => {
@@ -182,9 +207,10 @@ await section('8. one-liner: irm <local>/start-windows.ps1 | iex', async () => {
   await quickStreamCheck(app, browser, 'one-liner');
   await quitAndVerify(app, home, 'one-liner');
 
-  // An error in a piped run must not close the user's PowerShell window: the script's "exit"
-  // would end the interactive session. Simulated with -NoExit (the window stays only if the
-  // host survives the script).
+  // An error in a piped run must not close the user's PowerShell window (an "exit" in the script
+  // would end the interactive session), and its reason must be the last thing in it: nothing
+  // after it may call the stop an "Unexpected error". Simulated with -NoExit (the window stays
+  // only if the host survives the script).
   const home2 = path.join(local, 'SC one-liner error');
   fs.rmSync(home2, { recursive: true, force: true });
   const env = bareEnv({ home: home2, releaseUrl: 'http://127.0.0.1:9' });
@@ -193,21 +219,22 @@ await section('8. one-liner: irm <local>/start-windows.ps1 | iex', async () => {
   child.stdout.on('data', (d) => (o += d));
   child.stderr.on('data', (d) => (o += d));
   onCleanup(() => killTree(child.pid));
-  // Wait for the error itself (or an early exit), then 5 s more: a host that survives that long
-  // after the error has kept the window open. Waiting the full 90 s for an exit that never comes
-  // proved nothing more.
+  // After the error (or an early exit), a command typed into the window: a host that runs it
+  // has kept the window open; one that exits instead had its window closed by the script. The
+  // command builds its output, so the echo of the command line cannot pass for the answer. The
+  // host reads it only once the script has ended, so the answer comes after all of its output.
+  // The deadline covers the one-liner's speed test (no -SkipSpeedtest there; ~20 s on runners).
   const tErr = Date.now();
-  await until(() => child.exitCode !== null || has(o, 'Could not download SwarmCast'), 90_000, 'piped setup error').catch(() => {});
-  if (child.exitCode === null) await sleep(5000);
-  const gone = child.exitCode !== null;
-  const errShown = has(o, 'Could not download SwarmCast');
-  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s (shown: ${errShown}; host ${gone ? `exited ${child.exitCode}` : 'alive 5 s later'})`);
-  if (gone) {
-    record('piped run: an error keeps the PowerShell window open', 'warn', `BUG: after "${errShown ? 'Could not download SwarmCast…' : 'error'}" the script calls "exit ${child.exitCode}", which closes the interactive PowerShell window of a user who pasted the one-liner, so the message disappears. (start-windows.ps1 Stop-Setup/exit)`);
-  } else {
-    check('piped run: an error keeps the PowerShell window open', errShown, 'host still alive after the error');
-    child.stdin.end('exit\n');
-  }
+  await until(() => child.exitCode !== null || has(o, UNREACHABLE), 180_000, 'piped setup error').catch(() => {});
+  info('piped run: error shown after', `${Math.round((Date.now() - tErr) / 1000)} s`);
+  const word = `sc-host-alive-${crypto.randomBytes(4).toString('hex')}`;
+  if (child.exitCode === null) child.stdin.write(`Write-Output ('${word.slice(0, 8)}' + '${word.slice(8)}')\n`);
+  const answer = await until(() => (has(o, word) ? 'answered' : child.exitCode !== null ? 'exited' : null), 30_000, 'the host to run a command after the error, or to exit').catch(() => 'silent');
+  const host = answer === 'answered' ? 'ran a command typed after it' : answer === 'exited' ? `exited ${child.exitCode}: the script closed the window` : 'still running 30 s after it, without running a command typed after it';
+  check('piped run: the error says the release server is unreachable', has(o, UNREACHABLE), o.slice(-600));
+  check('piped run: nothing after the error calls it an "Unexpected error"', !has(o, 'Unexpected error'), (/[^\n]*unexpected error[^\n]*/i.exec(o) ?? [''])[0]);
+  check('piped run: an error keeps the PowerShell window open (a command typed after it runs)', answer === 'answered', `host ${host}`);
+  if (child.exitCode === null) child.stdin.end('exit\n');
 });
 
 await section('9. installer zip: Explorer "Extract All" of a downloaded zip, no release server', async () => {
@@ -221,10 +248,14 @@ await section('9. installer zip: Explorer "Extract All" of a downloaded zip, no 
   fs.copyFileSync(zip, dlZip);
   // Mark of the Web, as a browser download has.
   ps(`Set-Content -LiteralPath '${dlZip}' -Stream Zone.Identifier -Value "[ZoneTransfer]\`r\`nZoneId=3\`r\`nHostUrl=https://github.com/"`);
-  const how = ps(`Add-Type -AssemblyName System.IO.Compression.FileSystem; $c = ([IO.Compression.ZipFile]::OpenRead('${dlZip}')).Entries.Count
+  // Explorer copies in the background and says nothing when it is done (Folder.CopyHere): done
+  // is every file of the zip there, at its full size, and no longer open for writing.
+  const how = ps(`Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $z = [IO.Compression.ZipFile]::OpenRead('${dlZip}'); $entries = @($z.Entries | Where-Object { $_.Name } | ForEach-Object { @{ Path = (Join-Path '${dl}' $_.FullName); Length = $_.Length } }); $z.Dispose()
+    $done = { foreach ($e in $entries) { try { $f = [IO.File]::Open($e.Path, 'Open', 'Read', 'None'); $n = $f.Length; $f.Dispose(); if ($n -ne $e.Length) { return $false } } catch { return $false } }; $true }
     try { $sh = New-Object -ComObject Shell.Application; $sh.NameSpace('${dl}').CopyHere($sh.NameSpace('${dlZip}').Items(), 0x14)
-      $end = (Get-Date).AddSeconds(120); while ((Get-ChildItem -LiteralPath '${dl}').Count -lt $c -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 500 }
-      Start-Sleep 2; 'Shell.Application' } catch { Expand-Archive -LiteralPath '${dlZip}' -DestinationPath '${dl}' -Force; "Expand-Archive ($($_.Exception.Message))" }`);
+      $end = (Get-Date).AddSeconds(120); while (-not (& $done) -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 200 }
+      if (& $done) { 'Shell.Application' } else { 'Shell.Application (not complete after 120 s)' } } catch { Expand-Archive -LiteralPath '${dlZip}' -DestinationPath '${dl}' -Force; "Expand-Archive ($($_.Exception.Message))" }`);
   info('extracted with', how);
   const motw = ps(`[bool](Get-Item -LiteralPath '${path.join(dl, 'start-windows.ps1')}' -Stream Zone.Identifier -ErrorAction SilentlyContinue)`);
   info('Mark of the Web propagated to the extracted files', motw);
@@ -333,7 +364,8 @@ await section('12. port 1935 busy on 0.0.0.0 (another RTMP server): behavior', a
     // Windows lets 127.0.0.1:1935 be bound next to a non-exclusive 0.0.0.0:1935 listener; OBS on 127.0.0.1 reaches the more specific one.
     const feed = pushStream(s.rtmpUrl, s.streamKey);
     const live = await waitPhase(app, 'live', 60_000).then(() => true, () => false);
-    record('started next to the other server; OBS on 127.0.0.1 reaches SwarmCast', live ? 'warn' : 'fail', live ? 'no error: Windows allowed 127.0.0.1:1935 beside 0.0.0.0:1935 and the stream worked; the other program no longer gets local RTMP clients (the installer report did warn about port 1935)' : 'started, but the stream never arrived');
+    check('started next to the other server: OBS on 127.0.0.1 reaches SwarmCast', live, live ? 'phase live' : 'started, but the stream never arrived');
+    if (live) info('the other RTMP server', 'Windows allowed 127.0.0.1:1935 beside 0.0.0.0:1935: local RTMP clients now reach SwarmCast, not the other program (the installer report did warn about port 1935)');
     feed.stop();
   }
   await occ.close();
@@ -426,8 +458,7 @@ await section('13. non-elevated (Basic User token via runas /trustlevel:0x20000)
     for (const f of fs.readdirSync(dir)) fs.copyFileSync(path.join(dir, f), path.join(dest, f));
   }
   if (wrapperProc && wrapperAlive()) killTree(wrapperProc.pid);
-  await sleep(1500);
-  const left = processesUnder(home);
+  const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 15_000, 'no process left').catch(() => processesUnder(home));
   check('Basic User run: no process left', left.length === 0, describeProcs(left));
   copyAppLogs(home, 'basic-user');
 });
@@ -442,7 +473,7 @@ await section('14. uninstaller (-KeepSettings while live, reinstall keeps the st
   const app0 = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'uninstall-right-after-start' });
   onCleanup(() => killUnder(homeU));
   await uninstallAndVerify({ dir: relDir, home: homeU, args: ['-KeepSettings'], label: 'uninstall -KeepSettings within 10 s of the start' });
-  const script0 = await Promise.race([app0.inst.exit.then(() => 'exited'), sleep(15_000).then(() => 'running')]);
+  const script0 = await orTimeout(app0.inst.exit.then(() => 'exited'), 15_000, 'running');
   check('uninstall within 10 s of the start: the start script did not restart SwarmCast', script0 === 'exited' && !/Trying again in/.test(app0.inst.out()), `start script ${script0}; ${(/SwarmCast stopped right away[^\n]*/.exec(app0.inst.out()) ?? ['no restart attempt'])[0]}`);
   const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv2.url, home: homeU, args: yesNoTunnel, label: 'before-uninstall-keep' });
   onCleanup(() => killUnder(homeU));

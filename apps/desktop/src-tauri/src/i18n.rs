@@ -257,45 +257,79 @@ mod tests {
         s.split('{').skip(1).filter_map(|p| p.split_once('}').map(|(n, _)| n.to_string())).collect()
     }
 
+    fn pt_br_text(key: &str) -> Option<&'static str> {
+        PT_BR.iter().find(|(k, _)| *k == key).map(|(_, v)| *v)
+    }
+
     #[test]
     fn en_and_pt_br_have_the_same_keys() {
-        assert_eq!(keys(EN), keys(PT_BR));
-        assert_eq!(keys(EN).len(), EN.len(), "duplicate key in EN");
-        assert_eq!(keys(PT_BR).len(), PT_BR.len(), "duplicate key in PT_BR");
+        // Act
+        let (en, pt_br) = (keys(EN), keys(PT_BR));
+
+        // Assert
+        assert_eq!(en, pt_br);
+        assert_eq!(en.len(), EN.len(), "duplicate key in EN");
+        assert_eq!(pt_br.len(), PT_BR.len(), "duplicate key in PT_BR");
     }
 
     #[test]
     fn translations_keep_the_placeholders() {
-        for (key, en) in EN {
-            let pt = PT_BR.iter().find(|(k, _)| k == key).unwrap().1;
-            assert_eq!(placeholders(en), placeholders(pt), "placeholders differ for {key}");
-            assert!(!pt.trim().is_empty(), "empty pt-BR text for {key}");
-        }
+        // Act
+        let differing: Vec<&str> =
+            EN.iter().filter(|(k, en)| pt_br_text(k).map(placeholders) != Some(placeholders(en))).map(|(k, _)| *k).collect();
+        let empty: Vec<&str> = EN.iter().filter(|(k, _)| pt_br_text(k).is_some_and(|pt| pt.trim().is_empty())).map(|(k, _)| *k).collect();
+
+        // Assert
+        assert!(differing.is_empty(), "placeholders differ (or the pt-BR text is missing) for {differing:?}");
+        assert!(empty.is_empty(), "empty pt-BR text for {empty:?}");
     }
 
     #[test]
     fn picks_the_language_from_the_locale() {
-        assert_eq!(lang_for("pt-BR"), Lang::PtBr);
-        assert_eq!(lang_for("pt_PT.UTF-8"), Lang::PtBr);
-        assert_eq!(lang_for("en-US"), Lang::En);
-        assert_eq!(lang_for("de-DE"), Lang::En);
+        // Arrange
+        let cases = [("pt-BR", Lang::PtBr), ("pt_PT.UTF-8", Lang::PtBr), ("en-US", Lang::En), ("de-DE", Lang::En)];
+
+        // Act
+        let picked = cases.map(|(locale, _)| (locale, lang_for(locale)));
+
+        // Assert
+        assert_eq!(picked, cases);
     }
 
+    /// The POSIX locale ("C") is English; a script subtag is kept, what follows it is not.
     #[test]
     fn normalizes_locales() {
-        assert_eq!(normalize_locale("pt_BR.UTF-8"), "pt-BR");
-        assert_eq!(normalize_locale("en-us"), "en-US");
-        assert_eq!(normalize_locale("C"), "en-US");
-        assert_eq!(normalize_locale("zh-Hans-CN"), "zh-Hans");
-        assert_eq!(normalize_locale("fr"), "fr");
+        // Arrange
+        let cases = [("pt_BR.UTF-8", "pt-BR"), ("en-us", "en-US"), ("C", "en-US"), ("zh-Hans-CN", "zh-Hans"), ("fr", "fr")];
+
+        // Act
+        let normalized = cases.map(|(raw, _)| (raw, normalize_locale(raw)));
+
+        // Assert
+        assert_eq!(normalized, cases.map(|(raw, tag)| (raw, tag.to_string())));
     }
 
     #[test]
     fn fills_placeholders() {
-        assert_eq!(tr_in(Lang::En, "tooltip.live_many", &[("n", "3")]), "SwarmCast: live · 3 viewers");
-        assert_eq!(
-            tr_in(Lang::PtBr, "update.available", &[("version", "0.3.0"), ("current", "0.2.0")]),
-            "O SwarmCast 0.3.0 está disponível (você tem a versão 0.2.0)."
-        );
+        // Act
+        let en = tr_in(Lang::En, "tooltip.live_many", &[("n", "3")]);
+        let pt_br = tr_in(Lang::PtBr, "update.available", &[("version", "0.3.0"), ("current", "0.2.0")]);
+
+        // Assert
+        assert_eq!(en, "SwarmCast: live · 3 viewers");
+        assert_eq!(pt_br, "O SwarmCast 0.3.0 está disponível (você tem a versão 0.2.0).");
+    }
+
+    /// The shell shows `fatal.<code>` for a server error code it has a text for, else the
+    /// generic message (shell.rs, after_exit).
+    #[test]
+    fn knows_which_fatal_codes_have_a_text() {
+        // Act
+        let known = [has("fatal.ports-busy"), has("fatal.already-running")];
+        let unknown = has("fatal.something-new");
+
+        // Assert
+        assert_eq!(known, [true, true]);
+        assert!(!unknown);
     }
 }

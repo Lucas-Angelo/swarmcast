@@ -37,11 +37,16 @@ const APPIMAGE_SIDECAR_DIR: &str = "libexec/SwarmCast";
 /// The sidecar next to the shell executable (macOS, Windows, the .deb's /usr/bin), else, on
 /// Linux, the AppImage's usr/libexec/SwarmCast when it is there.
 fn sidecar_path(exe_dir: &Path) -> PathBuf {
+    sidecar_path_for(std::env::consts::OS, exe_dir, |p| p.exists())
+}
+
+/// [`sidecar_path`] on `os`, with `exists` saying which files are there.
+fn sidecar_path_for(os: &str, exe_dir: &Path, exists: impl Fn(&Path) -> bool) -> PathBuf {
     let next_to_exe = exe_dir.join(sidecar_file_name());
-    if cfg!(target_os = "linux") && !next_to_exe.exists() {
+    if os == "linux" && !exists(&next_to_exe) {
         if let Some(usr) = exe_dir.parent() {
             let appimage = usr.join(APPIMAGE_SIDECAR_DIR).join(sidecar_file_name());
-            if appimage.exists() {
+            if exists(&appimage) {
                 return appimage;
             }
         }
@@ -316,38 +321,93 @@ mod win {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_support::TempDir;
 
-    /// A fresh <tmp>/<name>/usr/bin, and <tmp>/<name>.
-    fn usr_bin(name: &str) -> (PathBuf, PathBuf) {
-        let root = std::env::temp_dir().join(format!("swarmcast-sidecar-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(root.join("usr/bin")).unwrap();
-        (root.join("usr/bin"), root)
+    /// An install layout: usr/bin (the shell's folder), and where each sidecar location would be.
+    struct InstallPaths {
+        bin: PathBuf,
+        next_to_exe: PathBuf,
+        appimage: PathBuf,
+    }
+
+    fn install_paths(root: &Path) -> InstallPaths {
+        let bin = root.join("usr").join("bin");
+        let next_to_exe = bin.join(sidecar_file_name());
+        let appimage = root.join("usr").join(APPIMAGE_SIDECAR_DIR).join(sidecar_file_name());
+        InstallPaths { bin, next_to_exe, appimage }
+    }
+
+    /// Only `files` exist.
+    fn only(files: &[&PathBuf]) -> impl Fn(&Path) -> bool {
+        let files: Vec<PathBuf> = files.iter().map(|f| f.to_path_buf()).collect();
+        move |p: &Path| files.iter().any(|f| f == p)
+    }
+
+    const EVERY_OS: [&str; 3] = ["linux", "macos", "windows"];
+
+    #[test]
+    fn the_sidecar_next_to_the_shell_wins_on_every_os() {
+        // Arrange
+        let l = install_paths(Path::new("/opt/swarmcast"));
+
+        // Act
+        let found = EVERY_OS.map(|os| sidecar_path_for(os, &l.bin, only(&[&l.next_to_exe, &l.appimage])));
+
+        // Assert
+        assert_eq!(found, EVERY_OS.map(|_| l.next_to_exe.clone()));
+    }
+
+    /// The AppImage keeps the server in usr/libexec/SwarmCast, out of linuxdeploy's reach.
+    #[test]
+    fn linux_finds_the_appimage_sidecar_in_usr_libexec() {
+        // Arrange
+        let l = install_paths(Path::new("/tmp/.mount_SwarmCast"));
+
+        // Act
+        let found = sidecar_path_for("linux", &l.bin, only(&[&l.appimage]));
+
+        // Assert
+        assert_eq!(found, l.appimage);
     }
 
     #[test]
-    fn sidecar_next_to_the_shell() {
-        let (bin, root) = usr_bin("next");
-        std::fs::write(bin.join(sidecar_file_name()), b"").unwrap();
-        assert_eq!(sidecar_path(&bin), bin.join(sidecar_file_name()));
-        std::fs::remove_dir_all(root).unwrap();
+    fn only_linux_looks_in_usr_libexec() {
+        // Arrange
+        let l = install_paths(Path::new("/opt/swarmcast"));
+
+        // Act
+        let found = ["macos", "windows"].map(|os| sidecar_path_for(os, &l.bin, only(&[&l.appimage])));
+
+        // Assert
+        assert_eq!(found, [l.next_to_exe.clone(), l.next_to_exe.clone()]);
     }
 
+    /// Nothing anywhere: the path next to the shell, so the error names the expected place.
     #[test]
-    fn sidecar_in_the_appimage_libexec() {
-        let (bin, root) = usr_bin("libexec");
-        let libexec = root.join("usr/libexec/SwarmCast");
-        std::fs::create_dir_all(&libexec).unwrap();
-        std::fs::write(libexec.join(sidecar_file_name()), b"").unwrap();
-        let expected = if cfg!(target_os = "linux") { libexec } else { bin.clone() };
-        assert_eq!(sidecar_path(&bin), expected.join(sidecar_file_name()));
-        std::fs::remove_dir_all(root).unwrap();
+    fn a_missing_sidecar_is_looked_for_next_to_the_shell() {
+        // Arrange
+        let l = install_paths(Path::new("/opt/swarmcast"));
+
+        // Act
+        let found = EVERY_OS.map(|os| sidecar_path_for(os, &l.bin, only(&[])));
+
+        // Assert
+        assert_eq!(found, EVERY_OS.map(|_| l.next_to_exe.clone()));
     }
 
+    /// The wiring to the real file system (the cases above use `only`).
     #[test]
-    fn missing_sidecar_is_looked_for_next_to_the_shell() {
-        let (bin, root) = usr_bin("missing");
-        assert_eq!(sidecar_path(&bin), bin.join(sidecar_file_name()));
-        std::fs::remove_dir_all(root).unwrap();
+    fn finds_a_sidecar_that_is_on_disk() {
+        // Arrange
+        let root = TempDir::new("sidecar");
+        let l = install_paths(root.path());
+        std::fs::create_dir_all(&l.bin).unwrap();
+        std::fs::write(&l.next_to_exe, b"").unwrap();
+
+        // Act
+        let found = sidecar_path(&l.bin);
+
+        // Assert
+        assert_eq!(found, l.next_to_exe);
     }
 }

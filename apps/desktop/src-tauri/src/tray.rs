@@ -8,7 +8,7 @@ use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager};
 
-use crate::i18n::{t, tr};
+use crate::i18n::{self, t, tr_in, Lang};
 use crate::logs;
 use crate::protocol::{ClickId, IconState, LiveState, Phase};
 use crate::shell::Shell;
@@ -40,14 +40,20 @@ impl TrayView {
 
 /// Tooltip for a live phase (mirrors trayStateFor() in apps/server/src/tray/tray.ts).
 pub fn tooltip_for(phase: Phase, viewers: u64) -> String {
-    match phase {
-        Phase::Off => t("tooltip.off"),
-        Phase::Starting => t("tooltip.starting"),
-        Phase::WaitingObs => t("tooltip.waiting"),
-        Phase::Stopping => t("tooltip.stopping"),
-        Phase::Live if viewers == 1 => t("tooltip.live_one"),
-        Phase::Live => tr("tooltip.live_many", &[("n", &viewers.to_string())]),
-    }
+    tooltip_in(i18n::lang(), phase, viewers)
+}
+
+/// [`tooltip_for`] in `lang`.
+fn tooltip_in(lang: Lang, phase: Phase, viewers: u64) -> String {
+    let key = match phase {
+        Phase::Off => "tooltip.off",
+        Phase::Starting => "tooltip.starting",
+        Phase::WaitingObs => "tooltip.waiting",
+        Phase::Stopping => "tooltip.stopping",
+        Phase::Live if viewers == 1 => "tooltip.live_one",
+        Phase::Live => "tooltip.live_many",
+    };
+    tr_in(lang, key, &[("n", &viewers.to_string())])
 }
 
 struct Handles {
@@ -134,29 +140,58 @@ pub fn update(app: &AppHandle, view: &TrayView) {
     h.last = Some(view.clone());
 }
 
+/// The tooltips are checked in a given language (`tooltip_in`), so the tests do not depend on
+/// the language of the machine they run on.
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::i18n::{tr_in, Lang};
 
     #[test]
     fn tooltips_follow_the_phase() {
-        // The test runs in whatever the machine language is: compare with that language.
-        let lang = crate::i18n::lang();
-        assert_eq!(tooltip_for(Phase::Live, 1), tr_in(lang, "tooltip.live_one", &[]));
-        assert_eq!(tooltip_for(Phase::Live, 7), tr_in(lang, "tooltip.live_many", &[("n", "7")]));
-        assert_eq!(tooltip_for(Phase::WaitingObs, 0), tr_in(lang, "tooltip.waiting", &[]));
-        assert_eq!(tr_in(Lang::En, "tooltip.live_many", &[("n", "7")]), "SwarmCast: live · 7 viewers");
+        // Arrange
+        let phases = [Phase::Off, Phase::Starting, Phase::WaitingObs, Phase::Stopping];
+
+        // Act
+        let tooltips = phases.map(|phase| tooltip_in(Lang::En, phase, 0));
+
+        // Assert
+        assert_eq!(tooltips, ["SwarmCast: off", "SwarmCast: starting the live…", "SwarmCast: waiting for OBS", "SwarmCast: stopping…"]);
+    }
+
+    #[test]
+    fn a_live_tooltip_counts_the_viewers() {
+        // Act
+        let one = tooltip_in(Lang::En, Phase::Live, 1);
+        let seven = tooltip_in(Lang::En, Phase::Live, 7);
+        let seven_pt_br = tooltip_in(Lang::PtBr, Phase::Live, 7);
+
+        // Assert
+        assert_eq!(one, "SwarmCast: live · 1 viewer");
+        assert_eq!(seven, "SwarmCast: live · 7 viewers");
+        assert_eq!(seven_pt_br, "SwarmCast: ao vivo · 7 espectadores");
     }
 
     #[test]
     fn view_from_live_state() {
+        // Arrange
         let live =
             LiveState { state: IconState::Live, phase: Phase::Live, viewers: 2, can_start: false, can_stop: true, tooltip: String::new() };
+
+        // Act
         let view = TrayView::from_live(&live);
+
+        // Assert
         assert_eq!(view.icon, IconState::Live);
         assert!(view.can_stop && !view.can_start);
-        let starting = TrayView::starting();
-        assert!(!starting.can_start && !starting.can_stop);
+    }
+
+    #[test]
+    fn nothing_can_be_clicked_while_the_app_starts() {
+        // Act
+        let view = TrayView::starting();
+
+        // Assert
+        assert_eq!(view.icon, IconState::Off);
+        assert!(!view.can_start && !view.can_stop);
     }
 }

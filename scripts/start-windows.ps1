@@ -40,6 +40,8 @@ $script:StagingDir = $null
 $script:Below = New-Object System.Collections.Generic.List[string]
 # Folder of this script when it runs from a file; $null for "irm ... | iex".
 $script:ScriptDir = $null
+# Exit-Setup stopped a piped run: its reason is already on screen.
+$script:Stopped = $false
 if ($PSCommandPath -and ((Split-Path -Leaf $PSCommandPath) -like 'start-windows*.ps1') -and $PSScriptRoot) { $script:ScriptDir = $PSScriptRoot }
 $script:Source = 'online'      # where the package comes from: online | local
 $script:LocalDir = $null       # folder of a usable local bundle
@@ -193,11 +195,15 @@ function Invoke-Cleanup {
 }
 
 # In "irm ... | iex" mode there is no script file and `exit` would close the user's own
-# PowerShell window (hiding the message). Stop the pipeline with an error instead.
+# PowerShell window (hiding the message). Stop the script with an error instead; the catch
+# at the end of this file knows it by $script:Stopped and adds nothing, so the window stays
+# open with the reason as the last thing in it. With code 0 a piped run returns from here:
+# callers return right after it.
 function Exit-Setup([int]$Code) {
   if ($script:ScriptDir) { exit $Code }
   $global:LASTEXITCODE = $Code
   if ($Code -eq 0) { return }
+  $script:Stopped = $true
   throw "SwarmCast setup stopped (code $Code). See the message above."
 }
 
@@ -1337,7 +1343,7 @@ function Test-Uninstalling {
 function Exit-Uninstalling {
   Say "SwarmCast was stopped by its uninstaller (exit code $($script:AppCode)); not starting it again."
   Write-Log 'SwarmCast is being uninstalled: not restarting it'
-  exit $script:AppCode
+  Exit-Setup $script:AppCode
 }
 
 function Start-App {
@@ -1360,15 +1366,15 @@ function Start-App {
     if ($delay -gt 0) {
       Say "SwarmCast stopped right away (exit code $($script:AppCode)). Trying again in $delay s (attempt $attempt of $($delays.Count))..."
       Start-Sleep -Seconds $delay
-      if (Test-Uninstalling) { Exit-Uninstalling }
+      if (Test-Uninstalling) { Exit-Uninstalling; return }
     }
     Invoke-App $appArgs
-    if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }
+    if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { Exit-Setup $script:AppCode; return }
     # Stopped by the uninstaller: never start it again (or roll back) under its feet.
-    if (Test-Uninstalling) { Exit-Uninstalling }
+    if (Test-Uninstalling) { Exit-Uninstalling; return }
     if ($script:JustUpdated -and (Invoke-Rollback)) {
       Invoke-App $appArgs
-      if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { exit $script:AppCode }
+      if ($script:AppCode -eq 0 -or $script:AppSeconds -ge 10) { Exit-Setup $script:AppCode; return }
     }
   }
   Stop-Setup "SwarmCast could not start (exit code $($script:AppCode)), even after several tries.`n  Restart your computer and run this again. If it keeps happening, report it at $SC_IssuesUrl`n  and attach $($script:LogFile) and the logs in $($script:DataDir)\logs." $script:AppCode
@@ -1425,9 +1431,12 @@ function Invoke-Main {
 try {
   Invoke-Main
 } catch {
-  $msg = $_.Exception.Message
-  Write-Log "Unexpected error: $msg`r`n$($_.ScriptStackTrace)"
-  Stop-Setup "Unexpected error: $msg`n  Please report it at $SC_IssuesUrl (attach $($script:LogFile))."
+  # Not when Exit-Setup stopped a piped run: its reason is already on screen.
+  if (-not $script:Stopped) {
+    $msg = $_.Exception.Message
+    Write-Log "Unexpected error: $msg`r`n$($_.ScriptStackTrace)"
+    Stop-Setup "Unexpected error: $msg`n  Please report it at $SC_IssuesUrl (attach $($script:LogFile))."
+  }
 } finally {
   Invoke-Cleanup
 }

@@ -44,7 +44,7 @@ node scripts/build/desktop.mjs --target <target> --version <v>                # 
 Toolchain per CI runner (everything is non-interactive; `tauri build` runs with `--ci`):
 
 - **Windows** (`windows-latest`): Node 24, the pinned Rust (`x86_64-pc-windows-msvc`, with the MSVC Build Tools of the image). The Tauri CLI downloads NSIS and the WebView2 bootstrapper itself. Use a short checkout path if a path is too long.
-- **macOS** (`macos-latest`, arm64): Node 24, the pinned Rust + `rustup target add x86_64-apple-darwin` for `macos-x64`, Xcode command line tools (preinstalled; `codesign` signs ad hoc). The DMG step (`bundle_dmg.sh`) lays out the window through Finder/AppleScript; `desktop.mjs` runs it as its own step and repeats it when hdiutil reports "Resource busy". Any other failure is a bug to fix, not a job to re-run.
+- **macOS** (`macos-latest`, arm64): Node 24, the pinned Rust + `rustup target add x86_64-apple-darwin` for `macos-x64`, Xcode command line tools (preinstalled; `codesign` signs ad hoc). The DMG step (`bundle_dmg.sh`) lays out the window through Finder/AppleScript; `desktop.mjs` runs it as its own step and repeats it only when hdiutil reports "Resource busy" (runner infrastructure: up to 4 tries, 5, 10 and 20 s apart). Any other failure stops the build at once: a bug to fix, not a job to re-run.
 - **Linux** (`ubuntu-22.04` for x64, `ubuntu-22.04-arm` for arm64; the deb is built against the oldest glibc we support): Node 24, the pinned Rust and
   `sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils`.
   `desktop.mjs` sets `APPIMAGE_EXTRACT_AND_RUN=1` (no FUSE on runners). AppImages are built for the runner's architecture only.
