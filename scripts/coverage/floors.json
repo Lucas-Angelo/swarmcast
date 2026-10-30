@@ -1,0 +1,19 @@
+{
+  "unit": {
+    "*": {
+      "total": { "lines": 64, "branches": 56, "functions": 55, "statements": 63 },
+      "apps/server/src/": { "lines": 74, "branches": 65, "functions": 69, "statements": 72 },
+      "apps/viewer/src/": { "lines": 59, "branches": 52, "functions": 48, "statements": 57 },
+      "apps/admin/src/": { "lines": 19, "branches": 18, "functions": 12, "statements": 20 },
+      "packages/shared/": { "lines": 91, "branches": 86, "functions": 87, "statements": 89 },
+      "scripts/": { "lines": 42, "branches": 42, "functions": 51, "statements": 41 },
+      "site/src/": { "lines": 75, "branches": 79, "functions": 69, "statements": 74 }
+    }
+  },
+  "integration": {
+    "linux": { "total": { "lines": 53, "branches": 38, "functions": 50, "statements": 49 } },
+    "darwin": { "total": { "lines": 53, "branches": 37, "functions": 49, "statements": 49 } }
+  },
+  "e2e-server": {},
+  "desktop": {}
+}
