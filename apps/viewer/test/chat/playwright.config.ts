@@ -14,6 +14,7 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,
+  // Never retried, CI included: a test that fails once is a bug to fix, not a flake to rerun.
   retries: 0,
   reporter: process.env.CI ? [['list'], ['html', { open: 'never', outputFolder: path.join(root, 'playwright-report', 'chat-ui') }]] : 'list',
   outputDir: path.join(root, 'test-results', 'chat-ui'),
