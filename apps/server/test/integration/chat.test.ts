@@ -62,8 +62,8 @@ function flood(flooders: ControlClient[], everyMs = 50): () => void {
 }
 
 /**
- * 110 chat lines (seq 1 to 110): the streamer's anti-mistake limit lets 5 of their own messages
- * through, so the rest are system lines posted through the hub.
+ * 60 chat lines (seq 1 to 60): the streamer's anti-mistake limit lets 5 of their 60 messages
+ * through, so 55 system lines posted through the hub follow them.
  */
 function fillHistory(live: LiveController): void {
   for (let i = 0; i < 60; i++) live.chat.sendAsStreamer({ text: `m${i}` });
