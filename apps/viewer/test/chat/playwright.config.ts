@@ -24,6 +24,6 @@ export default defineConfig({
     { name: 'chromium', use: { ...devices['Desktop Chrome'], ...(process.env.CI ? { channel: 'chrome' } : {}) }, grepInvert: /@mobile/ },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] }, grepInvert: /@mobile/ },
     { name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: /@mobile/ },
-    { name: 'mobile-webkit', use: { ...devices['iPhone 14'] }, grep: /@mobile|screenshots/ },
+    { name: 'mobile-webkit', use: { ...devices['iPhone 14'] }, grep: /@mobile|@render|screenshots/ },
   ],
 });
