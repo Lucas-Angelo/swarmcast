@@ -1,8 +1,9 @@
+import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import pino from 'pino';
-import { onTestFinished } from 'vitest';
+import { onTestFinished, vi } from 'vitest';
 
 export const silentLog = pino({ level: 'silent' });
 
@@ -46,5 +47,26 @@ export function killIfRunning(pid: number): void {
     process.kill(pid, 'SIGKILL');
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+  }
+}
+
+/**
+ * A viewer's WebSocket as ControlChannel.attach takes it: frames arrive through the 'message'
+ * event (as `ws` emits them), and whatever the channel sends, closes or terminates is recorded.
+ */
+export class FakeControlSocket extends EventEmitter {
+  readonly OPEN = 1;
+  readyState = 1;
+  bufferedAmount = 0;
+  sent: string[] = [];
+  terminate = vi.fn();
+  close = vi.fn();
+  ping(): void {}
+  send(d: string): void {
+    this.sent.push(d);
+  }
+  /** A frame from the viewer. */
+  receive(data: string | Buffer, isBinary = false): void {
+    this.emit('message', typeof data === 'string' ? Buffer.from(data) : data, isBinary);
   }
 }

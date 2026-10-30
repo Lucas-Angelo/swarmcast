@@ -6,13 +6,13 @@ import { canBindPort } from '../../src/core/ports.js';
 import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { CGNAT_MESSAGE, DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
-import { UpnpGateway, discoverUpnp, parseDeviceDescription } from '../../src/direct/upnp.js';
+import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
 import { isNonPublicIPv4 } from '../../src/direct/mapper.js';
 import { NoTunnel, probeHealth } from '../../src/tunnel/provider.js';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { silentLog } from './helpers.js';
+import { joinViewer, mockRouter } from './helpers-b.js';
 import { makeController, startController } from './live-helpers.js';
-import { MockIgd } from './mock-igd.js';
 
 // Direct mode (viewers connect to the streamer's public IP instead of the tunnel) against a mock
 // UPnP router on 127.0.0.1. Its address in these tests is 203.0.113.7, a documentation range.
@@ -44,20 +44,12 @@ const randomFor = (port: number) => (): number => (port - DIRECT_PORT_MIN + 0.5)
  * 28745, which `0.5` gave too). The HTTPS server binds loopback; the real app binds 0.0.0.0.
  */
 async function directFixture() {
-  const igd = new MockIgd(PUBLIC_IP);
-  await igd.start();
-  onTestFinished(() => igd.stop());
+  const igd = await mockRouter(PUBLIC_IP);
   const [directPort] = (await allocPorts(1)) as [number];
-  /** The mock router, found from its description URL (no SSDP window). */
-  const mockGateway = async (): Promise<UpnpGateway | null> => {
-    const location = `http://127.0.0.1:${igd.httpPort}/desc.xml`;
-    const service = parseDeviceDescription(await (await fetch(location)).text(), location);
-    return service ? new UpnpGateway(service, location) : null;
-  };
   const deps = (over: Partial<DirectDeps> = {}): DirectDeps => ({
     log: silentLog,
     state: new MemoryStateStore(),
-    discoverMapper: mockGateway,
+    discoverMapper: () => igd.gateway(),
     mapperFromId: (_k, id) => UpnpGateway.fromId(id),
     publicIps: async () => ({ v4: PUBLIC_IP }),
     localAddress: async () => '127.0.0.1',
@@ -308,7 +300,7 @@ describe('controller: switching modes', () => {
     const { igd, deps } = await directFixture();
     const { live } = await startController(new DirectMode(deps()));
     const oldLink = live.liveLink!;
-    const s = live.access.createSession({ nickname: 'a', deviceId: 'd', device: 'desktop', ip: 'ip' });
+    const s = joinViewer(live.access, 'a');
     // Act
     const link = await live.enableDirect({});
     // Assert

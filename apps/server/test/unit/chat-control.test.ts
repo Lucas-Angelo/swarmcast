@@ -1,4 +1,3 @@
-import { EventEmitter } from 'node:events';
 import type { IncomingMessage } from 'node:http';
 import fc from 'fast-check';
 import type { WebSocket } from 'ws';
@@ -8,32 +7,12 @@ import { AccessControl } from '../../src/access/access.js';
 import { ChatHub } from '../../src/chat/hub.js';
 import { ControlChannel } from '../../src/control/control.js';
 import { ActivityLog } from '../../src/core/activity.js';
-import { manualClock, silentLog } from './helpers.js';
+import { FakeControlSocket, manualClock, silentLog } from './helpers.js';
+import { joinViewer } from './helpers-b.js';
 
 // The chat rides on the viewer's /control WebSocket (control/control.ts). Chat frames have a
 // budget of their own (20 per 10 s, CHAT_MAX_FRAMES_PER_10S) next to the control budget (30 per
 // 10 s): a socket over either is terminated, and nothing else terminates it but binary frames.
-
-/**
- * A viewer's WebSocket as ControlChannel.attach takes it: frames arrive through the 'message'
- * event (as `ws` emits them), and whatever the channel sends, closes or terminates is recorded.
- */
-class FakeControlSocket extends EventEmitter {
-  readonly OPEN = 1;
-  readyState = 1;
-  bufferedAmount = 0;
-  sent: string[] = [];
-  terminate = vi.fn();
-  close = vi.fn();
-  ping(): void {}
-  send(d: string): void {
-    this.sent.push(d);
-  }
-  /** A frame from the viewer. */
-  receive(data: string | Buffer, isBinary = false): void {
-    this.emit('message', typeof data === 'string' ? Buffer.from(data) : data, isBinary);
-  }
-}
 
 const REQ = { url: '/control' } as IncomingMessage;
 
@@ -61,7 +40,7 @@ function setup(over: Partial<ChatSettings> = {}) {
     hub.reset();
     control.close();
   });
-  const s = access.createSession({ nickname: 'Ana', deviceId: 'dev', device: 'desktop', ip: '198.51.100.7' });
+  const s = joinViewer(access, 'Ana', { deviceId: 'dev' });
   s.joinedAt = clock.now() - 600_000;
   /** A new control socket of the viewer, attached like an accepted upgrade. */
   const connect = (): FakeControlSocket => {
@@ -190,8 +169,8 @@ describe('nickname uniqueness and reserved names', () => {
   function watching() {
     const a = new AccessControl();
     a.begin();
-    a.createSession({ nickname: 'ana', deviceId: 'd1', device: 'desktop', ip: 'x' }).connections = 1;
-    a.createSession({ nickname: 'lucas', deviceId: 'd2', device: 'desktop', ip: 'x' }).connections = 1;
+    joinViewer(a, 'ana', { deviceId: 'd1' }).connections = 1;
+    joinViewer(a, 'lucas', { deviceId: 'd2' }).connections = 1;
     return a;
   }
 
@@ -237,7 +216,7 @@ describe('nickname uniqueness and reserved names', () => {
     const clock = manualClock();
     const a = new AccessControl(clock.now);
     a.begin();
-    a.createSession({ nickname: 'ana', deviceId: 'd1', device: 'desktop', ip: 'x' });
+    joinViewer(a, 'ana', { deviceId: 'd1' });
     const before = a.nicknameProblem('Ana', 'd2');
     // Act
     clock.advance(31_000);

@@ -8,7 +8,7 @@ import { DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, type DirectDeps } from '.
 import { UpnpGateway } from '../../src/direct/upnp.js';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { captureLog, silentLog } from './helpers.js';
-import { gatewayOf, mockRouter } from './helpers-b.js';
+import { mockRouter } from './helpers-b.js';
 import type { MockIgd } from './mock-igd.js';
 
 // B6: Direct mode's port stays below Windows' dynamic range (49152–65535, where Hyper-V, WSL and
@@ -40,7 +40,7 @@ function deps(igd: MockIgd | null, over: Partial<DirectDeps> = {}): DirectDeps {
   return {
     log: silentLog,
     state: new MemoryStateStore(),
-    discoverMapper: async () => (igd ? gatewayOf(igd) : null),
+    discoverMapper: async () => (igd ? igd.gateway() : null),
     mapperFromId: (_k, id) => UpnpGateway.fromId(id),
     publicIps: async () => ({ v4: '203.0.113.7' }),
     localAddress: async () => '127.0.0.1',

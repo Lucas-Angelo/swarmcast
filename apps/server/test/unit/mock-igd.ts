@@ -1,6 +1,7 @@
 import dgram from 'node:dgram';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { UpnpGateway, parseDeviceDescription } from '../../src/direct/upnp.js';
 
 /** Minimal UPnP Internet Gateway Device for tests: SSDP responder + description + SOAP control. */
 export class MockIgd {
@@ -67,6 +68,16 @@ export class MockIgd {
     });
     await new Promise<void>((r) => this.udp.bind(0, '127.0.0.1', () => r()));
     this.ssdpPort = this.udp.address().port;
+  }
+
+  /**
+   * This router as Direct mode finds it, from its description URL. SSDP discovery collects answers
+   * for a whole window (every time); only a test of discovery itself needs that.
+   */
+  async gateway(): Promise<UpnpGateway | null> {
+    const location = `http://127.0.0.1:${this.httpPort}/desc.xml`;
+    const service = parseDeviceDescription(await (await fetch(location)).text(), location);
+    return service ? new UpnpGateway(service, location) : null;
   }
 
   async stop(): Promise<void> {

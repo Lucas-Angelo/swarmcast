@@ -5,7 +5,8 @@ import { HASH_FAILURE_THRESHOLD, encodeTrackerFrame, type ServerMessage } from '
 import type { Session } from '../../src/access/access.js';
 import { defaultConfig, type AppConfig } from '../../src/core/config.js';
 import type { LiveController } from '../../src/core/live.js';
-import { FakeControlSocket, announceFrame, joinViewer, nextJson, trackerSocket, upgradeServer } from './helpers-b.js';
+import { FakeControlSocket } from './helpers.js';
+import { announceFrame, joinViewer, nextJson, trackerSocket, upgradeServer } from './helpers-b.js';
 import { inactiveDirect, makeController } from './live-helpers.js';
 
 // P2P control of the live, as the viewers' pages see it on their /control sockets: "Remove from

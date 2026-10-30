@@ -2,18 +2,17 @@
 // doubles, object mothers and resources that clean up after themselves. Every resource made here
 // is closed or deleted when the test that made it finishes (Vitest's onTestFinished, newest first),
 // so a helper must be called from a test body, never from a beforeEach hook.
-import { EventEmitter, once } from 'node:events';
+import { once } from 'node:events';
 import fs from 'node:fs';
 import http from 'node:http';
 import net, { type AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
-import { onTestFinished, vi } from 'vitest';
+import { onTestFinished } from 'vitest';
 import WebSocket from 'ws';
 import { defaultQualitySettings, type QualitySettings, type Rung, type SourceInfo, type TranscoderStatus } from '@swarmcast/shared';
 import type { AccessControl, Session } from '../../src/access/access.js';
 import type { ControlChannel } from '../../src/control/control.js';
-import { UpnpGateway, parseDeviceDescription } from '../../src/direct/upnp.js';
 import { Transcoder, type TranscoderOptions } from '../../src/quality/transcoder.js';
 import type { TrackerService } from '../../src/tracker/tracker.js';
 import { silentLog, tempDir } from './helpers.js';
@@ -41,16 +40,6 @@ export async function mockRouter(externalIp = '203.0.113.7'): Promise<MockIgd> {
   return igd;
 }
 
-/**
- * The mock router as Direct mode finds it, from its description URL. SSDP discovery collects
- * answers for a whole window (every time); only a test of discovery itself needs that.
- */
-export async function gatewayOf(igd: MockIgd): Promise<UpnpGateway | null> {
-  const location = `http://127.0.0.1:${igd.httpPort}/desc.xml`;
-  const service = parseDeviceDescription(await (await fetch(location)).text(), location);
-  return service ? new UpnpGateway(service, location) : null;
-}
-
 // ---- ports ----
 
 /**
@@ -67,28 +56,6 @@ export async function droppingPort(): Promise<number> {
 }
 
 // ---- WebSockets ----
-
-/**
- * A viewer's /control socket as ControlChannel.attach() takes it, without a network: what the
- * server sends lands in `sent` (the hello first), `receive()` is a frame from the viewer, and
- * terminate/close are spies. (The same as chat-control.test.ts's.)
- */
-export class FakeControlSocket extends EventEmitter {
-  readonly OPEN = 1;
-  readyState = 1;
-  bufferedAmount = 0;
-  sent: string[] = [];
-  terminate = vi.fn();
-  close = vi.fn();
-  ping(): void {}
-  send(d: string): void {
-    this.sent.push(d);
-  }
-  /** A frame from the viewer. */
-  receive(data: string | Buffer, isBinary = false): void {
-    this.emit('message', typeof data === 'string' ? Buffer.from(data) : data, isBinary);
-  }
-}
 
 /** Where upgrades go: /control and /tracker, the two WebSocket paths of the public server. */
 export interface UpgradeRoutes {
