@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 // The chat router in the watch page's main bundle (chat/loader.ts): it routes `chat.*` frames and
 // loads the chat chunk only when the live has the chat on. Each test gives it a fake chunk of its
-// own (createChatRouter's loadChunk), which records what the router hands the mounted chat.
+// own (createChatRouter's loadMountChat), which records what the router hands the mounted chat.
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatSnapshot } from '@swarmcast/shared/chat';
-import { createChatRouter, type ChatChunk } from '../../src/chat/loader.js';
+import { createChatRouter, type MountChat } from '../../src/chat/loader.js';
 
 const SNAPSHOT = { v: 1 } as ChatSnapshot;
 
@@ -24,21 +24,19 @@ function router(o: { fail?: 'load' | 'mount' } = {}) {
   const mounted = new Promise<void>((resolve) => (onMounted = resolve));
   let onFailed: (line: string) => void = () => {};
   const failed = new Promise<string>((resolve) => (onFailed = resolve));
-  const chunk = {
-    mountChat: () => {
-      if (o.fail === 'mount') throw new Error('old browser');
-      // Whoever awaits `mounted` resumes after the router's own callback (mount, then replay) ends.
-      onMounted();
-      return {
-        hello: (s: unknown) => calls.push(`hello ${s ? 'snapshot' : 'none'}`),
-        frame: (m: { t: string }) => calls.push(`frame ${m.t}`),
-        connection: (open: boolean) => calls.push(`conn ${open}`),
-        lastSeq: () => 0,
-      };
-    },
-  } as unknown as ChatChunk;
-  const loadChunk = vi.fn(() => (o.fail === 'load' ? Promise.reject(new Error('offline')) : Promise.resolve(chunk)));
-  const r = createChatRouter({ root, showButton, nickname: () => 'Bia', send: () => true, loadChunk, debug: (line) => onFailed(line) });
+  const mountChat = (() => {
+    if (o.fail === 'mount') throw new Error('old browser');
+    // Whoever awaits `mounted` resumes after the router's own callback (mount, then replay) ends.
+    onMounted();
+    return {
+      hello: (s: unknown) => calls.push(`hello ${s ? 'snapshot' : 'none'}`),
+      frame: (m: { t: string }) => calls.push(`frame ${m.t}`),
+      connection: (open: boolean) => calls.push(`conn ${open}`),
+      lastSeq: () => 0,
+    };
+  }) as unknown as MountChat;
+  const loadChunk = vi.fn(() => (o.fail === 'load' ? Promise.reject(new Error('offline')) : Promise.resolve(mountChat)));
+  const r = createChatRouter({ root, showButton, nickname: () => 'Bia', send: () => true, loadMountChat: loadChunk, debug: (line) => onFailed(line) });
   return { r, root, showButton, calls, loadChunk, mounted, failed };
 }
 

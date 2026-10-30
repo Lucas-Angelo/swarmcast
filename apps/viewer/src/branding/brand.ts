@@ -156,8 +156,19 @@ function supportButton(b: PublicBranding): HTMLElement | null {
   return el;
 }
 
-export function startBrand(page: BrandPage, o: { fetch?: typeof fetch } = {}): BrandController {
+export interface BrandOptions {
+  fetch?: typeof fetch;
+  /**
+   * Join page: whether the streamer's header, title and tagline may still go in. They are taller
+   * than the stock ones, so once the page shows they would move the form under a press in progress
+   * (startJoinBranding: true until the page shows). The tab title and icon change regardless.
+   */
+  canChangeLayout?: () => boolean;
+}
+
+export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandController {
   const f = o.fetch ?? ((input: RequestInfo | URL, init?: RequestInit) => fetch(input, init));
+  const canChangeLayout = o.canChangeLayout ?? (() => true);
   let data: PublicBranding | null = null;
   let etag: string | null = null;
   let framed = false;
@@ -266,6 +277,8 @@ export function startBrand(page: BrandPage, o: { fetch?: typeof fetch } = {}): B
 
   const applyJoin = (): void => {
     const b = data;
+    document.title = b?.name ? t('brand.viewer.joinTitle', { name: b.name }) : stock.title;
+    if (!canChangeLayout()) return;
     const branded = !!(b && (b.name || b.avatar));
     const h1 = document.querySelector<HTMLElement>('main.card h1');
     const intro = document.querySelector<HTMLElement>('main.card h1 + p');
@@ -291,7 +304,6 @@ export function startBrand(page: BrandPage, o: { fetch?: typeof fetch } = {}): B
       } else intro.textContent = intro.dataset.stock;
     }
     document.body.classList.toggle('branded', branded);
-    document.title = b?.name ? t('brand.viewer.joinTitle', { name: b.name }) : stock.title;
   };
 
   const apply = (): void => {

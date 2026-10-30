@@ -58,11 +58,11 @@ function fetcher(body: unknown) {
 }
 
 /** The page's markup, then startBrand on it with `body` as /api/brand, refreshed once. */
-async function branded(page: BrandPage, body: unknown = brand()) {
+async function branded(page: BrandPage, body: unknown = brand(), o: { canChangeLayout?: () => boolean } = {}) {
   if (page === 'watch') watchDom();
   else joinDom();
   const f = fetcher(body);
-  const c = startBrand(page, { fetch: f as unknown as typeof fetch });
+  const c = startBrand(page, { fetch: f as unknown as typeof fetch, ...o });
   await c.refresh();
   return { c, f };
 }
@@ -235,6 +235,18 @@ describe('watch page branding', () => {
 });
 
 describe('join page branding', () => {
+  it('branding that comes once the page shows changes the tab title only, not the layout', async () => {
+    // Act
+    await branded('join', brand(), { canChangeLayout: () => false });
+
+    // Assert
+    expect(document.title).toBe("Join Ana Plays's stream");
+    expect(document.querySelector('main h1')!.textContent).toBe('Join the stream');
+    expect(document.querySelector('main h1 + p')!.textContent).toBe('Pick a nickname.');
+    expect(byId('brand-head').hidden).toBe(true);
+    expect(document.querySelector<HTMLElement>('.site-head .sc-brand')!.hidden).toBe(false);
+  });
+
   it('"Join {name}\'s stream" with the name in its own bdi, the tagline as the intro', async () => {
     // Act
     await branded('join');
