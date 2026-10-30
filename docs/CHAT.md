@@ -461,7 +461,7 @@ the chat stopped itself.
 | Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
 | The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
-| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
 | The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 

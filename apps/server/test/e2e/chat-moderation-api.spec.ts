@@ -1,5 +1,5 @@
-// Chat moderation end to end (chat plan §10.3, chat-moderation.spec.ts @ui): what the streamer
-// does in the panel (its chat API, apps/server/src/admin/chat-routes.ts) reaches real viewer pages
+// Chat moderation end to end through the panel API (chat plan §10.3): what the streamer does in the
+// panel (its chat API, apps/server/src/admin/chat-routes.ts) reaches real viewer pages
 // in every engine: delete, clear, mute for a time and until the end of the live, unmute, a colour
 // set and locked by the streamer, content presets (text only also refuses emoji), blocked words.
 // Every test restores the chat settings it changed: the e2e server is shared by the whole run.
