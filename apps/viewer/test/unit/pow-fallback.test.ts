@@ -1,0 +1,134 @@
+// The browser check's solver (apps/viewer/src/pow.ts) around its worker: a worker double stands
+// in for pow-worker.ts, and the main-thread fallback runs the real altcha solver on easy
+// challenges. A silent worker used to leave the join page at "Checking your browser… 0 %" for
+// good (stability soak: Firefox on Windows); the watchdog moves the solve to the main thread, and
+// the bar keeps moving there too.
+import { createChallenge, type Challenge, type Solution } from 'altcha-lib';
+import { deriveKey } from 'altcha-lib/algorithms/sha';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { solvePow, WORKER_SILENT_MS, type PowWorker } from '../../src/pow.js';
+import { PROGRESS_EVERY } from '../../src/pow-attempts.js';
+
+/** A challenge whose answer is `counter` attempts away; `max` is what the progress bar counts against. */
+function challenge(counter: number, max = 15_000): Promise<Challenge> {
+  return createChallenge({ algorithm: 'SHA-256', cost: 1, counter, deriveKey, hmacSignatureSecret: 'test', data: { max } });
+}
+
+/** A worker double: says what the test tells it to, or nothing at all. */
+class FakeWorker implements PowWorker {
+  onmessage: PowWorker['onmessage'] = null;
+  onerror: PowWorker['onerror'] = null;
+  readonly received: unknown[] = [];
+  terminated = false;
+  postMessage(msg: unknown): void {
+    this.received.push(msg);
+  }
+  terminate(): void {
+    this.terminated = true;
+  }
+  say(data: { attempts?: number; solution?: Solution; error?: string }): void {
+    this.onmessage?.call(this as unknown as Worker, { data } as MessageEvent);
+  }
+  crash(message: string): void {
+    this.onerror?.call(this as unknown as Worker, { message } as ErrorEvent);
+  }
+}
+
+describe('solvePow with a worker', () => {
+  beforeEach(() => {
+    // Only the watchdog's timers: the real solver reads performance.now for its own time budget.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns the worker's solution and shows its progress against the most attempts the challenge can need", async () => {
+    // Arrange
+    const c = await challenge(3, 2_000);
+    const worker = new FakeWorker();
+    const progress: number[] = [];
+    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker });
+    const solution: Solution = { counter: 3, derivedKey: 'k', time: 1 };
+
+    // Act
+    worker.say({ attempts: 500 });
+    worker.say({ attempts: 1_000 });
+    worker.say({ solution });
+
+    // Assert
+    expect(await solved).toEqual({ challenge: { parameters: c.parameters, signature: c.signature }, solution });
+    expect(worker.received).toEqual([c]);
+    expect(progress).toEqual([0.25, 0.5, 1]);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('keeps waiting for a worker that reports progress, however long the whole solve takes', async () => {
+    // Arrange
+    const c = await challenge(3);
+    const worker = new FakeWorker();
+    const solved = solvePow(c, undefined, { worker: () => worker });
+    const solution: Solution = { counter: 3, derivedKey: 'k', time: 1 };
+
+    // Act
+    for (let i = 1; i <= 3; i++) {
+      await vi.advanceTimersByTimeAsync(WORKER_SILENT_MS - 1);
+      worker.say({ attempts: i * PROGRESS_EVERY });
+    }
+    worker.say({ solution });
+
+    // Assert
+    expect((await solved).solution).toEqual(solution);
+  });
+
+  it('solves on the main thread when the worker stays silent for WORKER_SILENT_MS', async () => {
+    // Arrange
+    const c = await challenge(3);
+    const worker = new FakeWorker();
+    let settled = false;
+    const solved = solvePow(c, undefined, { worker: () => worker }).finally(() => (settled = true));
+
+    // Act
+    await vi.advanceTimersByTimeAsync(WORKER_SILENT_MS - 1);
+
+    // Assert
+    expect(settled).toBe(false);
+    expect(worker.terminated).toBe(false);
+
+    // Act
+    await vi.advanceTimersByTimeAsync(1);
+
+    // Assert
+    expect((await solved).solution.counter).toBe(3);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('solves on the main thread at once when the worker fails to start', async () => {
+    // Arrange
+    const c = await challenge(3);
+    const worker = new FakeWorker();
+    const solved = solvePow(c, undefined, { worker: () => worker });
+
+    // Act
+    worker.crash('SyntaxError: import declarations may only appear at top level of a module');
+
+    // Assert
+    expect((await solved).solution.counter).toBe(3);
+    expect(worker.terminated).toBe(true);
+  });
+
+  it('keeps the progress bar moving while the main thread solves', async () => {
+    // Arrange
+    const c = await challenge(2 * PROGRESS_EVERY + 100, 4 * PROGRESS_EVERY);
+    const worker = new FakeWorker();
+    const progress: number[] = [];
+    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker });
+
+    // Act
+    worker.crash('worker failed');
+    await solved;
+
+    // Assert
+    expect(progress).toEqual([0.25, 0.5, 1]);
+  });
+});
