@@ -108,7 +108,7 @@ and Google Chrome. Run from the repository root.
 | `npx playwright test -c apps/viewer/test/chat/playwright.config.ts` | viewer chat UI against a mock hub; after `npm run build -w @swarmcast/viewer` |
 | `npm run desktop:test` | `cargo test`; in `apps/desktop/src-tauri` also `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` |
 | `cd site && npm run build && npm run check` | website build (fails on a broken link) and types; `npm run test:e2e` for its browser tests |
-| `npm run dev -w @swarmcast/server -- --no-tunnel --no-tray --no-autostart` | the app from source, after `build`, only with the environment of §5 (arguments reach the server only through `-w`) |
+| `npm run dev -w @swarmcast/server -- --no-tunnel --no-tray --no-autostart` | the app from source (data in `.cache/dev-data`), after `build`, with the environment of §5 (arguments reach the server only through `-w`) |
 
 Before pushing: `npm run lint && npm run typecheck && npm test` plus the suites of what you touched. Flags,
 environment variables, `config.json` and the version policy: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md);
@@ -118,13 +118,16 @@ packages and installers: [apps/desktop/README.md](apps/desktop/README.md).
 
 The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may touch them.
 
-- **Data:** the app defaults to the real data folder (`~/Library/Application Support/SwarmCast`,
-  `%LOCALAPPDATA%\SwarmCast`, `~/.local/share/swarmcast`). Whatever starts it gets
-  `SWARMCAST_DATA_DIR="$(mktemp -d)"` (or `--data-dir`), and `SWARMCAST_DOWNLOADS_DIR` for log exports.
+- **Data:** packaged builds (start scripts, desktop app) use the real data folder
+  (`~/Library/Application Support/SwarmCast`, `%LOCALAPPDATA%\SwarmCast`, `~/.local/share/swarmcast`); a run
+  from the source checkout defaults to `<repo>/.cache/dev-data`. Anything packaged you start gets
+  `SWARMCAST_DATA_DIR="$(mktemp -d)"` (or `--data-dir`), and log exports `SWARMCAST_DOWNLOADS_DIR`.
 - **No pop-ups:** `SWARMCAST_NO_OPEN=1` (no browser; server and desktop shell) and `SWARMCAST_NO_NOTIFY=1`.
 - **Hands off:** OBS and its settings, `/Applications` and `~/Applications`, login and autostart items, the
   router (tests use the mock IGD). Never run the start or uninstall scripts or the installers on the host;
   their harnesses (`scripts/test/run.sh`, `scripts/test/uninstall.sh`) isolate themselves.
+  `scripts/test/windows/`, `desktop/verify.mjs` and `preflight/verify.mjs` change the machine (CI or a
+  throwaway VM only), and `obs-e2e/` rewrites OBS's own settings ([scripts/README.md](scripts/README.md)).
 - **Processes:** stop only the PIDs you started; never `pkill` / `killall` SwarmCast, MediaMTX, cloudflared,
   ffmpeg or OBS.
 - **Ports:** never bind, probe or kill 31935/38180/38181 (the maintainer's demo) or the defaults
@@ -133,10 +136,9 @@ The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may tou
   (it lands on the demo); check first with `lsof -nP -iTCP:<port> -sTCP:LISTEN`.
 - **Temporary files** go in `mktemp -d` folders or your session scratchpad, never in tracked paths or `$HOME`.
 - **Updater key:** `~/.tauri/swarmcast-updater.key` and `.password` are the real release key: never read,
-  copy, print or commit them. `scripts/build/desktop.mjs` uses them silently when `TAURI_SIGNING_PRIVATE_KEY`
-  is unset, so export a throwaway key first, as `_desktop.yml` does:
-  `node node_modules/@tauri-apps/cli/tauri.js signer generate --ci --password test --write-keys "$T/k"`, then
-  `TAURI_SIGNING_PRIVATE_KEY="$(cat "$T/k")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test`. Builds with
+  copy, print, commit or build with them. Local desktop builds sign with a throwaway key, as `_desktop.yml`
+  does: `node node_modules/@tauri-apps/cli/tauri.js signer generate --ci --password test --write-keys "$T/k"`,
+  then `TAURI_SIGNING_PRIVATE_KEY="$(cat "$T/k")" TAURI_SIGNING_PRIVATE_KEY_PASSWORD=test`. Builds with
   `--insecure-updates` are for local tests, never published.
 
 ## 6. Code conventions
@@ -251,6 +253,7 @@ Index: [docs/README.md](docs/README.md). Read the doc of the area before changin
 |---|---|
 | setup, flags, environment, `config.json`, version policy | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md), [CONTRIBUTING.md](CONTRIBUTING.md) |
 | media path, access control, tunnel, Direct mode, packaging | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
+| something that looks odd but may be on purpose | [docs/DECISIONS.md](docs/DECISIONS.md) (decisions, reasons, links) |
 | anything security-relevant | [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md), [docs/SECURITY_RESEARCH.md](docs/SECURITY_RESEARCH.md) |
 | chat; "Your page" | [docs/CHAT.md](docs/CHAT.md); [docs/BRANDING.md](docs/BRANDING.md) |
 | player, quality ladder, ffmpeg, upload budget | [docs/QUALITY.md](docs/QUALITY.md) |

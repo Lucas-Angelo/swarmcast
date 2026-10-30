@@ -95,8 +95,9 @@ consumers' own steps below and commit the results.
 | Website (`site/`) | `site/src/styles/tokens.css` imports `tokens.css`; `starlight.css` maps Starlight onto it; `site/src/tokens.mjs` reads literal values at build time (theme colour, contrast test) | [`site/src/brand.mjs`](../../site/src/brand.mjs) names the files used from this folder (symbol light/dark, mascot); `site/public/favicon.svg` is a copy of `favicon/favicon.svg`. Fredoka is subset into `site/src/fonts/` |
 | Offline guide (installer zips) | `scripts/build/guide-html.mjs` reads the light and dark values from `tokens.css` | — |
 
-The script-mode tray helper (`apps/tray`) still draws its own plain status circles
-(`apps/tray/icons/gen`); it does not use `tray/` yet.
+The script-mode tray helper (`apps/tray`) uses copies of `tray/tray-{off,waiting,live}-32.png` and
+`tray/tray-<state>.ico` in `apps/tray/icons/` (byte-identical today); re-copy them when the tray icons
+change. The desktop app copies the same PNGs with `npm run desktop:icons`.
 
 ## Type
 
