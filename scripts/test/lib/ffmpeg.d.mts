@@ -17,7 +17,14 @@ export function hasFfmpeg(): boolean;
 export function ffmpegVersion(): string | null;
 
 /** Arguments for a feed encoded live, in real time (x264 ultrafast). */
-export function liveFeedArgs(rtmpUrl: string, o?: FeedOptions): string[];
+export interface LiveFeedOptions extends FeedOptions {
+  /** x264 preset (default ultrafast). */
+  preset?: string;
+  /** Cap peaks at `kbps` with a two-second buffer (ignored with `cbr`, which caps them already). */
+  vbv?: boolean;
+}
+
+export function liveFeedArgs(rtmpUrl: string, o?: LiveFeedOptions): string[];
 
 export interface ClipOptions extends FeedOptions {
   /** Clip length, a whole number of 2 s keyframe intervals (default CLIP_SECONDS). */

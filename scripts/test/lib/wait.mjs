@@ -15,7 +15,8 @@ export class WaitError extends Error {
 function describe(detail) {
   if (!detail) return '';
   try {
-    return ` (${detail()})`;
+    const d = detail();
+    return d ? ` (${d})` : '';
   } catch (err) {
     return ` (detail failed: ${err.message})`;
   }
@@ -95,6 +96,48 @@ export function until(pred, o) {
     }
     void check();
   });
+}
+
+/**
+ * Polls `fn` every `everyMs` (default 500) until it returns something truthy, and resolves with
+ * that value. Unlike `until`, an error thrown by `fn` only means "not yet" (an API that does not
+ * answer while the app starts): the last one is in the timeout message. A WaitError thrown by
+ * `fn` is a definite failure (the live start failed): it ends the wait at once. `abortOn` and
+ * `detail` as in `until`.
+ */
+export async function poll(fn, o) {
+  let value;
+  let lastError;
+  await until(
+    async () => {
+      try {
+        value = await fn();
+        lastError = undefined;
+        return !!value;
+      } catch (err) {
+        if (err instanceof WaitError) throw err;
+        lastError = err;
+        return false;
+      }
+    },
+    {
+      timeoutMs: o.timeoutMs,
+      what: o.what,
+      abortOn: o.abortOn,
+      pollMs: o.everyMs ?? 500,
+      detail: () => [o.detail?.(), lastError && `last error: ${lastError.message ?? lastError}`].filter(Boolean).join('; '),
+    },
+  );
+  return value;
+}
+
+/**
+ * Resolves with what `promise` resolves to, or with `fallback` once `ms` passed (a deadline on an
+ * event, such as a process exit; the timer is cleared either way).
+ */
+export function orTimeout(promise, ms, fallback) {
+  let timer;
+  return Promise.race([promise, new Promise((resolve) => (timer = setTimeout(() => resolve(fallback), ms)))]).finally(() => clearTimeout(timer));
 }
 
 /**

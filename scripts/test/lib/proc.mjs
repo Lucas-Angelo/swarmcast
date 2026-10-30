@@ -252,6 +252,20 @@ export function spawnTracked(command, args, o = {}) {
   return new Tracked(command, args, o);
 }
 
+/**
+ * What a wait needs of a process it depends on (an Owner of wait.mjs), for a child that is not
+ * tracked (a start script whose whole output a test reads): its exit, and the last lines of
+ * `output()`.
+ */
+export function ownerOf(child, name, output) {
+  const exited = new Promise((resolve) => {
+    if (child.exitCode !== null || child.signalCode !== null) resolve({ code: child.exitCode, signal: child.signalCode });
+    child.once('exit', (code, sig) => resolve({ code, signal: sig }));
+    child.once('error', (err) => resolve({ code: null, signal: null, error: err.message }));
+  });
+  return { name, exited, tail: (n = 20) => output().split(/\r?\n/).filter(Boolean).slice(-n).join('\n') };
+}
+
 /** Stops every tracked child still running; throws one error listing every one that survived. */
 export async function stopTracked() {
   const results = await Promise.allSettled([...pending].map((t) => t.stop()));

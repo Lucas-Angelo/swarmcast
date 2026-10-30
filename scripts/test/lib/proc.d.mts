@@ -1,6 +1,6 @@
 import type { ChildProcess, StdioOptions } from 'node:child_process';
 import type { EventEmitter } from 'node:events';
-import type { ExitInfo } from './wait.mjs';
+import type { ExitInfo, Owner } from './wait.mjs';
 
 export function isAlive(pid: number): boolean;
 
@@ -60,3 +60,6 @@ export function spawnTracked(command: string, args: readonly string[], o?: Spawn
 
 /** Stops every tracked child not stopped yet; rejects listing every one that survived. */
 export function stopTracked(): Promise<void>;
+
+/** An Owner (wait.mjs) for a child that is not tracked: its exit, and the last lines of `output()`. */
+export function ownerOf(child: ChildProcess, name: string, output: () => string): Owner;
