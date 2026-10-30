@@ -255,7 +255,7 @@ before the stable version.
    ```
 5. **Watch the release workflow** in the **Actions** tab. It runs by itself on the tag and:
    1. checks that the tag matches `package.json`, that the version is `X.Y.Z`, `X.Y.Z-beta.N` or
-      `X.Y.Z-rc.N`, that the tag commit is on `main` (or `release/X.Y`), that a new minor `X.Y.0` had a
+      `X.Y.Z-rc.N`, that the tag commit is on `main` or `release/X.Y` (a pre-release may also be on the minor's release pull request branch `release/X.Y.Z`, same X.Y.Z, before it is merged), that a new minor `X.Y.0` had a
       published beta, that `CHANGELOG.md` has the notes (`## [X.Y.Z]`, or `## [Unreleased]` for a
       pre-release), that the updater signing secrets exist, and that no GitHub release exists yet for the
       tag;

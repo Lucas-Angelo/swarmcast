@@ -86,16 +86,16 @@ jobs:
         run: |
           mapfile -t stable < <(gh release list -R "$GITHUB_REPOSITORY" --exclude-pre-releases --exclude-drafts --limit 1000 --json tagName --jq '.[].tagName')
           node scripts/releases/version.mjs "$VERSION" "${stable[@]}" | tee -a "$GITHUB_OUTPUT"
-      - name: The tag is on main or a maintenance branch
+      # Stable: main, or the maintenance branch release/X.Y. A pre-release may also be tagged on
+      # the minor's release pull request branch release/X.Y.Z, before it is merged into main (main
+      # only takes the stable version).
+      - name: The tag is on main or a release branch
         shell: bash
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          minor="$(node -p "require('./package.json').version.split('.').slice(0, 2).join('.')")"
-          branches="$(git branch -r --contains "$GITHUB_SHA" --format '%(refname:short)')"
-          echo "$branches"
-          if ! grep -qxE "origin/main|origin/release/${minor//./\\.}" <<<"$branches"; then
-            echo "::error::${GITHUB_REF_NAME} (${GITHUB_SHA}) is not on main or release/${minor}: tag the release commit there (docs/RELEASING.md, section 4)."
-            exit 1
-          fi
+          mapfile -t branches < <(git branch -r --contains "$GITHUB_SHA" --format '%(refname:short)')
+          node scripts/releases/version.mjs --on-branch "$VERSION" "${branches[@]}"
       # A new minor or major ships to everyone only after its beta: X.Y.0 needs a published
       # X.Y.0-beta.N or X.Y.0-rc.N (patch releases normally skip betas).
       - name: A new minor was a beta first

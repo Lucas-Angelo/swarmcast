@@ -1,6 +1,11 @@
+import { spawnSync } from 'node:child_process';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { compare, debianVersion, isLatestStable, isPrerelease, parse, releaseChannel } from '../semver.mjs';
-import { classify } from '../version.mjs';
+import { allowedTagBranches, classify } from '../version.mjs';
+
+const VERSION_CLI = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'version.mjs');
 
 describe('compare (SemVer 2.0.0 precedence)', () => {
   it('orders the release line the way the app updater does', () => {
@@ -64,6 +69,29 @@ describe('isLatestStable (GitHub "Latest")', () => {
     expect(classify(['0.3.0', 'v0.2.2', ''])).toEqual({ channel: 'stable', prerelease: false, is_latest: true });
     expect(classify(['0.2.3', 'v0.3.0'])).toEqual({ channel: 'stable', prerelease: false, is_latest: false });
     expect(() => classify(['0.3.0-alpha.1'])).toThrow(/not a release version/);
+  });
+});
+
+describe('allowedTagBranches (release.yml: the tag commit must be on one of them)', () => {
+  it('stable: main or release/X.Y; a pre-release also release/X.Y.Z of exactly its X.Y.Z', () => {
+    expect(allowedTagBranches('0.3.0')).toEqual(['origin/main', 'origin/release/0.3']);
+    expect(allowedTagBranches('0.3.2')).toEqual(['origin/main', 'origin/release/0.3']);
+    expect(allowedTagBranches('0.3.0-beta.1')).toEqual(['origin/main', 'origin/release/0.3', 'origin/release/0.3.0']);
+    expect(allowedTagBranches('1.0.0-rc.2')).toEqual(['origin/main', 'origin/release/1.0', 'origin/release/1.0.0']);
+    expect(() => allowedTagBranches('0.3.0-alpha.1')).toThrow(/not a release version/);
+  });
+
+  it('CLI dry run of the verify step', () => {
+    const cli = (...a: string[]) => spawnSync(process.execPath, [VERSION_CLI, '--on-branch', ...a], { encoding: 'utf8' });
+    expect(cli('0.3.0-beta.1', 'origin/release/0.3.0').status).toBe(0);
+    expect(cli('0.3.0-beta.1', 'origin/main', 'origin/release/0.3.0').stdout).toContain('origin/main, origin/release/0.3.0');
+    // Not the same X.Y.Z, a stable tag on a release PR branch, nothing, a lookalike.
+    for (const [v, ...b] of [['0.3.1-beta.1', 'origin/release/0.3.0'], ['0.3.0', 'origin/release/0.3.0'], ['0.3.0-beta.1'], ['0.3.0-beta.1', 'origin/release/0x3x0'], ['0.3.0-beta.1', 'origin/wp/feature']]) {
+      const r = cli(v!, ...b);
+      expect(r.status, `${v} on ${b.join(',')}`).toBe(1);
+      expect(r.stderr).toContain('::error::');
+    }
+    expect(cli('0.3.0', 'origin/release/0.3').status).toBe(0);
   });
 });
 
