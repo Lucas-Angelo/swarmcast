@@ -103,7 +103,7 @@ button.bf-section-head {
   grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
   gap: var(--sp-3);
 }
-.field select.lang-select {
+.bf-two select.lang-select {
   display: block;
   width: 100%;
 }
