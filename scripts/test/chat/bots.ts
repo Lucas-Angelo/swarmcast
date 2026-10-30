@@ -161,11 +161,14 @@ async function joinAll(from: number, count: number, concurrency: number, overMs 
 function frameFor(bot: Bot, seq: number): string {
   const n = (bot.nonce = (bot.nonce % 2_000_000_000) + 1);
   const b = scenario.behaviour;
-  if (b.kind === 'gif') return JSON.stringify({ t: 'chat.send', n, gif: { p: 'klipy', id: `g${bot.i}x${seq}`, w: 200, h: 150 } });
+  // A GIF reference as the picker sends it: provider, id, size and the provider's media path.
+  if (b.kind === 'gif') return JSON.stringify({ t: 'chat.send', n, gif: { p: 'klipy', id: `g${bot.i}x${seq}`, w: 200, h: 150, m: '/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp' } });
   let text: string;
   if (b.kind === 'corpus') text = CORPUS[(bot.i + seq) % CORPUS.length]!.input;
   else if (b.kind === 'same') text = 'compre seguidores baratos agora';
-  else text = `${WORDS[(bot.i + seq) % WORDS.length]} ${WORDS[(bot.i * 7 + seq) % WORDS.length]} ${seq}`;
+  // Ordinary chat: different people say different things (the bot and its count are in the
+  // text), so the duplicate detector only fires in the dup-storm scenario.
+  else text = `${WORDS[(bot.i + seq) % WORDS.length]} ${WORDS[(bot.i * 7 + seq) % WORDS.length]} ${bot.i}x${seq}`;
   return JSON.stringify({ t: 'chat.send', n, text });
 }
 
