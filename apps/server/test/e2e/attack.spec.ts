@@ -5,6 +5,7 @@ import {
   adminState,
   expect,
   liveLink,
+  loginPanel,
   test,
   uid,
   waitPlaying,
@@ -79,7 +80,7 @@ test("a flood of invalid join links is detected, turns on the browser check, and
   ) as { adminLoginUrl: string };
   const adminCtx = await browser.newContext();
   const panel = await adminCtx.newPage();
-  await panel.goto(env.adminLoginUrl);
+  await loginPanel(panel, env.adminLoginUrl);
   await expect(panel.getByTestId("threat")).toHaveAttribute(
     "data-threat",
     "attack",

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
-import { admin, expect, liveLink, test } from './fixtures.js';
+import { admin, expect, liveLink, loginPanel, test } from './fixtures.js';
 
 // First-run setup tutorial in the admin panel (checked on Chromium).
 function adminLoginUrl(): string {
@@ -10,7 +10,7 @@ function adminLoginUrl(): string {
 }
 
 async function openPanel(page: Page): Promise<void> {
-  await page.goto(adminLoginUrl());
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('status')).toBeVisible();
 }
 
@@ -114,7 +114,7 @@ test('the tutorial is translated (pt-BR)', { tag: '@ui' }, async ({ browser }) =
   await admin('/api/onboarding', { done: false });
   const context = await browser.newContext({ locale: 'pt-BR' });
   const page = await context.newPage();
-  await page.goto(adminLoginUrl());
+  await loginPanel(page, adminLoginUrl());
   await expect(page.getByTestId('onboarding')).toBeVisible();
   await expect(page.getByTestId('onb-progress')).toHaveText('Passo 1 de 9');
   await expect(page.getByTestId('onb-skip')).toHaveText('Pular tutorial');

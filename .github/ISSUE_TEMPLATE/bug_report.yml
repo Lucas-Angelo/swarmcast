@@ -16,8 +16,8 @@ body:
     id: version
     attributes:
       label: SwarmCast version
-      description: It is at the bottom of the panel ("SwarmCast 0.2.1"). In the desktop app it is also on the **Desktop app** card. Not sure? Write when you downloaded it.
-      placeholder: "0.2.1"
+      description: It is at the bottom of the panel ("SwarmCast 0.2.2"). In the desktop app it is also on the **Desktop app** card. Not sure? Write when you downloaded it.
+      placeholder: "0.2.2"
     validations:
       required: true
 

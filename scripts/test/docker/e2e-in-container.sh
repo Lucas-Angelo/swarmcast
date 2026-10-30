@@ -49,11 +49,15 @@ declare -A RC
 for p in $PROJECTS; do
   echo
   echo "== playwright test --project=$p (scripts/test/docker/playwright.linux.config.ts)"
+  # The e2e server writes its log and the fake OBS's next to outputDir (test-results/, not
+  # test-results/pw, which Playwright empties): one set per project.
+  rm -f test-results/e2e-server.log test-results/fake-obs.log
   npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p"
   RC[$p]=$?
   mkdir -p "/out/$p"
   cp -a test-results/pw "/out/$p/test-results" 2>/dev/null
   cp -a playwright-report "/out/$p/playwright-report" 2>/dev/null
+  cp -a test-results/e2e-server.log test-results/fake-obs.log "/out/$p/" 2>/dev/null
   leftovers "--project=$p"
 done
 
