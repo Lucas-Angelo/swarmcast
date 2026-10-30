@@ -53,8 +53,11 @@ network (`http://release:8000/ok`). A second folder (`/corrupt`) lists a newer v
      `/api/state` phase `waiting-obs`, ffmpeg RTMP push → `live` + `obsConnected`, viewer join
      flow with curl (link → 303 + ticket cookie, `POST /api/join`, playlist, init + media
      segment 200), SIGINT → "Off: nothing on your computer is reachable", no MediaMTX left,
-     ports closed
+     ports closed, the reaper never restarted
   5. the same shutdown with SIGTERM
+     5b. a display (`DISPLAY=:99`) without a D-Bus session bus: the tray helper says why and
+     exits with code 3, the server goes on with the panel only without starting it again,
+     nothing panics, the same clean shutdown
   6. SIGKILL of the app: the reaper must stop MediaMTX
 - **d.** (first target only, or `--tunnel-all`) the real quick tunnel: the
   `https://*.trycloudflare.com/join/…` link must answer `/healthz` with 200 + `x-swarmcast`
@@ -83,7 +86,9 @@ in both `global.ini` `[OBSWebSocket]` (obs-websocket ≤ 5.4, OBS ≤ 30) and
 scene + color source + media source (an ffmpeg-generated mp4), custom server
 `rtmp://127.0.0.1:1935/live` + the stream key from `/api/state`, `StartStream`. It then checks
 `live` / `obsConnected`, a curl viewer gets H.264 segments, `StopStream` returns to
-`waiting-obs`, and SIGINT shuts everything down.
+`waiting-obs`, and SIGINT shuts everything down. Advanced output checks 2 s segments; with
+`--simple` the keyframe interval is OBS's own default, so the segment length and the panel's
+warnings are printed as information instead.
 
 ## Section 3: `e2e.sh`
 
@@ -98,6 +103,9 @@ H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each pr
 `playwright.linux.config.ts`: the main config, but the chromium project has no `channel`
 (Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/<project>/`,
 with that project's `e2e-server.log` and `fake-obs.log` (CI uploads them when a project fails).
+After every Playwright invocation, nothing of the e2e web server (its own process, the MediaMTX
+and cloudflared it started) may still run 10 s after Playwright stopped it: a check that fails the
+run (what is left is then killed, so the next invocation can bind its ports).
 
 ## Section 4: `appimage.sh`
 

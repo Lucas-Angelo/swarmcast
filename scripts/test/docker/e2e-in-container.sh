@@ -30,22 +30,29 @@ npm run build --silent >/tmp/build.log 2>&1 || { tail -50 /tmp/build.log; exit 2
 echo "== codec support of the bundled browsers"
 node scripts/test/docker/codec-probe.mjs
 
-# Processes the e2e web server (apps/server/test/e2e/server.ts) leaves behind once Playwright
-# has stopped it: still running LEFTOVER_GRACE_S after it (the server's own shutdown stops its
-# children before it exits). Reported, then killed so the next invocation can bind its ports.
-LEFTOVER=0
+# Once Playwright has stopped the e2e web server (apps/server/test/e2e/server.ts: SIGTERM, and
+# its own shutdown stops the MediaMTX and cloudflared it started before it exits), none of those
+# processes runs any more: checked after every Playwright invocation, with LEFTOVER_GRACE_S for
+# that shutdown. What is still running fails the run, and is then killed so the next invocation
+# can bind its ports.
 LEFTOVER_GRACE_S=10
 LEFT_RE='vendor/linux-[a-z0-9]+/(mediamtx|cloudflared)|test/e2e/server\.ts'
+LEFT_CHECKS=()
+LEFT_FAILED=0
 none_left() { ! pgrep -f "$LEFT_RE" >/dev/null; }
 leftovers() { # leftovers LABEL
-  local l
-  wait_for "$LEFTOVER_GRACE_S" none_left && return
-  l="$(pgrep -a -f "$LEFT_RE")"
-  echo "WARN after $1: processes left running $LEFTOVER_GRACE_S s after Playwright stopped the web server:"
-  printf '%s\n' "$l" | sed 's/^/  /'
-  LEFTOVER=1
+  local name="nothing of the e2e web server left running after $1" n
+  if wait_for "$LEFTOVER_GRACE_S" none_left; then
+    LEFT_CHECKS+=("PASS $name")
+    return
+  fi
+  n="$(pgrep -f "$LEFT_RE" | wc -l | tr -d ' ')"
+  echo "  still running $LEFTOVER_GRACE_S s after Playwright stopped the web server ($1):"
+  pgrep -a -f "$LEFT_RE" | sed 's/^/    /'
+  LEFT_CHECKS+=("FAIL $name ($n processes still running $LEFTOVER_GRACE_S s after Playwright stopped it)")
+  LEFT_FAILED=1
   pkill -9 -f "$LEFT_RE"
-  wait_for 10 none_left || echo "WARN after $1: still running after SIGKILL: $(pgrep -a -f "$LEFT_RE")"
+  wait_for 10 none_left || echo "  still running after SIGKILL: $(pgrep -a -f "$LEFT_RE" | tr '\n' ' ')"
 }
 
 declare -A RC
@@ -77,6 +84,7 @@ for p in $PROJECTS; do
   if [ "${RC[$p]}" = 0 ]; then echo "PASS $p"; else echo "FAIL $p (exit ${RC[$p]})"; fi
 done
 echo "INFO main config with PW_CHROMIUM_CHANNEL='': exit $EMPTY_RC"
-[ "$LEFTOVER" = 1 ] && echo "WARN the e2e web server left processes running after Playwright stopped it (see above)"
+printf '%s\n' "${LEFT_CHECKS[@]}"
 for p in $PROJECTS; do [ "${RC[$p]}" = 0 ] || exit 1; done
+[ "$LEFT_FAILED" = 0 ] || exit 1
 exit 0

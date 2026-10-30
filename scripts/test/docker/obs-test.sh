@@ -200,7 +200,9 @@ TD="$(sed -n 's/^#EXT-X-TARGETDURATION://p' "$PL" | head -n1)"
 if [ "$OUTPUT_MODE" = advanced ]; then
   if [ "${TD:-99}" -le 3 ]; then ok "segments ~2 s (TARGETDURATION $TD) with OBS keyframe interval 2 s"; else bad "TARGETDURATION $TD with keyframe interval 2 s"; fi
 else
-  [ "${TD:-0}" -gt 3 ] && echo "  WARN: Simple output mode: TARGETDURATION $TD s (x264 default keyframe interval); SwarmCast expects 2 s and does not warn"
+  # Information, not a check: in Simple output mode the keyframe interval is OBS's own default
+  # (the panel's setup asks for Advanced output with keyframes every 2 s).
+  echo "  INFO: Simple output mode: TARGETDURATION ${TD:-?} s; panel warnings: $(state | jq -c '[.warnings[].code]')"
 fi
 cat "$W/init.mp4" "$W/seg.mp4" >"$W/joined.mp4"
 PROBE="$(ffprobe -v error -show_entries stream=codec_name,codec_type,width,height -of csv=p=0 "$W/joined.mp4" | tr '\n' ' ')"
