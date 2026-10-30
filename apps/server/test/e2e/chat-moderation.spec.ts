@@ -159,11 +159,21 @@ async function openPanel(page: Page, lang?: string): Promise<Locator> {
   return card;
 }
 
+/**
+ * Waits until the panel's viewers table lists `v`. The table sits right above the Chat card and
+ * gains a row per new session: a click aimed at the card while the join is still on its way to
+ * the panel lands wherever the card was before the row pushed it down.
+ */
+async function panelShows(page: Page, v: Viewer): Promise<void> {
+  await expect(page.getByTestId(`viewer-${v.nickname}`)).toBeVisible();
+}
+
 const row = (card: Locator, text: string) => card.getByTestId('chat-msg').filter({ hasText: text });
 
 test('the streamer posts with a badge from the role; links are never clickable; delete removes a message for everyone', { tag: '@ui' }, async ({ page }) => {
   const card = await openPanel(page);
   const ana = await chatViewer('ana');
+  await panelShows(page, ana);
   const sent = await answer(ana, ana.send('hello from ana https://evil.example/x'));
   expect(sent.s).toBeGreaterThan(0);
 
@@ -217,6 +227,7 @@ test('a viewer who joins after the streamer was first announced still gets the s
 test('mute tells the viewer until when and refuses their messages; unmute and "until the stream ends" from the viewers table', { tag: '@ui' }, async ({ page }) => {
   const card = await openPanel(page);
   const bia = await chatViewer('bia');
+  await panelShows(page, bia);
   await answer(bia, bia.send('first message'));
   const biaRow = row(card, 'first message');
   await biaRow.getByTestId('chat-more').click();
@@ -245,6 +256,7 @@ test('mute tells the viewer until when and refuses their messages; unmute and "u
 test('the streamer changes a name colour and locks it; clear empties the chat for everyone', { tag: '@ui' }, async ({ page }) => {
   const card = await openPanel(page);
   const caio = await chatViewer('caio');
+  await panelShows(page, caio);
   await answer(caio, caio.send('colour me'));
   const caioRow = row(card, 'colour me');
   await caioRow.getByTestId('chat-more').click();
@@ -271,6 +283,7 @@ test('the streamer changes a name colour and locks it; clear empties the chat fo
 test('modes: emotes only refuses text; text only with a blocked word; the length limit', { tag: '@ui' }, async ({ page }) => {
   const card = await openPanel(page);
   const dani = await chatViewer('dani');
+  await panelShows(page, dani);
 
   await card.getByTestId('chat-preset-emotes').click();
   await card.getByTestId('chat-save').click();
@@ -301,6 +314,7 @@ test('modes: emotes only refuses text; text only with a blocked word; the length
 test('the switch turns the chat off and on; protection can be set and ended by hand', { tag: '@ui' }, async ({ page }) => {
   const card = await openPanel(page);
   const eli = await chatViewer('eli');
+  await panelShows(page, eli);
   await expect(card.getByTestId('chat-status')).toHaveText(translate('en', 'admin.chat.status.on'));
 
   await card.getByTestId('chat-enabled').uncheck();
