@@ -142,11 +142,13 @@ everywhere, and what each change runs are in [.github/workflows/README.md](../.g
 | `windows` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
 | `clean-machine` | per runner image: the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
 | `site` | the website's tests, when it changed | Ubuntu |
+| `docker` | the Linux Docker suites (package and start script on Ubuntu 22.04/24.04 and Debian 12, AppImage on a minimal host, OBS Studio, Playwright in the Playwright image), when they or what they run changed | Ubuntu x64 + arm64 |
 | `ci-ok` | the one required check: green only when every stage the change needs passed | Ubuntu |
 
 Other workflows: `codeql.yml` (code scanning of TypeScript, Go, Rust and the workflows), `site.yml` and
-`stats.yml` (the website and the usage numbers, section 6), `soak.yml` and `linux-docker.yml` (stability
-measurements and the Docker suites), and `release.yml` (on a `v*` tag: the whole pipeline as a gate, then
+`stats.yml` (the website and the usage numbers, section 6), `soak.yml` (stability measurements),
+`linux-docker.yml` (the Docker suites weekly; pull requests that touch them run the same suites as the
+pipeline's `docker` stage, inside `ci-ok`), and `release.yml` (on a `v*` tag: the whole pipeline as a gate, then
 sign and publish, section 4).
 
 Changes that only touch `docs/`, `site/` or `.md` files skip the app stages: `ci-ok` is green within a
