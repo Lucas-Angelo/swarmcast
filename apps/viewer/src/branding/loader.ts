@@ -34,8 +34,12 @@ export function startJoinBranding(o: { loadStartBrand?: () => Promise<StartBrand
   const timer = setTimeout(markShown, o.waitMs ?? JOIN_BRAND_WAIT_MS);
   loadStartBrand()
     .then((startBrand) => startBrand('join', { canChangeLayout: () => !shown }).refresh())
-    // The text in its web fonts too: a font swap after the page shows would reflow it as well.
-    .then(() => document.fonts?.ready)
+    // The text in its web fonts too (a font swap after the page shows would reflow it as well): a
+    // layout first, so the fonts the streamer's text needs have started loading, then wait for them.
+    .then(() => {
+      void document.body.getBoundingClientRect();
+      return document.fonts?.ready;
+    })
     .catch((err: unknown) => o.debug?.(`branding: ${String(err)}`))
     .finally(() => {
       clearTimeout(timer);
