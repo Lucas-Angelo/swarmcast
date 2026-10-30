@@ -169,7 +169,12 @@ function checkServer(model) {
     throw new CheckError(`${fromRoot(metaFile)} does not describe ${SERVER_BUNDLE} on disk (${out.bytes} bytes there, ${fs.existsSync(bundle) ? fs.statSync(bundle).size : 'no file'} here): build again`);
   }
   for (const input of Object.keys(meta.inputs ?? {})) {
-    // Namespaced inputs ("ns:path") come from plugins, which build.mjs has none of.
+    // build.mjs's one plugin replaces optional peers with an empty module (no package code at all).
+    if (input.startsWith('optional-peer-absent:')) {
+      check.notes.push(`${input.slice('optional-peer-absent:'.length)}: replaced by an empty module (build.mjs OPTIONAL_PEERS)`);
+      continue;
+    }
+    // Any other namespaced input ("ns:path") comes from a plugin this check does not know.
     if (/^[a-z][\w-]*:/i.test(input) && !/^[a-z]:[\\/]/i.test(input)) {
       check.bad(input, 'an input from an esbuild plugin namespace; no-dev-deps.mjs cannot tell where it comes from');
       continue;
