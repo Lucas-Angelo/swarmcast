@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "emotes": [
+    {
+      "code": "hi",
+      "file": "hi.webp",
+      "file2x": "hi@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "live",
+      "file": "live.webp",
+      "file2x": "live@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "sleep",
+      "file": "sleep.webp",
+      "file2x": "sleep@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "bee",
+      "file": "bee.webp",
+      "file2x": "bee@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "love",
+      "file": "love.webp",
+      "file2x": "love@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "hearts",
+      "file": "hearts.webp",
+      "file2x": "hearts@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "gg",
+      "file": "gg.webp",
+      "file2x": "gg@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "lol",
+      "file": "lol.webp",
+      "file2x": "lol@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "wow",
+      "file": "wow.webp",
+      "file2x": "wow@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "what",
+      "file": "what.webp",
+      "file2x": "what@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "fire",
+      "file": "fire.webp",
+      "file2x": "fire@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "hype",
+      "file": "hype.webp",
+      "file2x": "hype@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "sad",
+      "file": "sad.webp",
+      "file2x": "sad@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "zzz",
+      "file": "zzz.webp",
+      "file2x": "zzz@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "brb",
+      "file": "brb.webp",
+      "file2x": "brb@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "rec",
+      "file": "rec.webp",
+      "file2x": "rec@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "clip",
+      "file": "clip.webp",
+      "file2x": "clip@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "plus1",
+      "file": "plus1.webp",
+      "file2x": "plus1@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "cozy",
+      "file": "cozy.webp",
+      "file2x": "cozy@2x.webp",
+      "w": 56,
+      "h": 56
+    },
+    {
+      "code": "swarm",
+      "file": "swarm.webp",
+      "file2x": "swarm@2x.webp",
+      "w": 56,
+      "h": 56
+    }
+  ]
+}
