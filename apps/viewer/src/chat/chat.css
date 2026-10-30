@@ -495,3 +495,107 @@ button.chat-show {
     max-height: calc(1em * var(--chat-lh) * 4 + 4px);
   }
 }
+
+/* ---- GIFs (plan 5.6): a fixed box, never more than 200 px wide ------------------------------ */
+.msg.has-gif {
+  max-height: calc(1em * var(--chat-lh) * 2 + 236px);
+}
+.msg .gif {
+  display: inline-block;
+  vertical-align: top;
+  max-width: 100%;
+}
+.msg img.gif-img {
+  display: block;
+  width: 200px;
+  max-width: 100%;
+  height: auto;
+  max-height: 220px;
+  aspect-ratio: var(--ar, 4 / 3);
+  object-fit: contain;
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-surface-2);
+}
+.msg button.gif-consent,
+.msg button.gif-play {
+  min-height: 32px;
+  max-width: 260px;
+  padding: var(--sp-1) var(--sp-3);
+  border: 1px dashed var(--sc-border-strong);
+  background: var(--sc-surface-2);
+  color: var(--sc-text);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-regular);
+  text-align: left;
+  white-space: normal;
+}
+.msg button.gif-consent:hover,
+.msg button.gif-play:hover {
+  background: var(--hover);
+}
+button.chat-tool.gif-btn {
+  font-size: var(--fs-xs);
+  font-weight: var(--sc-weight-bold);
+  letter-spacing: 0.04em;
+}
+.chat-gif {
+  bottom: 96px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  height: min(380px, 62vh);
+}
+.chat-gif input[type='search'] {
+  width: 100%;
+  height: 36px;
+  padding: 0 var(--sp-3);
+  font: inherit;
+  font-size: 1rem;
+  color: var(--sc-ink);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: var(--sc-radius-md);
+}
+.chat-gif .gif-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 4px;
+  align-content: start;
+}
+button.gif-pick {
+  min-height: 0;
+  padding: 0;
+  background: var(--sc-surface-2);
+  border-color: transparent;
+  overflow: hidden;
+}
+button.gif-pick img {
+  display: block;
+  width: 100%;
+  height: 96px;
+  object-fit: cover;
+}
+button.gif-pick:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: -2px;
+}
+.chat-gif .gif-status,
+.chat-gif .gif-attribution {
+  margin: 0;
+}
+.chat-gif .gif-attribution {
+  text-align: right;
+}
+.gif-consent-text {
+  margin: 0;
+  line-height: 1.5;
+}
+.gif-consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2);
+}

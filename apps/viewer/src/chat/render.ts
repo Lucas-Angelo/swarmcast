@@ -7,7 +7,7 @@
 // "N messages skipped" line), at most DOM_MAX in the list, nothing rendered while the chat is
 // hidden or the tab is in the background (messages wait, up to DOM_MAX).
 import { formatNumber, getLang, t } from '@swarmcast/shared/i18n';
-import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, isHexColor, tokenizeChat, type ChatAuthor } from './core/index.js';
+import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, gifMediaUrl, isHexColor, tokenizeChat, type ChatAuthor, type GifProvider, type GifRef } from './core/index.js';
 import type { Emote } from './emotes.js';
 import type { ChatEntry } from './session.js';
 
@@ -27,7 +27,16 @@ export interface ListOptions {
   visible(): boolean;
   raf?: (cb: () => void) => unknown;
   now?: () => number;
+  /** GIFs: has the viewer agreed to load them, and should they animate (plan 3.3, 5.4)? */
+  gifs?: () => { consented: boolean; animate: boolean };
+  /** The viewer tapped "show GIFs" on a placeholder. */
+  onGifConsent?: () => void;
 }
+
+/** How a provider is named on screen. */
+export const GIF_PROVIDER_NAMES: Record<GifProvider, string> = { klipy: 'KLIPY', giphy: 'GIPHY' };
+/** At most this many animated GIF images in the list; older ones go back to a "play" button (frees decoded frames). */
+export const LIVE_GIFS_MAX = 10;
 
 export interface ListStats {
   rendered: number;
@@ -67,6 +76,8 @@ export class ChatList {
   private announceTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly bySeq = new Map<number, HTMLLIElement>();
   private readonly pending = new Map<number, Pending>();
+  private readonly gifRefs = new WeakMap<HTMLElement, GifRef>();
+  private liveGifs: HTMLElement[] = [];
   private readonly raf: (cb: () => void) => unknown;
   /** Called when the unread count changes (for the "Show chat (3 new)" button). */
   onUnread: (n: number) => void = () => {};
@@ -153,8 +164,8 @@ export class ChatList {
   }
 
   /** The viewer's own message, shown at once as "sending…" until the server acks it. */
-  addPending(n: number, text: string, me: ChatAuthor): void {
-    const li = this.build({ kind: 'msg', s: 0, at: (this.opts.now ?? Date.now)(), author: me, text });
+  addPending(n: number, text: string, me: ChatAuthor, gif?: GifRef): void {
+    const li = this.build({ kind: 'msg', s: 0, at: (this.opts.now ?? Date.now)(), author: me, ...(gif ? { gif } : { text }) });
     li.classList.add('pending');
     li.removeAttribute('data-seq');
     const state = el('span', 'state');
@@ -360,15 +371,84 @@ export class ChatList {
     const text = el('bdi', 'text');
     text.setAttribute('dir', 'auto');
     if (e.gif) {
-      const chip = el('span', 'gif-chip');
-      chip.textContent = 'GIF';
-      text.append(chip);
+      li.classList.add('has-gif');
+      text.append(this.gifNode(e.gif));
     } else {
       this.fillText(text, e.text ?? '');
     }
     li.append(nick, sep, text);
     this.stats.rendered++;
     return li;
+  }
+
+  /** A GIF in a message: a consent placeholder, a play button or the image (never fetched before consent). */
+  private gifNode(ref: GifRef): HTMLElement {
+    const box = el('span', 'gif');
+    box.dataset.gif = ref.p;
+    this.gifRefs.set(box, ref);
+    this.fillGif(box, ref, false);
+    return box;
+  }
+
+  private fillGif(box: HTMLElement, ref: GifRef, play: boolean): void {
+    box.replaceChildren();
+    const url = gifMediaUrl(ref);
+    const provider = GIF_PROVIDER_NAMES[ref.p] ?? ref.p;
+    if (!url) {
+      const chip = el('span', 'gif-chip');
+      chip.textContent = t('chat.viewer.gif');
+      box.append(chip);
+      return;
+    }
+    const st = this.opts.gifs?.() ?? { consented: false, animate: false };
+    if (!st.consented) {
+      const b = el('button', 'gif-consent');
+      b.type = 'button';
+      b.textContent = t('chat.viewer.gif.placeholder', { provider });
+      b.addEventListener('click', () => this.opts.onGifConsent?.());
+      box.append(b);
+      return;
+    }
+    if (!st.animate && !play) {
+      this.playButton(box, ref);
+      return;
+    }
+    const img = el('img', 'gif-img');
+    img.alt = t('chat.viewer.gif');
+    img.width = ref.w;
+    img.height = ref.h;
+    img.loading = 'lazy';
+    img.decoding = 'async';
+    img.referrerPolicy = 'no-referrer';
+    img.style.setProperty('--ar', `${ref.w} / ${ref.h}`);
+    img.src = url;
+    box.append(img);
+    // Still in the list (or in the fragment about to be added): its row has a parent.
+    this.liveGifs = this.liveGifs.filter((b) => b !== box && !!b.closest('li')?.parentNode);
+    this.liveGifs.push(box);
+    while (this.liveGifs.length > LIVE_GIFS_MAX) {
+      const old = this.liveGifs.shift()!;
+      const oldRef = this.gifRefs.get(old);
+      if (oldRef) this.playButton(old, oldRef);
+    }
+  }
+
+  private playButton(box: HTMLElement, ref: GifRef): void {
+    box.replaceChildren();
+    const b = el('button', 'gif-play');
+    b.type = 'button';
+    b.textContent = t('chat.viewer.gif.play');
+    b.addEventListener('click', () => this.fillGif(box, ref, true));
+    box.append(b);
+  }
+
+  /** Consent or "animate" changed: redraw every GIF in the list. */
+  refreshGifs(): void {
+    this.liveGifs = [];
+    for (const box of this.list.querySelectorAll<HTMLElement>('span.gif')) {
+      const ref = this.gifRefs.get(box);
+      if (ref) this.fillGif(box, ref, false);
+    }
   }
 
   private fillText(target: HTMLElement, text: string): void {
