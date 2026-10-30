@@ -72,7 +72,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
       "default-src 'none'",
       "script-src 'self'",
       "style-src 'self'",
-      "img-src 'self' data:",
+      // blob:: the "Your page" card shows a picked picture (URL.createObjectURL) before upload.
+      "img-src 'self' data: blob:",
       // Self-hosted brand fonts (Inter, Fredoka) bundled into /assets.
       "font-src 'self'",
       `connect-src 'self' ws://127.0.0.1:${port} ws://localhost:${port}`,
