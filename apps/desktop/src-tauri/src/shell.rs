@@ -239,6 +239,7 @@ impl Shell {
             }
             ServerMessage::UpdateCheck => updater::check_soon(self.clone(), true),
             ServerMessage::UpdateInstall => updater::install_soon(self.clone()),
+            ServerMessage::UpdateChannel { channel } => updater::set_channel(self.clone(), channel),
             ServerMessage::ExportLogs { ok, path, error } => self.on_logs_exported(ok, path, error),
         }
     }

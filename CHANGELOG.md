@@ -7,8 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-30
+
+The beta channel: try the next version of SwarmCast before everyone else.
+
+### Added
+
+- **"Get beta versions"** on the panel's Desktop app card (off by default). When it is on, the desktop app also gets beta versions of the next update (for example 0.3.0-beta.1) as updates, always the newest version, beta or stable. Betas can have bugs; your settings are kept. Turn it off at any time: you stay on the beta until the next stable version is newer (SwarmCast never installs an older version over a newer one). A copy of the app installed from a beta follows the betas by itself until you turn it off. A **Beta** badge next to the version shows when you are on one. Tell us what you find in [Discussions → Beta feedback](https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback).
+- The bug report form asks which update channel you are on (stable or beta).
+
+### Changed
+
+- The start scripts (script mode) install beta versions from a beta installer zip or release, and never replace an installed version with an older one, also when the latest release online is older than what you have.
+
 ### Fixed
 
+- The Linux `.deb` of a beta now sorts before its stable version for apt and dpkg (`0.3.0~beta.1` < `0.3.0`), so the update from the beta to the stable version is not refused as a downgrade.
 - Switching between "Stable" and "Lower delay" while the player was briefly pausing to absorb a stall no longer leaves the video paused on "Buffering" for good: it plays again at once.
 
 ## [0.2.2] - 2026-10-29
@@ -143,7 +157,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.1.0...v0.2.0

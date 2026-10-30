@@ -575,6 +575,64 @@ assert_not_contains "$OUT" "retrying"
 assert_no_file "$DATA/app/current"
 assert_tmp_empty
 end
+
+# --- 12. pre-releases (the beta channel: X.Y.Z-beta.N, X.Y.Z-rc.N) -------------
+begin "12a. version order is SemVer: a pre-release is older than its release"
+eval "$(awk '/^ver_gt\(\) \{/,/^}$/' "$SCRIPT")"
+for c in "0.3.0 0.3.0-beta.1 gt" "0.3.0-beta.1 0.3.0 no" "0.3.0-beta.11 0.3.0-beta.2 gt" "0.3.0-beta.2 0.3.0-beta.11 no" \
+  "0.3.0-rc.1 0.3.0-beta.11 gt" "0.3.0-beta.1 0.2.9 gt" "0.2.9 0.3.0-beta.1 no" "0.3.0 0.3.0 no" "0.3.0-rc.1 0.3.0-rc.1 no" \
+  "0.10.0 0.9.0 gt" "1.0.0-alpha.1 1.0.0-alpha gt" "1.0.0-alpha.beta 1.0.0-alpha.1 gt" "1.0.0-beta 1.0.0-alpha.beta gt"; do
+  set -- $c
+  if ver_gt "$1" "$2"; then got=gt; else got=no; fi
+  assert_eq "$got" "$3" "ver_gt $1 $2"
+done
+end
+
+begin "12b. a beta installer zip installs (0.4.0-beta.2)"
+DATA="$WORK/beta home"
+make_bundle 0.4.0-beta.2 "$CLOSED_URL"
+run_bundle "${COMMON[@]}" --install-only
+assert_eq "$RC" 0 "exit code 0"
+assert_contains "$OUT" "Install source: local bundle in $BUNDLE (v0.4.0-beta.2)"
+assert_contains "$OUT" "Installing SwarmCast v0.4.0-beta.2"
+assert_eq "$(file_content "$DATA/app/current/VERSION")" "0.4.0-beta.2" "current/VERSION is 0.4.0-beta.2"
+assert_tmp_empty
+end
+
+begin "12c. beta.11 is newer than beta.2; an older beta does not downgrade"
+make_bundle 0.4.0-beta.11 "$CLOSED_URL"
+run_bundle "${COMMON[@]}" --install-only
+assert_eq "$RC" 0 "exit code 0"
+assert_contains "$OUT" "Updating SwarmCast v0.4.0-beta.2 -> v0.4.0-beta.11"
+make_bundle 0.4.0-beta.2 "$CLOSED_URL"
+run_bundle "${COMMON[@]}" --install-only
+assert_contains "$OUT" "Already up to date (v0.4.0-beta.11; the local bundle has the older v0.4.0-beta.2"
+assert_eq "$(file_content "$DATA/app/current/VERSION")" "0.4.0-beta.11" "current is still 0.4.0-beta.11"
+end
+
+begin "12d. the latest stable release, older than the installed beta, is never installed over it"
+make_release --version 0.3.9
+: >"$REQ_LOG"
+run_script "$URL" "${COMMON[@]}" --install-only
+assert_eq "$RC" 0 "exit code 0"
+assert_contains "$OUT" "Already up to date (v0.4.0-beta.11; the release has the older v0.3.9, so it is not installed)"
+assert_not_contains "$REQ_LOG" "GET /$(pkg 0.3.9)" "the older package is not downloaded"
+assert_eq "$(file_content "$DATA/app/current/VERSION")" "0.4.0-beta.11" "current is still 0.4.0-beta.11"
+end
+
+begin "12e. the stable release of the beta replaces it; online stable wins over an rc bundle"
+make_release --version 0.4.0
+run_script "$URL" "${COMMON[@]}" --install-only
+assert_eq "$RC" 0 "exit code 0"
+assert_contains "$OUT" "Updating SwarmCast v0.4.0-beta.11 -> v0.4.0"
+assert_eq "$(file_content "$DATA/app/current/VERSION")" "0.4.0" "current/VERSION is 0.4.0"
+DATA="$WORK/rc home"
+make_bundle 0.4.0-rc.1 "$URL"
+run_bundle "${COMMON[@]}" --install-only
+assert_contains "$OUT" "A newer version v0.4.0 is available online"
+assert_eq "$(file_content "$DATA/app/current/VERSION")" "0.4.0" "current/VERSION is 0.4.0"
+assert_tmp_empty
+end
 DATA="$DATA_SAVED"
 
 # --- 7. usage --------------------------------------------------------------

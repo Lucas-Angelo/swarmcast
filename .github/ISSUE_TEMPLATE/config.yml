@@ -8,7 +8,10 @@ contact_links:
     about: How do I…? Is this normal? Ask in Discussions.
   - name: Ideas and feedback
     url: https://github.com/Lucas-Angelo/swarmcast/discussions/categories/ideas
-    about: Rough ideas, suggestions and feedback, including on beta versions.
+    about: Rough ideas, suggestions and feedback.
+  - name: Beta feedback
+    url: https://github.com/Lucas-Angelo/swarmcast/discussions/categories/beta-feedback
+    about: Trying a beta version ("Get beta versions")? Tell us what works and what does not.
   - name: Guide and troubleshooting
     url: https://lucas-angelo.github.io/swarmcast/help/troubleshooting/
     about: Answers to common problems, in English and Portuguese.
