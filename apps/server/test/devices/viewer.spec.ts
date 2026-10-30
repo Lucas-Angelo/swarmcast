@@ -1,0 +1,103 @@
+// The viewer on a real phone browser (Chrome on Android, Mobile Safari on iOS), the checks the
+// owner did by hand on a phone (docs/CHAT.md "Rendering checks", the real-phone check):
+// - the live link, a nickname, the browser check, the video starting muted by itself
+//   (browsers allow only muted autoplay) and Unmute turning the sound on with a tap;
+// - the chat under the player on a phone screen, a message from the phone reaching a second
+//   viewer (a desktop browser: a phone browser hosts one automation session) and back, and the
+//   on-screen keyboard leaving the input and Send in sight: the visual viewport (what the
+//   keyboard leaves) must contain them. A tap raises the keyboard; a mouse click does not.
+// - the app sent to the background and brought back: the page went hidden (checked from its own
+//   record: neither driver can read a page in the background) and plays again, behind the live
+//   by about the time away, and Go live takes the viewer back to the live point.
+// Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
+import { liveLink, say, sees, uid, viewerByNick } from '../e2e/fixtures.js';
+import { expect, liveMovesOn, test } from './fixtures.js';
+import { box, chatShows, goLive, inSight, isShown, joinOnPhone, keyboardUp, lifecycle, ownMessage, playedSince, recordLifecycle, videoState, viewport } from './phone.js';
+
+/** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
+const WATCHING_S = 1.5;
+/** Seconds the video must play on (not paused) after a step for playback to count as going on. */
+const PLAYS_ON_S = 3;
+/**
+ * Segments the live makes while the phone is in the background: 5 x 2 s, over twice the
+ * distance at which "Go live" offers to jump (max(4 s, two segments): watch.ts setupGoLive).
+ */
+const AWAY_SEGMENTS = 5;
+/** Go live lands within this many seconds of the live point (as in the e2e viewer spec). */
+const AT_LIVE_S = 4;
+
+test('a phone viewer joins with the link: the video starts muted by itself, Unmute turns the sound on, playback goes on', async ({ phone }) => {
+  // Arrange
+  const nick = uid('join');
+  const link = await liveLink();
+  // Act
+  await joinOnPhone(phone, nick, link);
+  // Assert
+  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  expect(await videoState(phone)).toMatchObject({ muted: true, paused: false });
+  await expect.poll(() => isShown(phone, '#unmute')).toBe(true);
+  await expect.poll(async () => (await viewerByNick(nick))?.connected).toBe(true);
+  // Act
+  await phone.tap('#unmute');
+  // Assert
+  await expect.poll(async () => (await videoState(phone)).muted).toBe(false);
+  const unmuted = await videoState(phone);
+  await expect.poll(() => playedSince(phone, unmuted)).toBeGreaterThan(PLAYS_ON_S);
+  expect(await isShown(phone, '#unmute')).toBe(false);
+  expect(await phone.evaluate(() => document.getElementById('status')!.textContent)).toBe('Live');
+});
+
+test('the chat sits under the player; a message goes from the phone to another viewer and back; the keyboard leaves the input in sight', async ({ phone, viewers }) => {
+  // Arrange
+  const link = await liveLink();
+  await joinOnPhone(phone, uid('chatP'), link);
+  const desktop = await viewers.join(uid('chatD'), { link });
+  await expect.poll(() => isShown(phone, '[data-testid="chat"]')).toBe(true);
+  const fromPhone = `oi do celular ${uid('m')}`;
+  const fromDesktop = `oi do PC ${uid('r')}`;
+  // Assert
+  const player = await box(phone, '.player');
+  const chat = await box(phone, '[data-testid="chat"]');
+  expect(chat!.y).toBeGreaterThanOrEqual(player!.y + player!.height - 1);
+  expect(chat!.x + chat!.width).toBeLessThanOrEqual((await viewport(phone)).innerWidth);
+  // Act
+  await phone.tap('[data-testid="chat-input"]');
+  // Assert
+  await keyboardUp(phone);
+  await expect.poll(() => inSight(phone, '[data-testid="chat-input"]')).toBe(true);
+  expect(await inSight(phone, '[data-testid="chat-send"]')).toBe(true);
+  // Act
+  await phone.type('[data-testid="chat-input"]', fromPhone);
+  await phone.tap('[data-testid="chat-send"]');
+  // Assert
+  await expect.poll(() => ownMessage(phone, fromPhone)).toBe('sent');
+  await sees(desktop.page, fromPhone);
+  // Act
+  await say(desktop.page, fromDesktop);
+  // Assert
+  await expect.poll(() => chatShows(phone, fromDesktop)).toBe(true);
+});
+
+test('back from the background the video plays again, behind the live; Go live returns to the live point', async ({ phone }) => {
+  // Arrange
+  await joinOnPhone(phone, uid('away'), await liveLink());
+  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  await recordLifecycle(phone);
+  // Act
+  await phone.background();
+  await liveMovesOn(AWAY_SEGMENTS);
+  await phone.foreground();
+  // Assert
+  const record = await lifecycle(phone);
+  expect(record, 'the page went to the background').toContain('hidden');
+  expect(record.lastIndexOf('visible'), 'and came back').toBeGreaterThan(record.indexOf('hidden'));
+  const back = await videoState(phone);
+  await expect.poll(() => playedSince(phone, back)).toBeGreaterThan(PLAYS_ON_S);
+  await expect.poll(async () => (await goLive(phone)).text).toMatch(/^Go live/);
+  // Act
+  await phone.tap('#golive');
+  // Assert
+  await expect.poll(async () => (await goLive(phone)).text).toBe('LIVE');
+  expect((await goLive(phone)).behind).toBeLessThan(AT_LIVE_S);
+  expect((await videoState(phone)).paused).toBe(false);
+});
