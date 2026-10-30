@@ -1,7 +1,6 @@
 // The join proof-of-work worker (pow-worker.ts) in a stand-in for a dedicated worker's global scope:
 // each test loads the module fresh into a scope of its own, so no test sees another's messages.
-// Solving is asynchronous (WebCrypto), so "ignored" is shown with a sentinel: after the messages
-// that must be ignored, a valid challenge goes in, and once its solution is out, nothing else is.
+// handleMessage settles once its answer, if any, is posted, so "ignored" is checked right after it.
 import { createChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/sha';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -13,81 +12,78 @@ function challenge(counter = 3): Promise<Challenge> {
 }
 
 /**
- * The worker, loaded fresh into a scope of its own. `send` is a message from the page, `posted`
- * what the worker sent back, and `until(done)` resolves as soon as a message it posts makes
- * `done(posted)` true (no polling: it is told about every message).
+ * The worker, loaded fresh into a scope of its own: `posted` is what it sent to the page,
+ * `firstPost` settles with the first message it posts, `scope.onmessage` is what the browser calls.
  */
 async function worker() {
   const posted: unknown[] = [];
-  const listeners = new Set<() => void>();
+  let onPost: (m: unknown) => void = () => {};
+  const firstPost = new Promise<unknown>((resolve) => (onPost = resolve));
   const scope = {
     location: { origin: ORIGIN },
     onmessage: null as ((ev: { origin: string; data: unknown }) => void) | null,
     postMessage: (m: unknown) => {
       posted.push(m);
-      for (const l of [...listeners]) l();
+      onPost(m);
     },
   };
   vi.resetModules();
   vi.stubGlobal('self', scope);
   onTestFinished(() => void vi.unstubAllGlobals());
-  await import('../../src/pow-worker.js');
-  const send = (origin: string, data: unknown): void => scope.onmessage!({ origin, data });
-  const until = (done: (messages: unknown[]) => boolean): Promise<void> =>
-    new Promise((resolve) => {
-      const check = (): void => {
-        if (!done(posted)) return;
-        listeners.delete(check);
-        resolve();
-      };
-      listeners.add(check);
-      check();
-    });
-  return { posted, send, until };
+  const { handleMessage } = await import('../../src/pow-worker.js');
+  return { posted, firstPost, scope, handleMessage };
 }
 
-/** A solution message for a challenge whose secret number is `counter`. */
-const isSolution = (m: unknown, counter: number): boolean => (m as { solution?: { counter?: number } }).solution?.counter === counter;
+const solved = (counter: number) => ({ solution: expect.objectContaining({ counter }) });
 
 describe('pow worker', () => {
   it('solves a challenge from the page that started it (messages without an origin)', async () => {
     // Arrange
-    const { posted, send, until } = await worker();
+    const { posted, handleMessage } = await worker();
 
     // Act
-    send('', await challenge());
-    await until((m) => m.length > 0);
+    await handleMessage({ origin: '', data: await challenge() });
 
     // Assert
-    expect(posted).toEqual([{ solution: expect.objectContaining({ counter: 3 }) }]);
+    expect(posted).toEqual([solved(3)]);
   });
 
   it("also takes a message that carries this page's origin", async () => {
     // Arrange
-    const { posted, send, until } = await worker();
+    const { posted, handleMessage } = await worker();
 
     // Act
-    send(ORIGIN, await challenge());
-    await until((m) => m.length > 0);
+    await handleMessage({ origin: ORIGIN, data: await challenge() });
 
     // Assert
-    expect(posted).toEqual([{ solution: expect.objectContaining({ counter: 3 }) }]);
+    expect(posted).toEqual([solved(3)]);
   });
 
-  it('ignores messages from another origin and anything that is not a challenge', async () => {
+  it.each([
+    ['a challenge from another origin', 'https://evil.example', () => challenge()],
+    ['nothing', '', async () => null],
+    ['a string', '', async () => 'solve me'],
+    ['parameters without a salt', '', async () => ({ parameters: {} })],
+  ])('ignores %s', async (_case, origin, data) => {
     // Arrange
-    const { posted, send, until } = await worker();
-    const [foreign, sentinel] = await Promise.all([challenge(3), challenge(40)]);
+    const { posted, handleMessage } = await worker();
+    const message = await data();
 
     // Act
-    send('https://evil.example', foreign);
-    send('', null);
-    send('', 'solve me');
-    send('', { parameters: {} });
-    send('', sentinel);
-    await until((m) => m.some((x) => isSolution(x, 40)));
+    await handleMessage({ origin, data: message });
 
     // Assert
-    expect(posted).toEqual([{ solution: expect.objectContaining({ counter: 40 }) }]);
+    expect(posted).toEqual([]);
+  });
+
+  it('answers what the page sends through onmessage', async () => {
+    // Arrange
+    const { firstPost, scope } = await worker();
+
+    // Act
+    scope.onmessage!({ origin: '', data: await challenge() });
+
+    // Assert
+    expect(await firstPost).toEqual(solved(3));
   });
 });
