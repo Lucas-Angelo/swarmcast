@@ -194,6 +194,13 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
     L.chat.setProtect('off');
     did.push('chat protection off');
   }
+  // "Your page": back to the stock SwarmCast page when a test left the streamer's page on.
+  const b = L.branding.branding;
+  if (b.name || b.tagline || b.about || b.links.length > 0 || b.tags.length > 0 || b.support.enabled || Object.keys(b.images).length > 0) {
+    L.branding.reset();
+    L.brandingChanged();
+    did.push('branding');
+  }
   let obs = !!o.hard;
   if (!same(app.config.quality, initial.quality)) {
     L.quality.updateSettings({ ...structuredClone(initial.quality), obsWebsocket: { ...initial.quality.obsWebsocket } });
