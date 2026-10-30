@@ -27,7 +27,9 @@ npm run og         # re-render the social preview cards (public/og/), see "Link 
 
 - **Unit tests** (`test/unit/`: the download picker, the stats reader, the brand tokens and their
   contrast) run with the root vitest: `npx vitest run site/test/unit` from the repository root (or
-  `npm test`, which includes them). They need the root `npm ci`.
+  `npm test`, which includes them). They need the root `npm ci` and this folder's packages too
+  (`npm ci --prefix site` from the root): without them every file fails with "Failed to load tsconfig
+  'astro/tsconfigs/strict'".
 - **E2E tests** (`test/e2e/site.spec.ts`): `test/serve.mjs` serves `dist/` under `/swarmcast/` like
   GitHub Pages; the tests cover the landing pages, light and dark mode, the language redirect and
   switcher, the download button and page per OS (with and without stats), the usage numbers, phone

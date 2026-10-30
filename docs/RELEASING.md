@@ -115,10 +115,24 @@ SwarmCast uses **trunk-based GitHub Flow**:
 - **Only `main` is covered** (`~DEFAULT_BRANCH`). The `release/X.Y.Z` and `release/X.Y` branches are not
   protected by a ruleset: never force-push or delete one while it is in use.
 
-**Release tags are not protected by a ruleset** (none exists): anyone with write access could create,
-move or delete a `v*` tag, so only the maintainer tags releases. Once a release is published, release
-immutability (section 1) keeps its tag from being moved or deleted; a tag whose release was not
-published yet can still be moved (section 4, "If the release workflow fails").
+**Release tags** have their own ruleset, `release tags` (id 26232349): only the admin role
+(`actor_id` 5, `bypass_mode: always`) can create, move or delete a `v*` tag, so a stray
+`git push --tags` or `--force` cannot change a release tag.
+
+```json
+{
+  "name": "release tags",
+  "target": "tag",
+  "enforcement": "active",
+  "conditions": { "ref_name": { "include": ["refs/tags/v*"], "exclude": [] } },
+  "bypass_actors": [ { "actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always" } ],
+  "rules": [ { "type": "creation" }, { "type": "update" }, { "type": "deletion" }, { "type": "non_fast_forward" } ]
+}
+```
+
+Once a release is published, release immutability (section 1) also keeps its tag from being moved or
+deleted; the admin can still move a tag whose release was not published yet (section 4, "If the release
+workflow fails").
 
 **CI.** One workflow, `pipeline.yml`, runs automatically on every pull request and push to `main`
 (standard runners are free on a public repository), again on the 1st of every month with everything (to
@@ -166,24 +180,17 @@ The desktop app installs an update only when its signature matches the public ke
 (`plugins.updater.pubkey` in `apps/desktop/src-tauri/tauri.conf.json`). The release workflow refuses to
 start without these two secrets, because a release without signatures could never reach installed apps.
 
-**Where they are today (checked 2026-10-30): repository secrets.** The `release` environment exists, but
-it holds no secrets and has no deployment rule. The workflows ask for the key only in release jobs (they
-name `environment: release` and read the secrets only when `release` is true), but a repository secret
-reaches every workflow run started from a branch of this repository, pull requests from such branches
-included: a workflow changed on a branch **can** read it. Pull requests from forks cannot.
-
-**The intended setup** (the maintainer's decision; the workflows already work with it, nothing in them
-changes):
+**They live in the `release` environment** (since 2026-10-30), not in the repository secrets:
 
 - **Settings → Environments → `release`**: "Deployment branches and tags" is **Selected branches and
   tags**, with one **tag** rule `v*` and no branch rule. No required reviewer and no wait timer. The two
-  secrets above become **environment secrets** of `release`, and the repository copies are deleted.
-- GitHub then gives the secrets only to a job that names the environment (`environment: release`), and
-  only after the environment's rules pass, so only release jobs started by a `v*` tag can read the key.
+  secrets above are **environment secrets** of `release`; there are no repository copies.
+- GitHub gives environment secrets only to a job that names the environment (`environment: release`),
+  and only after the environment's rules pass, so only release jobs started by a `v*` tag can read the
+  key. Pull request and branch runs, including ones that edit a workflow, cannot.
 - In a reusable workflow, the job inside the called workflow is the one that must declare
-  `environment: release`; the caller still passes the secrets down.
-- The tag rule is only as strong as the tags: with no tag ruleset (section 2), anyone with write access
-  can push a `v*` tag.
+  `environment: release`; the environment's secret then takes precedence over anything the caller passes.
+- The tag rule pairs with the tag ruleset (section 2): only the admin can create `v*` tags.
 
 Key care:
 
@@ -312,7 +319,7 @@ Then the stable version: rename `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD` (
 than every beta), and stable apps from the stable feed.
 
 **If the release workflow fails** before publishing, fix the problem on `main` (a normal pull request),
-then move the tag (no ruleset protects tags, and an unpublished release does not lock its tag):
+then move the tag (the admin bypass of the tag ruleset allows it; an unpublished release does not lock its tag):
 `git tag -d vX.Y.Z && git push origin :refs/tags/vX.Y.Z`, tag the fixed commit and push it again. Once
 a release is **published**, never re-use its version: ship `X.Y.Z+1` instead.
 

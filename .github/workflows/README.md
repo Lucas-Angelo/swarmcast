@@ -195,12 +195,10 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
-- **Secrets:** only release jobs ask for the updater key: they name the `release` environment and read
-  the secrets only when `release` is true. Pull request runs sign their test builds with a throwaway
-  key. Today the key is still a repository secret, which any workflow run from a branch of this
-  repository could reference; moving it into the `release` environment with a `v*` tag rule is the
-  maintainer's decision (docs/RELEASING.md, section 3). Never reference `secrets.*` outside a release
-  job (the other jobs use `github.token`).
+- **Secrets:** only release jobs see the updater key. They name the `release` environment
+  (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
+  Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
+  a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
   (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because

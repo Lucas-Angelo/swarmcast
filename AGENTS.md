@@ -104,6 +104,7 @@ and Google Chrome. Run from the repository root.
 | `npm run build` | shared → viewer → admin → server, into `apps/*/dist` |
 | `npm run fetch-bins` | MediaMTX and cloudflared for this OS into `vendor/<os>-<arch>/` (download, SHA-256 checked) |
 | `npm run test:integration` | real MediaMTX + ffmpeg; after `fetch-bins` and `build` |
+| `npm run coverage` | unit + integration coverage, checked against the floors in `scripts/coverage/floors.json` (docs/TESTING.md); `coverage:e2e`, `coverage:desktop` for the others |
 | `npm run test:e2e` | Playwright on Chrome, Firefox, WebKit (`--grep @ui` / `@media`); after `fetch-bins` and `build`; `npx playwright install firefox webkit` once |
 | `npx playwright test -c apps/viewer/test/chat/playwright.config.ts` | viewer chat UI against a mock hub; after `npm run build -w @swarmcast/viewer` |
 | `npm run desktop:test` | `cargo test`; in `apps/desktop/src-tauri` also `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` |
@@ -242,7 +243,7 @@ flake": find its cause in the product or the test, with evidence, and fix it at 
 - Joins: 256-bit link secret, ticket cookie + 303, 10-minute sessions, rate limits, public IP blocklists
   and the ALTCHA proof-of-work browser check (`apps/server/src/security/`, `apps/viewer/src/pow.ts`).
 - Secrets: `secrets.json` (stream key, signing keys) is mode 0600 and never logged; the updater key lives
-  only in CI secrets and the maintainer's `~/.tauri/` (§5); log exports are anonymised
+  only in the `release` environment's secrets (tags `v*` only) and the maintainer's `~/.tauri/` (§5); log exports are anonymised
   (`apps/server/src/diagnostics/anonymize.ts`).
 
 ## 10. Where to find more

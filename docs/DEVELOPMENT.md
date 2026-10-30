@@ -70,7 +70,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 
 ## Configuration
 
-`config.json` lives in the data folder above. It is created on first run, and the panel edits the common settings.
+`config.json` lives in the data folder above (a run from the source checkout uses `<repo>/.cache/dev-data` instead, see [Development](#development-1)). It is created on first run, and the panel edits the common settings.
 
 | Key | Default | Meaning |
 |-----|---------|---------|
@@ -80,7 +80,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `maxSessionsPerDevice` | 3 | Sessions one browser may hold (the oldest is replaced) (panel) |
 | `security.blockKnownBadIps` | true | Refuse IPs on free public blocklists (Spamhaus DROP + DROPv6, FireHOL level1), downloaded at start and every 24 h, cached in `blocklists/` (panel) |
 | `security.requireBrowserCheck` | true | Ask new viewers' browsers for a short proof-of-work (ALTCHA protocol, self-hosted), once per browser: a signed `sc_verified` cookie remembers it for 30 days (panel) |
-| `configVersion` | 2 | Format version. Files without it are from v0.1.0: their `requireBrowserCheck: false` (the old default) is switched on once |
+| `configVersion` | 4 | Format version; older files are migrated once at start (`migrateConfig` in `apps/server/src/core/config.ts`). Files without it are from v0.1.0. 2: a `requireBrowserCheck: false` saved by v0.1.0 (the old default) is switched on once. 3: a saved `maxViewers` of 500 (the old default) becomes 120. 4: the chat defaults are added |
 | `security.autoBrowserCheck` | true | Turn the browser check on automatically on unusual activity / attacks (panel) |
 | `security.autoTighten` | true | Under attack: stricter per-IP join limits, 1 session per browser, viewer cap held near the current audience (panel) |
 | `security.autoNewLink` | false | Under attack (Secure mode): generate a new link automatically; you must resend it (panel) |
@@ -105,16 +105,20 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `quality.upload.mode` / `otherStreamKbps` / `headroomPercent` | `auto` / null / 15 | Adaptive upload cap, bitrate you send to other platforms (null = detect), share of the upload kept free (panel) |
 | `quality.obsWebsocket.enabled` / `url` / `password` | false / `ws://127.0.0.1:4455` / — | Read the main stream's health from OBS (loopback only) (panel) |
 | `ffmpegPath` | — | ffmpeg for the extra qualities. Unset: `bin/ffmpeg` if a packager bundled it, else `<data>/tools/ffmpeg/ffmpeg[.exe]` (installed by the start scripts or the panel). `SWARMCAST_FFMPEG` overrides it; `"ffmpeg"` uses the one on PATH (source checkouts only) |
+| `onboardingDone` | false | The panel's first-run tutorial was finished or skipped (it opens until then) |
+| `chat` | on, GIFs off, slow mode 2 s | The Chat card's settings: what viewers may send, slow mode, limits, blocked words, links, protection, GIFs (the streamer's own provider key). Keys and defaults: [CHAT.md](CHAT.md#settings-and-defaults) |
+| `branding` | empty | "Your page" (panel: Your page card); its pictures are in `<data>/branding/`. Fields and limits: [BRANDING.md](BRANDING.md#data-model) |
+| `updates.channel` | — | Desktop app only: `beta` (panel: "Get beta versions") or `stable`. Unset: beta when the installed app is a pre-release, else stable ([DESKTOP.md](DESKTOP.md#updates)) |
 
 **ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (published with each release as `binaries.json`) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. (CI downloads the macOS archives from byte-identical copies in the `ci-deps` pre-release first; see [RELEASING.md](RELEASING.md).) See [QUALITY.md](QUALITY.md).
 
-`secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date), `system-check.json` (the computer check shown by the setup tutorial), `tools/ffmpeg/` and `logs/` (daily `swarmcast-YYYY-MM-DD.log` files, plus `desktop.log` from the desktop app; [apps/server/README.md](../apps/server/README.md) has the rotation, retention and "Export logs" details).
+`secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date), `system-check.json` (the computer check shown by the setup tutorial), `tools/ffmpeg/`, `branding/` (the pictures of "Your page"), `exports/` (log exports when the Downloads folder cannot be used), `run/` (files of the running app, such as the tray icons and the desktop app's update marker) and `logs/` (daily `swarmcast-YYYY-MM-DD.log` files, plus `desktop.log` from the desktop app; [apps/server/README.md](../apps/server/README.md) has the rotation, retention and "Export logs" details).
 
-App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-tray`, `--no-autostart`, `--desktop` (run inside the desktop app, [DESKTOP.md](DESKTOP.md)), `--cleanup` (remove a router port left open by a crash, then exit), `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_WEB_DIR`, `SWARMCAST_LOG_LEVEL`, `SWARMCAST_NO_OPEN=1` (do not open the panel in the browser), `SWARMCAST_FFMPEG`.
+App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-tray`, `--no-autostart`, `--desktop` (run inside the desktop app, [DESKTOP.md](DESKTOP.md)), `--cleanup` (remove a router port left open by a crash, then exit), `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_WEB_DIR`, `SWARMCAST_LOG_LEVEL`, `SWARMCAST_NO_OPEN=1` (do not open the panel in the browser), `SWARMCAST_NO_NOTIFY=1` (no desktop notifications), `SWARMCAST_NO_PARENT_WATCH=1` (keep running when the terminal or window that started it closes), `SWARMCAST_DOWNLOADS_DIR` (where "Export logs" writes instead of the Downloads folder), `SWARMCAST_LOCALE`, `SWARMCAST_FFMPEG`. The desktop app sets more (`SWARMCAST_DESKTOP_EXE`, `SWARMCAST_DESKTOP_VERSION`, …) and its tests use `SWARMCAST_NO_FFMPEG_INSTALL=1`, `SWARMCAST_UPDATE_URL` / `SWARMCAST_BETA_UPDATE_URL`, `SWARMCAST_SPEEDTEST_URL` and `SWARMCAST_TEST_LOGIN_FILE` ([DESKTOP.md](DESKTOP.md#shell--server-protocol)). Test-only: `SWARMCAST_TEST_HOOKS=1`, `FFMPEG_BIN`, `SWARMCAST_E2E_PORT_OFFSET`, `PW_CHROMIUM_CHANNEL`, `SITE_E2E_PORT`, `CHAT_EXHAUSTIVE=1`, `CHAT_FUZZ_RUNS` ([TESTING.md](TESTING.md)).
 
 ## Development
 
-Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. To build the tray helper you need Go 1.23+ ([apps/tray/README.md](../apps/tray/README.md)); the desktop app needs Rust and the Tauri prerequisites ([apps/desktop/README.md](../apps/desktop/README.md)).
+Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. To build the tray helper you need Go 1.23 or later (`go.mod`; CI builds with 1.27.x, [apps/tray/README.md](../apps/tray/README.md)); the desktop app needs Rust (the toolchain pinned in `apps/desktop/src-tauri/rust-toolchain.toml`, which rustup installs by itself) and the Tauri prerequisites ([apps/desktop/README.md](../apps/desktop/README.md)).
 
 ```sh
 npm ci
@@ -125,9 +129,16 @@ npm test                  # unit tests (vitest)
 npm run test:integration  # real MediaMTX + ffmpeg test stream
 npm run test:e2e          # Playwright: Chrome, Firefox, WebKit (npx playwright install first; SWARMCAST_E2E_PORT_OFFSET=N moves its ports)
 npm run coverage          # unit + integration with coverage, checked against their floors (below)
-npm run dev               # run the app from source (tsx)
+npm run dev               # run the app from source (tsx); its data goes to <repo>/.cache/dev-data
 npm run lint && npm run typecheck
 ```
+
+- A run from the source checkout keeps its data in `<repo>/.cache/dev-data` (ignored by git), never in
+  the real data folder of your computer; `--data-dir DIR` or `SWARMCAST_DATA_DIR` picks another folder.
+- From the repository root, `npm run dev -- --no-tunnel` does not reach the app: npm reads the flag
+  itself (npm 11 and later stop with "Unknown cli flag"). Use `npm run dev -w @swarmcast/server -- --no-tunnel`.
+- `SWARMCAST_E2E_PORT_OFFSET` must keep every e2e port free and off the reserved ones in
+  `scripts/test/lib/ports.mjs` (31935, 38180, 38181…): an offset of 100, for example, collides.
 
 Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
 
@@ -173,10 +184,10 @@ Everything is pinned so a surprise major release cannot break a build, while bug
 
 - **npm:** `^` ranges in `package.json` (minor + patch, never a new major) and an exact `package-lock.json`; `npm ci` installs exactly the lockfile. Dependabot groups minor/patch updates weekly and ignores majors, which are upgraded deliberately.
 - **MediaMTX / cloudflared:** exact versions with SHA-256 in [`scripts/build/versions.json`](../scripts/build/versions.json). `node scripts/build/update-binaries.mjs --check` (also a scheduled CI job) reports newer releases within the same major; running it without `--check` rewrites the pins and hashes.
-- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Go `1.27.x` for the tray helper, Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
+- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Go `1.27.x` in CI for the tray helper (`go.mod` needs 1.23 or later), Rust `1.99.1` for the desktop app (`apps/desktop/src-tauri/rust-toolchain.toml`, bumped deliberately), Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` runs the release workflow. The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`) and `latest.json`, the script-mode packages, one installer zip per target, the start and uninstall scripts, `binaries.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
+Pushing a tag `vX.Y.Z` (or `vX.Y.Z-beta.N`) runs the release workflow. A new minor ships as a beta first: `X.Y.0` is refused until its beta is published ([RELEASING.md](RELEASING.md#4-ship-a-release)). The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`) and `latest.json`, the script-mode packages, one installer zip per target, the start and uninstall scripts, `binaries.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
 
 **Binaries are not code-signed by default** (signing certificates are paid). Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper blocks the first open (**System Settings → Privacy & Security → Open Anyway**). The website's install pages walk through both. Desktop updates are always signed with the updater key, and code signing of the script-mode binaries switches on when the signing secrets are set (see [RELEASING.md](RELEASING.md)).

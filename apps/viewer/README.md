@@ -10,7 +10,7 @@ Static pages served by the public server: `join.html` (nickname form, browser ch
   - `quality-menu.ts`, `latency-toggle.ts`, `player-config.ts`: the quality menu (Auto or one rendition), the Stable / Lower delay switch and the player settings ([docs/QUALITY.md](../../docs/QUALITY.md)).
   - `integrity.ts`: verifies the Ed25519-signed manifest and checks every P2P segment's SHA-256.
   - `peer-guard.ts`: closes connections to blocked peers by matching ICE ufrags from tracker signaling.
-  - `join.ts`: the nickname form; `pow.ts` + `pow-worker.ts`: the proof-of-work browser check (on by default, remembered per browser), with its progress bar.
+  - `join.ts` wires `join-form.ts` (the nickname form, testable with its page, fetch, solver and navigation passed in); `pow.ts` + `pow-worker.ts` + `pow-attempts.ts`: the proof-of-work browser check (on by default, remembered per browser), with its progress bar; a worker that stays silent for 15 s falls back to the main thread.
   - `tracker-mux.ts` (installed first by `peer-guard-install.ts`): the P2P tracker connection carried inside the `/control` WebSocket, so a viewer holds one socket.
   - `p2p-fallback.ts` and `stall-recovery.ts`: P2P can never starve playback (a stuck peer fragment is fetched over HTTP) and the player never stays stuck outside what it can load.
   - `chat/`: the chat, a lazy chunk loaded by `chat/loader.ts` only when the live has the chat on: `session.ts` (protocol state, resume after a reconnect), `render.ts` (untrusted text through `textContent` only; ESLint refuses `innerHTML` in this folder), the input, the emoji and emote picker (emoji data built by `scripts/emoji-data.mjs`) and the GIF picker (asks the viewer first). [docs/CHAT.md](../../docs/CHAT.md).
