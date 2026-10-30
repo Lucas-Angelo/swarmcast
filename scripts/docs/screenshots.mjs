@@ -43,6 +43,8 @@ const MAX_BYTES = 250 * 1024;
 // (`npm ci --prefix site` first).
 const GUIDES = path.join(ROOT, 'site', 'src', 'assets', 'guides');
 const guideDir = (lang) => (lang === 'en' ? 'en' : 'pt-br');
+// Cards left out of the panel overview (each has its own picture or guide).
+const OVERVIEW_HIDDEN = ['[data-testid="quality-card"]', '[data-testid="activity"]', '[data-testid="brand-card"]', '[data-testid="chat-card"]', '[data-testid="diagnostics"]', 'footer'];
 
 const log = (msg) => console.log(`[screenshots] ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -492,7 +494,7 @@ async function captureLocale(browser, lang) {
   // (Phone/PC, P2P), with the cards in between left out of this one picture.
   await sanitize(panel, s);
   await panel.evaluate(() => {
-    for (const sel of ['[data-testid="quality-card"]', '[data-testid="activity"]', 'footer']) {
+    for (const sel of OVERVIEW_HIDDEN) {
       const el = document.querySelector(sel);
       if (el) el.style.display = 'none';
     }
@@ -500,7 +502,7 @@ async function captureLocale(browser, lang) {
   await panel.screenshot({ path: path.join(OUT_DIR, `panel-overview-${lang}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   log(`captured panel-overview-${lang}.png`);
   await panel.evaluate(() => {
-    for (const sel of ['[data-testid="quality-card"]', '[data-testid="activity"]', 'footer']) {
+    for (const sel of OVERVIEW_HIDDEN) {
       const el = document.querySelector(sel);
       if (el) el.style.display = '';
     }
