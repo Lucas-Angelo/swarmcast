@@ -138,7 +138,8 @@ esac
     & chmod 755 $out
     return $out
   }
-  $cls = 'FakeSwarmCast' + ($Version -replace '\.', '_')
+  # A C# identifier: a pre-release version (0.4.0-beta.2) has hyphens too.
+  $cls = 'FakeSwarmCast' + ($Version -replace '[^A-Za-z0-9]', '_')
   $src = @"
 using System;
 using System.IO;
