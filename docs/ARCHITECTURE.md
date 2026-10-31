@@ -126,7 +126,7 @@ flowchart TB
 - **Start**:
   1. Start the local server, with a new live id, JWT key and link secret.
   2. Start MediaMTX.
-  3. Open the tunnel and wait until `https://…/healthz` returns our `X-SwarmCast` marker (one retry with a new tunnel).
+  3. Open the tunnel and wait until `https://…/healthz` returns our `X-SwarmCast` marker (one retry with a new tunnel), then until this computer's resolver knows the name. The new name is resolved through Cloudflare's DNS-over-HTTPS (1.1.1.1, then 1.0.0.1) and the request goes to that address; the computer's own resolver is asked only once Cloudflare has the address (or when neither DoH server answers), because a resolver asked about a name before it exists remembers "no such name" for 60 s and would tell the streamer's browser so (`tunnel/provider.ts`).
 - **Stop everything**:
   1. Disconnect viewers and peers.
   2. Close the tunnel and the direct-mode port.
