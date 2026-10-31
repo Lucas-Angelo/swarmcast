@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { scrub } from '../../src/core/logger.js';
-import { clientIp, originMatchesHost, viewerCsp } from '../../src/public/security.js';
+import { clientIp, inlineScriptHashes, originMatchesHost, viewerCsp } from '../../src/public/security.js';
 import { requestFrom } from './helpers-b.js';
 
 // Headers and helpers the public server relies on: whose IP a request is (CF-Connecting-IP only
@@ -33,6 +34,44 @@ describe('CSP', () => {
     expect(csp).toContain("connect-src 'self' wss://abc.trycloudflare.com;");
     expect(csp).not.toContain('stun:');
     expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it('allows the inline scripts it is given by their hash only, never all inline scripts', () => {
+    // Act
+    const csp = viewerCsp('abc.trycloudflare.com', true, [], undefined, ["'sha256-AAAA'", "'sha256-BBBB'"]);
+    // Assert
+    expect(csp).toContain("script-src 'self' 'sha256-AAAA' 'sha256-BBBB';");
+    expect(csp).not.toContain('unsafe-inline');
+  });
+});
+
+describe('inline script hashes', () => {
+  /** The CSP source a browser checks an inline script against: SHA-256 of its text, base64. */
+  const source = (text: string): string => `'sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}'`;
+
+  it('are the hashes browsers compute for the inline scripts of a page, not for its script files', () => {
+    // Arrange
+    const html = '<head><script>\n  guard();\n</script><script type="module" src="/assets/a.js"></script></head><body><script>other()</script></body>';
+    // Act
+    const hashes = inlineScriptHashes([html]);
+    // Assert
+    expect(hashes).toEqual([source('\n  guard();\n'), source('other()')]);
+  });
+
+  it('count line breaks as the browser reads them (a page saved with Windows line breaks)', () => {
+    // Arrange
+    const html = '<script>\r\n  guard();\r\n</script>';
+    // Act
+    const hashes = inlineScriptHashes([html]);
+    // Assert
+    expect(hashes).toEqual([source('\n  guard();\n')]);
+  });
+
+  it('list a script shared by several pages once', () => {
+    // Act
+    const hashes = inlineScriptHashes(['<script>guard()</script>', '<p>x</p><script>guard()</script>', '<p>no scripts</p>']);
+    // Assert
+    expect(hashes).toEqual([source('guard()')]);
   });
 });
 

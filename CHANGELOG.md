@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A join or watch page that lost a piece on the way no longer stays stuck.** When one of the page's scripts failed to download (a dropped connection), the page showed up looking ready but nothing worked: Watch never became clickable. The page now reloads itself, up to three times in a row.
+
 ## [0.4.1] - 2026-10-31
 
 ### Fixed

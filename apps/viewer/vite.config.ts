@@ -3,7 +3,8 @@ import { defineConfig } from 'vite';
 import { fontLicenses } from '@swarmcast/shared/web/font-licenses';
 import { emojiDataPlugin } from './scripts/emoji-data.mjs';
 
-// Multi-page build. No inline scripts are emitted, so the strict CSP (script-src 'self') holds.
+// Multi-page build. No inline scripts are emitted: the only one is the startup guard written in
+// join.html and watch.html, which the server allows by its hash (strict CSP, no 'unsafe-inline').
 export default defineConfig({
   plugins: [fontLicenses(), emojiDataPlugin()],
   base: '/',

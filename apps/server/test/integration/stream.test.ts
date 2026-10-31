@@ -149,7 +149,9 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('permissions-policy')).toContain('camera=()');
-    expect(html).not.toMatch(/<script>(?!<\/script>)/);
+    const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${crypto.createHash('sha256').update(m[1]!).digest('base64')}'`);
+    expect(inline).toHaveLength(1);
+    expect(csp).toContain(`script-src 'self' ${inline[0]};`);
   });
 
   it('keeps the admin API off the public port and locked down on its own port', async () => {
