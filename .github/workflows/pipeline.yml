@@ -1,262 +1,99 @@
 name: Pipeline
 
-# The one CI entry point for pull requests and main (.github/workflows/README.md):
-#
-#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×5, windows ×5 ──────────┐
-#            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
-#            │                              └─ desktop <target> ×5: build ─ clean-machine┤
-#            ├─ site (when the site changed) ──────────────────────────────────────────┤
-#            └─ docker (when the Docker suites or what they run changed) ──────────────┘
-#
-# - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
-#   every stage; ci-ok is then green within a minute.
-# - docker: the Linux Docker suites (_docker.yml: package, start script, AppImage, OBS and the
-#   Playwright suite in containers, x64 and arm64), on their own builds. Also weekly through
-#   linux-docker.yml.
-# - build runs in parallel with quick; the test jobs download its artifacts (build once, test
-#   the same bytes everywhere).
-# - ci-ok is the one required check: it always reports, and it is red when any stage failed or
-#   was cancelled, or did not run although the change needed it, and on any re-run (a failure is
-#   fixed, not re-run until green). `changes` checks that ci-ok waits for every job.
-# - No test is retried anywhere (README.md, "Rules"); retries are for the network only.
-#
-# Also runs monthly with everything (catches rot: dead downloads, runner image changes, and
-# ubuntu-latest as a canary), by hand (workflow_dispatch, with the Windows options below), and
-# from release.yml with `release: true` (fat LTO desktop builds signed with the updater key).
-# No merge_group: GitHub offers the merge queue to organization-owned repositories only, and this
-# one belongs to a user (https://github.blog/changelog/2023-07-12-pull-request-merge-queue-is-now-generally-available/).
+# soak/mf-diag only: Media Foundation install diagnostics on windows-latest (not for main).
+# Each job starts the install first (as _windows.yml does: Server Manager as on main, or DISM),
+# runs the same setup load meanwhile, then waits while sampling the servicing stack.
 on:
-  pull_request:
-  push:
-    branches: [main]
-  schedule:
-    - cron: '17 6 1 * *'
   workflow_dispatch:
     inputs:
       windows-runners:
-        description: 'Windows suites: JSON list of runners'
+        description: unused
         default: '["windows-latest"]'
       windows-suites:
-        description: 'Windows suites: JSON list of suites'
-        default: '["installer","app","quality","direct","obs"]'
+        description: unused
+        default: '[]'
       screenshots:
-        description: Also capture the Windows installer pages and app window for the website guide (artifact only).
+        description: unused
         type: boolean
         default: false
-  workflow_call:
-    inputs:
-      release:
-        description: Release run from release.yml, with every stage and the desktop builds in release flavour.
-        type: boolean
-        default: false
-    secrets:
-      TAURI_SIGNING_PRIVATE_KEY:
-        required: false
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD:
-        required: false
 
 permissions:
   contents: read
 
-# Superseded pull request runs are cancelled; runs on main, tags, schedules and releases never are.
-concurrency:
-  group: pipeline-${{ github.event.pull_request.number || github.run_id }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-
 jobs:
-  changes:
-    name: changes
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    outputs:
-      app: ${{ steps.changes.outputs.app }}
-      site: ${{ steps.changes.outputs.site }}
-      scripts: ${{ steps.changes.outputs.scripts }}
-      docker: ${{ steps.changes.outputs.docker }}
+  mf:
+    name: mf ${{ matrix.method }} ${{ matrix.i }}
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix:
+        method: [servermanager, dism]
+        i: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+    runs-on: windows-latest
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
     steps:
-      # A pull request's merge commit and its two parents.
+      - name: Start (servermanager, as on main)
+        if: matrix.method == 'servermanager'
+        shell: pwsh
+        run: |
+          "up $([int]([Environment]::TickCount64 / 1000)) s; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue)); TrustedInstaller: $((Get-Service TrustedInstaller).Status)"
+          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows'; exit 0 }
+          $dir = $env:RUNNER_TEMP
+          [DateTime]::UtcNow.ToString('o') | Set-Content "$dir\media-foundation.start"
+          @'
+          param($Dir)
+          $ErrorActionPreference = 'Stop'
+          try {
+            $t0 = [DateTime]::UtcNow
+            $f = Get-WindowsFeature Server-Media-Foundation
+            $out = "Get-WindowsFeature: $([int]([DateTime]::UtcNow - $t0).TotalSeconds) s; before: $($f.InstallState)`n"
+            $t1 = [DateTime]::UtcNow
+            if ($f.InstallState -ne 'Installed') { $out += Install-WindowsFeature Server-Media-Foundation | Format-List | Out-String }
+            $out += "Install-WindowsFeature: $([int]([DateTime]::UtcNow - $t1).TotalSeconds) s`n"
+            Set-Content (Join-Path $Dir 'media-foundation.log') $out
+            Set-Content (Join-Path $Dir 'media-foundation.done') '0'
+          } catch {
+            Set-Content (Join-Path $Dir 'media-foundation.log') ($_ | Out-String)
+            Set-Content (Join-Path $Dir 'media-foundation.done') '1'
+          }
+          '@ | Set-Content (Join-Path $dir 'media-foundation.ps1')
+          $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $dir 'media-foundation.ps1'), $dir)
+          "Media Foundation install started (PID $($p.Id))"
+      - name: Start (dism)
+        if: matrix.method == 'dism'
+        shell: pwsh
+        run: |
+          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').InstallationType -eq 'Client') { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
+          $d = $env:RUNNER_TEMP
+          [DateTime]::UtcNow.ToString('o') | Set-Content "$d\media-foundation.start"
+          $c = "dism.exe /English /Online /Enable-Feature /FeatureName:ServerMediaFoundation /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
+          $p = Start-Process cmd.exe -PassThru -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
+          "Media Foundation: dism.exe started (cmd PID $($p.Id)), $([int]([Environment]::TickCount64 / 1000)) s after boot; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue))"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 2
-      - id: changes
-        env:
-          ALL: ${{ inputs.release || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+      - name: Early diagnostics
+        shell: pwsh
+        timeout-minutes: 3
+        run: .github/scripts/media-foundation.ps1 diagnose
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          ffmpeg: 'true'
+      - name: Playwright Firefox
+        timeout-minutes: 8
+        run: npx playwright install firefox
+      - name: Wait for Media Foundation
+        timeout-minutes: 11
+        shell: pwsh
+        run: .github/scripts/media-foundation.ps1 wait -Seconds 540
+      - name: Late diagnostics
+        if: always()
+        shell: pwsh
+        timeout-minutes: 3
         run: |
-          all=(); [ "$ALL" = true ] && all=(--all)
-          .github/scripts/changes.sh "${all[@]}" | tee -a "$GITHUB_OUTPUT"
-      # ci-ok is the only required check, so a job it does not wait for would gate nothing.
-      - name: ci-ok waits for every job
-        shell: bash
-        run: |
-          file=.github/workflows/pipeline.yml
-          jobs="$(awk '/^jobs:/ { in_jobs = 1; next } in_jobs && /^  [A-Za-z0-9_-]+:/ { sub(/^  /, ""); sub(/:.*/, ""); print }' "$file" | grep -vx ci-ok | sort)"
-          needs="$(sed -n '/^  ci-ok:/,/^  [A-Za-z0-9_-]*:/ s/^    needs: *\[\(.*\)\]/\1/p' "$file" | tr ',' '\n' | tr -d ' ' | sort)"
-          if [ -z "$jobs" ] || [ "$jobs" != "$needs" ]; then
-            echo "::error file=$file,title=ci-ok::ci-ok must need every other job (one line, needs: [...]). Missing: $(comm -23 <(echo "$jobs") <(echo "$needs") | xargs); unknown: $(comm -13 <(echo "$jobs") <(echo "$needs") | xargs)"
-            exit 1
-          fi
-          echo "ci-ok waits for: $(echo "$needs" | xargs)"
-
-  quick:
-    name: quick
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
-    uses: ./.github/workflows/_quick.yml
-
-  build:
-    name: build
-    needs: changes
-    if: needs.changes.outputs.app == 'true'
-    uses: ./.github/workflows/_build.yml
-
-  # One call per target: its build, then its clean-machine jobs (one per runner image), which
-  # start as soon as that target's build is done. Only a release passes the updater key on (from
-  # release.yml); other runs sign with a throwaway key made in the job.
-  desktop-windows-x64:
-    name: desktop windows-x64
-    needs: [changes, build]
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      target: windows-x64
-      release: ${{ inputs.release == true }}
-      screenshots: ${{ inputs.screenshots == true }}
-    secrets: &tauri-key
-      TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
-
-  desktop-macos-arm64:
-    name: desktop macos-arm64
-    needs: [changes, build]
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      target: macos-arm64
-      release: ${{ inputs.release == true }}
-      screenshots: ${{ inputs.screenshots == true }}
-    secrets: *tauri-key
-
-  desktop-macos-x64:
-    name: desktop macos-x64
-    needs: [changes, build]
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      target: macos-x64
-      release: ${{ inputs.release == true }}
-      screenshots: ${{ inputs.screenshots == true }}
-    secrets: *tauri-key
-
-  desktop-linux-x64:
-    name: desktop linux-x64
-    needs: [changes, build]
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      target: linux-x64
-      release: ${{ inputs.release == true }}
-      screenshots: ${{ inputs.screenshots == true }}
-    secrets: *tauri-key
-
-  desktop-linux-arm64:
-    name: desktop linux-arm64
-    needs: [changes, build]
-    uses: ./.github/workflows/_desktop.yml
-    with:
-      target: linux-arm64
-      release: ${{ inputs.release == true }}
-      screenshots: ${{ inputs.screenshots == true }}
-    secrets: *tauri-key
-
-  # ---------------------------------------------------------------- test stage
-  node:
-    name: node
-    needs: [changes, quick, build]
-    uses: ./.github/workflows/_node.yml
-    with:
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
-
-  e2e:
-    name: e2e
-    needs: [quick, build]
-    uses: ./.github/workflows/_e2e.yml
-
-  windows:
-    name: windows
-    needs: [quick, build]
-    uses: ./.github/workflows/_windows.yml
-    with:
-      runners: ${{ inputs.windows-runners || '["windows-latest"]' }}
-      suites: ${{ inputs.windows-suites || '["installer","app","quality","direct","obs"]' }}
-
-  site:
-    name: site
-    needs: changes
-    if: needs.changes.outputs.site == 'true'
-    uses: ./.github/workflows/_site.yml
-
-  docker:
-    name: docker
-    needs: changes
-    if: needs.changes.outputs.docker == 'true'
-    uses: ./.github/workflows/_docker.yml
-
-  # ---------------------------------------------------------------- the required check
-  # The verdict and nothing else: one shell step, no checkout, no action, no artifact. Anything
-  # more would make the one required check depend on GitHub's services a second time (an artifact
-  # download that retries for minutes, a checkout during an Actions incident) and add to the
-  # little it does. Each stage's jobs write their own results to their summaries.
-  ci-ok:
-    name: ci-ok
-    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site, docker]
-    if: always()
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      # Red when a stage failed or was cancelled, when `changes` itself did not succeed, when a
-      # stage the change needs did not run (skipped), or when this is a re-run: GitHub shows only
-      # the latest attempt on the pull request, so a green re-run would hide the failure. A
-      # failure is fixed and pushed (or, after a GitHub outage, a new run is started), never
-      # re-run until green. Green with every stage skipped for a docs-only change.
-      - name: Verdict
-        env:
-          NEEDS: ${{ toJSON(needs) }}
-          APP: ${{ needs.changes.outputs.app }}
-          SITE: ${{ needs.changes.outputs.site }}
-          DOCKER: ${{ needs.changes.outputs.docker }}
-          ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node e2e windows'
-          bad=0
-          {
-            echo '## ci-ok'
-            echo
-            echo "Change: app=${APP:-?}, site=${SITE:-?}, docker=${DOCKER:-?}"
-            echo
-            echo '| stage | result | |'
-            echo '|---|---|---|'
-          } >> "$GITHUB_STEP_SUMMARY"
-          for stage in $(jq -r 'keys_unsorted[]' <<<"$NEEDS"); do
-            result="$(jq -r --arg s "$stage" '.[$s].result' <<<"$NEEDS")"
-            needed=false
-            [ "$stage" = changes ] && needed=true
-            [ "$APP" = true ] && [[ " $app_stages " == *" $stage "* ]] && needed=true
-            [ "$SITE" = true ] && [ "$stage" = site ] && needed=true
-            [ "$DOCKER" = true ] && [ "$stage" = docker ] && needed=true
-            verdict=ok
-            case "$result" in
-              success) ;;
-              skipped) [ "$needed" = false ] || verdict='needed, did not run' ;;
-              *) verdict="$result" ;;
-            esac
-            [ "$verdict" = ok ] || bad=$((bad + 1))
-            mark=$([ "$verdict" = ok ] && echo '✅' || echo "❌ $verdict")
-            echo "| $stage | $result | $mark |" >> "$GITHUB_STEP_SUMMARY"
-            printf '%-22s %-10s %s\n' "$stage" "$result" "$verdict"
-          done
-          if [ "$ATTEMPT" != 1 ]; then
-            bad=$((bad + 1))
-            echo "| (run attempt) | $ATTEMPT | ❌ a re-run cannot pass: fix the failure and push, or start a new run |" >> "$GITHUB_STEP_SUMMARY"
-            echo "run attempt $ATTEMPT: a re-run cannot pass"
-          fi
-          if [ "$bad" -gt 0 ]; then
-            echo "::error title=ci-ok::$bad stage(s) failed, were cancelled or did not run (see the table above)"
-            exit 1
-          fi
+          .github/scripts/media-foundation.ps1 diagnose
+          dism.exe /English /Online /Get-Features /Format:Table | Select-String -Pattern 'Media'
