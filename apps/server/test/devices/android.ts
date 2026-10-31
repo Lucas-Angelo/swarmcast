@@ -81,17 +81,50 @@ function shellWord(s: string): string {
   return /^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/** A page target of Chrome's DevTools endpoint list (`/json/list`). */
+interface PageTarget {
+  url: string;
+  webSocketDebuggerUrl?: string;
+}
+
 /**
  * The page targets Chrome's DevTools endpoint lists (`/json/list`), or null while it does not
  * answer yet (Chrome has not created its socket).
  */
-async function pageTargets(port: number): Promise<string[] | null> {
+async function pageTargets(port: number): Promise<PageTarget[] | null> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/json/list`, { signal: AbortSignal.timeout(2_000) });
     if (!res.ok) return null;
-    return ((await res.json()) as Array<{ type: string; url: string }>).filter((t) => t.type === 'page').map((t) => t.url);
+    return ((await res.json()) as Array<PageTarget & { type: string }>).filter((t) => t.type === 'page');
   } catch {
     return null;
+  }
+}
+
+/**
+ * Whether the page's renderer answers DevTools (Runtime.evaluate over the target's own socket)
+ * within `ms`. A tab whose renderer is still frozen from the background does not.
+ */
+async function answers(target: PageTarget, ms = 2_000): Promise<boolean> {
+  if (!target.webSocketDebuggerUrl) return false;
+  const ws = new WebSocket(target.webSocketDebuggerUrl.replace('localhost', '127.0.0.1'));
+  try {
+    return await new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), ms);
+      ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: '1', returnByValue: true } }));
+      ws.onmessage = (m) => {
+        if ((JSON.parse(String(m.data)) as { id?: number }).id === 1) {
+          clearTimeout(timer);
+          resolve(true);
+        }
+      };
+      ws.onerror = () => {
+        clearTimeout(timer);
+        resolve(false);
+      };
+    });
+  } finally {
+    ws.close();
   }
 }
 
@@ -296,13 +329,38 @@ export class AndroidDevice {
    */
   async connectChrome(wanted: (url: string) => boolean): Promise<{ browser: Browser; port: number }> {
     const port = Number((await run(ADB, ['-s', this.serial, 'forward', 'tcp:0', 'localabstract:chrome_devtools_remote'])).stdout.trim());
-    let seen: string[] | null = null;
-    await until(async () => (seen = await pageTargets(port))?.some(wanted) === true, {
-      timeoutMs: 30_000,
-      what: "Chrome's DevTools listing the tab",
-      detail: () => (seen ? `tabs: ${seen.join(', ') || '(none)'}` : 'DevTools does not answer'),
-    });
-    return { browser: await chromium.connectOverCDP(`http://127.0.0.1:${port}`), port };
+    let seen: PageTarget[] | null = null;
+    let silent: string[] = [];
+    let browserSocket: string | null = null;
+    // Ready to connect: the tab listed, every tab's renderer answering (connectOverCDP attaches to
+    // each and waits for it), and the browser's own endpoint answering /json/version, whose
+    // WebSocket address connectOverCDP is then given. In Devices run 41231906472 connectOverCDP
+    // itself waited 30 s on "retrieving websocket url" (its own GET /json/version) right after the
+    // tab had been listed, while Chrome was still handing the link from its launcher activity on.
+    await until(
+      async () => {
+        seen = await pageTargets(port);
+        if (!seen?.some((t) => wanted(t.url))) return false;
+        silent = [];
+        for (const t of seen) if (!(await answers(t))) silent.push(t.url);
+        if (silent.length > 0) return false;
+        browserSocket = await fetch(`http://127.0.0.1:${port}/json/version`, { signal: AbortSignal.timeout(2_000) })
+          .then(async (r) => ((await r.json()) as { webSocketDebuggerUrl?: string }).webSocketDebuggerUrl ?? null)
+          .catch(() => null);
+        return browserSocket !== null;
+      },
+      {
+        timeoutMs: 30_000,
+        what: "Chrome's DevTools listing the tab, every tab and the browser answering",
+        detail: () =>
+          seen
+            ? `tabs: ${seen.map((t) => t.url).join(', ') || '(none)'}; not answering: ${silent.join(', ') || '(none)'}; browser endpoint: ${browserSocket ? 'answers' : 'silent'}`
+            : 'DevTools does not answer',
+      },
+    );
+    const endpoint = new URL(browserSocket!);
+    endpoint.host = `127.0.0.1:${port}`;
+    return { browser: await chromium.connectOverCDP(endpoint.toString()), port };
   }
 
   async unforward(port: number): Promise<void> {
