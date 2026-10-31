@@ -9,7 +9,7 @@
 // scripts and emoji (once per browser process): warmFontFallback lays them out first, so the checks
 // below time the page, not that scan. The machine's own first load of those fonts happens earlier,
 // in globalSetup (warm-browsers.ts), not while other workers' tests run.
-import { expect, test, type Page } from './fixtures.js';
+import { expect, test, type Page } from './diag-fixture.js';
 import { NAMES, SNAPSHOT_MAX, sayCorpus } from './corpus-hub.js';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild, reviewScreenshot, warmFontFallback } from './watch-page.js';
