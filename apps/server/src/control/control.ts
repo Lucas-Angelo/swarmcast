@@ -5,6 +5,7 @@ import {
   CHAT_FRAME_MAX_BYTES,
   CHAT_FRAME_PREFIX,
   CHAT_MAX_FRAMES_PER_10S,
+  CONTROL_CLOSE,
   CONTROL_MAX_MESSAGE,
   HASH_FAILURE_THRESHOLD,
   MAX_TRACKER_CHANNELS,
@@ -158,7 +159,7 @@ export class ControlChannel implements ChatHost {
     }
     const session = this.access.sessions.get(s.sessionId);
     if (!session) {
-      s.close(4001, 'session ended');
+      s.close(CONTROL_CLOSE.sessionEnded, 'session ended');
       return;
     }
     const text = data.toString();
@@ -232,7 +233,7 @@ export class ControlChannel implements ChatHost {
     }
     const session = this.access.sessions.get(s.sessionId);
     if (!session) {
-      s.close(4001, 'session ended');
+      s.close(CONTROL_CLOSE.sessionEnded, 'session ended');
       return;
     }
     session.lastSeenAt = now;
@@ -297,7 +298,7 @@ export class ControlChannel implements ChatHost {
   kick(sessionId: string): void {
     for (const s of this.conns.get(sessionId) ?? []) {
       this.sendTo(s, { t: 'kicked' });
-      s.close(4003, 'kicked');
+      s.close(CONTROL_CLOSE.kicked, 'kicked');
     }
     this.conns.delete(sessionId);
   }
@@ -319,7 +320,7 @@ export class ControlChannel implements ChatHost {
     for (const set of this.conns.values()) {
       for (const s of set) {
         if (reason === 'ended') this.sendTo(s, { t: 'ended' });
-        s.close(reason === 'ended' ? 4000 : 4002, reason);
+        s.close(reason === 'ended' ? CONTROL_CLOSE.ended : CONTROL_CLOSE.disconnected, reason);
       }
     }
     this.conns.clear();
