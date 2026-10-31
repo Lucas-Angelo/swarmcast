@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Viewers keep watching when your PC turns a quality off.** When your computer could not convert a quality in real time and SwarmCast turned it off to protect OBS, viewers watching that quality froze for minutes. They now move to the remaining quality within a couple of seconds.
+
 ## [0.4.1] - 2026-10-31
 
 ### Fixed
