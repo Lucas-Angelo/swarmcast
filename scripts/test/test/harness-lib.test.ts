@@ -1,6 +1,6 @@
 // The shared helpers of the system harnesses (scripts/test/lib): the release server, the waits
 // that return a value or end at a deadline, the port probe, the JUnit view of a harness's
-// results and the cookie jar of the fetch-based browsers. Servers listen on 127.0.0.1 port 0 (no
+// results, the cookie jar of the fetch-based browsers and the environment of a launched Firefox. Servers listen on 127.0.0.1 port 0 (no
 // collision, no firewall prompt) and every folder and server a test makes is removed by
 // onTestFinished, servers before their folder.
 import fs from 'node:fs';
@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
+import { firefoxEnv } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { serveDir } from '../lib/release-server.mjs';
@@ -327,5 +328,21 @@ describe('CookieJar', () => {
 
     // Assert
     expect(s.seen[0]!.headers.cookie).toBe('sc_verified=v1.1.x');
+  });
+});
+
+describe('firefoxEnv', () => {
+  it('keeps the given variables and names a startup cache file that cannot be created', () => {
+    // Act
+    const env = firefoxEnv({ KEEP: 'me' });
+    const again = firefoxEnv({});
+
+    // Assert
+    expect(env.KEEP).toBe('me');
+    const file = env.MOZ_STARTUP_CACHE!;
+    expect(path.isAbsolute(file)).toBe(true);
+    expect(again.MOZ_STARTUP_CACHE).toBe(file);
+    expect(fs.existsSync(path.dirname(path.dirname(file)))).toBe(true);
+    expect(() => fs.openSync(file, 'w')).toThrow(expect.objectContaining({ code: 'ENOENT' }));
   });
 });
