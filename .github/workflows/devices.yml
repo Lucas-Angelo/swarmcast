@@ -132,20 +132,30 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # The AVD and its boot snapshot, made once and saved on main (pull requests restore main's):
-      # later runs boot from the snapshot in seconds instead of a cold boot.
-      - name: Restore the AVD
-        id: avd
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-${{ env.API_LEVEL }}-google_apis-x86_64-pixel_7-v1
-      - name: Create the AVD and its boot snapshot
-        if: steps.avd.outputs.cache-hit != 'true'
-        timeout-minutes: 15
+      # Room on the runner's disk for the emulator's data partition. The emulator will not start with
+      # less free space than the partition may take (run 41173006688: "Not enough space to create
+      # userdata partition. Available: 7038.12 MB ..., need 7372.80 MB"), and the partition grows
+      # while the tests run. The image's toolchains this job never uses go first; the emulator step
+      # then checks the room left once the SDK is installed (pre-emulator-launch-script).
+      - name: Disk space for the emulator
+        timeout-minutes: 5
+        run: |
+          df -m /
+          sudo rm -rf /usr/local/lib/android/sdk/ndk /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
+          df -m /
+      # One emulator, booted cold (about 30 s with KVM) with no snapshot: a boot snapshot takes
+      # gigabytes of the same disk, and a restored AVD booted cold anyway (the action appends
+      # its settings to config.ini on every start, "a different AVD configuration").
+      # The action runs each line of `script` in its own `sh -c`: one command, the suite. The suite
+      # uses the emulator the action started (the one connected device). No hardware keyboard
+      # (enable-hw-keyboard is false by default): the on-screen keyboard is part of the checks.
+      # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
+      - name: Device tests, Android
+        timeout-minutes: 25
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        env:
+          # The emulator's own floor for a 6000 MB partition (7373 MB) and room for what the run writes.
+          DISK_FREE_MB: '10000'
         with:
           api-level: ${{ env.API_LEVEL }}
           target: google_apis
@@ -153,39 +163,12 @@ jobs:
           profile: pixel_7
           ram-size: 4096M
           disk-size: 6000M
-          cores: 4
-          force-avd-creation: false
-          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
-          disable-animations: false
-          script: echo "AVD and boot snapshot created"
-      - name: Save the AVD (main)
-        if: ${{ steps.avd.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
-        continue-on-error: true
-        timeout-minutes: 5
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.android/avd/*
-            ~/.android/adb*
-          key: avd-${{ env.API_LEVEL }}-google_apis-x86_64-pixel_7-v1
-      # The action runs each line of `script` in its own `sh -c`: one command, the suite. The suite
-      # uses the emulator the action started (the one connected device). No hardware keyboard
-      # (enable-hw-keyboard is false by default): the on-screen keyboard is part of the checks.
-      # No ram-size, disk-size or cores here: the AVD has them from its creation, and the action
-      # appends whatever it is given to config.ini each time, which made the boot snapshot "a
-      # different AVD configuration" (a cold boot instead).
-      # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
-      - name: Device tests, Android
-        timeout-minutes: 25
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: ${{ env.API_LEVEL }}
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7
-          force-avd-creation: false
-          emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
+          cores: 2
+          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics
           disable-animations: true
+          emulator-boot-timeout: 300
+          pre-emulator-launch-script: |
+            free_mb="$(df --output=avail -m "$HOME/.android" | tail -n 1 | tr -d ' ')"; echo "free on the AVD's disk: $free_mb MB"; [ "$free_mb" -ge "$DISK_FREE_MB" ] || { echo "::error::$free_mb MB free for the emulator, $DISK_FREE_MB MB needed"; exit 1; }
           script: npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
       - name: Results in the job summary
         if: ${{ !cancelled() }}
@@ -201,8 +184,9 @@ jobs:
           mkdir -p test-results/devices
           {
             echo "== free -m"; free -m
+            echo "== df -m"; df -m
             echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100
-            echo "== emulator crash reports"; ls -laR /tmp/android-runner 2>&1 | head -n 100
+            echo "== emulator crash reports"; find /tmp/android-runner -ls 2>&1 | head -n 100
           } 2>&1 | tee test-results/devices/host-state.txt
       - name: Upload the report, recordings and logs
         if: ${{ !cancelled() }}

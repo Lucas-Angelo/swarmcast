@@ -111,7 +111,8 @@ async function disconnectHardwareKeyboard(): Promise<void> {
     'tell application "Simulator" to activate',
     `tell application "System Events" to tell process "Simulator" to click (first menu item of ${KEYBOARD_MENU} whose name contains "Hardware Keyboard")`,
   ]);
-  if (await hardwareKeyboardConnected()) throw new Error('Simulator.app still connects the hardware keyboard after its menu item was clicked');
+  // The menu's check mark follows a moment later (CI run 41173006688 read it still ticked at once).
+  await until(async () => !(await hardwareKeyboardConnected()), { timeoutMs: 10_000, what: 'Connect Hardware Keyboard unticked after its menu item was clicked' });
 }
 
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
@@ -229,6 +230,15 @@ export class IosDevice {
     this.orientation = to;
   }
 
+  /** Whether Simulator.app connects the Mac's keyboard (an attached keyboard hides the on-screen one), for a failure message. */
+  async keyboardState(): Promise<string> {
+    if (this.rotator !== 'simulator-app') return '(no state on iOS; Simulator.app not used)';
+    return hardwareKeyboardConnected().then(
+      (on) => `Simulator.app ${on ? 'connects' : 'does not connect'} the hardware keyboard`,
+      (e: Error) => `(Simulator.app menu unreadable: ${e.message})`,
+    );
+  }
+
   async launch(bundleId: string): Promise<void> {
     await simctl(['launch', this.udid, bundleId]);
   }
@@ -316,9 +326,9 @@ export class IosPhone implements Phone {
     return this.device.screenshot();
   }
 
-  /** iOS gives no keyboard state to the host: the viewport readings around it say what there is. */
+  /** iOS gives no keyboard state to the host; Simulator.app says whether it connects the Mac's keyboard. */
   keyboardState(): Promise<string> {
-    return Promise.resolve('(not available on iOS)');
+    return this.device.keyboardState();
   }
 
   async close(): Promise<void> {

@@ -192,6 +192,7 @@ export const KEYBOARD_MIN_PX = 150;
  */
 export async function tapToType(phone: Phone, selector: string): Promise<void> {
   const before = await viewport(phone);
+  await recordInput(phone);
   await phone.tap(selector);
   let previous = '';
   await expect
@@ -202,11 +203,39 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
         const settled = before.height - v.height > KEYBOARD_MIN_PX && now === previous;
         previous = now;
         if (settled) return 'up';
-        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; focus: ${await focused(phone)}; keyboard: ${await phone.keyboardState()}`;
+        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}; keyboard: ${await phone.keyboardState()}`;
       },
       { message: `the on-screen keyboard is up for ${selector} and the page has stopped moving` },
     )
     .toBe('up');
+}
+
+/**
+ * Records the input events the page receives from now on (type, target, and "untrusted" for one
+ * a script made), for a failure message: whether a tap reached the page as a finger does.
+ * The join page focuses the nickname field itself (autofocus), so focus alone says nothing.
+ */
+function recordInput(phone: Phone): Promise<void> {
+  return phone.evaluate(() => {
+    const w = window as unknown as { __input?: string[] };
+    w.__input = [];
+    if ((window as unknown as { __inputListening?: boolean }).__inputListening) return;
+    (window as unknown as { __inputListening?: boolean }).__inputListening = true;
+    for (const type of ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'mousedown', 'click', 'focusin', 'focusout']) {
+      window.addEventListener(
+        type,
+        (e) => {
+          const t = e.target as Element | null;
+          w.__input?.push(`${type}@${t?.id || t?.tagName?.toLowerCase() || '?'}${e.isTrusted ? '' : ' untrusted'}${e instanceof PointerEvent ? ` (${e.pointerType})` : ''}`);
+        },
+        true,
+      );
+    }
+  });
+}
+
+function inputEvents(phone: Phone): Promise<string> {
+  return phone.evaluate(() => (window as unknown as { __input?: string[] }).__input?.join(', ') || '(none)');
 }
 
 /** The focused element as `tag#id` (`body` when nothing has focus), for a failure message. */
