@@ -67,5 +67,5 @@ its area and add a row here in the same pull request.
 | Trunk-based flow: short branches, squash merges only, `ci-ok` the only required check | one maintainer, a readable `main`, a ruleset that does not change with the stages | [RELEASING.md §2](RELEASING.md#2-branches-pull-requests-and-protection), [workflows README](../.github/workflows/README.md#the-pipeline) |
 | Build once per pipeline, test the same bytes everywhere | what is tested is what ships | [workflows README](../.github/workflows/README.md#the-pipeline) |
 | Tests: 0 % failures in 100 % of runs on every OS, no retries anywhere; retries only for network steps | a test that passes sometimes is a failing test | [TESTING.md](TESTING.md), [workflows README](../.github/workflows/README.md#rules) |
-| Every new minor ships as a beta first; published releases are never changed | installed apps update by themselves | [RELEASING.md §4](RELEASING.md#4-ship-a-release) |
+| Every version ships as at least two betas first; published releases are never changed | installed apps update by themselves | [RELEASING.md §4](RELEASING.md#4-ship-a-release) |
 | CI downloads slow third-party files from byte-identical copies in the `ci-deps` pre-release | some publishers are very slow from GitHub's runners | [RELEASING.md §8](RELEASING.md#8-mirrored-ci-dependencies-ci-deps) |
