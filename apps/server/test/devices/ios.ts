@@ -204,13 +204,20 @@ export class IosDevice {
    * What the simulator and the Mac logged about Web Inspector, Safari and WebDriver since `from`,
    * written next to safaridriver.log for a session that could not be created; returns where.
    */
-  private async sessionLogs(from: Date): Promise<string> {
+  private sessionLogs(from: Date): Promise<string> {
+    return this.logs(from, 'session', 'process CONTAINS[c] "webinspector" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "webdriver" OR subsystem CONTAINS[c] "webinspector" OR subsystem CONTAINS[c] "webkit"');
+  }
+
+  /**
+   * The simulator's and the Mac's unified log since a minute before `from`, filtered by
+   * `predicate`, in `<name>-<time>.log` in the log folder; returns where (for a failure message).
+   */
+  async logs(from: Date, name: string, predicate: string): Promise<string> {
     const start = new Date(from.getTime() - 60_000)
       .toISOString()
       .replace('T', ' ')
       .replace(/\.\d+Z$/, '+0000');
-    const file = path.join(this.logDir, `session-${from.toISOString().replace(/[:.]/g, '-')}.log`);
-    const predicate = 'process CONTAINS[c] "webinspector" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "webdriver" OR subsystem CONTAINS[c] "webinspector" OR subsystem CONTAINS[c] "webkit"';
+    const file = path.join(this.logDir, `${name}-${from.toISOString().replace(/[:.]/g, '-')}.log`);
     const show = (cmd: string, args: string[]) =>
       run(cmd, [...args, 'show', '--style', 'compact', '--info', '--debug', '--start', start, '--predicate', predicate], { maxBuffer: 256 * 1024 * 1024 }).then(
         (r) => r.stdout,
@@ -315,8 +322,34 @@ export class IosPhone implements Phone {
     await this.session.perform(tapActions(element, point!.dx, point!.dy));
   }
 
+  /**
+   * Element Send Keys. When the text does not reach the field, fails at once with what the page
+   * saw (key and input events, focus, whether the page has the window's focus) and the
+   * simulator's UIKit, text input and WebKit log of that moment.
+   */
   async type(selector: string, text: string): Promise<void> {
-    await this.session.sendKeys(await this.session.find(selector), text);
+    const from = new Date();
+    await this.evaluate(() => {
+      const w = window as unknown as { __keys?: string[]; __keysListening?: boolean };
+      w.__keys = [];
+      if (w.__keysListening) return;
+      w.__keysListening = true;
+      for (const type of ['keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'compositionstart']) window.addEventListener(type, (e) => w.__keys?.push(`${type}${e.isTrusted ? '' : ' untrusted'}`), true);
+    });
+    const element = await this.session.find(selector);
+    await this.session.sendKeys(element, text);
+    const seen = await this.evaluate(
+      (s) => ({
+        value: (document.querySelector(s) as HTMLInputElement | null)?.value ?? null,
+        focus: document.activeElement?.id ?? document.activeElement?.tagName ?? null,
+        pageHasFocus: document.hasFocus(),
+        events: [...new Set((window as unknown as { __keys?: string[] }).__keys ?? [])].join(', '),
+      }),
+      selector,
+    );
+    if (seen.value?.includes(text)) return;
+    const logs = await this.device.logs(from, 'typing', 'subsystem == "com.apple.UIKit" OR subsystem CONTAINS[c] "webkit" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "TextInput" OR process CONTAINS[c] "keyboard" OR category CONTAINS[c] "keyboard"');
+    throw new Error(`typing "${text}" into ${selector} did not reach it: ${JSON.stringify(seen)} (${logs})`);
   }
 
   rotate(to: Orientation): Promise<void> {

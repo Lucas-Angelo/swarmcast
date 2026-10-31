@@ -40,12 +40,16 @@ const AVD_NAME = 'swarmcast-pixel';
 const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
 /**
- * Emulator features turned off. HardwareDecoder: the emulator decodes H.264 for Android on the
- * host (Chrome gets c2.goldfish.h264.decoder). In Devices run 41173958482 the device log stopped
- * 1.2 s after "C2GoldfishAvcDec: calling onInit" and the emulator was gone; without the feature,
- * Android decodes the video itself (no goldfish codec in run 41175462466) and the live played.
+ * Emulator features turned off. Vulkan: with the emulator's software GPU, Chrome draws through
+ * Vulkan (SwiftShader on the host), and the emulator crashed with SIGSEGV as the second Chrome of
+ * a run created its Vulkan instance: in Devices run 41177262228 all three emulators died that way,
+ * each right after the log line "Created VkInstance ... for application:''" of the Chrome started
+ * after the previous test's was stopped and cleared (emulator.log). Runs 41171340670 and
+ * 41175462466 lost the device as the second Chrome started too; 41173958482 in the first test,
+ * as Chrome began to decode the live (with no exit status kept then). Without Vulkan Chrome draws
+ * with OpenGL ES, as on phones whose GPU driver Chrome does not trust with Vulkan.
  */
-export const EMULATOR_FEATURES = ['-feature', '-HardwareDecoder'] as const;
+export const EMULATOR_FEATURES = ['-feature', '-Vulkan'] as const;
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -108,8 +112,8 @@ export class AndroidDevice {
     if (!serial) {
       serial = `emulator-${OWN_EMULATOR_PORT}`;
       const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
-      // Headless (CI boots it this way too), software GPU, no audio device, a cold boot, video
-      // decoded inside Android (EMULATOR_FEATURES).
+      // Headless (CI boots it this way too), software GPU without Vulkan (EMULATOR_FEATURES), no
+      // audio device, a cold boot.
       own = spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect', ...EMULATOR_FEATURES], {
         name: 'emulator',
         logFile: path.join(o.logDir, 'emulator.log'),
@@ -122,9 +126,9 @@ export class AndroidDevice {
       abortOn: own ? [own] : [],
     });
     device.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
-    // Whether the emulator offers Android its host-side video decoders (2: it does; EMULATOR_FEATURES).
-    const hostDecoders = await device.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
-    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.boot.qemu.hwcodec.avcdec=${hostDecoders || '(unset)'}\n`);
+    // Whether Android was given Vulkan (EMULATOR_FEATURES: it should not be), for the record.
+    const vulkan = await device.shellOut(['getprop', 'ro.hardware.vulkan']);
+    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.hardware.vulkan=${vulkan || '(unset)'}\n`);
     for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await device.shell(['settings', 'put', 'global', scale, '0']);
     await device.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
