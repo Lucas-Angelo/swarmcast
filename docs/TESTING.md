@@ -148,7 +148,7 @@ workflows and harness scripts, against the defaults and `RESERVED`.
 an Android emulator (Pixel 7) and Mobile Safari on an iOS Simulator. Each test joins with a nickname
 typed on the on-screen keyboard and checks one behaviour: muted autoplay and Unmute by a tap; the chat
 under the player with the keyboard up (input and Send inside the visual viewport) and a message both
-ways with a desktop viewer; the browser sent to the background and back (playback resumes, Go live
+ways with a scripted viewer (a desktop browser next to the iOS Simulator slowed its taps); the browser sent to the background and back (playback resumes, Go live
 returns to the live point); turning the phone (Android: Chrome's fullscreen video, then SwarmCast's
 sideways layout; iOS: the sideways layout).
 

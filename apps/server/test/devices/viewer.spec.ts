@@ -4,7 +4,9 @@
 //   scrolls it into view; the check waits for the keyboard and that scroll to settle), the browser check, the video starting muted by itself (browsers allow only muted
 //   autoplay) and Unmute turning the sound on with a tap;
 // - the chat under the player on a phone screen, a message from the phone reaching a second
-//   viewer (a desktop browser: a phone browser hosts one automation session) and back, and the
+//   viewer and back (a scripted viewer on /control, the e2e `bots` fixture: a desktop browser
+//   playing the live next to the iOS Simulator slowed the simulator's taps to up to 6.8 s, which
+//   iOS takes for long presses, Devices runs 41235159056 and 41240999682), and the
 //   on-screen keyboard leaving the input and Send in sight: the visual viewport (what the
 //   keyboard leaves) must contain them. A tap raises the keyboard; a mouse click does not.
 // - the app sent to the background and brought back: the page went hidden (checked from its own
@@ -17,7 +19,7 @@
 // The trip to the background runs on Android: under safaridriver the session ends as Safari leaves
 // the screen (ios.ts IosPhone.background has the evidence).
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
-import { liveLink, say, sees, uid, viewerByNick } from '../e2e/fixtures.js';
+import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
 import { box, chatShows, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, recordLifecycle, tapToType, videoState, viewport } from './phone.js';
 
@@ -60,14 +62,14 @@ test('a phone viewer joins with the link, Watch in sight while typing: the video
   expect(await phone.evaluate(() => document.getElementById('status')!.textContent)).toBe('Live');
 });
 
-test('the chat sits under the player; a message goes from the phone to another viewer and back; the keyboard leaves the input in sight', async ({ phone, viewers }) => {
+test('the chat sits under the player; a message goes from the phone to another viewer and back; the keyboard leaves the input in sight', async ({ phone, bots }) => {
   // Arrange
   const link = await liveLink();
   await joinOnPhone(phone, uid('chatP'), link);
-  const desktop = await viewers.join(uid('chatD'), { link });
+  const other = await bots.join(uid('chatD'), link);
   await expect.poll(() => isShown(phone, '[data-testid="chat"]')).toBe(true);
   const fromPhone = `oi do celular ${uid('m')}`;
-  const fromDesktop = `oi do PC ${uid('r')}`;
+  const fromOther = `oi do PC ${uid('r')}`;
   // Assert
   const player = await box(phone, '.player');
   const chat = await box(phone, '[data-testid="chat"]');
@@ -83,11 +85,12 @@ test('the chat sits under the player; a message goes from the phone to another v
   await phone.tap('[data-testid="chat-send"]');
   // Assert
   await expect.poll(() => ownMessage(phone, fromPhone)).toBe('sent');
-  await sees(desktop.page, fromPhone);
+  await expect.poll(() => other.items().some((i) => i.k === 'm' && i.x === fromPhone)).toBe(true);
   // Act
-  await say(desktop.page, fromDesktop);
+  const answer = await other.answer(other.send(fromOther));
   // Assert
-  await expect.poll(() => chatShows(phone, fromDesktop)).toBe(true);
+  expect(answer.s).toBeGreaterThan(0);
+  await expect.poll(() => chatShows(phone, fromOther)).toBe(true);
 });
 
 test('back from the background the video plays again, behind the live; Go live returns to the live point', { tag: '@android' }, async ({ phone }) => {
