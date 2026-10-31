@@ -10,20 +10,13 @@
 // worker's browser stood still in layout for 2-7 s (a Chrome trace showed one font match for Arial
 // taking 1.8 s), long enough to miss openWatch's 5 s check. Only the first run on a runner did
 // that, never later runs on the same machine, with fresh browsers each time: so it is done here,
-// once, with the same page and texts. Each test's own browser is then warm except for its
-// per-process font fallback, which openWatch handles (watch-page.ts). Engines that are not
-// installed are skipped.
+// once, with the same page and texts, in each engine launched as its projects launch it. Each
+// worker's own browser then renders it once more before its first test (fixtures.ts). Engines
+// that are not installed are skipped.
 import { chromium, firefox, webkit, type BrowserType, type FullConfig } from '@playwright/test';
-import { NAMES, SNAPSHOT_MAX, sayCorpus } from './corpus-hub.js';
-import { MockHub } from './mock-hub.js';
-import { loadWatch, warmFontFallback } from './watch-page.js';
+import { renderWatchCorpus } from './warm.js';
 
 const TYPES: Record<string, BrowserType> = { chromium, firefox, webkit };
-/**
- * The warm-up is not a check: it takes what the machine needs (over 30 s for a cold engine), and
- * this only bounds it, so an engine that never renders the page fails the run instead of hanging it.
- */
-const WARM_LIMIT_MS = 120_000;
 
 export default async function warmBrowsers(config: FullConfig): Promise<void> {
   const seen = new Set<string>();
@@ -36,7 +29,7 @@ export default async function warmBrowsers(config: FullConfig): Promise<void> {
     const t0 = Date.now();
     let browser;
     try {
-      browser = await TYPES[name]!.launch(channel ? { channel } : {});
+      browser = await TYPES[name]!.launch({ ...project.use.launchOptions, ...(channel ? { channel } : {}) });
     } catch (err) {
       // Not installed on this runner (its project is not run here either). Said, not swallowed: an
       // engine that is installed but cannot start fails its tests, and this line tells why.
@@ -44,20 +37,7 @@ export default async function warmBrowsers(config: FullConfig): Promise<void> {
       continue;
     }
     try {
-      const page = await browser.newPage();
-      const hub = new MockHub('Bia');
-      const sent = sayCorpus(hub);
-      await warmFontFallback(page, [...NAMES, ...sent.map((e) => e.text)]);
-      await loadWatch(page, hub);
-      await page
-        .getByTestId('chat-list')
-        .locator('li.msg:not(.sys)')
-        .nth(Math.min(sent.length, SNAPSHOT_MAX) - 1)
-        .waitFor({ timeout: WARM_LIMIT_MS });
-      await page.evaluate(async () => {
-        await document.fonts.ready;
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      });
+      await renderWatchCorpus(await browser.newPage());
     } finally {
       await browser.close();
     }

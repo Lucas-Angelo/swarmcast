@@ -25,8 +25,9 @@ const warmed = new WeakSet<Browser>();
  * emoji or text in a script the page fonts lack makes the browser load and scan the system fonts
  * for a fallback: once per browser process, but seconds on a fresh CI runner (7 s in Firefox on
  * Windows, and Chrome on macOS), during which the page does not paint. A real visitor's browser
- * has done it long before; a test that times the watch page would time this instead. openWatch
- * does it for the first page of each browser; a spec with other scripts can add its own texts.
+ * has done it long before; a test that times the watch page would time this instead. Each
+ * worker's browser does it before its first test (fixtures.ts), and openWatch for a browser that
+ * has not; a spec with other scripts can add its own texts.
  */
 export async function warmFontFallback(page: Page, texts: readonly string[] = []): Promise<void> {
   await page.route(`${ORIGIN}/warm`, (route) => route.fulfill({ body: '<!doctype html><meta charset="utf-8"><title>warm</title>', contentType: 'text/html' }));

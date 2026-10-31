@@ -22,6 +22,7 @@ export default defineConfig({
     : 'list',
   outputDir: path.join(root, 'test-results', 'chat-ui'),
   // Every engine started once before the tests (warm-browsers.ts): a fresh runner's first start is not the page.
+  // Each worker's own browser is warmed too, before its first test (fixtures.ts).
   globalSetup: path.join(import.meta.dirname, 'warm-browsers.ts'),
   // The same browser language and time zone on every machine (the page's language comes from
   // ?lang=, but Intl formatting and the first-visit language follow the browser's).
