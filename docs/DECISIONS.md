@@ -39,6 +39,14 @@ its area and add a row here in the same pull request.
 | One WebSocket per viewer: the tracker rides inside `/control`; WebSockets, not SSE | quick tunnels count every open socket and do not support SSE | [ARCHITECTURE.md](ARCHITECTURE.md#network-services) |
 | P2P is opt-in, STUN only (no TURN), and every peer segment is checked against an Ed25519-signed SHA-256 manifest | viewers' IPs and the stream's integrity | [ARCHITECTURE.md](ARCHITECTURE.md#viewer), [THREAT_MODEL.md](THREAT_MODEL.md#residual-risks-accepted) |
 | Direct mode is opt-in and never automatic: one random port, Let's Encrypt IP certificate, own UPnP-IGD and NAT-PMP clients | it exposes the streamer's IP | [ARCHITECTURE.md](ARCHITECTURE.md#direct-mode-opt-in), [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md#3-if-direct-mode-is-used-anyway-honest-limits) |
+| Own minimal ACME client (RFC 8555), not a library | Let's Encrypt IP certificates need IP identifiers and ACME profiles, which the common Node library did not support; it is tested against Pebble | `apps/server/src/direct/acme.ts`, [ARCHITECTURE.md](ARCHITECTURE.md#verified-facts-2026-10-25) |
+
+## Code
+
+| Decision | Why | Details |
+|---|---|---|
+| Pure dependency injection: constructor options wired in one composition root (`apps/server/src/app.ts`), no DI container | the object graph stays small and explicit; tests pass fakes through the same options | [ARCHITECTURE.md](ARCHITECTURE.md#components), [apps/server/README.md](../apps/server/README.md) |
+| Own typed i18n (`packages/shared/src/i18n`), not i18next or FormatJS | small, runs under the strict CSP, the key set is type-checked in both languages and shared by the server, viewer pages and panel | [packages/shared/README.md](../packages/shared/README.md) |
 
 ## Security and privacy
 
