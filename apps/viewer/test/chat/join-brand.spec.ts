@@ -26,6 +26,8 @@ const BRANDING = {
 };
 /** CSS time at which the page shows without its script (style.css: the 3 s fallback). */
 const CSS_FALLBACK_MS = 3000;
+/** How many times in a row the page reloads itself when its scripts fail to load (join.html, startup guard). */
+const STARTUP_RELOADS = 3;
 
 /** An answer the test gives when it wants: `answer` settles once `release(value)` is called. */
 function held<T>() {
@@ -142,10 +144,12 @@ test.describe('join page branding (no layout shift)', () => {
     expect(await settledWatchBox(page)).toEqual(shown);
   });
 
-  test(`without its scripts the page still shows, after ${CSS_FALLBACK_MS / 1000} s of CSS time`, async ({ page }) => {
+  test(`without its scripts the page reloads itself three times, then still shows after ${CSS_FALLBACK_MS / 1000} s of CSS time`, async ({ page }) => {
     // Arrange
     const brand = held<unknown>();
-    await openJoin(page, { brand: brand.answer, withoutScripts: true });
+    const { loads } = await openJoin(page, { brand: brand.answer, withoutScripts: true });
+    await expect.poll(loads).toBe(1 + STARTUP_RELOADS);
+    await page.waitForLoadState('load');
     await expect(page.locator('main.card')).toHaveCSS('opacity', '0');
 
     // Act
@@ -156,5 +160,6 @@ test.describe('join page branding (no layout shift)', () => {
     // Assert
     await expect(page.locator('main.card')).toHaveCSS('opacity', '1');
     await expect(page.locator('main.card')).toHaveCSS('pointer-events', 'auto');
+    expect(loads()).toBe(1 + STARTUP_RELOADS);
   });
 });

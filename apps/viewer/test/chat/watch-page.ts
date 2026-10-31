@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, type Browser, type Page, type Route } from '@playwright/test';
-import { viewerCsp } from '../../../server/src/public/security.js';
+import { inlineScriptHashes, viewerCsp } from '../../../server/src/public/security.js';
 import type { MockHub } from './mock-hub.js';
 
 export const DIST = path.resolve(import.meta.dirname, '..', '..', 'dist');
@@ -76,6 +76,9 @@ type ApiRoutes = (route: Route, url: URL) => Promise<void> | false;
 /** The pages the server serves by path. */
 const PAGES: Record<string, string> = { '/watch': 'watch.html', '/join': 'join.html' };
 
+/** The server's viewer CSP, with the hash of the pages' startup guard as the server adds it. */
+const csp = (): string => viewerCsp('chat.test', false, [], undefined, inlineScriptHashes(Object.values(PAGES).map((f) => fs.readFileSync(path.join(DIST, f), 'utf8'))));
+
 /**
  * Serves the built viewer under ORIGIN with the server's viewer CSP: `api` answers first, then
  * the pages and their files from apps/viewer/dist (404 for anything else).
@@ -97,7 +100,7 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
     }
     return route.fulfill({
       body,
-      headers: { 'content-type': TYPES[path.extname(full)] ?? 'application/octet-stream', 'content-security-policy': viewerCsp('chat.test', false), 'referrer-policy': 'no-referrer' },
+      headers: { 'content-type': TYPES[path.extname(full)] ?? 'application/octet-stream', 'content-security-policy': csp(), 'referrer-policy': 'no-referrer' },
     });
   });
 }
@@ -143,14 +146,19 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
  * Opens /join (English) with /api/brand answered by `brand` once it settles (a test holds it to
  * see the page before and after its branding), the theme empty, the streamer's pictures 1×1, no
  * browser check and its CSS animations paused (PAUSED_ANIMATIONS). `withoutScripts`: the page's
- * scripts fail to load. Fails on any page error during load. `joins` collects the POST /api/join
- * bodies the page sends; each one is answered with a redirect to /watch.
+ * scripts fail to load (and the page reloads itself, its startup guard). Fails on any page error
+ * during load. `joins` collects the POST /api/join bodies the page sends; each one is answered
+ * with a redirect to /watch. `loads()` counts the join pages the browser has shown (commits).
  */
-export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean }): Promise<{ joins: unknown[] }> {
+export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean }): Promise<{ joins: unknown[]; loads: () => number }> {
   const joins: unknown[] = [];
+  let loads = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && new URL(frame.url()).pathname === '/join') loads++;
+  });
   await serveViewer(page, (route, url) => {
     if (url.pathname === PAUSED_ANIMATIONS) return route.fulfill({ body: '*, *::before, *::after { animation-play-state: paused !important; }', contentType: 'text/css' });
-    if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': viewerCsp('chat.test', false) } });
+    if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': csp() } });
     if (o.withoutScripts && url.pathname.endsWith('.js')) return route.fulfill({ status: 404, body: 'not found' });
     if (url.pathname === '/api/brand') return o.brand.then((json) => route.fulfill({ json }));
     if (url.pathname === '/api/join/challenge') return route.fulfill({ json: { required: false } });
@@ -166,7 +174,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/join?lang=en`);
   expect(errors).toEqual([]);
-  return { joins };
+  return { joins, loads: () => loads };
 }
 
 /** The one built file of `dir` (under DIST) whose name matches `pattern`, as a URL path. */
