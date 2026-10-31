@@ -1,8 +1,7 @@
 // The viewer on a real phone browser (Chrome on Android, Mobile Safari on iOS), the checks the
 // owner did by hand on a phone (docs/CHAT.md "Rendering checks", the real-phone check):
-// - the live link, a nickname typed with Watch still in sight above the keyboard (join.html
-//   resizes the page for it: interactive-widget=resizes-content; Gboard covered half of Watch
-//   without), the browser check, the video starting muted by itself (browsers allow only muted
+// - the live link, a nickname typed with Watch still in sight above the keyboard (the browser
+//   scrolls it into view; the check waits for the keyboard and that scroll to settle), the browser check, the video starting muted by itself (browsers allow only muted
 //   autoplay) and Unmute turning the sound on with a tap;
 // - the chat under the player on a phone screen, a message from the phone reaching a second
 //   viewer (a desktop browser: a phone browser hosts one automation session) and back, and the

@@ -184,7 +184,7 @@ export const KEYBOARD_MIN_PX = 150;
  * Taps a text field and waits until the on-screen keyboard it raised is up and the page has
  * stopped moving. Up: the visible part of the page (the visual viewport) is at least a keyboard
  * shorter than before the tap. That holds whether the browser only covers the page (Chrome's
- * default, Safari) or resizes it (join.html: interactive-widget=resizes-content, where the
+ * default, Safari) or resizes it (a page with interactive-widget=resizes-content, where the
  * layout viewport shrinks with it). The keyboard slides in after the tap and the browser then
  * scrolls (Chrome also zooms) the field into view, and a tap computed while that moves lands off
  * target (it missed Watch once), so this also waits for two readings in a row alike. While
