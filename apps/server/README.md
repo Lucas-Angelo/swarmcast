@@ -17,7 +17,8 @@ The main app (`swarmcast` executable). It starts MediaMTX and cloudflared, serve
   - `main.ts`: CLI flags, signals, smoke test.
   - `app.ts`: wiring.
   - `core/live.ts`: start/stop steps, link rotation, admin state.
-  - `public/server.ts`: join flow, `/hls/*`, WebSocket upgrades.
+  - `public/server.ts`: join flow, `/hls/*`, WebSocket upgrades; `public/security.ts`: the viewer CSP, client IP.
+  - `http/`: shared by the viewer and panel servers: security headers and the WebSocket Origin check (`security-headers.ts`), the resettable rate-limit store (`rate-limit-store.ts`).
   - `access/access.ts`: links, tickets, sessions, kicks.
   - `hls/`: origin cache, playlists, signed manifest, upload limiter.
   - `tracker/tracker.ts` and `control/control.ts`.

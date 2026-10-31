@@ -1,6 +1,9 @@
 import { GIF_PROVIDERS, type GifProvider } from '@swarmcast/shared/chat';
 import net from 'node:net';
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyRequest } from 'fastify';
+
+// Shared with the panel server, so they live in http/; re-exported for one cycle.
+export { applySecurityHeaders, originMatchesHost } from '../http/security-headers.js';
 
 /** Strict CSP for viewer pages: no inline scripts, connections only to ourselves (+ STUN for WebRTC). */
 export function viewerCsp(host: string, secure: boolean, _stunServers: string[] = [], gif?: GifProvider): string {
@@ -27,20 +30,6 @@ export function viewerCsp(host: string, secure: boolean, _stunServers: string[] 
   ].join('; ');
 }
 
-export function applySecurityHeaders(reply: FastifyReply, csp: string, hsts: boolean): void {
-  reply.header('Content-Security-Policy', csp);
-  reply.header('Referrer-Policy', 'no-referrer');
-  reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('X-Frame-Options', 'DENY');
-  reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-  reply.header('Cross-Origin-Resource-Policy', 'same-origin');
-  reply.header(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=(), browsing-topics=(), fullscreen=(self), autoplay=(self), picture-in-picture=(self)',
-  );
-  if (hsts) reply.header('Strict-Transport-Security', 'max-age=31536000');
-}
-
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 
 /**
@@ -58,14 +47,4 @@ export function clientIp(req: FastifyRequest | { socket: { remoteAddress?: strin
 
 export function isMobileUserAgent(ua: string | undefined): boolean {
   return /Mobi|Android|iPhone|iPad|iPod/i.test(ua ?? '');
-}
-
-/** Origin must match the Host the request was sent to (blocks cross-site WebSocket hijacking). */
-export function originMatchesHost(origin: string | undefined, host: string | undefined): boolean {
-  if (!origin || !host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }

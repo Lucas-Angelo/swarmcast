@@ -60,9 +60,10 @@ feeds. Script mode installs the same executable with the start scripts and a Go 
 Where to start reading:
 
 - **Server** `apps/server/src` (Node 24, Fastify 5): `main.ts` (flags) → `app.ts` (wiring) → `core/live.ts`
-  (start/stop, link, state); `public/server.ts` + `public/security.ts` (viewer routes, CSP), `access/`,
-  `hls/`, `control/`, `tracker/`, `chat/`, `branding/`, `security/` (attack detector, proof-of-work,
-  blocklists), `quality/`, `direct/`, `tunnel/`, `process/children.ts`, `desktop/`, `admin/*`.
+  (start/stop, link, state); `public/server.ts` + `public/security.ts` (viewer routes, CSP), `http/`
+  (security headers and rate-limit store shared with the panel), `access/`, `hls/`, `control/`, `tracker/`,
+  `chat/`, `branding/`, `security/` (attack detector, proof-of-work, blocklists), `quality/`, `direct/`,
+  `tunnel/`, `process/children.ts`, `desktop/`, `admin/*`.
 - **Viewer** `apps/viewer` (plain TypeScript + Vite; `join.html`, `watch.html`, `invalid.html`):
   `src/join.ts`, `pow.ts`, `watch.ts`, `integrity.ts`, `peer-guard.ts`, `chat/`, `branding/`.
 - **Panel** `apps/admin` (Preact + Vite): `src/main.tsx` → `App.tsx`; one file or folder per card
