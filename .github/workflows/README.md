@@ -125,6 +125,7 @@ schedules and releases are never cancelled.
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried up to three times with a pause between tries (every download in these workflows goes through it) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/changes.sh` | the `changes` job |
+| `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
 | `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
