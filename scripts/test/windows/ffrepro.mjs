@@ -37,7 +37,7 @@ function firefoxStacks(tag) {
   const kids = processes().filter((p) => /^firefox\.exe$/i.test(p.name));
   for (const p of kids) {
     const role = /-contentproc/.test(p.cmd) ? (/\s(\d+ \w+)\s*$/.exec(p.cmd)?.[1] ?? 'child') : 'parent';
-    const r = spawnSync(CDB, ['-pv', '-p', String(p.pid), '-c', '.symfix+ C:\\sym; .reload; !runaway 7; ~*kn 40; q'], { encoding: 'utf8', timeout: 240_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+    const r = spawnSync(CDB, ['-pv', '-p', String(p.pid), '-c', role === 'parent' ? '.symfix C:\\sym; .reload; !runaway 7; ~*kn 40; !handle 0 f File; ~*e r r10; q' : '.symfix C:\\sym; .reload; !runaway 7; ~*kn 40; q'], { encoding: 'utf8', timeout: 240_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
     const file = path.join(ART, `ffrepro-stacks-${tag}-${p.pid}-${role.replace(/\s+/g, '_')}.txt`);
     fs.writeFileSync(file, `${p.pid} ${role}\n${r.stdout ?? ''}\n${r.stderr ?? ''}${r.error ? `\nerror: ${r.error.message}` : ''}`);
     log(`stacks of firefox ${p.pid} (${role}): ${path.basename(file)}`);
