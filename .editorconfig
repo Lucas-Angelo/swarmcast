@@ -10,3 +10,10 @@ trim_trailing_whitespace = true
 
 [*.{ps1,cmd}]
 end_of_line = crlf
+
+# The formatters' own styles: gofmt indents with tabs, rustfmt with 4 spaces.
+[*.go]
+indent_style = tab
+
+[*.rs]
+indent_size = 4
