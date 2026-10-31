@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { GIF_PROVIDERS, gifRatingParam } from '@swarmcast/shared/chat';
+import { GUARD, type LoopSample } from '../../src/chat/guard.js';
 import type { LiveController } from '../../src/core/live.js';
 import { viewerCsp } from '../../src/public/security.js';
-import { makeController, startController } from './live-helpers.js';
+import { inactiveDirect, makeController, startController } from './live-helpers.js';
 
 // Chat GIFs (docs/CHAT.md): the viewer CSP opens exactly the provider's hosts while GIFs are on,
-// and only then; everything else in it stays byte-identical.
+// and only then; everything else in it stays byte-identical. Protection and the event-loop guard
+// pause GIFs, so the CSP drops the provider while either is on.
 
 const KLIPY_HOSTS = / https:\/\/[a-z0-9.]+klipy\.com/g;
+/** Event-loop samples the chat's guard reads (injected: the test ticks it by hand). */
+const CALM_LOOP: LoopSample = { p99Ms: 10, elu: 0.1 };
+const HEAVY_LOOP: LoopSample = { p99Ms: 300, elu: 0.95 };
+/** The guard's own timer period here: an hour, so only the test's tick() calls sample it. */
+const GUARD_NEVER_TICKS_MS = 3_600_000;
 
 /** The CSP the live's real public server sends right now. */
 async function csp(live: LiveController): Promise<string> {
@@ -56,6 +63,27 @@ describe('chat GIFs: the viewer CSP', () => {
     // Act
     live.chat.setProtect('off');
     // Assert
+    expect(await csp(live)).toContain('klipy');
+  });
+
+  it('the event-loop guard pauses GIFs, and its recovery brings them back', async () => {
+    // Arrange
+    let load: LoopSample = CALM_LOOP;
+    const { live } = await startController(inactiveDirect(), { chatGuard: { sample: () => load, intervalMs: GUARD_NEVER_TICKS_MS } });
+    gifsOn(live);
+    live.chat.guard.tick();
+    load = HEAVY_LOOP;
+    // Act
+    for (let i = 0; i < GUARD.pauseAfter; i++) live.chat.guard.tick();
+    // Assert
+    expect(live.chat.guardState).toBe('pause');
+    expect(live.chat.effective.public.gif).toBeUndefined();
+    expect(await csp(live)).not.toContain('klipy');
+    // Act
+    load = CALM_LOOP;
+    for (let i = 0; i < GUARD.recoverAfter; i++) live.chat.guard.tick();
+    // Assert
+    expect(live.chat.guardState).toBe('ok');
     expect(await csp(live)).toContain('klipy');
   });
 

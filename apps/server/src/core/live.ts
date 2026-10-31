@@ -20,6 +20,7 @@ import { translate } from '@swarmcast/shared/i18n';
 import { chatSettingsSchema, countGraphemes, type AdminChatMessage, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl, type Session } from '../access/access.js';
 import { EgressWatch, type EgressWatchOptions } from '../access/own-connection.js';
+import type { GuardOptions } from '../chat/guard.js';
 import { ChatHub } from '../chat/hub.js';
 import { BrandingStore } from '../branding/store.js';
 import { ControlChannel } from '../control/control.js';
@@ -67,6 +68,8 @@ export interface LiveDeps {
   activity?: ActivityLog;
   /** Quality ladder / adaptive upload (docs/QUALITY.md). Omitted in logic tests: no ffmpeg, no ladder. */
   quality?: { binDir: string; dataDir: string; runDir: string; reaper: Reaper | null; loadGuard?: LoadGuard | Partial<LoadGuardOptions> };
+  /** The chat's event-loop guard (tests): its sample source and period; omitted, it samples this process's event loop. */
+  chatGuard?: GuardOptions;
   /** Public IP blocklists (downloaded by the app; none in logic tests). */
   blocklists?: PublicBlocklists;
   /** Key of the "browser already passed the check" cookie (secrets.json; random in logic tests). */
@@ -235,6 +238,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         this.shield.chatSignal(level);
         this.limiter.setReserveMbps(chatReserveMbps(budget, egress));
       },
+      ...(d.chatGuard ? { guard: d.chatGuard } : {}),
     });
     this.control.chat = this.chat;
     // ---- branding: store ----

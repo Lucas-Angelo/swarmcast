@@ -72,6 +72,16 @@ const app = await createApp({
   // vain for its two qualities (PR #21, run 40917266795). The guard keeps its other trigger
   // (the ladder falling behind real time); unit and integration tests cover the CPU one.
   loadGuard: { cpuSaturatedPercent: 101 },
+  // The chat's event-loop guard pauses GIFs, forces slow mode and refuses viewers' messages for at
+  // least 10 s after two seconds of a late event loop, whatever made it late. On macos-latest it
+  // paused a second before chat-privacy's GIF test (p99 222 ms with ELU 0.32, the loop mostly
+  // idle: the stops GitHub's macOS VMs give a process now and then, scripts/test/lib/loop-delay.mjs),
+  // and that test got the CSP without KLIPY, which is what a paused guard must send (run
+  // 41136895016). Here the load comes from the runner and the test's browsers, not from the chat
+  // a spec drives, so the guard reads a calm loop and every chat spec gets the settings it set.
+  // Unit tests (chat-limits, chat-gif) cover the guard and what it pauses; the chat bench runs it
+  // on a real loop under chat load.
+  chatGuard: { sample: () => ({ p99Ms: 0, elu: 0 }) },
   // stdout is test-results/e2e-server.log (above).
   logToStdout: true,
   configOverrides: {

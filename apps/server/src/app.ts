@@ -22,6 +22,7 @@ import { lookupPublicIps } from './direct/publicip.js';
 import { ManifestSigner } from './hls/manifest.js';
 import { MediaMtx } from './media/mediamtx.js';
 import { Reaper } from './process/children.js';
+import type { GuardOptions } from './chat/guard.js';
 import type { LoadGuard, LoadGuardOptions } from './quality/load-guard.js';
 import { ExternalTunnel, NoTunnel, type TunnelProvider } from './tunnel/provider.js';
 import { QuickTunnel } from './tunnel/quick.js';
@@ -50,6 +51,8 @@ export interface AppOptions {
    * Tests about the ladder itself pass thresholds that never drop a rendition.
    */
   loadGuard?: LoadGuard | Partial<LoadGuardOptions>;
+  /** The chat's event-loop guard (tests): where its load samples come from, and how often. */
+  chatGuard?: GuardOptions;
 }
 
 export interface App {
@@ -225,6 +228,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
     secureCookies: config.tunnel.provider !== 'none',
     quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper, ...(opts.loadGuard ? { loadGuard: opts.loadGuard } : {}) },
     brandingDir: path.join(paths.dataDir, 'branding'),
+    ...(opts.chatGuard ? { chatGuard: opts.chatGuard } : {}),
   });
   started.add(() => live.shutdown());
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
