@@ -96,8 +96,10 @@ jobs:
         timeout-minutes: 8
         if: runner.os == 'macOS'
         run: npx playwright install firefox webkit
-      # 13 minutes: the slowest group took 9.8 (media, macOS). A step that runs out fails, so the
-      # report and the logs are still uploaded (a job that runs out is cancelled and uploads nothing).
+      # 13 minutes, a hang guard: about 7.2 min of tests per group on the slowest macOS runners seen
+      # (55 %); the first runs of the three groups took 5.9/4.3/6.0 min (ui/chat/media) on Ubuntu
+      # and 6.7/4.7/6.2 on macOS. A step that runs out fails, so the report and the logs are still
+      # uploaded (a job that runs out is cancelled and uploads nothing).
       - name: Playwright, ${{ matrix.group }} group
         timeout-minutes: 13
         env:
