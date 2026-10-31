@@ -1,7 +1,7 @@
 {
   "$comment": [
-    "What .github/workflows/soak.yml runs: each entry runs `suite` on every runner in `os`, in `jobs` fresh jobs per runner (default 1), each running the suite `repeat` times (default 1; e2e passes it to Playwright as --repeat-each). `args` are added to the suite's command.",
-    "Suites: unit, integration, chat-load, e2e, rust, windows-installer, windows-app, windows-direct, windows-quality, windows-obs, preflight, scripts, desktop-test, desktop-dmg, apt (see scripts/ci/soak-run.mjs for each command).",
+    "What .github/workflows/soak.yml runs: each entry runs `suite` on every runner in `os`, in `jobs` fresh jobs per runner (default 1), each running the suite `repeat` times (default 1; e2e passes it to Playwright as --repeat-each, chat-ui makes that many fresh Playwright runs). `args` are added to the suite's command.",
+    "Suites: unit, integration, chat-load, e2e, chat-ui, rust, windows-installer, windows-app, windows-direct, windows-quality, windows-obs, preflight, scripts, desktop-test, desktop-dmg, apt (see scripts/ci/soak-run.mjs for each command).",
     "Edit this file on the branch, push, then add the `soak` label to the pull request (remove and add it again for another soak). Runners: GitHub Free runs 20 jobs at once, 5 of them macOS; the rest queue.",
     "The entries below run every suite type 3 times: a quick check that each one runs and reports. To measure a failure rate, raise `repeat` or `jobs`: with N clean runs, the soak report gives a 95 % upper bound of about 3/N (rule of three), so 30 runs bound it below 10 %, 60 below 5 %."
   ],
@@ -11,6 +11,8 @@
     { "suite": "rust", "os": ["ubuntu-22.04", "macos-latest", "windows-latest"], "repeat": 3 },
     { "suite": "e2e", "os": ["ubuntu-24.04", "macos-latest"], "repeat": 3, "args": ["--project=chromium"] },
     { "suite": "e2e", "os": ["ubuntu-24.04", "macos-latest"], "repeat": 20, "label": "chat", "args": ["--grep", "chat|nickname|branding"] },
+    { "suite": "chat-ui", "os": ["ubuntu-24.04", "macos-latest"], "repeat": 3 },
+    { "suite": "chat-ui", "os": ["windows-latest"], "repeat": 3, "args": ["--project=chromium", "--project=firefox", "--project=edge"] },
     { "suite": "chat-load", "os": ["ubuntu-24.04", "windows-latest"], "jobs": 3 },
     { "suite": "windows-installer", "os": ["windows-latest"], "jobs": 3 },
     { "suite": "windows-app", "os": ["windows-latest"], "jobs": 3 },

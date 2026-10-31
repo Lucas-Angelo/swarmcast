@@ -42,6 +42,14 @@ export function commandsFor(row) {
         parse: playwrightChecks,
       },
     ],
+    // The viewer chat UI against the mock hub, as _e2e.yml runs it (one fresh run per repetition).
+    'chat-ui': [
+      {
+        name: 'playwright',
+        cmd: `PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/playwright.json" npx playwright test -c apps/viewer/test/chat/playwright.config.ts --reporter=list,json --output="$RUN_DIR/test-results" ${A}`,
+        parse: playwrightChecks,
+      },
+    ],
     // The chat load bench (docs/CHAT.md): every scenario once per run, one PASS/FAIL line each.
     'chat-load': [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/chat/bench.ts --out "$RUN_DIR/chat-bench" ${A}`, parse: lineChecks }],
     rust: [{ name: 'cargo test', cmd: `cd apps/desktop/src-tauri && cargo test --locked ${A}`, parse: cargoChecks }],
