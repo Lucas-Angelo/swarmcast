@@ -1,64 +1,38 @@
 // The video-first gate of the chat (chat plan §6.6 and §10.5, chat-flood.spec.ts @media): one
 // real viewer plays the stream while scripted viewers flood the chat at the highest rate their
-// sockets allow. Compared with a calm stretch of the same live, the player must not stall more,
-// the HLS answers must not get slower beyond a small margin, and a kick must still arrive within
-// a second. The full bench (more viewers, more scenarios) is scripts/test/chat/bench.ts.
-import { solveChallenge, type Challenge } from 'altcha-lib';
-import { deriveKey } from 'altcha-lib/algorithms/web/sha';
-import WebSocket from 'ws';
+// sockets allow, with slow mode off so every frame a bot sends is a real message attempt.
+// Compared with a calm stretch of the same live, the player must keep playing and not stall
+// more (plus one segment of timer noise), the server's own work must keep its event loop within
+// 20 ms of calm (p99, scripts/test/lib/loop-delay.mjs: the limit of the chat bench), the HLS
+// answers must not get slower beyond 20 % (+ 50 ms for loopback jitter), and a kick in the middle
+// of the flood must still arrive within a second (control messages jump ahead of chat). The full bench (more viewers, more scenarios) is
+// scripts/test/chat/bench.ts. One engine is enough for the server side.
+//
+// The stall comparison holds where the runner plays steadily. Chrome on the macOS runners stalls
+// about 3 s in roughly one 20 s stretch in ten whether or not the chat is busy (the stability
+// soak: 2 of 20 stretches, one of them calm, while 40 of 40 on Linux had none, and the HLS
+// answers and the kick stayed as fast as in the calm stretch). The HLS answer times the page sees
+// have the same blind spot there: those VMs stop whole processes for 50-110 ms now and then (see
+// loop-delay.mjs), and a calm stretch's p95 reached 50 ms with the server idle (pipeline runs of
+// 2026-10-30: calm p95 3-50 ms, flood p95 2-18 ms, and once 100 ms in a flood with no stall, a
+// kick in 8 ms). One calm stretch against one busy one cannot tell either apart from the chat
+// there. The event-loop check can: it measures the server's own work, leaving out the time the
+// VM did not run it, so it holds on every runner, and the playback, kick and HLS-count checks
+// still run everywhere.
 import type { Page } from '@playwright/test';
-import type { AdminChatState, ChatSettings, ServerMessage } from '@swarmcast/shared';
-import { admin, adminApi, expect, join, liveLink, startStallMonitor, stallReport, test, uid, unmute, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, expect, measuredWindow, serverOwnLoopDelayP99, startStallMonitor, stallReport, test, uid, unmute, viewerByNick, waitPlaying, type ScriptedViewer } from './fixtures.js';
+
+test.skip(({ browserName }) => browserName !== 'chromium', 'one engine is enough for the server side');
 
 const BOTS = 24;
-const SECONDS = 20;
-
-/** A scripted viewer: joins like a browser (link → ticket → /api/join), then holds /control. */
-class Bot {
-  private cookies = new Map<string, string>();
-  ws: WebSocket | null = null;
-  kickedAt = 0;
-  constructor(
-    readonly base: string,
-    readonly nickname: string,
-  ) {}
-  private header(): string {
-    return [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
-  }
-  private async fetch(p: string, init: RequestInit = {}): Promise<Response> {
-    const res = await fetch(p.startsWith('http') ? p : this.base + p, { ...init, redirect: 'manual', headers: { ...(init.headers as Record<string, string>), cookie: this.header() } });
-    for (const sc of res.headers.getSetCookie()) {
-      const pair = sc.split(';')[0]!;
-      const eq = pair.indexOf('=');
-      const v = pair.slice(eq + 1).trim();
-      if (v) this.cookies.set(pair.slice(0, eq).trim(), v);
-      else this.cookies.delete(pair.slice(0, eq).trim());
-    }
-    return res;
-  }
-  async join(link: string): Promise<void> {
-    expect((await this.fetch(link)).status).toBe(303);
-    const ch = (await (await this.fetch('/api/join/challenge')).json()) as { required: boolean; challenge?: Challenge };
-    const pow = ch.required ? { challenge: ch.challenge!, solution: await solveChallenge({ challenge: ch.challenge!, deriveKey }) } : undefined;
-    const r = await this.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pow ? { nickname: this.nickname, pow } : { nickname: this.nickname }) });
-    expect(r.status, await r.clone().text()).toBe(200);
-    const ws = new WebSocket(`${this.base.replace('http', 'ws')}/control`, { origin: this.base, headers: { cookie: this.header() } });
-    this.ws = ws;
-    await new Promise<void>((resolve, reject) => {
-      ws.once('error', reject);
-      ws.on('message', (d) => {
-        const text = String(d);
-        if (text.startsWith('~')) return;
-        const m = JSON.parse(text) as ServerMessage;
-        if (m.t === 'hello') resolve();
-        if (m.t === 'kicked') this.kickedAt = Date.now();
-      });
-    });
-  }
-  close(): void {
-    this.ws?.terminate();
-  }
-}
+/** The calm stretch, and the flood (a kick in its middle): measured windows of playback and HLS answers. */
+const WINDOW_MS = 20_000;
+/** A bot's chat frames, 1.8 a second: just under the 20-per-10-s line that terminates a socket (the load, not a wait). */
+const BOT_FRAME_INTERVAL_MS = 555;
+/** Whether one calm stretch against one busy one can tell the chat's stalls and slow HLS answers from the runner's own (see above). */
+const STEADY_RUNNER = process.platform !== 'darwin';
+/** How much the server's own work may hold up its event loop beyond calm (p99, ms): the chat bench's limit (bench.ts). */
+const OWN_LOOP_SLACK_MS = 20;
 
 /** HLS answers (segments and playlists) the page saw since the last call, ms each. */
 async function hlsTimings(page: Page): Promise<number[]> {
@@ -77,75 +51,78 @@ const p95 = (xs: number[]): number => {
   return s[Math.min(s.length - 1, Math.floor(0.95 * s.length))] ?? 0;
 };
 
-test('a chat flood never slows the video down, and a kick still arrives within a second', { tag: '@media' }, async ({ browser, browserName, baseURL }) => {
-  test.skip(browserName !== 'chromium', 'one engine is enough for the server side');
+/** Every bot sends chat frames until stop(), which resolves with how many were sent. */
+function flood(crowd: ScriptedViewer[]): { stop(): Promise<number> } {
+  let on = true;
+  let sent = 0;
+  const loops = crowd.map(async (b, i) => {
+    while (on) {
+      if (b.open) b.send(`flood ${i} ${++sent} kkkkkk 🔥`);
+      await new Promise((r) => setTimeout(r, BOT_FRAME_INTERVAL_MS));
+    }
+  });
+  return {
+    stop: async () => {
+      on = false;
+      await Promise.all(loops);
+      return sent;
+    },
+  };
+}
+
+test('a chat flood never slows the video down, and a kick still arrives within a second', { tag: '@media' }, async ({ viewers, bots, chat }) => {
+  // Arrange
   test.setTimeout(180_000);
-  const link = await liveLink();
-  const v = await join(browser, uid('flood'));
-  const bots: Bot[] = [];
-  const before = (await adminApi<AdminChatState>('GET', '/api/chat')).settings;
-  try {
-    await v.page.evaluate(() => performance.setResourceTimingBufferSize(5000));
-    await waitPlaying(v.page, 3);
-    await unmute(v.page);
+  const { page } = await viewers.join(uid('flood'));
+  await page.evaluate(() => performance.setResourceTimingBufferSize(5000));
+  await waitPlaying(page, 3);
+  await unmute(page);
+  await hlsTimings(page);
+  await startStallMonitor(page);
+  await serverOwnLoopDelayP99();
 
-    // Calm: the same live, no chat.
-    await hlsTimings(v.page);
-    await startStallMonitor(v.page);
-    await v.page.waitForTimeout(SECONDS * 1000);
-    const calm = { stall: await stallReport(v.page), hls: await hlsTimings(v.page) };
+  // Act
+  await measuredWindow(page, WINDOW_MS);
+  const calm = { stall: await stallReport(page), hls: await hlsTimings(page), ownLoopP99: await serverOwnLoopDelayP99() };
 
-    // Flood: slow mode off, so every frame a bot may send is a real message attempt.
-    await adminApi('PUT', '/api/chat/settings', { ...before, slowModeS: 0 } satisfies ChatSettings);
-    const prefix = uid('b').slice(0, 14);
-    for (let i = 0; i < BOTS; i++) bots.push(new Bot(baseURL!, `${prefix}${i}`));
-    for (const b of bots) await b.join(link);
-    await startStallMonitor(v.page);
-    let flooding = true;
-    let n = 0;
-    const flood = Promise.all(
-      bots.map(async (b, i) => {
-        while (flooding) {
-          if (b.ws?.readyState === WebSocket.OPEN) b.ws.send(JSON.stringify({ t: 'chat.send', n: ++n, text: `flood ${i} ${n} kkkkkk 🔥` }));
-          // 1.8 frames a second: just under the 20-per-10-s line that terminates a socket.
-          await new Promise((r) => setTimeout(r, 555));
-        }
-      }),
-    );
-    await v.page.waitForTimeout((SECONDS / 2) * 1000);
-    // A kick in the middle of the flood.
-    const target = bots[0]!;
-    const row = await viewerByNick(target.nickname);
-    expect(row, 'the kicked bot is listed').toBeTruthy();
-    const kickAt = Date.now();
-    await admin(`/api/viewers/${row!.sessionId}/kick`);
-    await expect.poll(() => target.kickedAt, { timeout: 5_000 }).toBeGreaterThan(0);
-    const kickMs = target.kickedAt - kickAt;
-    await v.page.waitForTimeout((SECONDS / 2) * 1000);
-    flooding = false;
-    await flood;
-    const busy = { stall: await stallReport(v.page), hls: await hlsTimings(v.page) };
-    const chat = await adminApi<AdminChatState>('GET', '/api/chat');
+  // Arrange
+  await chat.change({ slowModeS: 0 });
+  const prefix = uid('b').slice(0, 14);
+  const crowd: ScriptedViewer[] = [];
+  for (let i = 0; i < BOTS; i++) crowd.push(await bots.join(`${prefix}${i}`));
+  const target = crowd[0]!;
+  const targetRow = await viewerByNick(target.nickname);
+  expect(targetRow, 'the bot to kick is listed').toBeTruthy();
+  await startStallMonitor(page);
+  await serverOwnLoopDelayP99();
 
-    const report = { calm: { maxStallMs: calm.stall.maxStallMs, playedS: calm.stall.playedS, hlsP95: p95(calm.hls), hls: calm.hls.length }, flood: { maxStallMs: busy.stall.maxStallMs, playedS: busy.stall.playedS, hlsP95: p95(busy.hls), hls: busy.hls.length }, kickMs, sent: n, counters: chat.counters };
-    console.log(`chat-flood: ${JSON.stringify(report)}`);
-    await test.info().attach('chat-flood.json', { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+  // Act
+  const flooding = flood(crowd);
+  await measuredWindow(page, WINDOW_MS / 2);
+  const kickAt = Date.now();
+  await admin(`/api/viewers/${targetRow!.sessionId}/kick`);
+  await expect.poll(() => target.kickedAt, { timeout: 5_000 }).toBeGreaterThan(0);
+  const kickMs = target.kickedAt - kickAt;
+  await measuredWindow(page, WINDOW_MS / 2);
+  const sent = await flooding.stop();
+  const busy = { stall: await stallReport(page), hls: await hlsTimings(page), ownLoopP99: await serverOwnLoopDelayP99() };
+  const { counters } = await chat.state();
 
-    // The flood really happened, and the chat held it at its global limit.
-    expect(n).toBeGreaterThan(BOTS * SECONDS);
-    // The video: it kept playing, no stall beyond the calm stretch's own (plus one segment of
-    // timer noise), and the HLS answers stayed within 20 % (+ 50 ms for loopback jitter).
-    expect(busy.stall.playedS).toBeGreaterThan(SECONDS * 0.8);
-    expect(busy.stall.maxStallMs).toBeLessThanOrEqual(Math.max(calm.stall.maxStallMs, 1000) + 1000);
-    expect(busy.hls.length).toBeGreaterThan(5);
-    expect(p95(busy.hls)).toBeLessThanOrEqual(p95(calm.hls) * 1.2 + 50);
-    // Control messages jump ahead of chat.
-    expect(kickMs).toBeLessThanOrEqual(1000);
-  } finally {
-    for (const b of bots) b.close();
-    await adminApi('PUT', '/api/chat/settings', before);
-    // The flood switched the chat's protection on; the next test starts calm.
-    await adminApi('POST', '/api/chat/protect', { mode: 'off' });
-    await v.context.close();
-  }
+  // Assert
+  const report = {
+    calm: { maxStallMs: calm.stall.maxStallMs, playedS: calm.stall.playedS, hlsP95: p95(calm.hls), hls: calm.hls.length, ownLoopP99: calm.ownLoopP99 },
+    flood: { maxStallMs: busy.stall.maxStallMs, playedS: busy.stall.playedS, hlsP95: p95(busy.hls), hls: busy.hls.length, ownLoopP99: busy.ownLoopP99 },
+    kickMs,
+    sent,
+    counters,
+  };
+  console.log(`chat-flood: ${JSON.stringify(report)}`);
+  await test.info().attach('chat-flood.json', { body: JSON.stringify(report, null, 2), contentType: 'application/json' });
+  expect(sent).toBeGreaterThan(BOTS * (WINDOW_MS / 1000));
+  expect(busy.stall.playedS).toBeGreaterThan((WINDOW_MS / 1000) * 0.8);
+  if (STEADY_RUNNER) expect(busy.stall.maxStallMs).toBeLessThanOrEqual(Math.max(calm.stall.maxStallMs, 1000) + 1000);
+  expect(busy.ownLoopP99).toBeLessThanOrEqual(calm.ownLoopP99 + OWN_LOOP_SLACK_MS);
+  expect(busy.hls.length).toBeGreaterThan(5);
+  if (STEADY_RUNNER) expect(p95(busy.hls)).toBeLessThanOrEqual(p95(calm.hls) * 1.2 + 50);
+  expect(kickMs).toBeLessThanOrEqual(1000);
 });

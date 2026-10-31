@@ -23,27 +23,35 @@ function regexLiterals(src: string): string[] {
   return out;
 }
 
-describe('chat regexes are ReDoS-safe', () => {
-  const files = DIRS.flatMap((d) =>
-    (fs.existsSync(path.join(root, d)) ? fs.readdirSync(path.join(root, d)) : [])
-      .filter((f) => f.endsWith('.ts') && !f.endsWith('.generated.ts'))
-      .map((f) => path.join(root, d, f)),
-  );
+/** What the linear-by-construction rule finds wrong in a regex literal, if anything. */
+function redosRisks(lit: string): string[] {
+  const body = lit.slice(1, lit.lastIndexOf('/')).replace(/\\./g, 'x').replace(/\[[^\]]*\]/g, 'C');
+  const risks: string[] = [];
+  if (/\)[*+?{]/.test(body)) risks.push(`${lit}: quantified group`);
+  if ((body.match(/[*+?]|\{\d+,/g) ?? []).length > 1) risks.push(`${lit}: more than one variable quantifier`);
+  return risks;
+}
 
+const FILES = DIRS.flatMap((d) =>
+  (fs.existsSync(path.join(root, d)) ? fs.readdirSync(path.join(root, d)) : [])
+    .filter((f) => f.endsWith('.ts') && !f.endsWith('.generated.ts'))
+    .map((f) => path.join(root, d, f)),
+);
+
+describe('chat regexes are ReDoS-safe', () => {
   it('finds the chat sources', () => {
-    expect(files.length).toBeGreaterThan(8);
-    const all = files.flatMap((f) => regexLiterals(fs.readFileSync(f, 'utf8')));
+    // Act
+    const all = FILES.flatMap((f) => regexLiterals(fs.readFileSync(f, 'utf8')));
+    // Assert
+    expect(FILES.length).toBeGreaterThan(8);
     expect(all.length).toBeGreaterThan(20);
     expect(all).toContain('/^[A-Za-z0-9_-]{1,64}$/');
   });
 
-  for (const file of files) {
-    it(path.relative(root, file), () => {
-      for (const lit of regexLiterals(fs.readFileSync(file, 'utf8'))) {
-        const body = lit.slice(1, lit.lastIndexOf('/')).replace(/\\./g, 'x').replace(/\[[^\]]*\]/g, 'C');
-        expect(/\)[*+?{]/.test(body), `${lit}: quantified group`).toBe(false);
-        expect((body.match(/[*+?]|\{\d+,/g) ?? []).length, `${lit}: more than one variable quantifier`).toBeLessThanOrEqual(1);
-      }
-    });
-  }
+  it.each(FILES.map((f) => [path.relative(root, f), f]))('%s', (_name, file) => {
+    // Act
+    const risks = regexLiterals(fs.readFileSync(file, 'utf8')).flatMap(redosRisks);
+    // Assert
+    expect(risks).toEqual([]);
+  });
 });

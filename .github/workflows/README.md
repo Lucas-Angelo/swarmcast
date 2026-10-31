@@ -8,23 +8,24 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 
 | Workflow | Runs on | What |
 |---|---|---|
-| `pipeline.yml` | pull requests, merge queue, push to `main`, monthly, by hand, called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
+| `pipeline.yml` | pull requests, push to `main`, monthly, by hand, called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
 | `release.yml` | push of a `v*` tag | the pipeline in release flavour, then sign and publish the GitHub release |
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
 | `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Go, Rust, the workflows |
-| `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates and flakes |
+| `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates; fails on any single failed run |
 | `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
 | `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 
 Files starting with `_` are reusable workflows (`workflow_call`), the stages of the pipeline.
-They have no trigger of their own.
+They have no trigger of their own. There is no `merge_group` trigger: GitHub offers the merge queue to
+organization-owned repositories only, and this one belongs to a user.
 
 ## The pipeline
 
 ```
-changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×4, windows ×5 ──────────────┐
+changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×5, windows ×5 ──────────────┐
          ├─ build (web + windows pkgs) ─┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
          ├─ site (when the site changed) ─────────────────────────────────────────────┤
@@ -33,25 +34,46 @@ changes ─┬─ quick ──────────────────�
 
 | Stage | File | Jobs | What |
 |---|---|---|---|
-| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts`, `docker` |
+| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts`, `docker`; and that `ci-ok` waits for every job |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
-| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64` |
-| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>` |
+| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64`; both checked for development dependencies first |
+| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the package and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
-| e2e | `_e2e.yml` | 4 (Ubuntu, macOS × `ui`, `media`) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two; the `ui` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, a few seconds) |
+| e2e | `_e2e.yml` | 5 (Ubuntu, macOS × `ui`, `media`; Windows chat UI) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two; the `ui` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, a few seconds), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
-| ci-ok | `pipeline.yml` | 1 | the verdict, plus the Windows suites' summary table |
+| ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
-That is 27 jobs for a change to the app (7 on macOS), 28 when it also touches the site, 12 more
-when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once, 5 of them
-on macOS.
+That is 28 jobs for a change to the app (7 on macOS, 7 on Windows), 29 when it also touches the
+site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
+5 of them on macOS.
+
+### What runs where
+
+| Suite | Ubuntu x64 | Ubuntu arm64 | macOS arm64 | macOS Intel | Windows x64 |
+|---|---|---|---|---|---|
+| lint, typecheck, `npm audit` | 24.04 | | | | |
+| unit (Vitest) | 24.04 | | ✓ | | ✓ |
+| integration (Vitest, real MediaMTX/ffmpeg) | 24.04 | | ✓ | | ✓ |
+| Rust: clippy, `cargo test`, crate licences | 24.04 | | ✓ | | ✓ |
+| e2e (Playwright: Chrome, Firefox, WebKit) | 24.04 | Docker (Chromium, Firefox) | ✓ | | |
+| viewer chat UI, mock hub | 24.04 (+ phones) | | ✓ (+ phones) | | Chrome, Edge, Firefox |
+| Windows suites (installer, app, quality, direct, obs) | | | | | ✓ |
+| preflight (package, stream, watch, P2P, tunnel) | 22.04, 24.04 | | ✓ | ✓ | ✓ |
+| desktop app: install, update, uninstall | 22.04, 24.04 | 24.04 | ✓ | ✓ | ✓ |
+| AppImage on a minimal host | 22.04 (+ Docker bases) | 24.04 (+ Docker bases) | | | |
+| start and uninstall scripts | 24.04 (+ the start script on the Docker bases) | the start script on the Docker bases | ✓ | | ✓ (PowerShell 5.1) |
+| OBS Studio | Docker | Docker | | | ✓ |
+| website | 24.04 | | | | |
+
+"Docker" is the `docker` stage (Ubuntu 22.04, 24.04 and Debian 12 containers on native x64 and arm64
+runners, no emulation). The monthly run adds `ubuntu-latest` to the node and e2e jobs as a canary.
 
 **Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` six times (two
-Windows packages, one per macOS and Linux target) and `tauri build` ten times (A and the real
-build per target). Every test job downloads those artifacts, so all of them test the same bytes.
+Windows packages, one per macOS and Linux target) and `tauri build` ten times (A and the real build
+per target). Every test job downloads those artifacts, so all of them test the same bytes.
 The artifacts are tar files, because `upload-artifact` drops the executable bit;
 `.github/actions/get-build` downloads and unpacks them. They are kept 3 days for pull requests and 14 days
 otherwise.
@@ -62,6 +84,8 @@ through a `latest.json` it writes and serves on `127.0.0.1`. Pull requests and `
 release profile without LTO and with 16 codegen units (`CARGO_PROFILE_RELEASE_*`, so the
 `tauri bundle` step that retries the macOS `.dmg` still finds the binary) and sign with a key pair
 made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the real updater key.
+`desktop.mjs` signs only with a key it is given (`TAURI_SIGNING_PRIVATE_KEY`, or `--release-key`
+locally); it never picks up a key file by itself.
 
 **What a change runs** (`.github/scripts/changes.sh`):
 - `app` is anything except `docs/`, `site/`, `*.md` and the files only other workflows read (soak,
@@ -78,8 +102,12 @@ made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the 
   push), everything runs too.
 
 **`ci-ok`** runs with `if: always()`. It is red when a stage failed or was cancelled, when
-`changes` did not succeed, or when a stage that the change needs was skipped (for example after an
-upstream failure). It is green with every stage skipped for a docs-only change, within a minute.
+`changes` did not succeed, when a stage that the change needs was skipped (for example after an
+upstream failure), or when the run is a re-run (`github.run_attempt` above 1): the pull request
+shows only the latest attempt, so a green re-run would hide the failure. Fix the cause and push; after
+a GitHub outage, start a new run (push, or run the workflow by hand). It is green with every stage
+skipped for a docs-only change, within a minute. `changes` fails when `ci-ok` does not wait for
+every other job of `pipeline.yml`, so a new stage cannot be left ungated.
 Branch protection requires only this check, so the stages can change without touching the
 ruleset (docs/RELEASING.md, section 2).
 
@@ -94,19 +122,83 @@ schedules and releases are never cancelled.
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
+| `.github/actions/fetch-artifact` | `actions/download-artifact` tried up to three times with a pause between tries (every download in these workflows goes through it) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/changes.sh` | the `changes` job |
+| `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
+| `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
+| `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
+
+## Coverage
+
+Measured in the test steps that already run the suites (no extra test runs), on every OS that runs
+them. Each job writes its coverage table (with the floors) into its job summary and uploads the
+reports (lcov, json-summary, HTML) as `coverage-*` artifacts, kept 14 days.
+
+| Suite | Jobs | How | Floors checked by |
+|---|---|---|---|
+| unit | quick (Ubuntu), node (macOS, Windows) | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
+| integration | node ×3 | `npm run coverage:integration`: Vitest, V8 (the code the tests run in-process) | Vitest, in the test step (this OS's floors) |
+| e2e server | e2e ×4 | `NODE_V8_COVERAGE` on the Playwright step; `scripts/coverage/e2e-server.mjs` keeps the e2e server's files, c8 maps them onto the sources | `report.mjs --check`, after a passing run (this group's floors, lines) |
+| desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (installed by `taiki-e/install-action`, version pinned; `llvm-tools` from `setup-rust`) | `report.mjs --check` |
+
+The floors are in `scripts/coverage/floors.json`, per suite and, where the tests differ, per OS or
+e2e group. They only go up: when coverage rises, the job summary lists the floors the run allows;
+raise them in the same pull request to the lowest value across the OSes. An OS with no floors yet
+reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
 
 ## Rules
 
+- **No failure is acceptable, and no test is retried.** Every run of every test on every OS must
+  pass; one failure is a bug, fixed at the root. Playwright runs with `retries: 0` (every config) and
+  `--fail-on-flaky-tests` in every CI invocation, so a config that ever retried could not pass a test
+  that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
+  `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
+  the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`), the pinned
+  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`) and the macOS `.dmg`
+  bundling step (hdiutil "Resource busy", `desktop.mjs`).
+- **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
+  at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
+  artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long
+  test steps have their own, each below the job's and above the slowest run seen (the comment at
+  each says by how much). A step that runs out of time fails, and the steps after it that upload
+  results and logs still run; a job that runs out is cancelled, and those steps
+  (`if: ${{ !cancelled() }}`) do not.
+- **Only caches and diagnostics may fail without failing the job.** A cache is a speed-up: every
+  cache restore and save is `continue-on-error`, a restore's download gives up after 2 minutes
+  (`SEGMENT_DOWNLOAD_TIMEOUT_MINS`), and the save steps (`./.github/actions/setup/save`, the
+  Playwright browsers) are not even entered on events that save nothing and have a 3-minute
+  limit. Uploads of test results, reports and logs, and the job-summary steps, are
+  `continue-on-error` with a 5-minute limit. Nothing else is: a test, a build, a check or an
+  upload of build artifacts that fails, fails the job. (Two pipelines of one soak batch lost a
+  job each to GitHub's "Incident with Actions, Pages, and Webhooks" of 2026-10-30, 17:50 UTC: one
+  in `setup/save` with every step skipped, one in the post-job "Cleaning up orphan processes" of
+  `ci-ok`, both at a 5-minute job limit.)
+- **Test results:** every suite writes its results to its job's summary: Vitest itself (its
+  `github-actions` reporter), every other suite through `.github/scripts/test-summary.mjs`, which
+  reads the suite's report or the output a step saved with `| tee`. Steps that pipe run with
+  `shell: bash`, whose `pipefail` keeps the test's exit status (GitHub's default for a step without a
+  shell, `bash -e`, has none). Summary steps are reports: `continue-on-error`, never the verdict.
+- **Nothing that ships carries a development dependency or test code.** `.github/scripts/no-dev-deps.mjs`
+  fails the build when a package that `package-lock.json` marks `dev`, a package named in any
+  workspace's `devDependencies`, an `@types/*` package, or a first-party test file shows up in: the
+  server bundle's inputs and run-time requires (`apps/server/dist/meta.json`), the viewer's and the
+  panel's module graphs (their Vite builds, and `apps/*/dist` must be exactly those builds), a
+  package (`release/staging/<target>`: the files in the server executable's pkg snapshot, no
+  `node_modules`, `web/` the checked dist), or a desktop installer (each unpacked: the sidecar's
+  snapshot, `web/`, no `node_modules`). It runs in `_build.yml` and `_desktop.yml` before their
+  artifacts are uploaded, and in `release.yml` on the signed packages and their archives. Run it
+  locally after `npm run build` and `node scripts/build/package.mjs --target <host> --no-archive`:
+  `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`; a job that needs more says so
   (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
-  (deployment rule: tags `v*`), whose secrets no other job can read. Pull request runs sign their
-  test builds with a throwaway key.
+  (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
+  Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
+  a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
   (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because
@@ -114,11 +206,14 @@ schedules and releases are never cancelled.
   request pays one slow download, its later runs restore it. A pull request cannot poison it:
   each entry is a pinned file, and `fetch-binaries.mjs` uses it only when its SHA-256 matches
   `scripts/build/versions.json`.
+- **Runner images:** pinned where an image switch must not land in the middle of a change
+  (`ubuntu-24.04`; `ubuntu-22.04` for the Linux builds' glibc baseline, retired by GitHub in April
+  2027; `macos-15-intel`, the last Intel image, until August 2027); `macos-latest` (macOS 26 on
+  Apple silicon) and `windows-latest` (Windows Server 2025) elsewhere. The monthly run is the
+  canary for `ubuntu-latest`.
 - **Releases are never edited after publishing:** `release.yml` uploads to a draft, checks every
   asset, attests them (`actions/attest`, verify with `gh attestation verify <file> -R
   Lucas-Angelo/swarmcast`) and then publishes the draft.
-- **Retries** are for the network, not for tests: apt, downloads and the macOS `.dmg` step
-  (hdiutil "Resource busy") retry; a flaky test is fixed, not rerun.
 - **Job names** read `<stage> / <what> (<runner>)` in the checks list.
 - **Windows options:** run `pipeline.yml` by hand with `windows-runners` (for example
   `["windows-2022","windows-11-arm"]`) and `windows-suites`, or `screenshots` for the website

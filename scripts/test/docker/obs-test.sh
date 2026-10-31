@@ -11,6 +11,8 @@
 # no HTTP status (000) for file:// URLs, so the script calls the release server unreachable.
 set -u
 set -o pipefail
+# shellcheck source-path=SCRIPTDIR source=lib.sh
+. "$(dirname "$0")/lib.sh"
 RELEASE_URL="${RELEASE_URL:-}"
 SCRIPT="${SCRIPT:-/release/start-linux.sh}"
 OUTPUT_MODE="${OUTPUT_MODE:-advanced}"   # advanced (x264, keyframes every 2 s) | simple (OBS defaults)
@@ -23,15 +25,14 @@ FAIL=0
 ok() { printf '  ok: %s\n' "$*"; PASS=$((PASS + 1)); }
 bad() { printf '  FAIL: %s\n' "$*"; FAIL=$((FAIL + 1)); }
 eq() { if [ "$1" = "$2" ]; then ok "$3"; else bad "$3 (expected '$2', got '$1')"; fi; }
-wait_for() { local s="$1" _i; shift; for _i in $(seq 1 "$((s * 2))"); do "$@" && return 0; sleep 0.5; done; return 1; }
 
 APP_PID=""
 OBS_PID=""
 HTTP_PID=""
 finish() {
   [ -n "$OBS_PID" ] && kill "$OBS_PID" 2>/dev/null
-  [ -n "$APP_PID" ] && kill -INT "$APP_PID" 2>/dev/null
-  sleep 1
+  # SwarmCast stops everything itself on Ctrl+C: let it finish before the release server goes.
+  [ -n "$APP_PID" ] && kill -INT "$APP_PID" 2>/dev/null && wait_for 45 gone "$APP_PID"
   [ -n "$HTTP_PID" ] && kill "$HTTP_PID" 2>/dev/null
 }
 trap finish EXIT
@@ -199,7 +200,9 @@ TD="$(sed -n 's/^#EXT-X-TARGETDURATION://p' "$PL" | head -n1)"
 if [ "$OUTPUT_MODE" = advanced ]; then
   if [ "${TD:-99}" -le 3 ]; then ok "segments ~2 s (TARGETDURATION $TD) with OBS keyframe interval 2 s"; else bad "TARGETDURATION $TD with keyframe interval 2 s"; fi
 else
-  [ "${TD:-0}" -gt 3 ] && echo "  WARN: Simple output mode: TARGETDURATION $TD s (x264 default keyframe interval); SwarmCast expects 2 s and does not warn"
+  # Information, not a check: in Simple output mode the keyframe interval is OBS's own default
+  # (the panel's setup asks for Advanced output with keyframes every 2 s).
+  echo "  INFO: Simple output mode: TARGETDURATION ${TD:-?} s; panel warnings: $(state | jq -c '[.warnings[].code]')"
 fi
 cat "$W/init.mp4" "$W/seg.mp4" >"$W/joined.mp4"
 PROBE="$(ffprobe -v error -show_entries stream=codec_name,codec_type,width,height -of csv=p=0 "$W/joined.mp4" | tr '\n' ' ')"
@@ -219,7 +222,7 @@ eq "$(state | jq -r .obsConnected)" "false" "obsConnected false"
 echo "== shut down"
 kill "$OBS_PID" 2>/dev/null; wait "$OBS_PID" 2>/dev/null; OBS_PID=""
 kill -INT "$APP_PID"
-wait_for 45 bash -c "! kill -0 $APP_PID 2>/dev/null" && ok "SwarmCast exited" || bad "SwarmCast still running"
+wait_for 45 gone "$APP_PID" && ok "SwarmCast exited" || bad "SwarmCast still running"
 APP_PID=""
 grep -q "Off: nothing on your computer is reachable" "$W/app.txt" && ok "printed the Off line" || bad "no Off line"
 pgrep -x mediamtx >/dev/null && bad "mediamtx still running" || ok "no mediamtx left"

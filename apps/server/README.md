@@ -2,7 +2,7 @@
 
 The main app (`swarmcast` executable). It starts MediaMTX and cloudflared, serves the viewer pages and HLS on 127.0.0.1:8080, the admin panel on 127.0.0.1:8081, the tracker and the control channel. Design: [docs/ARCHITECTURE.md](../../docs/ARCHITECTURE.md).
 
-- Run from source: `npm run fetch-bins && npm run build && npm run dev` (from the repo root; `npm run dev -- --no-tunnel` for local only). Binaries are taken from `vendor/<os-arch>/` in dev mode, or from `SWARMCAST_BIN_DIR`; the web pages from `apps/{viewer,admin}/dist`, `web/` next to the executable, or `SWARMCAST_WEB_DIR` (a folder with `viewer/` and `admin/`).
+- Run from source: `npm run fetch-bins && npm run build && npm run dev` (from the repo root; `npm run dev -w @swarmcast/server -- --no-tunnel` for local only: from the root, arguments reach the server only through `-w @swarmcast/server`). A source run keeps its data in `<repo>/.cache/dev-data` (ignored by git), never in the real data folder of the computer; `--data-dir DIR` or `SWARMCAST_DATA_DIR` picks another one (`runDataDir` in `core/paths.ts`). Binaries are taken from `vendor/<os-arch>/` in dev mode, or from `SWARMCAST_BIN_DIR`; the web pages from `apps/{viewer,admin}/dist`, `web/` next to the executable, or `SWARMCAST_WEB_DIR` (a folder with `viewer/` and `admin/`).
 - Two ways to run it, same binary and data folder:
   - **Script mode** (`scripts/start-*`): opens the panel in the browser and shows the Go tray helper.
   - **Desktop mode** (`--desktop`, started by the desktop app in `apps/desktop`): no browser, no tray helper; it talks to the app over stdio (one JSON message per line: `@@swarmcast {…}` lines on stdout for `ready` / `state` / `fatal` / `update-check` / `update-install` / `export-logs`, commands on stdin) and quits when stdin closes. It refuses to start next to another SwarmCast (`fatal` with code `already-running` or `ports-busy`). On its first start (and after an app update) it runs the start scripts' system check in TypeScript and installs ffmpeg with retries (`SWARMCAST_NO_FFMPEG_INSTALL=1` skips that). The panel shows a "Desktop app" card (start with the computer, updates). Contract: [docs/DESKTOP.md](../../docs/DESKTOP.md). Try it by hand: `node --import tsx apps/server/src/main.ts --desktop --no-tunnel`, then type `{"type":"quit"}`.
@@ -25,5 +25,11 @@ The main app (`swarmcast` executable). It starts MediaMTX and cloudflared, serve
   - `tunnel/`: quick, none and external providers.
   - `process/children.ts`: child processes and the reaper.
   - `direct/`: UPnP-IGD, NAT-PMP, ACME IP certificates.
+  - `chat/`: the chat hub, batcher, buckets, flood detector and event-loop guard ([docs/CHAT.md](../../docs/CHAT.md)); panel API in `admin/chat-routes.ts`.
+  - `branding/`: "Your page": store, image validator, viewer and panel routes, link-preview page ([docs/BRANDING.md](../../docs/BRANDING.md)).
+  - `security/`: attack detector, shield and reactions, proof-of-work, `sc_verified`, public blocklists ([docs/SECURITY_RESEARCH.md](../../docs/SECURITY_RESEARCH.md)); `access/own-connection.ts` keeps P2P off for viewers on the streamer's own connection.
+  - `quality/`: ffmpeg ladder, encoder probe, load guard, upload controller ([docs/QUALITY.md](../../docs/QUALITY.md)); `speedtest/`: the speed test.
+  - `diagnostics/`: log retention, "Export logs" and the anonymiser (above).
+  - `core/`: also `config.ts` (`config.json` schema and migrations), `paths.ts` (data, binaries and web folders), `secrets.ts`, `logger.ts` and `messages.ts` (coded texts that clients translate).
   - `admin/server.ts` and `tray/tray.ts`.
   - `desktop/`: desktop mode: `protocol.ts` (stdio messages, pure), `desktop.ts` (stdio loop), `bridge.ts` (state for the panel), `autostart.ts` ("Start with the computer": Windows Run key via `reg.exe`, macOS LaunchAgent, XDG autostart), `system-check.ts` and `first-run.ts` (first start), `preflight.ts` (already running?). Panel API in `admin/desktop-routes.ts`.

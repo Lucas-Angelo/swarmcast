@@ -7,8 +7,9 @@
 // A plan entry is { suite, os: [runner labels], jobs, repeat, args, label }: `jobs` fresh runners
 // per OS, each running the suite `repeat` times (Playwright: --repeat-each), so a suite gets
 // jobs x repeat runs per OS. `label` (optional) names a variant, so one suite can be listed twice
-// on the same OS with different `args` (the E2E flake hunt and one test with --retries=0); the
-// report counts each label apart. See .github/soak-plan.json for the suites and their defaults.
+// on the same OS with different `args` (the whole E2E suite, and one spec on its own); the report
+// counts each label apart. Nothing is retried: every run counts, and one failure in any run is a
+// bug to fix. See .github/soak-plan.json for the suites and their defaults.
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
@@ -31,7 +32,7 @@ export const SUITES = {
   preflight: { job: 'preflight', setup: 15, run: 15 },
   scripts: { job: 'scripts', setup: 5, run: 10 },
   'desktop-test': { job: 'desktop_test', setup: 10, run: 20 },
-  'desktop-dmg': { job: 'desktop_dmg', setup: 30, run: 10 },
+  'desktop-dmg': { job: 'desktop_dmg', setup: 50, run: 10 },
   apt: { job: 'apt', setup: 5, run: 15 },
 };
 export const JOBS = [...new Set(Object.values(SUITES).map((s) => s.job))];

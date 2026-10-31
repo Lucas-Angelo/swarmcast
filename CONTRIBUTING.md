@@ -39,10 +39,12 @@ Setup, build and test commands are in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 request, run what your change touches:
 
 ```sh
+npm ci && npm ci --prefix site   # once: `npm test` also runs the website's unit tests
 npm run lint && npm run typecheck
 npm test                  # unit
 npm run test:integration  # needs ffmpeg
 npm run test:e2e          # Playwright
+npm run coverage          # unit + integration coverage, which must stay above its floors
 ```
 
 - Desktop app (in `apps/desktop/src-tauri`): `cargo fmt --check`,
@@ -51,22 +53,39 @@ npm run test:e2e          # Playwright
 - Fix bugs at the cause and add a test that fails without the fix. Do not hide flaky tests behind
   retries or longer timeouts.
 
-CI runs everything on Windows, macOS and Linux for every pull request.
+**The testing bar.** Every test passes in every run on every system: retries are off everywhere (no
+Playwright or Vitest retries, no re-running a CI job until it is green), and a single failure is a bug to
+fix at its cause. How the suites work and how stability is measured: [docs/TESTING.md](docs/TESTING.md).
+
+**Run things safely.** A run from the source checkout keeps its data in `.cache/dev-data`, never in your
+real SwarmCast folder. Give anything else you start (a package, an installer test) its own folder with
+`SWARMCAST_DATA_DIR="$(mktemp -d)"`, set `SWARMCAST_NO_OPEN=1` so nothing opens a browser, and move the
+e2e ports with `SWARMCAST_E2E_PORT_OFFSET` when another copy may be running. Some system tests change the
+machine and are for CI only ([scripts/README.md](scripts/README.md)).
+
+CI runs everything on Windows, macOS and Linux for every pull request. When a job fails, its artifacts
+hold the evidence (the Playwright report and traces, `test-results/` with the e2e server log, the Vitest
+JSON); start there, not with a re-run.
 
 ## Branches and pull requests
 
 The project uses trunk-based GitHub Flow ([docs/RELEASING.md](docs/RELEASING.md#2-branches-pull-requests-and-protection)):
 
-- Branch from `main` with a short-lived branch (`feat/…`, `fix/…`, `docs/…`, `ci/…`, `chore/…`).
+- Branch from `main` with a short-lived branch (`feat/…`, `fix/…`, `docs/…`, `test/…`, `ci/…`, `chore/…`).
 - Keep one topic per pull request. Your branch can have many commits.
 - Pull requests are **squash-merged**: the pull request title becomes the single commit on `main`, and
   the branch is deleted after the merge.
-- The required check `ci-ok` must be green, and review threads must be resolved.
+- The required check `ci-ok` must be green on a branch that is up to date with `main`, and review threads
+  must be resolved. To update your branch, merge `main` into it (**Update branch**); never rebase or
+  force-push commits that are already pushed.
+- `soak/…` branches only carry marker commits for stability runs ([docs/TESTING.md](docs/TESTING.md));
+  they are never merged.
 
 ### Pull request titles
 
-The title is the commit message on `main`, so it follows
-[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/):
+The title is the commit message on `main`. Write it as one clear summary in plain English; the
+[Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) form is recommended (not
+checked):
 
 ```text
 type(scope): short summary in plain English
@@ -94,6 +113,8 @@ refactors) get the `skip-changelog` label instead.
 You may use any tools, including AI assistants. You are responsible for every line you submit: read it,
 understand it and test it. Do not open large unreviewed or generated pull requests. Do not add tool
 attribution lines (such as "Generated with …" or tool co-author trailers) to commits or pull requests.
+Coding agents read [AGENTS.md](AGENTS.md) first (Claude Code loads it through `CLAUDE.md`): the rules,
+commands and safety limits of this repository.
 
 ## Releases
 

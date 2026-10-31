@@ -4,7 +4,10 @@ description: >-
   filled (pinned downloads, pkg's Node.js binaries, downloaded .debs), only when they were
   missing. On main only, so pull requests restore main's caches instead of each storing its own
   copy (the repository's 10 GB cache limit), except the pinned-downloads cache, which pull
-  requests save too (see below).
+  requests save too (see below). Never fatal: a save that fails is a warning. Call it with
+  `if: !cancelled() && (main or pull_request)`, `continue-on-error: true` and a short
+  `timeout-minutes`, so on other events it is not even entered and a hung cache service cannot
+  take the job's time.
 
 runs:
   using: composite
@@ -25,18 +28,21 @@ runs:
     # uses one (a wrong file is ignored, downloaded again and replaced). Small: tens of MB per runner OS.
     - name: Save the download cache
       if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && env.SC_DL_CACHE_KEY != '' && env.SC_DL_CACHE_HIT != 'true' && steps.filled.outputs.downloads == 'true'
+      continue-on-error: true
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/sc-cache/downloads
         key: ${{ env.SC_DL_CACHE_KEY }}
     - name: Save the pkg cache
       if: github.ref == 'refs/heads/main' && env.SC_PKG_CACHE_KEY != '' && env.SC_PKG_CACHE_HIT != 'true' && steps.filled.outputs.pkg == 'true'
+      continue-on-error: true
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/sc-cache/pkg
         key: ${{ env.SC_PKG_CACHE_KEY }}
     - name: Save the .deb cache
       if: github.ref == 'refs/heads/main' && env.SC_APT_DEBS_KEY != '' && env.SC_APT_DEBS_HIT != 'true'
+      continue-on-error: true
       uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb

@@ -31,7 +31,7 @@ jobs:
   verify:
     name: Verify tag and changelog
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     # For the updater key check: environment secrets are visible only to jobs that name it.
     environment: release
     outputs:
@@ -173,9 +173,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
       - uses: ./.github/actions/get-build
+        timeout-minutes: 5
         with:
           names: pkg-${{ matrix.target }}
       - name: The staged package is this version
@@ -310,6 +312,14 @@ jobs:
 
       - name: Archive
         run: node scripts/build/archive.mjs --target "$TARGET" --version "$VERSION"
+      # What ships, after signing: the package and the archive made from it carry no development
+      # dependency and no test code (.github/scripts/no-dev-deps.mjs; the pipeline checked the
+      # same package, its bundles and the desktop installers when it built them).
+      - name: No development dependencies in the package and its archive
+        run: |
+          ext=tar.gz
+          if [ "$RUNNER_OS" = Windows ]; then ext=zip; fi
+          node .github/scripts/no-dev-deps.mjs --staging "$STAGING" --archive "release/SwarmCast-v$VERSION-$TARGET.$ext"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -339,9 +349,11 @@ jobs:
         with:
           persist-credentials: false
       - uses: ./.github/actions/setup
+        timeout-minutes: 8
         with:
           npm-ci: 'false'
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      - uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           pattern: swarmcast-*
           merge-multiple: true
@@ -531,7 +543,8 @@ jobs:
 
       # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
       - name: Download the desktop installers
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        uses: ./.github/actions/fetch-artifact
+        timeout-minutes: 10
         with:
           pattern: desktop-*
           merge-multiple: true

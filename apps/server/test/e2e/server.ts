@@ -8,6 +8,8 @@ import type { ChildProcess } from 'node:child_process';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
+import { OwnLoopDelay } from '../../../../scripts/test/lib/loop-delay.mjs';
+import { RESERVED } from '../../../../scripts/test/lib/ports.mjs';
 import { startFeed } from '../integration/helpers.js';
 
 // Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
@@ -44,9 +46,18 @@ process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
 
 // SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
-export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38888 + OFFSET };
+export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38083 + OFFSET };
 /** The test control port below (fixtures.ts computes it the same way: no URL read from a file). */
 const CONTROL_PORT = 38082 + OFFSET;
+
+// SwarmCast's default ports and those of the demo SwarmCast the maintainer keeps running
+// (scripts/test/lib/ports.mjs RESERVED, which the other suites never hand out either): an offset
+// of 100, for example, would put the panel on 38181. Stop before binding anything.
+const clashes = Object.entries({ ...E2E_PORTS, control: CONTROL_PORT }).filter(([, port]) => RESERVED.has(port));
+if (!Number.isInteger(OFFSET) || clashes.length > 0) {
+  const why = clashes.length > 0 ? clashes.map(([name, port]) => `${name} would be ${port}`).join(', ') : 'it is not a whole number';
+  throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: ${why}. Pick another offset.`);
+}
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
 // "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
@@ -61,6 +72,16 @@ const app = await createApp({
   // vain for its two qualities (PR #21, run 40917266795). The guard keeps its other trigger
   // (the ladder falling behind real time); unit and integration tests cover the CPU one.
   loadGuard: { cpuSaturatedPercent: 101 },
+  // The chat's event-loop guard pauses GIFs, forces slow mode and refuses viewers' messages for at
+  // least 10 s after two seconds of a late event loop, whatever made it late. On macos-latest it
+  // paused a second before chat-privacy's GIF test (p99 222 ms with ELU 0.32, the loop mostly
+  // idle: the stops GitHub's macOS VMs give a process now and then, scripts/test/lib/loop-delay.mjs),
+  // and that test got the CSP without KLIPY, which is what a paused guard must send (run
+  // 41136895016). Here the load comes from the runner and the test's browsers, not from the chat
+  // a spec drives, so the guard reads a calm loop and every chat spec gets the settings it set.
+  // Unit tests (chat-limits, chat-gif) cover the guard and what it pauses; the chat bench runs it
+  // on a real loop under chat load.
+  chatGuard: { sample: () => ({ p99Ms: 0, elu: 0 }) },
   // stdout is test-results/e2e-server.log (above).
   logToStdout: true,
   configOverrides: {
@@ -84,11 +105,13 @@ let ffmpeg: ChildProcess | null = null;
 let stopping = false;
 // What the fake OBS sends; quality.spec.ts changes it (POST /obs) to make OBS reconnect with a
 // bigger picture, which is when a new rendition plan applies. Kept in a file so a restarted
-// fake OBS (it restarts by itself one second after it exits) uses the same options.
+// fake OBS (it restarts by itself, like OBS's own reconnect) uses the same options.
 const PUSH_FILE = path.join('test-results', 'e2e-push.json');
 type PushOptions = { size?: string; kbps?: number };
-/** The 720p feed the ladder scenarios ask for (quality.spec, barely-delivers). */
-export const HD_FEED = { size: '1280x720', kbps: 2500 } as const;
+/** The 720p feed the ladder scenarios ask for with POST /obs {feed: 'hd'} (quality.spec, barely-delivers). */
+const HD_FEED = { size: '1280x720', kbps: 2500 } as const;
+/** How long the fake OBS waits before it publishes again after its ffmpeg exited, like OBS's reconnect delay. */
+const OBS_RECONNECT_MS = 1000;
 const pushOptions = (): PushOptions => {
   try {
     return JSON.parse(fs.readFileSync(PUSH_FILE, 'utf8')) as PushOptions;
@@ -104,7 +127,7 @@ const push = (): void => {
   const { child } = startFeed(`rtmp://127.0.0.1:${E2E_PORTS.rtmp}/live/${app.live.snapshot().streamKey}`, pushOptions());
   ffmpeg = child;
   child.on('exit', () => {
-    if (!stopping && ffmpeg === child) setTimeout(push, 1000);
+    if (!stopping && ffmpeg === child) setTimeout(push, OBS_RECONNECT_MS);
   });
 };
 fs.mkdirSync('test-results', { recursive: true });
@@ -129,7 +152,7 @@ const initial = {
   chat: structuredClone(app.live.chatSettings()),
 };
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
-const shield = app.live.shield as unknown as { setAutoPow(level: 0 | 1 | 2): void; detector: { state: string } };
+const shield = app.live.shield;
 /** The test that ran before the current one (an unhealthy stream names it). */
 let previousTest = '(none: first test on this server)';
 let currentTest = previousTest;
@@ -164,6 +187,11 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
   if (shield.detector.state !== 'normal') {
     L.clearAttackAlert();
     did.push('attack alert ended');
+  }
+  // The panel's warnings last for the live: a test that checks one sees its own, not an earlier test's.
+  if (L.warnings.length > 0) {
+    L.warnings = [];
+    did.push('panel warnings');
   }
   if (!same(L.securitySettings(), initial.security)) {
     L.updateSecurity(structuredClone(initial.security));
@@ -292,13 +320,36 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
   };
 }
 
+/**
+ * Resolves at the next change that can make the stream healthy, or after `ms`: every problem
+ * healthNow() reports ends with a playlist update, a change of availability or of the live's
+ * state (a new segment, a new variant, the live started).
+ */
+function nextStreamChange(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const { origin } = app.live;
+    const done = (): void => {
+      clearTimeout(deadline);
+      origin.off('updated', done);
+      origin.off('available', done);
+      app.live.off('state', done);
+      resolve();
+    };
+    const deadline = setTimeout(done, ms);
+    origin.on('updated', done);
+    origin.on('available', done);
+    app.live.on('state', done);
+  });
+}
+
 /** Waits up to `waitMs` for a healthy stream; answers with the last state seen. */
 async function health(waitMs: number, minPlaylistS: number, qualities: number): Promise<Health> {
   const end = Date.now() + waitMs;
   for (;;) {
     const h = healthNow(minPlaylistS, qualities);
-    if (h.ok || Date.now() >= end) return h;
-    await new Promise((r) => setTimeout(r, 200));
+    const left = end - Date.now();
+    if (h.ok || left <= 0) return h;
+    await nextStreamChange(left);
   }
 }
 
@@ -306,11 +357,14 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
 // - GET /env: the panel's address and login path (fixtures.ts signs in with them);
 // - POST /reset[?hard=1] {test?}: back to the starting state (reset() above);
 // - GET /health?waitMs=&minPlaylistS=&qualities=: the stream's health, waiting up to waitMs for it;
-// - POST /obs {options | null}: the fake OBS reconnects with these push options;
+// - POST /obs {feed: 'hd'} | null: the fake OBS reconnects with the 720p feed or the default one;
 // - POST /pow-level/<0|1|2>: the level the attack shield would choose by itself, without
 //   flooding the server;
 // - POST /playlist-window/<seconds>: how many seconds every playlist keeps (p2p.spec.ts
-//   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s).
+//   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s);
+// - POST /own-loop-delay: the p99 of how long the app's own work held up this process's event
+//   loop since the previous call (scripts/test/lib/loop-delay.mjs), then starts over.
+const ownLoopDelay = new OwnLoopDelay();
 const json = (res: http.ServerResponse, status: number, body: unknown): void => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
   let text = '';
@@ -340,7 +394,9 @@ const control = http.createServer((req, res) => {
       return json(res, 200, h);
     }
     if (post && url.pathname === '/obs') {
-      reconnectObs(((await readJson(req)) as PushOptions | null) ?? null);
+      const body = (await readJson(req)) as { feed?: unknown } | null;
+      if (body !== null && body.feed !== 'hd') return json(res, 400, { error: 'POST /obs takes {"feed":"hd"} or null' });
+      reconnectObs(body === null ? null : HD_FEED);
       return json(res, 200, { options: pushOptions() });
     }
     const w = /^\/playlist-window\/(\d+)$/.exec(url.pathname);
@@ -348,6 +404,7 @@ const control = http.createServer((req, res) => {
       app.live.origin.windowSeconds = Number(w[1]);
       return json(res, 200, { windowSeconds: app.live.origin.windowSeconds });
     }
+    if (post && url.pathname === '/own-loop-delay') return json(res, 200, { p99Ms: ownLoopDelay.takeP99() });
     const m = /^\/pow-level\/([012])$/.exec(url.pathname);
     if (post && m) {
       shield.setAutoPow(Number(m[1]) as 0 | 1 | 2);
@@ -369,8 +426,11 @@ console.log('e2e server ready');
 const shutdown = async (): Promise<void> => {
   stopping = true;
   control.close();
+  ownLoopDelay.stop();
   ffmpeg?.kill('SIGKILL');
   await app.close();
+  // The data folder is this run's only (mkdtemp above); the app has closed every file in it.
+  fs.rmSync(dataDir, { recursive: true, force: true });
   process.exit(0);
 };
 process.on('SIGTERM', () => void shutdown());

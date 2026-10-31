@@ -11,6 +11,8 @@ mod page;
 mod protocol;
 mod shell;
 mod sidecar;
+#[cfg(test)]
+mod test_support;
 mod tray;
 mod updater;
 mod window;

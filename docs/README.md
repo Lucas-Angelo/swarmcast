@@ -2,12 +2,14 @@
 
 **Streamers and viewers:** everything is on the website, <https://lucas-angelo.github.io/swarmcast/> (English) and <https://lucas-angelo.github.io/swarmcast/pt-br/> (Português). Its pages live in [`site/src/content/docs/`](../site/src/content/docs/), and the offline guide inside the installer zips is generated from them.
 
-Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING.md)):
+Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING.md); coding agents, and the people who work with them, start with [AGENTS.md](../AGENTS.md)):
 
 | Document | For | Language |
 |----------|-----|----------|
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Build, tests, configuration, version policy, releases, website | English |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How it works, design choices, verified facts with sources | English |
+| [DECISIONS.md](DECISIONS.md) | Index of the design decisions, each with its reason and the section that explains it | English |
+| [TESTING.md](TESTING.md) | Test suites and how to run them, the testing bar, stability soaks | English |
 | [THREAT_MODEL.md](THREAT_MODEL.md) | Assets, attackers, mitigations, accepted risks | English |
 | [SECURITY_RESEARCH.md](SECURITY_RESEARCH.md) | Attack detection and protections, with sources | English |
 | [CHAT.md](CHAT.md) | Chat: settings, protocol, Unicode pipeline, moderation, flood protection, GIFs, privacy | English |

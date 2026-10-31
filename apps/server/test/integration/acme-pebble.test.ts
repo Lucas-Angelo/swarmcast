@@ -19,6 +19,11 @@
  *   badNonce handling is covered by the unit tests; set PEBBLE_WFE_NONCEREJECT=<percent> in the
  *   environment to exercise it against Pebble).
  *
+ * The container is created without `--rm` and removed by afterAll alone (`docker rm -f`): with
+ * two removers (the daemon's auto-remove on stop, and ours) the second one can fail, and a
+ * cleanup error must mean something.
+ * Readiness is the directory answering, polled with a deadline.
+ *
  * The whole suite is skipped when `docker info` fails.
  */
 import { execFileSync } from 'node:child_process';
@@ -26,7 +31,6 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import https from 'node:https';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import * as x509 from '@peculiar/x509';
 import pino from 'pino';
@@ -34,7 +38,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { FetchLike } from '../../src/direct/acme.js';
 import { LetsEncryptIpIssuer, type IssuedCert } from '../../src/direct/certs.js';
 import type { PortMapper } from '../../src/direct/mapper.js';
-import { allocPorts } from './helpers.js';
+import { allocPorts, tmpDir, until } from './helpers.js';
 
 /** ghcr.io/letsencrypt/pebble 2.10.1 (multi-arch index, revision b1e1ca4), pinned by digest. */
 const PEBBLE_IMAGE = 'ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199';
@@ -52,8 +56,11 @@ const hasDocker = (() => {
 const log = pino({ level: 'silent' });
 const docker = (...args: string[]) => execFileSync('docker', args, { encoding: 'utf8', timeout: 120_000 }).trim();
 
-/** A port of this worker's block, free right now (not one from the OS's ephemeral range). */
-async function freePort(): Promise<number> {
+/**
+ * A free port of this worker's block that is not Pebble's httpPort: an http-01 responder there
+ * is never reached, so that validation fails.
+ */
+async function portPebbleNeverCalls(): Promise<number> {
   return (await allocPorts(1))[0]!;
 }
 
@@ -89,6 +96,38 @@ function splitPem(chain: string): string[] {
 // container reaches the host through the bridge, so responders must listen on all interfaces.
 const LISTEN_HOST = process.platform === 'linux' ? '0.0.0.0' : '127.0.0.1';
 
+/**
+ * A fake router: "mapping external port 80" starts a TCP forwarder on Pebble's httpPort that
+ * leads to the issuer's own (random) local responder port; unmapping closes it. `events` lists
+ * the calls in order.
+ */
+function fakeRouter(ip: string, httpPort: number): { mapper: PortMapper; events: string[]; forwarding: () => boolean } {
+  const events: string[] = [];
+  let proxy: net.Server | null = null;
+  const mapper: PortMapper = {
+    kind: 'upnp',
+    id: 'fake',
+    externalIp: async () => ip,
+    hasMapping: async () => proxy !== null,
+    map: async (externalPort, internalPort, internalHost) => {
+      events.push(`map ${externalPort}`);
+      proxy = net.createServer((client) => {
+        const upstream = net.connect(internalPort, internalHost);
+        client.pipe(upstream).pipe(client);
+        client.on('error', () => upstream.destroy());
+        upstream.on('error', () => client.destroy());
+      });
+      await new Promise<void>((r) => proxy!.listen(httpPort, LISTEN_HOST, () => r()));
+    },
+    unmap: async (externalPort) => {
+      events.push(`unmap ${externalPort}`);
+      await new Promise<void>((r) => (proxy ? proxy.close(() => r()) : r()));
+      proxy = null;
+    },
+  };
+  return { mapper, events, forwarding: () => proxy !== null };
+}
+
 // Windows runners only run Windows containers (no Linux Pebble image, no host-gateway).
 describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against Pebble (Docker)', () => {
   let container = '';
@@ -99,9 +138,8 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
   let tlsPort = 0;
 
   beforeAll(async () => {
-    httpPort = await freePort();
-    tlsPort = await freePort();
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-pebble-'));
+    [httpPort, tlsPort] = (await allocPorts(2)) as [number, number];
+    const tmp = tmpDir('sc-pebble-');
     const config = {
       pebble: {
         listenAddress: '0.0.0.0:14000',
@@ -124,7 +162,7 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
 
     // create + cp + start avoids bind mounts (and Docker Desktop file-sharing settings).
     container = docker(
-      'create', '--rm',
+      'create',
       '-p', '127.0.0.1::14000',
       '--add-host', 'host.docker.internal:host-gateway',
       '-e', 'PEBBLE_VA_ALWAYS_VALID=0',
@@ -147,30 +185,25 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
     directoryUrl = `https://127.0.0.1:${published.split(':').pop()}/dir`;
     fetchImpl = fetchTrusting(fs.readFileSync(path.join(tmp, 'minica.pem'), 'utf8'));
 
-    const deadline = Date.now() + 30_000;
-    for (;;) {
-      let lastError: string;
-      try {
-        // Pebble rejects requests without a User-Agent (RFC 8555 section 6.1).
-        const res = await fetchImpl(directoryUrl, { headers: { 'User-Agent': 'swarmcast-test' } });
-        if (res.ok) break;
-        lastError = `HTTP ${res.status}`;
-      } catch (err) {
-        lastError = (err as Error).message; // not up yet
-      }
-      if (Date.now() > deadline) throw new Error(`Pebble did not answer at ${directoryUrl} (${lastError}):\n${docker('logs', container)}`);
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    let lastError = 'no answer yet';
+    await until(
+      async () => {
+        try {
+          // Pebble rejects requests without a User-Agent (RFC 8555 section 6.1).
+          const res = await fetchImpl(directoryUrl, { headers: { 'User-Agent': 'swarmcast-test' } });
+          lastError = `HTTP ${res.status}`;
+          return res.ok;
+        } catch (err) {
+          lastError = (err as Error).message;
+          return false;
+        }
+      },
+      { timeoutMs: 30_000, what: `Pebble's directory at ${directoryUrl}`, detail: () => `${lastError}; logs:\n${docker('logs', container)}` },
+    );
   });
 
   afterAll(() => {
-    if (container) {
-      try {
-        execFileSync('docker', ['rm', '-f', container], { stdio: 'ignore' });
-      } catch {
-        /* already gone */
-      }
-    }
+    if (container) docker('rm', '-f', container);
   });
 
   async function expectValidIpCert(cert: IssuedCert) {
@@ -190,82 +223,57 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
   }
 
   it('issues an IP certificate with http-01', async () => {
-    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, {
-      fetch: fetchImpl,
-      preferredChallenge: 'http-01',
-      challengeHttpPort: httpPort,
-      listenHost: LISTEN_HOST,
-      pollTimeoutMs: 60_000,
-    });
-    await expectValidIpCert(await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' }));
+    // Arrange
+    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, { fetch: fetchImpl, preferredChallenge: 'http-01', challengeHttpPort: httpPort, listenHost: LISTEN_HOST, pollTimeoutMs: 60_000 });
+    // Act
+    const cert = await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' });
+    // Assert
+    await expectValidIpCert(cert);
   });
 
   it('issues an IP certificate with tls-alpn-01 (acme-tls/1, reverse-DNS SNI, acmeIdentifier extension)', async () => {
-    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, {
-      fetch: fetchImpl,
-      preferredChallenge: 'tls-alpn-01',
-      challengeTlsPort: tlsPort,
-      listenHost: LISTEN_HOST,
-      pollTimeoutMs: 60_000,
-    });
-    await expectValidIpCert(await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' }));
+    // Arrange
+    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, { fetch: fetchImpl, preferredChallenge: 'tls-alpn-01', challengeTlsPort: tlsPort, listenHost: LISTEN_HOST, pollTimeoutMs: 60_000 });
+    // Act
+    const cert = await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' });
+    // Assert
+    await expectValidIpCert(cert);
   });
 
   it('falls back to tls-alpn-01 with a new order when http-01 validation fails', async () => {
-    const wrongPort = await freePort(); // Pebble connects to httpPort, where nothing listens.
+    // Arrange
     const issuer = new LetsEncryptIpIssuer(log, directoryUrl, {
       fetch: fetchImpl,
       preferredChallenge: ['http-01', 'tls-alpn-01'],
-      challengeHttpPort: wrongPort,
+      challengeHttpPort: await portPebbleNeverCalls(),
       challengeTlsPort: tlsPort,
       listenHost: LISTEN_HOST,
       pollTimeoutMs: 60_000,
     });
-    await expectValidIpCert(await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' }));
+    // Act
+    const cert = await issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' });
+    // Assert
+    await expectValidIpCert(cert);
   });
 
   it('maps the validation port through the PortMapper only during validation, then removes it', async () => {
-    // A fake router: "mapping external port 80" starts a TCP forwarder on Pebble's httpPort
-    // that leads to the issuer's random local responder port.
-    const events: string[] = [];
-    let proxy: net.Server | null = null;
-    const mapper: PortMapper = {
-      kind: 'upnp',
-      id: 'fake',
-      externalIp: async () => ip,
-      hasMapping: async () => proxy !== null,
-      map: async (externalPort, internalPort, internalHost) => {
-        events.push(`map ${externalPort}`);
-        expect(externalPort).toBe(80);
-        proxy = net.createServer((client) => {
-          const upstream = net.connect(internalPort, internalHost);
-          client.pipe(upstream).pipe(client);
-          client.on('error', () => upstream.destroy());
-          upstream.on('error', () => client.destroy());
-        });
-        await new Promise<void>((r) => proxy!.listen(httpPort, LISTEN_HOST, () => r()));
-      },
-      unmap: async (externalPort) => {
-        events.push(`unmap ${externalPort}`);
-        await new Promise<void>((r) => (proxy ? proxy.close(() => r()) : r()));
-        proxy = null;
-      },
-    };
+    // Arrange
+    const router = fakeRouter(ip, httpPort);
     const issuer = new LetsEncryptIpIssuer(log, directoryUrl, { fetch: fetchImpl, preferredChallenge: 'http-01', listenHost: LISTEN_HOST, pollTimeoutMs: 60_000 });
-    await expectValidIpCert(await issuer.issue(ip, { mapper, internalHost: '127.0.0.1' }));
-    expect(events).toEqual(['map 80', 'unmap 80']);
-    expect(proxy).toBeNull();
+    // Act
+    const cert = await issuer.issue(ip, { mapper: router.mapper, internalHost: '127.0.0.1' });
+    // Assert
+    await expectValidIpCert(cert);
+    expect(router.events).toEqual(['map 80', 'unmap 80']);
+    expect(router.forwarding()).toBe(false);
   });
 
   it('reports the ACME problem detail when validation fails', async () => {
-    const wrongPort = await freePort();
-    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, {
-      fetch: fetchImpl,
-      preferredChallenge: 'http-01',
-      challengeHttpPort: wrongPort,
-      listenHost: LISTEN_HOST,
-      pollTimeoutMs: 60_000,
-    });
-    await expect(issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' })).rejects.toThrow(/http-01: authorization invalid: connection: /);
+    // Arrange
+    const issuer = new LetsEncryptIpIssuer(log, directoryUrl, { fetch: fetchImpl, preferredChallenge: 'http-01', challengeHttpPort: await portPebbleNeverCalls(), listenHost: LISTEN_HOST, pollTimeoutMs: 60_000 });
+    // Act
+    const issuing = issuer.issue(ip, { mapper: null, internalHost: '127.0.0.1' });
+    // Assert
+    await expect(issuing).rejects.toThrow(/http-01: authorization invalid: connection: /);
   });
 });

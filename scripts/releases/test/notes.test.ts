@@ -1,9 +1,11 @@
+// The release notes taken from CHANGELOG.md (notes.mjs), as a function and as the CLI the release
+// workflow runs. A CHANGELOG saved with Windows line endings (CRLF) gives the same notes.
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect } from 'vitest';
+import { it } from '../../build/test/fixtures.js';
 import { changelogSection } from '../notes.mjs';
 
 const SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'notes.mjs');
@@ -29,26 +31,89 @@ const CHANGELOG = `# Changelog
 [0.2.2]: https://example.com/compare/v0.2.1...v0.2.2
 `;
 
-describe('changelogSection', () => {
-  it('takes the body between its heading and the next one (or the link references)', () => {
-    expect(changelogSection(CHANGELOG, 'Unreleased')).toBe('### Added\n\n- Beta versions.');
-    expect(changelogSection(CHANGELOG, '0.2.2')).toBe('### Fixed\n\n- A fix.');
-    expect(changelogSection(CHANGELOG, '0.2.1')).toBe('- Older.');
-    expect(changelogSection(CHANGELOG, '0.2')).toBeNull();
-    expect(changelogSection(CHANGELOG.replace('- Beta versions.', '').replace('### Added', ''), 'Unreleased')).toBe('');
+/** `notes.mjs --section <section> <file>`, without throwing on a non-zero exit. */
+const notesCli = (section: string, file: string) => spawnSync(process.execPath, [SCRIPT, '--section', section, file], { encoding: 'utf8' });
+
+describe('changelogSection: the body between its heading and the next one (or the link references)', () => {
+  it.each([
+    ['Unreleased', '### Added\n\n- Beta versions.'],
+    ['0.2.2', '### Fixed\n\n- A fix.'],
+    ['0.2.1', '- Older.'],
+  ])('## [%s]', (section, notes) => {
+    // Act
+    const body = changelogSection(CHANGELOG, section);
+
+    // Assert
+    expect(body).toBe(notes);
   });
 
-  it('CLI: prints the notes, fails on a missing or empty section', () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-notes-'));
-    const file = path.join(dir, 'CHANGELOG.md');
+  it('a heading that is only a prefix of the asked version is not the section', () => {
+    // Act
+    const body = changelogSection(CHANGELOG, '0.2');
+
+    // Assert
+    expect(body).toBeNull();
+  });
+
+  it('a heading without a body gives an empty string (not null)', () => {
+    // Arrange
+    const empty = CHANGELOG.replace('- Beta versions.', '').replace('### Added', '');
+
+    // Act
+    const body = changelogSection(empty, 'Unreleased');
+
+    // Assert
+    expect(body).toBe('');
+  });
+
+  it('reads a CHANGELOG with CRLF line endings, and the notes it gives have LF', () => {
+    // Arrange
+    const crlf = CHANGELOG.replace(/\n/g, '\r\n');
+
+    // Act
+    const body = changelogSection(crlf, '0.2.2');
+
+    // Assert
+    expect(body).toBe('### Fixed\n\n- A fix.');
+  });
+});
+
+describe('notes.mjs (CLI)', () => {
+  it('prints the notes of the section', ({ tmp }) => {
+    // Arrange
+    const file = path.join(tmp, 'CHANGELOG.md');
+    fs.writeFileSync(file, CHANGELOG);
+
+    // Act
+    const out = execFileSync(process.execPath, [SCRIPT, '--section', 'Unreleased', file], { encoding: 'utf8' });
+
+    // Assert
+    expect(out).toBe('### Added\n\n- Beta versions.\n');
+  });
+
+  it('fails with a ::error:: line on a missing section', ({ tmp }) => {
+    // Arrange
+    const file = path.join(tmp, 'CHANGELOG.md');
+    fs.writeFileSync(file, CHANGELOG);
+
+    // Act
+    const run = notesCli('0.3.0', file);
+
+    // Assert
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain(`::error file=${file}::No '## [0.3.0]' section`);
+  });
+
+  it('fails with a ::error:: line on an empty section', ({ tmp }) => {
+    // Arrange
+    const file = path.join(tmp, 'CHANGELOG.md');
     fs.writeFileSync(file, CHANGELOG.replace('- Older.', ''));
-    expect(execFileSync(process.execPath, [SCRIPT, '--section', 'Unreleased', file], { encoding: 'utf8' })).toBe('### Added\n\n- Beta versions.\n');
-    const missing = spawnSync(process.execPath, [SCRIPT, '--section', '0.3.0', file], { encoding: 'utf8' });
-    expect(missing.status).toBe(1);
-    expect(missing.stderr).toContain("No '## [0.3.0]' section");
-    const empty = spawnSync(process.execPath, [SCRIPT, '--section', '0.2.1', file], { encoding: 'utf8' });
-    expect(empty.status).toBe(1);
-    expect(empty.stderr).toContain('is empty');
-    fs.rmSync(dir, { recursive: true, force: true });
+
+    // Act
+    const run = notesCli('0.2.1', file);
+
+    // Assert
+    expect(run.status).toBe(1);
+    expect(run.stderr).toContain("The '## [0.2.1]' section is empty");
   });
 });

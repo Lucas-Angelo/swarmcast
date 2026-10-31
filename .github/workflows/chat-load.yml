@@ -54,13 +54,24 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         timeout-minutes: 8
+      # 25 minutes: the bench takes about 12 for every scenario (soak-plan.mjs); one that runs
+      # out fails, so its results are still uploaded.
       - name: Chat bench
+        timeout-minutes: 25
         env:
           SCENARIO: ${{ inputs.scenario || 'all' }}
-        run: node --import tsx scripts/test/chat/bench.ts --scenario "$SCENARIO" --out test-results/chat-bench
+        run: node --import tsx scripts/test/chat/bench.ts --scenario "$SCENARIO" --out test-results/chat-bench 2>&1 | tee "$RUNNER_TEMP/bench.log"
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          OS: ${{ matrix.os }}
+        run: node .github/scripts/test-summary.mjs --title "Chat bench ($OS)" --lines "$RUNNER_TEMP/bench.log"
       - name: Upload the bench results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: chat-bench-${{ matrix.os }}
           path: test-results/chat-bench/
@@ -80,6 +91,9 @@ jobs:
             files: packages/shared/test/branding apps/server/test/unit/branding-image.test.ts apps/server/test/unit/branding-og.test.ts
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -87,17 +101,21 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 8
       # The seed is printed on a failure; rerun it locally with the same CHAT_FUZZ_RUNS and seed.
+      # The github-actions reporter: annotations and Vitest's job summary.
       - name: Property tests at 1,000,000 runs, exhaustive colour sweeps
+        timeout-minutes: 110
         env:
           CHAT_FUZZ_RUNS: '1000000'
           CHAT_EXHAUSTIVE: '1'
           FILES: ${{ matrix.files }}
         run: |
           # shellcheck disable=SC2086 # FILES is a list of paths
-          npx vitest run --testTimeout=7200000 --reporter=default --reporter=json --outputFile.json=test-results/chat-fuzz.json $FILES
+          npx vitest run --testTimeout=7200000 --reporter=default --reporter=github-actions --reporter=json --outputFile.json=test-results/chat-fuzz.json $FILES
       - name: Upload the results
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: chat-fuzz-${{ strategy.job-index }}
           path: test-results/chat-fuzz.json

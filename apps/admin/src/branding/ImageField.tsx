@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { t } from '@swarmcast/shared/i18n';
 import { Info } from '../Info.js';
 import { BRAND_SLOTS, type BrandSlot } from '@swarmcast/shared/branding';
@@ -35,13 +35,14 @@ export function ImageField({ field, current, onSave, onRemove, disabled }: Image
   const aspect = FIELD_ASPECT[field];
   const master = BRAND_SLOTS[FIELD_SLOTS[field][0]!];
 
-  // Live crop preview on a canvas (no object URL needed for the picked file).
-  useEffect(() => {
+  // Live crop preview on a canvas (no object URL needed for the picked file). The canvas is
+  // rendered at its final size and drawn before the browser paints: sized afterwards, it showed
+  // at the default 300x150 for a frame and the buttons under it jumped.
+  const cropW = Math.min(360, master.w);
+  const cropH = Math.round(cropW / aspect);
+  useLayoutEffect(() => {
     const c = canvas.current;
     if (!c || !picked) return;
-    const w = Math.min(360, master.w);
-    c.width = w;
-    c.height = Math.round(w / aspect);
     const ctx = c.getContext('2d');
     if (!ctx) return;
     const r = cropRect(picked.w, picked.h, aspect, crop);
@@ -129,6 +130,8 @@ export function ImageField({ field, current, onSave, onRemove, disabled }: Image
         <div class="bf-crop">
           <canvas
             ref={canvas}
+            width={cropW}
+            height={cropH}
             class={`bf-crop-canvas bf-crop-${field}`}
             data-testid={`brand-crop-${field}`}
             onPointerDown={onPointerDown}

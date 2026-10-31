@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { SignJWT, jwtVerify } from 'jose';
+import { SignJWT, jwtVerify, type JWTVerifyResult } from 'jose';
 import { CHAT_RESERVED_NAMES, JOIN_TICKET_TTL_S, NICKNAME_MAX, SESSION_TTL_S, countGraphemes, type DeviceKind, type P2PBlockReason } from '@swarmcast/shared';
 import { nameKeys } from '@swarmcast/shared/chat/skeleton';
 
@@ -161,15 +161,20 @@ export class AccessControl extends EventEmitter<AccessEvents> {
   async issueTicket(): Promise<string> {
     return new SignJWT({ typ: 'ticket', lid: this.liveId, gen: this.linkGeneration })
       .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(`${JOIN_TICKET_TTL_S}s`)
+      .setIssuedAt(new Date(this.now()))
+      .setExpirationTime(new Date(this.now() + JOIN_TICKET_TTL_S * 1000))
       .sign(this.jwtKey);
+  }
+
+  /** jwtVerify on this instance's clock (the one `now` injects), like the iat/exp it issued. */
+  private verifyJwt(token: string): Promise<JWTVerifyResult> {
+    return jwtVerify(token, this.jwtKey, { algorithms: ['HS256'], currentDate: new Date(this.now()) });
   }
 
   async verifyTicket(token: string | undefined): Promise<boolean> {
     if (!token || !this.live) return false;
     try {
-      const { payload } = await jwtVerify(token, this.jwtKey, { algorithms: ['HS256'] });
+      const { payload } = await this.verifyJwt(token);
       return payload.typ === 'ticket' && payload.lid === this.liveId && payload.gen === this.linkGeneration;
     } catch {
       return false;
@@ -216,8 +221,8 @@ export class AccessControl extends EventEmitter<AccessEvents> {
   async issueSessionToken(session: Session): Promise<string> {
     return new SignJWT({ typ: 'session', lid: this.liveId, sid: session.id })
       .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime(`${SESSION_TTL_S}s`)
+      .setIssuedAt(new Date(this.now()))
+      .setExpirationTime(new Date(this.now() + SESSION_TTL_S * 1000))
       .sign(this.jwtKey);
   }
 
@@ -228,7 +233,7 @@ export class AccessControl extends EventEmitter<AccessEvents> {
   async verifySessionToken(token: string | undefined): Promise<{ session: Session; renew: boolean } | null> {
     if (!token || !this.live) return null;
     try {
-      const { payload } = await jwtVerify(token, this.jwtKey, { algorithms: ['HS256'] });
+      const { payload } = await this.verifyJwt(token);
       if (payload.typ !== 'session' || payload.lid !== this.liveId || typeof payload.sid !== 'string') return null;
       const session = this.sessions.get(payload.sid);
       if (!session) return null;

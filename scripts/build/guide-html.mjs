@@ -74,6 +74,7 @@ export function inline(text, link = (url) => (/^https?:\/\//.test(url) ? url : n
     const href = link(url.replace(/&amp;/g, '&'));
     return href ? `<a href="${escapeHtml(href)}">${label}</a>` : label;
   });
+  // eslint-disable-next-line no-control-regex -- NUL marks the code spans set aside above: Markdown text never holds one
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => codes[Number(i)]);
 }
 

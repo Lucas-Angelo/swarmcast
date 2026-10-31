@@ -1,0 +1,70 @@
+name: Download artifacts, with retries
+description: >-
+  actions/download-artifact, tried up to three times with a pause between tries. Its own retries
+  (five, within about a minute) are not enough when the artifact service has a bad minute: a
+  stability run of ten pipelines at once saw "Artifact download failed after 5 retries" twice in a
+  row on one job, and the same download work three minutes later. Same inputs as download-artifact.
+
+inputs:
+  name:
+    description: One artifact by name (or use pattern).
+    default: ''
+  pattern:
+    description: A glob of artifact names.
+    default: ''
+  path:
+    description: Where to put the files.
+    required: true
+  merge-multiple:
+    description: With pattern, extract every artifact into path itself.
+    default: 'false'
+  run-id:
+    description: Another run's artifacts (needs github-token).
+    default: ''
+  github-token:
+    description: Token for run-id.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: try1
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        pattern: ${{ inputs.pattern }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}
+        run-id: ${{ inputs.run-id }}
+        github-token: ${{ inputs.github-token }}
+    - if: steps.try1.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::artifact download failed (try 1 of 3); retrying in 30 s"
+        sleep 30
+    - id: try2
+      if: steps.try1.outcome == 'failure'
+      continue-on-error: true
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        pattern: ${{ inputs.pattern }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}
+        run-id: ${{ inputs.run-id }}
+        github-token: ${{ inputs.github-token }}
+    - if: steps.try2.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::artifact download failed (try 2 of 3); retrying in 90 s"
+        sleep 90
+    - if: steps.try2.outcome == 'failure'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: ${{ inputs.name }}
+        pattern: ${{ inputs.pattern }}
+        path: ${{ inputs.path }}
+        merge-multiple: ${{ inputs.merge-multiple }}
+        run-id: ${{ inputs.run-id }}
+        github-token: ${{ inputs.github-token }}

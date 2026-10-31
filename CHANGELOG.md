@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Joining a live no longer fails silently.** The "Checking your browser…" line sat above the Watch button and disappeared right when people click, moving the button away mid-click, so the click did nothing. It now sits below the button, and Watch only becomes clickable once the page is ready. If the browser check's background worker ever stops answering, the check finishes on the page instead of waiting forever.
+- **No more jumping pages.** On a page with your name, picture and links, the join page now appears with them already in place instead of pushing Watch down a moment later; on the watch page, the space for your banner is kept from the start, so the video no longer jumps down when the picture arrives. In the panel, the picture preview no longer jumps when you pick a picture, and the Pix QR code appears at once.
+- **Chat slow mode matches the server.** The wait now starts when the server accepts your message (GIFs too) and follows changes to slow mode, so a message sent right as the countdown ends is no longer refused.
+- **Chat keeps showing messages in a partly covered window,** even when the browser stops drawing animation frames.
+- **Fewer pauses on slower computers.** A short decoder hiccup with plenty of video buffered no longer pauses playback for 3 seconds.
+- Source runs keep their data in the project's own folder, never in your real SwarmCast folder; the server cleans up everything it started when it stops or fails to start; the updater only signs builds with a key it is given.
+
 ## [0.4.0] - 2026-10-30
 
 Chat and your own page: talk with your viewers next to the video, moderate from the panel, and give your stream page your name, picture, links and a support button or Pix.

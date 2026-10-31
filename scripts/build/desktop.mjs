@@ -14,12 +14,13 @@
 //
 // Usage: node scripts/build/desktop.mjs [--target macos-arm64] [--version 0.2.0] [--package]
 //          [--bundles app,dmg] [--sidecar mock] [--insecure-updates [--updater-pubkey <file.pub>]]
-//          [--debug] [--fast] [--runner cargo-xwin]
+//          [--release-key <file>] [--debug] [--fast] [--runner cargo-xwin]
 //
 //   --package           run package.mjs first (needs `npm run build`)
 //   --bundles           which bundles to make (default: all of the target's). macOS: the .dmg is
-//                       made by its own `tauri bundle` step after the .app, retried when hdiutil
-//                       reports "Resource busy", so a busy disk costs seconds, not a rebuild
+//                       made by its own `tauri bundle` step after the .app, retried only when
+//                       hdiutil reports "Resource busy", so a busy disk costs seconds, not a
+//                       rebuild; any other failure fails at once
 //   --fast              throwaway test builds (the update test's A and B): no LTO, 16 codegen
 //                       units (CARGO_PROFILE_RELEASE_* environment overrides, so `tauri bundle`
 //                       still finds target/<triple>/release) and an uncompressed NSIS installer.
@@ -29,10 +30,14 @@
 //   --updater-pubkey    with --insecure-updates: trust this public key (`tauri signer generate`'s
 //                       .pub file) instead of the release key, for update tests with a throwaway key
 //   --runner <cmd>      passed to `tauri build` (e.g. cargo-xwin to build windows-x64 from Linux)
+//   --release-key <file>  sign the updater artifacts with this private key file (the maintainer's
+//                       ~/.tauri/swarmcast-updater.key); its password from
+//                       TAURI_SIGNING_PRIVATE_KEY_PASSWORD or the .password file next to it
 //
-// Updater signing: TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD (CI secrets),
-// or locally ~/.tauri/swarmcast-updater.key + ~/.tauri/swarmcast-updater.password. Without a
-// key the app is built without updater artifacts (with a warning).
+// Updater signing only when asked: TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+// (CI: the release secrets, or a throwaway key pair for test builds) or --release-key. Nothing
+// reads ~/.tauri by itself, so a local test build can never be signed with the release key by
+// accident. Without a key the app is built without updater artifacts (with a warning).
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -136,19 +141,21 @@ if (isMac && process.platform === 'darwin') {
   }
 }
 
-// 3. Updater signing key.
+// 3. Updater signing key: given in the environment or with --release-key, never found by itself.
 const env = { ...process.env };
 let updaterArtifacts = true;
-if (!env.TAURI_SIGNING_PRIVATE_KEY) {
-  const keyFile = path.join(os.homedir(), '.tauri', 'swarmcast-updater.key');
-  const pwFile = path.join(os.homedir(), '.tauri', 'swarmcast-updater.password');
-  if (fs.existsSync(keyFile)) {
-    env.TAURI_SIGNING_PRIVATE_KEY = fs.readFileSync(keyFile, 'utf8').trim();
-    env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = fs.existsSync(pwFile) ? fs.readFileSync(pwFile, 'utf8').trim() : '';
-  } else {
-    updaterArtifacts = false;
-    console.warn('⚠ no updater signing key (TAURI_SIGNING_PRIVATE_KEY or ~/.tauri/swarmcast-updater.key): building without updater artifacts');
-  }
+const releaseKey = arg('release-key');
+if (releaseKey) {
+  if (env.TAURI_SIGNING_PRIVATE_KEY) throw new Error('give the updater key one way: TAURI_SIGNING_PRIVATE_KEY or --release-key, not both');
+  const keyFile = path.resolve(releaseKey);
+  if (!fs.existsSync(keyFile)) throw new Error(`--release-key: ${keyFile} does not exist`);
+  const pwFile = keyFile.replace(/(\.key)?$/, '.password');
+  env.TAURI_SIGNING_PRIVATE_KEY = fs.readFileSync(keyFile, 'utf8').trim();
+  if (env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD === undefined) env.TAURI_SIGNING_PRIVATE_KEY_PASSWORD = fs.existsSync(pwFile) ? fs.readFileSync(pwFile, 'utf8').trim() : '';
+  console.log(`✓ updater artifacts signed with ${keyFile}`);
+} else if (!env.TAURI_SIGNING_PRIVATE_KEY) {
+  updaterArtifacts = false;
+  console.warn('⚠ no updater signing key (TAURI_SIGNING_PRIVATE_KEY, or --release-key <file>): building without updater artifacts (*.sig)');
 }
 
 // Linux CI runners have no FUSE: let the AppImage tools (linuxdeploy) run extracted.
@@ -290,14 +297,15 @@ if (dmg) {
       if (i > 1) console.log(`::notice title=hdiutil::the .dmg succeeded on try ${i} of ${tries}`);
       break;
     }
+    // Only a busy disk is the runner's: any other failure is the build's, and fails at once.
     const busy = /Resource busy/i.test(r.out);
     const why = busy ? 'hdiutil: Resource busy' : `exit ${r.status}`;
-    if (i >= tries) {
-      console.log(`::error title=hdiutil::the .dmg failed ${tries} times (${why})`);
+    if (!busy || i >= tries) {
+      console.log(`::error title=hdiutil::the .dmg failed${busy ? ` ${tries} times` : ''} (${why})`);
       process.exit(r.status || 1);
     }
     const wait = backoff[i - 1];
-    console.log(`::warning title=hdiutil::the .dmg failed after ${Math.round((Date.now() - t0) / 1000)} s (${why}, try ${i} of ${tries}); retrying in ${wait} s`);
+    console.log(`::warning title=hdiutil::infra recovery: the .dmg failed after ${Math.round((Date.now() - t0) / 1000)} s (${why}, try ${i} of ${tries}); retrying in ${wait} s`);
     await sleep(wait * 1000);
   }
 }

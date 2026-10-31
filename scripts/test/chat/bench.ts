@@ -5,17 +5,24 @@
 //
 //   node --import tsx scripts/test/chat/bench.ts [--scenario lively,flood | all] [--seconds 30] [--out test-results/chat-bench]
 //
-// Writes <out>/<scenario>.json (every sample) and <out>/summary.md; exits 1 when a scenario fails.
+// Writes <out>/<scenario>.json (every sample), <out>/summary.md and <out>/junit.xml (one testcase
+// per scenario); exits 1 when a scenario fails.
 // Nothing here touches the user's SwarmCast data, OBS or the usual ports.
+//
+// Real time is the subject here: the calm baseline (BASELINE_SAMPLES seconds) and the run are
+// measured windows, sampled every SAMPLE_MS. Everything else waits for its event: the bots'
+// messages, and at the end the marker that proves every observer has every message (bots.ts).
 import { fork } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+import type { MessageKey } from '@swarmcast/shared';
 import { defaultConfig } from '../../../apps/server/src/core/config.js';
-import type { DirectMode } from '../../../apps/server/src/direct/direct.js';
 import { TunnelProvider } from '../../../apps/server/src/tunnel/provider.js';
-import { makeController } from '../../../apps/server/test/unit/live-helpers.js';
+import { inactiveDirect, makeController } from '../../../apps/server/test/unit/live-helpers.js';
+import { writeJunit } from '../lib/junit.mjs';
+import { LOOP_TICK_MS, OwnLoopDelay } from '../lib/loop-delay.mjs';
 import type { BotStats } from './bots.js';
 import { SCENARIOS, type Scenario } from './scenarios.js';
 
@@ -43,13 +50,31 @@ class FakeQuickTunnel extends TunnelProvider {
   }
 }
 
+const p = (xs: number[], q: number): number => {
+  if (xs.length === 0) return 0;
+  const s = [...xs].sort((a, b) => a - b);
+  return s[Math.min(s.length - 1, Math.floor(q * s.length))]!;
+};
+const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+const round = (x: number, d = 1): number => Math.round(x * 10 ** d) / 10 ** d;
+
+/** Seconds of calm, everyone connected and nobody chatting, that the run is compared with. */
+const BASELINE_SAMPLES = 5;
+/** One sample of the server per second, in the baseline and during the run. */
+const SAMPLE_MS = 1000;
+/** The system line the bench adds after the bots stopped (bots.ts, `end-marker`). */
+const END_MARKER: MessageKey = 'chat.sys.protectOff';
+
 interface Sample {
   t: number;
   phase: 'baseline' | 'run';
   /** Server process CPU, % of one core, over the last second. */
   cpu: number;
   elu: number;
+  /** Event-loop delay p99 (monitorEventLoopDelay): includes the time the process did not run. */
   loopP99Ms: number;
+  /** Event-loop delay p99 caused by the server's own work (OwnLoopDelay): what the check uses. */
+  ownDelayP99Ms: number;
   rssMb: number;
   accepted: number;
   egressKbps: number;
@@ -72,16 +97,7 @@ interface Result {
   samples: Sample[];
 }
 
-const p = (xs: number[], q: number): number => {
-  if (xs.length === 0) return 0;
-  const s = [...xs].sort((a, b) => a - b);
-  return s[Math.min(s.length - 1, Math.floor(q * s.length))]!;
-};
-const mean = (xs: number[]): number => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
-const round = (x: number, d = 1): number => Math.round(x * 10 ** d) / 10 ** d;
-
 async function runScenario(sc: Scenario): Promise<Result> {
-  const direct = { noteViewer: () => {}, snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
   const config = defaultConfig();
   config.ports = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
   config.security.requireBrowserCheck = false;
@@ -89,7 +105,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
   config.maxViewers = 1000;
   config.maxSessionsPerDevice = 3;
   config.chat = { ...config.chat, ...sc.chat, content: { ...config.chat.content, ...sc.chat?.content }, gif: { ...config.chat.gif, ...sc.chat?.gif } };
-  const { live } = makeController(direct, {
+  const { live } = makeController(inactiveDirect(), {
     config,
     tunnel: new FakeQuickTunnel(),
     // The server's own public address: none (never asks Cloudflare's trace endpoint).
@@ -111,6 +127,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
       child.once('exit', (code) => reject(new Error(`bots exited with ${code} before "${type}"`)));
     });
 
+  let own: OwnLoopDelay | undefined;
   try {
     child.send({ type: 'start', base, link, scenario: sc });
     const joined = await fromChild<{ bots: number; joinFailures: number }>('joined');
@@ -120,8 +137,10 @@ async function runScenario(sc: Scenario): Promise<Result> {
     live.chat.setProtect('off');
 
     const samples: Sample[] = [];
-    const loop = monitorEventLoopDelay({ resolution: 10 });
+    const loop = monitorEventLoopDelay({ resolution: LOOP_TICK_MS });
     loop.enable();
+    own = new OwnLoopDelay();
+    const ownDelay = own;
     let cpu = process.cpuUsage();
     let elu = performance.eventLoopUtilization();
     let lastSeq = live.chat.adminState().lastSeq;
@@ -143,6 +162,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
         cpu: round(((c.user + c.system) / 1000 / (dt * 1000)) * 100),
         elu: round(e.utilization, 3),
         loopP99Ms: round(loop.percentile(99) / 1e6),
+        ownDelayP99Ms: round(ownDelay.takeP99()),
         rssMb: round(process.memoryUsage().rss / 1048576),
         accepted: round((state.lastSeq - lastSeq) / dt),
         egressKbps: counters.egressKbps,
@@ -158,21 +178,29 @@ async function runScenario(sc: Scenario): Promise<Result> {
       loop.reset();
     };
 
-    // 5 s of calm with everyone connected: the baseline the run is compared with.
-    for (let s = 0; s < 5; s++) {
-      await new Promise((r) => setTimeout(r, 1000));
+    for (let s = 0; s < BASELINE_SAMPLES; s++) {
+      await new Promise((r) => setTimeout(r, SAMPLE_MS));
       sample('baseline');
     }
     const linkBefore = live.liveLink;
     child.send({ type: 'go' });
     const done = fromChild<{ stats: BotStats }>('done');
+    // The bots stopped and the server has handled every frame they sent: one more system line,
+    // a priority item that every observer gets after all the messages before it.
+    const marked = fromChild('drained').then(() => {
+      live.chat.system(END_MARKER);
+      child.send({ type: 'end-marker', seq: live.chat.lastSeq });
+    });
     let finished = false;
-    void done.then(() => (finished = true));
+    void done.then(
+      () => (finished = true),
+      () => (finished = true),
+    );
     while (!finished) {
-      await new Promise((r) => setTimeout(r, 1000));
+      await new Promise((r) => setTimeout(r, SAMPLE_MS));
       if (!finished) sample('run');
     }
-    const bots = (await done).stats;
+    const [{ stats: bots }] = await Promise.all([done, marked]);
     loop.disable();
 
     const base0 = samples.filter((s) => s.phase === 'baseline');
@@ -185,6 +213,8 @@ async function runScenario(sc: Scenario): Promise<Result> {
 
     const baseLoop = p(base0.map((s) => s.loopP99Ms), 0.5);
     const runLoop = p(run.map((s) => s.loopP99Ms), 0.95);
+    const baseOwn = p(base0.map((s) => s.ownDelayP99Ms), 0.5);
+    const runOwn = p(run.map((s) => s.ownDelayP99Ms), 0.95);
     const budget = Math.max(...run.map((s) => s.budgetKbps));
     const egressP95 = p(steady.map((s) => s.egressKbps), 0.95);
     const maxG = Math.max(...run.map((s) => s.globalPerS));
@@ -200,11 +230,14 @@ async function runScenario(sc: Scenario): Promise<Result> {
     const inflightRun = Math.max(...run.map((s) => s.tunnelInFlight));
 
     // Every scenario: nobody who keeps to the limits is disconnected, chat never adds a
-    // connection, the event loop stays within 20 ms (+ the 10 ms histogram resolution) of calm,
-    // and chat upload stays inside its budget (10 % slack for the one-second sampling).
+    // connection, the server's own work keeps its event loop within 20 ms of calm (OwnLoopDelay),
+    // and chat upload stays inside its budget (10 % slack for the one-second sampling). After the
+    // run, the server has handled every frame and every observer got every message (bots.ts).
     check(joined.joinFailures === 0, `${joined.joinFailures} bots could not join`);
     check(closed === 0, `the server closed ${closed} bot sockets (${JSON.stringify(bots.closedByServer)})`);
-    check(runLoop <= baseLoop + 30, `event-loop p99 ${runLoop} ms vs calm ${baseLoop} ms (limit +30)`);
+    check(runOwn <= baseOwn + 20, `event-loop delay from the server's own work: p99 ${runOwn} ms vs calm ${baseOwn} ms (limit +20; all delay incl. the time the process did not run: ${runLoop} vs ${baseLoop} ms)`);
+    check(bots.undrained === 0, `${bots.undrained} bots got no answer to a ping: the server did not handle every frame they sent`);
+    check(bots.markerMissed === 0, `${bots.markerMissed} observers never got the end marker: chat did not reach them`);
     // Join snapshots, acks and refusals are sent at once and only charged to the budget (a
     // viewer must get its hello), so scenarios that join or reconnect many viewers during the run
     // may go over it while they last: at most twice the budget there.
@@ -264,6 +297,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
       'egress p95 kbps': egressP95,
       'budget kbps': budget,
       'server CPU mean %': round(mean(run.map((s) => s.cpu))),
+      'own loop delay p99 calm/run ms': `${baseOwn}/${runOwn}`,
       'loop p99 calm/run ms': `${baseLoop}/${runLoop}`,
       'RSS growth MB': round(rssGrowth),
       'tunnel in-flight calm/run': `${inflightBase}/${inflightRun}`,
@@ -275,6 +309,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
     };
     return { scenario: sc.name, description: sc.description, passed: failures.length === 0, failures, summary, bots: { ...bots, latencies: [] }, samples };
   } finally {
+    own?.stop();
     child.kill();
     await live.stop().catch(() => {});
   }
@@ -312,6 +347,7 @@ const md = [
   ...results.flatMap((r) => (r.failures.length ? [`**${r.scenario}**:`, ...r.failures.map((f) => `- ${f}`), ''] : [])),
 ].join('\n');
 fs.writeFileSync(path.join(out, 'summary.md'), md + '\n');
+writeJunit(path.join(out, 'junit.xml'), 'chat bench', results.map((r) => ({ group: 'chat bench', name: r.scenario, status: r.passed ? 'pass' : 'fail', detail: r.failures.join('; ') })));
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, md + '\n');
 console.log(`\n${md}`);
 process.exit(results.every((r) => r.passed) ? 0 : 1);

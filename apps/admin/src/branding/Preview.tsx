@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { MessageKey, MessageParams } from '@swarmcast/shared';
 import { deriveTheme, drawQr, qrMatrix, renderBrandAbout, renderBrandHeader, renderSupportButton, type PublicBranding, type ThemeMode } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
@@ -42,7 +42,8 @@ function Interpolated({ template, name }: { template: string; name: string }) {
 function PixSheet({ pix, onClose }: { pix: NonNullable<NonNullable<PublicBranding['support']>['pix']>; onClose: () => void }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [copied, setCopied] = useState<string | null>(null);
-  useEffect(() => {
+  // Drawn before the browser paints, as PixField does: the sheet never shows an empty canvas.
+  useLayoutEffect(() => {
     const c = canvas.current;
     if (!c) return;
     const m = qrMatrix(pix.payload);

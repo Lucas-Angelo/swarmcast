@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'preact/hooks';
+import { useLayoutEffect, useRef } from 'preact/hooks';
 import { buildPixPayload, drawQr, normalizePixKey, PIX_CITY_MAX, PIX_NAME_MAX, PIX_PERSONAL_TYPES, pixAscii, qrMatrix, type PixKeyType } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
 import { Info } from '../Info.js';
@@ -18,7 +18,8 @@ export function PixField({ pix, errors, confirmed, onConfirm, onChange }: { pix:
   const key = normalizePixKey(pix.type, pix.key);
   const payload = key.ok ? buildPixPayload({ key: key.key, name: pix.name, city: pix.city }) : null;
   const code = payload?.ok ? payload.payload : null;
-  useEffect(() => {
+  // Drawn before the browser paints: never a blank canvas, or the previous code's QR, for a frame.
+  useLayoutEffect(() => {
     const c = canvas.current;
     if (!c || !code) return;
     const m = qrMatrix(code);

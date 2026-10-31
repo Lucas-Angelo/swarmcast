@@ -53,11 +53,32 @@ export function platformTag(platform = process.platform, arch = process.arch): s
 }
 
 /**
- * Where everything lives. `SWARMCAST_BIN_DIR` (MediaMTX, cloudflared) and `SWARMCAST_WEB_DIR`
- * (folder holding `viewer/` and `admin/`) override the defaults; the desktop app sets both,
- * because its resources are not next to the server executable (docs/DESKTOP.md).
+ * Data folder of a run from a source checkout (`npm run dev -w @swarmcast/server`,
+ * `node --import tsx apps/server/src/main.ts`), relative to the repository: ignored by git, so a
+ * developer or an agent working in the repository never reads or changes the real SwarmCast
+ * data of the computer by accident. The desktop app's debug runs do the same
+ * (`.cache/desktop-dev`, apps/desktop/test/dev.mjs).
  */
-export function resolvePaths(dataDir = defaultDataDir(), env: NodeJS.ProcessEnv = process.env): AppPaths {
+export const DEV_DATA_DIR = path.join('.cache', 'dev-data');
+
+/**
+ * The data folder of a run that was not given one (`--data-dir`): `SWARMCAST_DATA_DIR`, else the
+ * per-user folder for the packaged app (start scripts, desktop app), else `<repo>/.cache/dev-data`
+ * for a source checkout.
+ */
+export function runDataDir(env: NodeJS.ProcessEnv = process.env, packaged = isPackaged(), root = repoRoot()): string {
+  if (env.SWARMCAST_DATA_DIR) return path.resolve(env.SWARMCAST_DATA_DIR);
+  return packaged ? defaultDataDir(process.platform, env) : path.join(root, DEV_DATA_DIR);
+}
+
+/**
+ * Where everything lives. Without `dataDirOption` (`--data-dir`), the data folder comes from `runDataDir`.
+ * `SWARMCAST_BIN_DIR` (MediaMTX, cloudflared) and `SWARMCAST_WEB_DIR` (folder holding `viewer/`
+ * and `admin/`) override the defaults; the desktop app sets both, because its resources are not
+ * next to the server executable (docs/DESKTOP.md).
+ */
+export function resolvePaths(dataDirOption?: string, env: NodeJS.ProcessEnv = process.env): AppPaths {
+  const dataDir = dataDirOption ?? runDataDir(env);
   let installDir: string;
   let binDir: string;
   if (isPackaged()) {

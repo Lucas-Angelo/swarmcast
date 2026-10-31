@@ -37,8 +37,12 @@ export interface Scenario {
 const MAX = 1.8;
 
 export const SCENARIOS: Scenario[] = [
-  { name: 'quiet', description: '120 viewers, 0.5 msg/s overall', bots: 120, behaviour: { kind: 'chat', perBotPerS: 0.5 / 120 }, seconds: 30, uploadMbps: 10 },
-  { name: 'lively', description: '120 viewers, 3 msg/s overall', bots: 120, behaviour: { kind: 'chat', perBotPerS: 3 / 120 }, seconds: 30, uploadMbps: 10 },
+  // quiet and lively check that, far below the budget, every message reaches everyone: they get
+  // the highest budget (960 kbps). At 10 Mbps (500 kbps) lively used 78-96 % of it (p95, about
+  // 160 bytes per message per viewer), so a run whose jittered bots sent a little more reached
+  // the budget and observers missed messages, as the batcher is meant to do there.
+  { name: 'quiet', description: '120 viewers, 0.5 msg/s overall', bots: 120, behaviour: { kind: 'chat', perBotPerS: 0.5 / 120 }, seconds: 30, uploadMbps: 20 },
+  { name: 'lively', description: '120 viewers, 3 msg/s overall', bots: 120, behaviour: { kind: 'chat', perBotPerS: 3 / 120 }, seconds: 30, uploadMbps: 20 },
   { name: 'flood', description: '120 viewers, every one at the highest rate the socket allows', bots: 120, behaviour: { kind: 'chat', perBotPerS: MAX }, seconds: 30, uploadMbps: 10, chat: { slowModeS: 0 } },
   {
     name: 'raid',

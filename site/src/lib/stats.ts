@@ -26,13 +26,15 @@ export function formatCount(n: number, lang: SiteLang): string {
   return new Intl.NumberFormat(lang).format(n);
 }
 
-let pending: Promise<UsageView> | null = null;
-
-/** Same-origin fetch of stats.json, once per page. Never throws. */
-export function loadUsage(url: string, fetchImpl: typeof fetch = fetch): Promise<UsageView> {
-  pending ??= fetchImpl(url, { credentials: 'omit', cache: 'no-cache' })
-    .then((r) => (r.ok ? r.json() : null))
-    .then(parseSummary)
-    .catch(() => parseSummary(null));
-  return pending;
+/** A same-origin reader of stats.json that fetches once and gives every caller that answer. Never throws. */
+export function usageLoader(fetchImpl: typeof fetch = fetch): (url: string) => Promise<UsageView> {
+  let pending: Promise<UsageView> | null = null;
+  return (url) =>
+    (pending ??= fetchImpl(url, { credentials: 'omit', cache: 'no-cache' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(parseSummary)
+      .catch(() => parseSummary(null)));
 }
+
+/** The page's reader: the usage numbers, the download button and the download page share one fetch. */
+export const loadUsage = usageLoader();

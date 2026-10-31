@@ -1,5 +1,8 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it } from 'vitest';
+// The chat list's render rules (chat/render.ts): text through text nodes only, emotes as images,
+// unsafe text hidden, readable name colours, and the frame and DOM budgets. Frames are injected
+// (`raf`): `flush` runs the ones the list asked for, so rendering happens exactly when a test says.
+import { describe, expect, it } from 'vitest';
 import { contrastRatio, adjustNameColor, CHAT_BG_DARK, CHAT_BG_LIGHT, type ChatAuthor } from '@swarmcast/shared/chat';
 import { ChatList, DOM_MAX, RENDER_PER_FRAME } from '../../src/chat/render.js';
 import type { ChatEntry } from '../../src/chat/session.js';
@@ -8,7 +11,11 @@ import type { Emote } from '../../src/chat/emotes.js';
 const ana: ChatAuthor = { a: 'k1', n: 'Ana', c: '#ffee88', r: 'viewer' };
 const lucas: ChatAuthor = { a: 'k0', n: 'Lucas', c: '#000000', r: 'streamer' };
 const m = (s: number, text: string, author: ChatAuthor = ana): ChatEntry => ({ kind: 'msg', s, at: 1_700_000_000_000 + s, author, text });
+/** `count` messages from seq `from` on. */
+const many = (count: number, from = 1, text = (s: number) => `m${s}`): ChatEntry[] => Array.from({ length: count }, (_, i) => m(from + i, text(from + i)));
+const HOSTILE = '<img src=x onerror=alert(1)><script>x</script> javascript:alert(1) https://evil.example/a.png';
 
+/** A list in an empty page, painting names for `bg`; `visible` says whether the page is shown. */
 function setup(o: { visible?: boolean; bg?: string } = {}) {
   document.body.replaceChildren();
   const root = document.createElement('div');
@@ -26,21 +33,27 @@ function setup(o: { visible?: boolean; bg?: string } = {}) {
   const flush = (): void => {
     while (frames.length) frames.shift()!();
   };
-  return { list, root, flush, setVisible: (v: boolean) => (visible = v) };
+  /** append + the frames it asked for. */
+  const show = (entries: ChatEntry[]): void => {
+    list.append(entries);
+    flush();
+  };
+  return { list, root, flush, show, setVisible: (v: boolean) => (visible = v) };
 }
 
 const rows = (list: ChatList): HTMLLIElement[] => [...list.list.querySelectorAll<HTMLLIElement>('li')];
 
 describe('ChatList render rules', () => {
-  beforeEach(() => document.body.replaceChildren());
-
   it('builds text with text nodes only: markup stays text, never elements', () => {
-    const { list, flush } = setup();
-    const hostile = '<img src=x onerror=alert(1)><script>x</script> javascript:alert(1) https://evil.example/a.png';
-    list.append([m(1, hostile)]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show([m(1, HOSTILE)]);
+
+    // Assert
     const li = list.list.querySelector('li.msg')!;
-    expect(li.querySelector('.text')!.textContent).toBe(hostile);
+    expect(li.querySelector('.text')!.textContent).toBe(HOSTILE);
     expect(li.querySelectorAll('img, script, a').length).toBe(0);
     expect(li.querySelector('bdi.nick')!.textContent).toBe('Ana');
     expect(li.querySelector('bdi.text')!.getAttribute('dir')).toBe('auto');
@@ -48,9 +61,13 @@ describe('ChatList render rules', () => {
   });
 
   it('known :codes: become emote images, unknown ones stay text', () => {
-    const { list, flush } = setup();
-    list.append([m(1, 'oi :hi: :nope: :HI:')]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show([m(1, 'oi :hi: :nope: :HI:')]);
+
+    // Assert
     const text = list.list.querySelector('li.msg .text')!;
     const imgs = text.querySelectorAll('img.emote');
     expect(imgs.length).toBe(1);
@@ -60,15 +77,13 @@ describe('ChatList render rules', () => {
   });
 
   it('hides a text or nickname that breaks the safety invariants (a server bug never reaches the DOM)', () => {
-    const { list, flush } = setup();
-    list.append([
-      m(1, 'abc‮fdp.exe'),
-      m(2, 'e' + '́̂̃̄̅'),
-      m(3, 'ok', { ...ana, n: 'Mark‮kram' }),
-      m(4, 'a\nb'),
-      m(5, 'fine 😀'),
-    ]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show([m(1, 'abc‮fdp.exe'), m(2, 'e' + '́̂̃̄̅'), m(3, 'ok', { ...ana, n: 'Mark‮kram' }), m(4, 'a\nb'), m(5, 'fine 😀')]);
+
+    // Assert
     const r = rows(list);
     expect(r.filter((li) => li.classList.contains('hidden-msg')).length).toBe(4);
     expect(r[0]!.textContent).toBe('Message hidden');
@@ -78,41 +93,56 @@ describe('ChatList render rules', () => {
   });
 
   it('an empty streamer name shows the translated default', () => {
-    const { list, flush } = setup();
-    list.append([m(1, 'oi', { ...lucas, n: '' })]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show([m(1, 'oi', { ...lucas, n: '' })]);
+
+    // Assert
     expect(list.list.querySelector('li.from-streamer .nick')!.textContent).toBe('Streamer');
     expect(list.list.querySelectorAll('li.hidden-msg')).toHaveLength(0);
   });
 
   it('the streamer gets a badge from the role and a theme colour, never a user colour', () => {
-    const { list, flush } = setup();
-    list.append([m(1, 'oi', lucas)]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show([m(1, 'oi', lucas)]);
+
+    // Assert
     const li = list.list.querySelector('li.msg')!;
     expect(li.classList.contains('from-streamer')).toBe(true);
     expect(li.querySelector('.badge')!.textContent).toBe('Streamer');
     expect((li.querySelector('.nick') as HTMLElement).style.getPropertyValue('--nick')).toBe('');
   });
 
-  for (const bg of [CHAT_BG_LIGHT, CHAT_BG_DARK]) {
-    it(`names are painted with ≥ 4.5:1 on ${bg} through the CSSOM`, () => {
-      const { list, flush } = setup({ bg });
-      list.append(['#ffee88', '#101010', '#0090ff', 'not-a-colour'].map((c, i) => m(i + 1, 'x', { a: `k${i}`, n: `N${i}`, c, r: 'viewer' })));
-      flush();
-      for (const nick of list.list.querySelectorAll<HTMLElement>('.nick')) {
-        const c = nick.style.getPropertyValue('--nick');
-        expect(c).toMatch(/^#[0-9a-f]{6}$/);
-        expect(contrastRatio(c, bg)).toBeGreaterThanOrEqual(4.5);
-        expect(nick.getAttribute('style') ?? '').not.toContain('color:');
-      }
-    });
-  }
+  it.each([CHAT_BG_LIGHT, CHAT_BG_DARK])('names are painted with ≥ 4.5:1 on %s through the CSSOM', (bg) => {
+    // Arrange
+    const { list, show } = setup({ bg });
+    const authors = ['#ffee88', '#101010', '#0090ff', 'not-a-colour'].map((c, i): ChatAuthor => ({ a: `k${i}`, n: `N${i}`, c, r: 'viewer' }));
+
+    // Act
+    show(authors.map((a, i) => m(i + 1, 'x', a)));
+
+    // Assert
+    for (const nick of list.list.querySelectorAll<HTMLElement>('.nick')) {
+      const c = nick.style.getPropertyValue('--nick');
+      expect(c).toMatch(/^#[0-9a-f]{6}$/);
+      expect(contrastRatio(c, bg)).toBeGreaterThanOrEqual(4.5);
+      expect(nick.getAttribute('style') ?? '').not.toContain('color:');
+    }
+  });
 
   it(`renders at most ${RENDER_PER_FRAME} per frame: older ones become one "skipped" line`, () => {
-    const { list, flush } = setup();
-    list.append(Array.from({ length: 120 }, (_, i) => m(i + 1, `m${i + 1}`)));
-    flush();
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    show(many(120));
+
+    // Assert
     const r = rows(list);
     expect(r.length).toBe(RENDER_PER_FRAME);
     expect(r[0]!.classList.contains('skipped')).toBe(true);
@@ -121,63 +151,123 @@ describe('ChatList render rules', () => {
   });
 
   it(`keeps at most ${DOM_MAX} rows`, () => {
-    const { list, flush } = setup();
-    for (let b = 0; b < 8; b++) {
-      list.append(Array.from({ length: 40 }, (_, i) => m(b * 40 + i + 1, 'x')));
-      flush();
-    }
+    // Arrange
+    const { list, show } = setup();
+
+    // Act
+    for (let b = 0; b < 8; b++) show(many(40, b * 40 + 1, () => 'x'));
+
+    // Assert
     expect(rows(list).length).toBe(DOM_MAX);
     expect(rows(list).at(-1)!.dataset.seq).toBe('320');
   });
 
-  it('renders nothing while hidden; on return shows what waited (capped)', () => {
-    const { list, flush, setVisible } = setup({ visible: false });
-    list.append(Array.from({ length: 30 }, (_, i) => m(i + 1, 'x')));
-    flush();
+  it('renders nothing while hidden', () => {
+    // Arrange
+    const { list, show } = setup({ visible: false });
+
+    // Act
+    show(many(30));
+
+    // Assert
     expect(list.list.querySelectorAll('li.msg').length).toBe(0);
+  });
+
+  it('on return shows what waited', () => {
+    // Arrange
+    const { list, show, flush, setVisible } = setup({ visible: false });
+    show(many(30));
+
+    // Act
     setVisible(true);
     list.resume();
     flush();
+
+    // Assert
     expect(list.list.querySelectorAll('li.msg').length).toBe(30);
   });
 
-  it('own message: "sending…", then replaced by the server copy; a reject marks it "not sent"', () => {
-    const { list, flush } = setup();
+  it('own message: "sending…" at once', () => {
+    // Arrange
+    const { list } = setup();
+
+    // Act
     list.addPending(11, 'oi', ana);
+
+    // Assert
     expect(list.list.querySelector('li.pending .state')!.textContent).toBe('sending…');
+  });
+
+  it('own message: the server copy replaces the "sending…" row', () => {
+    // Arrange
+    const { list, show } = setup();
+    list.addPending(11, 'oi', ana);
+
+    // Act
     list.ack(11, 5);
-    list.append([m(5, 'oi')]);
-    flush();
+    show([m(5, 'oi')]);
+
+    // Assert
     expect(list.list.querySelectorAll('li.pending').length).toBe(0);
     expect(list.list.querySelectorAll('li.msg').length).toBe(1);
+  });
+
+  it('own message: a reject marks it "not sent" and keeps its text', () => {
+    // Arrange
+    const { list } = setup();
     list.addPending(12, 'feio', ana);
+
+    // Act
     list.reject(12);
+
+    // Assert
     expect(list.list.querySelector('li.failed .state')!.textContent).toBe('not sent');
     expect(list.list.querySelector('li.failed .text')!.textContent).toBe('feio');
   });
 
-  it('removes deleted messages and clears up to a seq', () => {
-    const { list, flush } = setup();
-    list.append([m(1, 'a'), m(2, 'b'), m(3, 'c')]);
-    flush();
+  it('removes deleted messages', () => {
+    // Arrange
+    const { list, show } = setup();
+    show([m(1, 'a'), m(2, 'b'), m(3, 'c')]);
+
+    // Act
     list.remove([2]);
+
+    // Assert
     expect(rows(list).map((r) => r.dataset.seq)).toEqual(['1', '3']);
+  });
+
+  it('clears up to a seq', () => {
+    // Arrange
+    const { list, show } = setup();
+    show([m(1, 'a'), m(2, 'b'), m(3, 'c')]);
+
+    // Act
     list.clearUpTo(3);
+
+    // Assert
     expect(list.list.querySelectorAll('li.msg').length).toBe(0);
   });
 
   it('a roster change re-colours that author only', () => {
-    const { list, flush } = setup();
-    list.append([m(1, 'a'), m(2, 'b', { a: 'k9', n: 'Rafa', c: '#46a758', r: 'viewer' })]);
-    flush();
+    // Arrange
+    const { list, show } = setup();
+    show([m(1, 'a'), m(2, 'b', { a: 'k9', n: 'Rafa', c: '#46a758', r: 'viewer' })]);
+
+    // Act
     list.recolor({ ...ana, c: '#0090ff' });
+
+    // Assert
     const nicks = [...list.list.querySelectorAll<HTMLElement>('.nick')];
     expect(nicks[0]!.dataset.c).toBe('#0090ff');
     expect(nicks[1]!.dataset.c).toBe('#46a758');
   });
 
   it('the list is a log region with a separate polite status for summaries', () => {
+    // Act
     const { list } = setup();
+
+    // Assert
     expect(list.list.getAttribute('role')).toBe('log');
     expect(list.list.getAttribute('aria-live')).toBe('off');
     expect(list.live.getAttribute('aria-live')).toBe('polite');

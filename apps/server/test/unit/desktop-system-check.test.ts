@@ -1,8 +1,7 @@
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { parseSystemCheck, systemCheckSchema } from '../../src/admin/system-check-routes.js';
 import {
   buildSystemCheck,
@@ -18,10 +17,13 @@ import {
   viewerEstimate,
   windowsOsInfo,
   writeSystemCheck,
+  type Platform,
   type SystemFacts,
 } from '../../src/desktop/system-check.js';
+import { tempDir } from './helpers.js';
 
-const tmp = (): string => fs.mkdtempSync(path.join(os.tmpdir(), 'sc-dsc-'));
+// The desktop app's first-run system check: the same checks, values, thresholds and file
+// (system-check.json) as the start scripts, from facts gathered with injected probes.
 
 const facts = (over: Partial<SystemFacts> = {}): SystemFacts => ({
   platform: 'darwin',
@@ -38,52 +40,125 @@ const facts = (over: Partial<SystemFacts> = {}): SystemFacts => ({
   ...over,
 });
 
+/** A TCP server on a port the OS picks (127.0.0.1), closed when the test finishes. */
+async function listening(): Promise<number> {
+  const srv = net.createServer();
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', () => r()));
+  onTestFinished(() => new Promise<void>((r) => srv.close(() => r())));
+  return (srv.address() as net.AddressInfo).port;
+}
+
 describe('operating system (same rules as the start scripts)', () => {
-  it('Linux: Ubuntu 22.04+ / Debian 12+ ok, others warn with the scripts\' notes', () => {
-    const rel = parseOsRelease('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\n');
-    expect(rel.PRETTY_NAME).toBe('Ubuntu 24.04.1 LTS');
-    expect(linuxOsInfo(rel, '6.8.0')).toEqual({ desc: 'Ubuntu 24.04.1 LTS', status: 'ok', note: '' });
-    expect(linuxOsInfo({ ...rel, VERSION_ID: '20.04' }, '5.4')).toMatchObject({ status: 'warn', note: 'Ubuntu 22.04 or newer is recommended' });
-    expect(linuxOsInfo({ ID: 'debian', VERSION_ID: '12', PRETTY_NAME: 'Debian GNU/Linux 12 (bookworm)' }, '6.1')).toMatchObject({ status: 'ok' });
-    expect(linuxOsInfo({ ID: 'debian', VERSION_ID: '11' }, '5.10')).toMatchObject({ status: 'warn', note: 'Debian 12 or newer is recommended' });
-    expect(linuxOsInfo({ ID: 'linuxmint', ID_LIKE: 'ubuntu debian', PRETTY_NAME: 'Linux Mint 22' }, '6.8').note).toMatch(/^based on Ubuntu\/Debian but not tested/);
-    expect(linuxOsInfo({ ID: 'fedora' }, '6.9')).toEqual({ desc: 'Linux 6.9', status: 'warn', note: 'not a tested distribution (tested: Ubuntu 22.04/24.04, Debian 12); it will probably work' });
-    expect(linuxOsInfo(null, '6.9').desc).toBe('Linux 6.9');
+  const UBUNTU = parseOsRelease('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\n');
+
+  it('reads /etc/os-release', () => {
+    // Assert
+    expect(UBUNTU.PRETTY_NAME).toBe('Ubuntu 24.04.1 LTS');
   });
 
-  it('macOS 12+ ok, older fails (below the minimum), unreadable warns', () => {
-    expect(macOsInfo('15.1\n')).toEqual({ desc: 'macOS 15.1', status: 'ok', note: '' });
-    expect(macOsInfo('11.7')).toEqual({ desc: 'macOS 11.7', status: 'bad', note: 'macOS 12 or newer is required' });
-    expect(macOsInfo('')).toMatchObject({ desc: 'macOS unknown', status: 'warn' });
+  it('Linux: Ubuntu 22.04+ and Debian 12+ are ok', () => {
+    // Act
+    const ubuntu = linuxOsInfo(UBUNTU, '6.8.0');
+    const debian = linuxOsInfo({ ID: 'debian', VERSION_ID: '12', PRETTY_NAME: 'Debian GNU/Linux 12 (bookworm)' }, '6.1');
+    // Assert
+    expect(ubuntu).toEqual({ desc: 'Ubuntu 24.04.1 LTS', status: 'ok', note: '' });
+    expect(debian).toMatchObject({ status: 'ok' });
   });
 
-  it('Windows: caption + build; Windows 11 by build number; Server warns', () => {
-    expect(windowsOsInfo('10.0.22631', 'Windows 10 Pro')).toEqual({ desc: 'Windows 11 Pro (build 22631)', status: 'ok', note: '' });
-    expect(windowsOsInfo('10.0.19045', 'Windows 10 Home')).toEqual({ desc: 'Windows 10 Home (build 19045)', status: 'ok', note: '' });
-    expect(windowsOsInfo('10.0.20348', 'Windows Server 2022 Datacenter')).toMatchObject({ status: 'warn', note: expect.stringMatching(/Windows Server is not a tested edition/) });
-    expect(windowsOsInfo('6.3.9600', 'Windows 8.1')).toMatchObject({ status: 'bad', note: 'Windows 10 or 11 is required' });
+  it.each([
+    ['Ubuntu 20.04', { ...UBUNTU, VERSION_ID: '20.04' }, '5.4', expect.objectContaining({ status: 'warn', note: 'Ubuntu 22.04 or newer is recommended' })],
+    ['Debian 11', { ID: 'debian', VERSION_ID: '11' }, '5.10', expect.objectContaining({ status: 'warn', note: 'Debian 12 or newer is recommended' })],
+    ['Fedora', { ID: 'fedora' }, '6.9', { desc: 'Linux 6.9', status: 'warn', note: 'not a tested distribution (tested: Ubuntu 22.04/24.04, Debian 12); it will probably work' }],
+  ])("Linux: %s warns with the scripts' note", (_what, rel, kernel, info) => {
+    // Act
+    const i = linuxOsInfo(rel, kernel);
+    // Assert
+    expect(i).toEqual(info);
+  });
+
+  it('Linux: a derivative of Ubuntu/Debian warns as such; no os-release falls back to the kernel', () => {
+    // Act
+    const mint = linuxOsInfo({ ID: 'linuxmint', ID_LIKE: 'ubuntu debian', PRETTY_NAME: 'Linux Mint 22' }, '6.8');
+    const unknown = linuxOsInfo(null, '6.9');
+    // Assert
+    expect(mint.note).toMatch(/^based on Ubuntu\/Debian but not tested/);
+    expect(unknown.desc).toBe('Linux 6.9');
+  });
+
+  it.each([
+    ['15.1\n', { desc: 'macOS 15.1', status: 'ok', note: '' }],
+    ['11.7', { desc: 'macOS 11.7', status: 'bad', note: 'macOS 12 or newer is required' }],
+    ['', expect.objectContaining({ desc: 'macOS unknown', status: 'warn' })],
+  ])('macOS 12+ ok, older fails (below the minimum), unreadable warns: %j', (version, info) => {
+    // Act
+    const i = macOsInfo(version);
+    // Assert
+    expect(i).toEqual(info);
+  });
+
+  it.each([
+    ['10.0.22631', 'Windows 10 Pro', { desc: 'Windows 11 Pro (build 22631)', status: 'ok', note: '' }],
+    ['10.0.19045', 'Windows 10 Home', { desc: 'Windows 10 Home (build 19045)', status: 'ok', note: '' }],
+    ['10.0.20348', 'Windows Server 2022 Datacenter', expect.objectContaining({ status: 'warn', note: expect.stringMatching(/Windows Server is not a tested edition/) })],
+    ['6.3.9600', 'Windows 8.1', expect.objectContaining({ status: 'bad', note: 'Windows 10 or 11 is required' })],
+  ])('Windows %s %s: caption + build, Windows 11 by build number, Server warns', (release, caption, info) => {
+    // Act
+    const i = windowsOsInfo(release, caption);
+    // Assert
+    expect(i).toEqual(info);
   });
 });
 
 describe('value texts', () => {
-  it('formats like the scripts', () => {
-    expect(formatRam(7982)).toBe('7.8 GB');
-    expect(formatRam(16384)).toBe('16.0 GB');
-    expect(formatDisk(100 * 1024 ** 3, 'linux')).toBe('100.0 GB');
-    expect(formatDisk(300 * 1024 ** 2 + 5000, 'darwin')).toBe('300 MB');
-    expect(formatDisk(1234.5 * 1024 ** 3, 'win32')).toBe('1,234.5 GB');
-    expect(formatDisk(300.6 * 1024 ** 2, 'win32')).toBe('301 MB');
-    expect(formatMbps(23, 'linux')).toBe('23.0');
-    expect(formatMbps(23, 'win32')).toBe('23');
-    expect(formatMbps(23.44, 'win32')).toBe('23.4');
-    expect(viewerEstimate(40)).toBe(3);
-    expect(viewerEstimate(5)).toBe(0);
+  it.each([
+    [7982, '7.8 GB'],
+    [16384, '16.0 GB'],
+  ])('formats %d MB of RAM like the scripts: %s', (mb, text) => {
+    // Act
+    const t = formatRam(mb);
+    // Assert
+    expect(t).toBe(text);
+  });
+
+  it.each<[number, Platform, string]>([
+    [100 * 1024 ** 3, 'linux', '100.0 GB'],
+    [300 * 1024 ** 2 + 5000, 'darwin', '300 MB'],
+    [1234.5 * 1024 ** 3, 'win32', '1,234.5 GB'],
+    [300.6 * 1024 ** 2, 'win32', '301 MB'],
+  ])('formats %d bytes of disk on %s like the scripts: %s', (bytes, platform, text) => {
+    // Act
+    const t = formatDisk(bytes, platform);
+    // Assert
+    expect(t).toBe(text);
+  });
+
+  it.each<[number, Platform, string]>([
+    [23, 'linux', '23.0'],
+    [23, 'win32', '23'],
+    [23.44, 'win32', '23.4'],
+  ])('formats %d Mbps on %s like the scripts: %s', (mbps, platform, text) => {
+    // Act
+    const t = formatMbps(mbps, platform);
+    // Assert
+    expect(t).toBe(text);
+  });
+
+  it.each([
+    [40, 3],
+    [5, 0],
+  ])('estimates %d Mbps of upload as %d viewers', (mbps, viewers) => {
+    // Act
+    const n = viewerEstimate(mbps);
+    // Assert
+    expect(n).toBe(viewers);
   });
 });
 
 describe('buildSystemCheck', () => {
-  it('writes the scripts\' ids, order, values and thresholds, plus appVersion/source', () => {
+  it("writes the scripts' ids, order, values and thresholds, plus appVersion/source", () => {
+    // Act
     const c = buildSystemCheck(facts(), new Date('2026-10-26T12:00:00.123Z'));
+    // Assert
     expect(systemCheckSchema.safeParse(c).success).toBe(true);
     expect(c).toMatchObject({ version: 1, at: '2026-10-26T12:00:00Z', os: 'macOS 15.1', arch: 'arm64', uploadMbps: 40.2, downloadMbps: 300, viewerEstimate: 3, belowMinimum: [], appVersion: '0.2.0', source: 'desktop' });
     expect(c.results).toEqual([
@@ -98,11 +173,19 @@ describe('buildSystemCheck', () => {
       { id: 'github', status: 'ok', value: 'reachable', min: '', recommended: '', detail: '' },
       { id: 'release', status: 'ok', value: 'v0.2.0 (desktop app)', min: '', recommended: '', detail: '' },
     ]);
-    // The panel's parser keeps the new fields.
-    expect(parseSystemCheck(JSON.stringify(c))?.appVersion).toBe('0.2.0');
   });
 
-  it('marks what is below the minimum (fail) and warns between minimum and recommended', () => {
+  it("the panel's parser keeps the desktop fields", () => {
+    // Arrange
+    const c = buildSystemCheck(facts(), new Date('2026-10-26T12:00:00.123Z'));
+    // Act
+    const parsed = parseSystemCheck(JSON.stringify(c));
+    // Assert
+    expect(parsed?.appVersion).toBe('0.2.0');
+  });
+
+  it('marks what is below the minimum (fail)', () => {
+    // Act
     const c = buildSystemCheck(
       facts({
         platform: 'win32',
@@ -117,6 +200,7 @@ describe('buildSystemCheck', () => {
         githubOk: false,
       }),
     );
+    // Assert
     expect(c.belowMinimum).toEqual(['os', 'ram', 'cpu', 'upload', 'disk']);
     const by = Object.fromEntries(c.results.map((r) => [r.id, r]));
     expect(by.os).toMatchObject({ status: 'fail', value: 'Windows 8.1 (build 9600)', min: 'Windows 10', detail: 'Windows 10 or 11 is required' });
@@ -128,17 +212,30 @@ describe('buildSystemCheck', () => {
     expect(by.obs).toMatchObject({ status: 'warn', value: 'not found', detail: 'Install OBS Studio from https://obsproject.com to stream.' });
     expect(by.github).toMatchObject({ status: 'warn', value: 'unreachable (not needed)' });
     expect(c.viewerEstimate).toBe(0);
-    expect(buildSystemCheck(facts({ ramMB: 6000, cores: 2 })).results.filter((r) => r.status === 'warn').map((r) => r.id)).toEqual(['ram', 'cpu', 'upload']);
   });
 
-  it('speed test failed or skipped', () => {
+  it('warns between the minimum and the recommended values', () => {
+    // Act
+    const c = buildSystemCheck(facts({ ramMB: 6000, cores: 2 }));
+    // Assert
+    expect(c.results.filter((r) => r.status === 'warn').map((r) => r.id)).toEqual(['ram', 'cpu', 'upload']);
+  });
+
+  it('speed test failed', () => {
+    // Act
     const failed = buildSystemCheck(facts({ speed: 'failed' }));
+    // Assert
     expect(failed.results.filter((r) => ['upload', 'download'].includes(r.id))).toEqual([
       { id: 'upload', status: 'warn', value: 'speed test failed', min: '10 Mbps', recommended: '50 Mbps', detail: '' },
       { id: 'download', status: 'warn', value: 'speed test failed', min: '', recommended: '', detail: '' },
     ]);
     expect(failed).toMatchObject({ uploadMbps: null, downloadMbps: null, viewerEstimate: null });
+  });
+
+  it('speed test skipped', () => {
+    // Act
     const skipped = buildSystemCheck(facts({ speed: 'skipped' }));
+    // Assert
     expect(skipped.results.filter((r) => ['upload', 'download'].includes(r.id)).map((r) => [r.status, r.value])).toEqual([
       ['skipped', 'not measured (skipped)'],
       ['skipped', 'not measured (skipped)'],
@@ -147,57 +244,74 @@ describe('buildSystemCheck', () => {
 });
 
 describe('when the desktop app runs the check', () => {
-  it('runs when the file is missing, invalid, from a start script or from another version', () => {
-    const file = path.join(tmp(), 'system-check.json');
-    expect(needsSystemCheck(file, '0.2.0')).toBe(true);
-    fs.writeFileSync(file, '{broken');
-    expect(needsSystemCheck(file, '0.2.0')).toBe(true);
-    const c = buildSystemCheck(facts());
-    const { appVersion: _v, source: _s, ...script } = c;
-    fs.writeFileSync(file, JSON.stringify(script));
-    expect(needsSystemCheck(file, '0.2.0')).toBe(true);
-    writeSystemCheck(file, c);
-    expect(needsSystemCheck(file, '0.2.0')).toBe(false);
-    expect(needsSystemCheck(file, '0.3.0')).toBe(true);
+  const file = (): string => path.join(tempDir('sc-dsc-'), 'system-check.json');
+
+  it('runs when the file is missing or invalid', () => {
+    // Arrange
+    const missing = file();
+    const broken = file();
+    fs.writeFileSync(broken, '{broken');
+    // Act
+    const needs = [needsSystemCheck(missing, '0.2.0'), needsSystemCheck(broken, '0.2.0')];
+    // Assert
+    expect(needs).toEqual([true, true]);
+  });
+
+  it('runs when the file comes from a start script (no appVersion/source)', () => {
+    // Arrange
+    const f = file();
+    const { appVersion: _v, source: _s, ...script } = buildSystemCheck(facts());
+    fs.writeFileSync(f, JSON.stringify(script));
+    // Act
+    const needs = needsSystemCheck(f, '0.2.0');
+    // Assert
+    expect(needs).toBe(true);
+  });
+
+  it('skips a check of this version, runs again for another one', () => {
+    // Arrange
+    const f = file();
+    writeSystemCheck(f, buildSystemCheck(facts()));
+    // Act
+    const same = needsSystemCheck(f, '0.2.0');
+    const next = needsSystemCheck(f, '0.3.0');
+    // Assert
+    expect(same).toBe(false);
+    expect(next).toBe(true);
   });
 });
 
 describe('gatherSystemFacts', () => {
   it('ports SwarmCast itself uses count as free; others are reported', async () => {
-    const other = net.createServer();
-    await new Promise<void>((r) => other.listen(0, '127.0.0.1', () => r()));
-    const busy = (other.address() as net.AddressInfo).port;
-    const ours = net.createServer();
-    await new Promise<void>((r) => ours.listen(0, '127.0.0.1', () => r()));
-    const own = (ours.address() as net.AddressInfo).port;
-    try {
-      const f = await gatherSystemFacts({
-        dataDir: tmp(),
-        appVersion: '0.2.0',
-        ports: [busy, own],
-        ownPorts: () => [own],
-        speed: async () => 'skipped',
-        fetchImpl: (async () => new Response(null, { status: 301 })) as typeof fetch,
-        exec: async () => ({ ok: false, stdout: '' }),
-        env: { PATH: '' },
-        home: tmp(),
-        platform: 'linux',
-      });
-      expect(f.busyPorts.map((p) => p.port)).toContain(busy);
-      expect(f.busyPorts.map((p) => p.port)).not.toContain(own);
-      expect(f).toMatchObject({ platform: 'linux', githubOk: true, speed: 'skipped', obs: null, appVersion: '0.2.0' });
-      expect(f.cores).toBeGreaterThan(0);
-      expect(f.ramMB).toBeGreaterThan(0);
-      expect(f.diskBytes).toBeGreaterThan(0);
-    } finally {
-      other.close();
-      ours.close();
-    }
+    // Arrange
+    const busy = await listening();
+    const own = await listening();
+    // Act
+    const f = await gatherSystemFacts({
+      dataDir: tempDir('sc-dsc-'),
+      appVersion: '0.2.0',
+      ports: [busy, own],
+      ownPorts: () => [own],
+      speed: async () => 'skipped',
+      fetchImpl: (async () => new Response(null, { status: 301 })) as typeof fetch,
+      exec: async () => ({ ok: false, stdout: '' }),
+      env: { PATH: '' },
+      home: tempDir('sc-home-'),
+      platform: 'linux',
+    });
+    // Assert
+    expect(f.busyPorts.map((p) => p.port)).toContain(busy);
+    expect(f.busyPorts.map((p) => p.port)).not.toContain(own);
+    expect(f).toMatchObject({ platform: 'linux', githubOk: true, speed: 'skipped', obs: null, appVersion: '0.2.0' });
+    expect(f.cores).toBeGreaterThan(0);
+    expect(f.ramMB).toBeGreaterThan(0);
+    expect(f.diskBytes).toBeGreaterThan(0);
   });
 
   it('a failed speed test and an unreachable github.com', async () => {
+    // Act
     const f = await gatherSystemFacts({
-      dataDir: tmp(),
+      dataDir: tempDir('sc-dsc-'),
       appVersion: '0.2.0',
       ports: [],
       ownPorts: () => [],
@@ -207,37 +321,77 @@ describe('gatherSystemFacts', () => {
       }) as typeof fetch,
       exec: async () => ({ ok: true, stdout: '15.1' }),
       platform: 'darwin',
-      home: tmp(),
+      home: tempDir('sc-home-'),
     });
+    // Assert
     expect(f).toMatchObject({ speed: 'failed', githubOk: false, os: { desc: 'macOS 15.1', status: 'ok' } });
   });
 });
 
 describe('findObs (same places as the scripts)', () => {
-  it('macOS: /Applications or ~/Applications', async () => {
-    const home = tmp();
-    const r = await findObs('darwin', { home });
-    expect(r === null || r === '/Applications/OBS.app').toBe(true);
-    if (r === null) {
-      fs.mkdirSync(path.join(home, 'Applications', 'OBS.app'), { recursive: true });
-      expect(await findObs('darwin', { home })).toBe(path.join(home, 'Applications', 'OBS.app'));
-    }
+  it('macOS: not found in either Applications folder', async () => {
+    // Act
+    const r = await findObs('darwin', { home: tempDir('sc-home-'), applications: tempDir('sc-apps-') });
+    // Assert
+    expect(r).toBeNull();
   });
 
-  it('Linux: obs on PATH, else flatpak, else snap', async () => {
-    const bin = tmp();
-    const none = await findObs('linux', { env: { PATH: bin }, exec: async () => ({ ok: true, stdout: '' }) });
-    expect(none).toBeNull();
+  it('macOS: ~/Applications/OBS.app', async () => {
+    // Arrange
+    const home = tempDir('sc-home-');
+    fs.mkdirSync(path.join(home, 'Applications', 'OBS.app'), { recursive: true });
+    // Act
+    const r = await findObs('darwin', { home, applications: tempDir('sc-apps-') });
+    // Assert
+    expect(r).toBe(path.join(home, 'Applications', 'OBS.app'));
+  });
+
+  it('macOS: the system Applications folder comes first', async () => {
+    // Arrange
+    const home = tempDir('sc-home-');
+    const applications = tempDir('sc-apps-');
+    fs.mkdirSync(path.join(home, 'Applications', 'OBS.app'), { recursive: true });
+    fs.mkdirSync(path.join(applications, 'OBS.app'));
+    // Act
+    const r = await findObs('darwin', { home, applications });
+    // Assert
+    expect(r).toBe(path.join(applications, 'OBS.app'));
+  });
+
+  it('Linux: none on PATH, no flatpak, no snap', async () => {
+    // Act
+    const r = await findObs('linux', { env: { PATH: tempDir('sc-bin-') }, exec: async () => ({ ok: true, stdout: '' }) });
+    // Assert
+    expect(r).toBeNull();
+  });
+
+  it('Linux: the flatpak, asked with flatpak info', async () => {
+    // Arrange
+    const bin = tempDir('sc-bin-');
     fs.writeFileSync(path.join(bin, 'flatpak'), '#!/bin/sh\n', { mode: 0o755 });
     const calls: string[] = [];
-    expect(await findObs('linux', { env: { PATH: bin }, exec: async (c, a) => (calls.push([c, ...a].join(' ')), { ok: true, stdout: '' }) })).toBe('flatpak com.obsproject.Studio');
+    // Act
+    const r = await findObs('linux', { env: { PATH: bin }, exec: async (c, a) => (calls.push([c, ...a].join(' ')), { ok: true, stdout: '' }) });
+    // Assert
+    expect(r).toBe('flatpak com.obsproject.Studio');
     expect(calls).toEqual(['flatpak info com.obsproject.Studio']);
-    fs.writeFileSync(path.join(bin, 'obs'), '#!/bin/sh\n', { mode: 0o755 });
-    expect(await findObs('linux', { env: { PATH: bin } })).toBe(path.join(bin, 'obs'));
   });
 
-  it('Windows: registry keys via reg.exe query', async () => {
+  it('Linux: obs on PATH comes first', async () => {
+    // Arrange
+    const bin = tempDir('sc-bin-');
+    fs.writeFileSync(path.join(bin, 'flatpak'), '#!/bin/sh\n', { mode: 0o755 });
+    fs.writeFileSync(path.join(bin, 'obs'), '#!/bin/sh\n', { mode: 0o755 });
+    // Act
+    const r = await findObs('linux', { env: { PATH: bin } });
+    // Assert
+    expect(r).toBe(path.join(bin, 'obs'));
+  });
+
+  it('Windows: registry keys via reg.exe query, in the scripts\' order', async () => {
+    // Arrange
     const queried: string[] = [];
+    // Act
     const r = await findObs('win32', {
       env: {},
       exec: async (c, a) => {
@@ -245,8 +399,15 @@ describe('findObs (same places as the scripts)', () => {
         return { ok: c === 'reg.exe' && a[1] === 'HKCU\\SOFTWARE\\OBS Studio', stdout: '' };
       },
     });
+    // Assert
     expect(r).toBe('HKCU\\SOFTWARE\\OBS Studio');
     expect(queried.slice(0, 3)).toEqual(['HKLM\\SOFTWARE\\OBS Studio', 'HKLM\\SOFTWARE\\WOW6432Node\\OBS Studio', 'HKCU\\SOFTWARE\\OBS Studio']);
-    expect(await findObs('win32', { env: {}, exec: async () => ({ ok: false, stdout: '' }) })).toBeNull();
+  });
+
+  it('Windows: nothing in the registry and no Program Files folder', async () => {
+    // Act
+    const r = await findObs('win32', { env: {}, exec: async () => ({ ok: false, stdout: '' }) });
+    // Assert
+    expect(r).toBeNull();
   });
 });

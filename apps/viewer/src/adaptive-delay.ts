@@ -12,7 +12,7 @@ import type Hls from 'hls.js';
 import type { CoreEventMap } from 'p2p-media-loader-core';
 import { DelayController, type DelayProfileId, type FragmentSample } from './latency-controller.js';
 
-type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config'> & { targetLatency: number | null };
+type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config' | 'latestLevelDetails'> & { targetLatency: number | null };
 interface EngineLike {
   addEventListener<K extends keyof CoreEventMap>(eventName: K, listener: CoreEventMap[K]): void;
 }
@@ -60,6 +60,13 @@ export function delayTestFlags(search: string, allowed: boolean): { speed: numbe
 /** One-second latency samples whose median is the delay everyone uses. */
 const LATENCY_SAMPLES = 5;
 
+/**
+ * A `waiting` with at least this much media buffered ahead is not the network: the browser's
+ * decoder or renderer fell behind (a busy machine). Holding playback there, and raising the
+ * delay, would only stretch its hiccup into a freeze of several seconds.
+ */
+export const STARVED_BELOW_S = 1;
+
 function forwardBuffer(video: HTMLVideoElement): number {
   const b = video.buffered;
   const t = video.currentTime;
@@ -105,6 +112,17 @@ export function attachAdaptiveDelay(
     if (recent.length === 0) return rawLatency();
     const sorted = [...recent].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length / 2)]!;
+  };
+  // The gap from the end of the buffer to the live edge, both read now (hls.latency is the same
+  // live edge estimate minus currentTime, as of the last timeupdate). Not latency() minus the
+  // buffer: that median trails the playhead by a few seconds, so catching up at 1.5× (the E2E
+  // rate) or two segments arriving in one playlist refresh read as a gap that grows (WebKit,
+  // macOS runner: a trend of +0.2 s/s on a 30 Mbps link, called unstable). The controller
+  // filters this reading itself.
+  const liveLag = (): number | null => {
+    const d = hls.latestLevelDetails;
+    if (!d?.live) return null;
+    return d.edge + d.age - (video.currentTime + forwardBuffer(video));
   };
 
   // p2p-media-loader knows where each segment came from and how long the real download took
@@ -171,9 +189,11 @@ export function attachAdaptiveDelay(
   });
   video.addEventListener('waiting', () => {
     const now = clock();
-    // Not a network stall: before the first frame, while seeking (Go live, profile switch), or
-    // while paused / already held.
+    // Not a network stall: before the first frame, while seeking (Go live, profile switch), while
+    // paused / already held, or with media still buffered ahead (Chrome on the 3-vCPU macOS CI
+    // runners froze about 3 s every few minutes of playback with ~20 s buffered: this hold).
     if (!started || holding || stallAt !== null || video.paused || video.seeking || now - lastSeekAt < 1.5) return;
+    if (forwardBuffer(video) >= STARVED_BELOW_S) return;
     stallAt = now;
     counters.stalls += 1;
     const d = ctl.onStallStart(now, latency());
@@ -216,6 +236,7 @@ export function attachAdaptiveDelay(
       now: clock(),
       latency: latency(),
       forwardBuffer: forwardBuffer(video),
+      liveLag: liveLag(),
       bandwidthEstimate: hls.bandwidthEstimate,
       levelBitrate: level?.bitrate ?? 0,
       playing: started && !video.paused && !holding && stallAt === null && !video.seeking && video.readyState >= 3,

@@ -11,7 +11,12 @@ name: e2e
 # adaptive-delay moves over (about 350 s and 270 s). Playwright matches --grep against
 # "<project> <file> <describe> <title> <tags>", so a file name can be part of the pattern.
 # Each group runs every project (Google Chrome, Firefox, WebKit) with workers: 1
-# (playwright.config.ts). Windows browsers are covered by the Windows suites (_windows.yml).
+# (playwright.config.ts). Windows: Google Chrome, Microsoft Edge and Firefox run the viewer chat
+# UI here (chat-windows) and the app itself in the Windows suites (_windows.yml).
+#
+# No test is retried (retries: 0 in the configs); --fail-on-flaky-tests fails the run anyway if a
+# config ever retries and a test passes only on its retry. Each Playwright run's results go to
+# the job summary (.github/scripts/test-summary.mjs).
 on:
   workflow_call:
 
@@ -32,7 +37,7 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
         group: [ui, media]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 17
+    timeout-minutes: 25
     defaults:
       run:
         shell: bash
@@ -66,6 +71,8 @@ jobs:
         if: runner.os == 'Linux'
         id: browsers
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true
+        timeout-minutes: 3
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
@@ -81,28 +88,64 @@ jobs:
         timeout-minutes: 8
         if: runner.os == 'macOS'
         run: npx playwright install firefox webkit
+      # 13 minutes: the slowest group took 9.8 (media, macOS). A step that runs out fails, so the
+      # report and the logs are still uploaded (a job that runs out is cancelled and uploads nothing).
       - name: Playwright, ${{ matrix.group }} group
+        timeout-minutes: 13
         env:
           GROUP: ${{ matrix.group }}
+          # Server-side coverage: every Node process writes its V8 coverage here when it exits.
+          NODE_V8_COVERAGE: ${{ runner.temp }}/v8-e2e
         run: |
           if [ "$GROUP" = media ]; then
             grep=(--grep @media --grep-invert "$MEDIA_WITH_UI")
           else
             grep=(--grep "^(?!.*@media)|$MEDIA_WITH_UI")
           fi
-          npx playwright test "${grep[@]}"
+          npx playwright test "${grep[@]}" --fail-on-flaky-tests
+      # The e2e server's coverage (scripts/coverage/e2e-server.mjs keeps that process's files, c8
+      # maps them onto the sources), its table in the job summary and this group's floors
+      # (scripts/coverage/floors.json). Only after a passing run: a failed one covers less.
+      - name: e2e server coverage
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          node scripts/coverage/e2e-server.mjs "$RUNNER_TEMP/v8-e2e"
+          node scripts/coverage/report.mjs e2e-server --key "$GROUP" --check
+      - name: Upload the e2e server coverage
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-e2e-server-${{ matrix.os }}-${{ matrix.group }}
+          path: coverage/e2e-server/
+          if-no-files-found: ignore
+          retention-days: 14
       # The viewer chat UI against a mock hub (apps/viewer/test/chat: the built watch page, no
       # server, no network): every engine plus an iPhone in a few seconds, so it rides along with
       # the ui group instead of a job of its own. The same flows against the real server are in
       # apps/server/test/e2e/chat.spec.ts.
       - name: Playwright, viewer chat UI (mock hub)
         if: ${{ !cancelled() && matrix.group == 'ui' }}
-        run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts
-      # Kept for every run that was not cancelled, so a test that passed on retry (flaky) still
-      # leaves its trace: the HTML report, results.json, traces, e2e-server.log, fake-obs.log.
+        timeout-minutes: 5
+        run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --fail-on-flaky-tests
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        env:
+          TITLE: Playwright, ${{ matrix.group }} group (${{ matrix.os }})
+          CHAT: ${{ matrix.group == 'ui' && format('Viewer chat UI, mock hub ({0})', matrix.os) || '' }}
+        run: |
+          node .github/scripts/test-summary.mjs --title "$TITLE" --playwright test-results/results.json
+          if [ -n "$CHAT" ]; then node .github/scripts/test-summary.mjs --title "$CHAT" --playwright test-results/chat-ui.json; fi
+      # Kept for every run that was not cancelled (green ones too): the HTML report, results.json,
+      # the traces and screenshots of failed tests, e2e-server.log, fake-obs.log.
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: playwright-${{ matrix.os }}-${{ matrix.group }}
           path: |
@@ -113,8 +156,62 @@ jobs:
       - name: Save the Playwright browsers (Linux, main)
         if: ${{ !cancelled() && runner.os == 'Linux' && github.ref == 'refs/heads/main' && steps.browsers.outputs.cache-hit != 'true' && matrix.group == 'ui' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        continue-on-error: true
+        timeout-minutes: 3
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
       - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
+
+  # The viewer chat UI against the mock hub on Windows, with Windows's own fonts and text shaping:
+  # Google Chrome and Microsoft Edge from the runner image, Firefox from Playwright. Linux and
+  # macOS run it in the ui group above; rendering.yml adds the screenshots and phone emulation.
+  chat-windows:
+    name: chat UI (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 5
+      - uses: ./.github/actions/get-build
+        timeout-minutes: 5
+        with:
+          names: web-dist
+      - name: Playwright Firefox
+        timeout-minutes: 5
+        run: npx playwright install firefox
+      - name: Playwright, viewer chat UI (mock hub)
+        timeout-minutes: 5
+        env:
+          CHAT_EDGE: '1'
+        run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --project=chromium --project=firefox --project=edge --fail-on-flaky-tests
+      - name: Results in the job summary
         if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node .github/scripts/test-summary.mjs --title 'Viewer chat UI, mock hub (windows-latest)' --playwright test-results/chat-ui.json
+      - name: Upload Playwright report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
+        with:
+          name: playwright-windows-latest-chat
+          path: |
+            playwright-report/chat-ui/
+            test-results/chat-ui/
+            test-results/chat-ui.json
+          if-no-files-found: ignore
+          retention-days: 14
+      - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}

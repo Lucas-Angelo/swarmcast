@@ -6,20 +6,37 @@
 //
 // The installer and the app always run with a bare-OS PATH (System32, Windows, Wbem,
 // WindowsPowerShell), never with the runner's Git/Node/Chocolatey tooling.
+//
+// No check is retried and nothing sleeps to let things settle: every wait is for its condition
+// (poll, orTimeout, Playwright's waits), with a deadline. The one infra recovery is the name of
+// a brand-new quick tunnel that the runner's resolver does not know yet (lib/viewer.mjs).
+// The platform-neutral parts live in scripts/test/lib (shared with preflight/verify.mjs).
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bareEnv, loginFromOutput, waitLiveLink as waitLiveLinkOf } from '../lib/app.mjs';
+import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
+import { firefoxEnv } from '../lib/firefox.mjs';
+import { writeJunit } from '../lib/junit.mjs';
 import { mdCell } from '../lib/markdown.mjs';
+import { isListening } from '../lib/ports.mjs';
+import { ownerOf, spawnTracked } from '../lib/proc.mjs';
+import { serveDir } from '../lib/release-server.mjs';
+import { joinIn, pageState, playerStats, probeHealth, waitPlaying as waitPlayingIn } from '../lib/viewer.mjs';
+import { formatExit, orTimeout, poll } from '../lib/wait.mjs';
+
+export { barePath, bareEnv } from '../lib/app.mjs';
+export { ffmpegBin } from '../lib/ffmpeg.mjs';
+export { renderedTwice, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
+export { orTimeout } from '../lib/wait.mjs';
 
 export const isWin = process.platform === 'win32';
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, '..', '..', '..');
-export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const args = process.argv.slice(2);
 export const opt = (n, d) => {
@@ -75,38 +92,21 @@ export const sectionRuns = [];
 let currentSection = '';
 let currentRep = 1;
 
-/** status: pass | fail | warn (a finding that does not fail the job) | skip | info */
+/**
+ * status: pass | fail | skip | info. There is no third verdict: what a suite can judge is a check
+ * (pass or fail), and a measurement or an outcome nothing documents is info.
+ */
 export function record(name, status, detail = '') {
+  if (!['pass', 'fail', 'skip', 'info'].includes(status)) throw new Error(`record(${JSON.stringify(name)}): unknown status ${status}`);
   const r = { section: currentSection, name, status, detail: String(detail ?? '').slice(0, 1500) };
   if (REPEAT > 1) r.rep = currentRep;
   results.push(r);
-  const sym = { pass: 'PASS', fail: 'FAIL', warn: 'WARN', skip: 'SKIP', info: 'INFO' }[status] ?? status;
+  const sym = { pass: 'PASS', fail: 'FAIL', skip: 'SKIP', info: 'INFO' }[status];
   log(`${sym} [${currentSection}] ${name}${r.detail ? ` -- ${r.detail}` : ''}`);
   return status === 'pass';
 }
 export const check = (name, ok, detail = '') => record(name, ok ? 'pass' : 'fail', detail);
 export const info = (name, detail) => record(name, 'info', detail);
-/**
- * A check that currently fails because of a reported app bug: recorded as a finding (warn,
- * prefixed "BUG") instead of failing the job, and as a plain pass once the bug is fixed.
- */
-export const bug = (name, ok, detail = '') => record(name, ok ? 'pass' : 'warn', ok ? '' : `BUG: ${detail}`);
-/**
- * Only for checks that go through a third party's network (the Cloudflare tunnel): `fn(attempt)`
- * gets one retry. A pass on the retry is recorded as warn "passed on retry" (retry: true), which
- * the soak summary counts separately; no other check is ever retried.
- */
-export async function checkWithRetry(name, fn) {
-  const first = await fn(1).then(() => null, (e) => e ?? new Error('failed'));
-  if (!first) return check(name, true);
-  const why = (e) => String(e?.message ?? e).split('\n')[0];
-  log(`${name}: first try failed (${why(first)}), retrying once`);
-  const second = await fn(2).then(() => null, (e) => e ?? new Error('failed'));
-  if (second) return check(name, false, `${why(first)} | retry: ${why(second)}`);
-  record(name, 'warn', `passed on retry; first try: ${why(first)}`);
-  results[results.length - 1].retry = true;
-  return true;
-}
 /** Like check(), but aborts the current section when it fails. */
 export function must(name, ok, detail = '') {
   check(name, ok, detail);
@@ -114,18 +114,35 @@ export function must(name, ok, detail = '') {
 }
 
 const openPages = new Set();
+/**
+ * Tracks `page` for the failure dumps, with its requests: how many, and the last one with its
+ * time. The browser process reports them (Firefox's network observer runs in the parent), so
+ * for a page that stopped answering the automation they still tell whether its scripts run.
+ */
 export function trackPage(page, label) {
-  openPages.add({ page, label });
+  const net = { count: 0, lastAt: 0, lastUrl: '' };
+  page.on('request', (r) => {
+    net.count++;
+    net.lastAt = Date.now();
+    net.lastUrl = r.url();
+  });
+  openPages.add({ page, label, net });
 }
+const networkLine = ({ count, lastAt, lastUrl }) =>
+  count ? `requests: ${count}, the last ${((Date.now() - lastAt) / 1000).toFixed(1)} s ago (${new Date(lastAt).toISOString()}): ${lastUrl}` : 'requests: none';
 async function screenshotAll(tag) {
+  const states = [];
   for (const p of [...openPages]) {
     if (p.page.isClosed()) {
       openPages.delete(p);
       continue;
     }
     const file = path.join(ART, `${SUITE}-${tag}-${p.label}.png`.replace(/[^\w.-]+/g, '_'));
+    const net = networkLine(p.net);
     await p.page.screenshot({ path: file, timeout: 10_000 }).catch(() => {});
+    states.push(`===== ${p.label}\n${net}\n${await pageState(p.page)}`);
   }
+  if (states.length) fs.writeFileSync(path.join(ART, `${SUITE}-${tag}-pages.txt`.replace(/[^\w.-]+/g, '_')), states.join('\n\n') + '\n');
 }
 
 const cleanups = [];
@@ -154,11 +171,14 @@ async function runSection(name, fn, rep, reps) {
     await fn();
   } catch (e) {
     record('section aborted', 'fail', e?.stack?.split('\n').slice(0, 3).join(' | ') ?? String(e));
-    await screenshotAll(tag);
   } finally {
-    // Before the cleanups, so the dump shows the processes and ports as the failure left them.
+    // Before the cleanups, so the dumps show the pages, processes and ports as the failure left
+    // them: also for a failed check that did not abort the section (a viewer that never joined).
     const failed = results.filter((r) => r.status === 'fail').length > failsBefore;
-    if (failed) failureDump(tag);
+    if (failed) {
+      await screenshotAll(tag);
+      failureDump(tag);
+    }
     while (cleanups.length) {
       const c = cleanups.pop();
       try {
@@ -257,10 +277,54 @@ export function processTree(list) {
   return lines.join('\n');
 }
 
+/** The window over which browserCpu measures: the CPU a process used in it, as a share of one core. */
+const CPU_SAMPLE_MS = 3000;
+
+/** What a browser process is, from its command line (`cmds`: pid -> command line). */
+function browserRole(cmd = '') {
+  const chromeType = /--type=([\w-]+)/.exec(cmd)?.[1];
+  if (chromeType) return chromeType === 'utility' ? `utility ${/--utility-sub-type=([\w.]+)/.exec(cmd)?.[1] ?? ''}`.trim() : chromeType;
+  // Firefox ends a child's command line with its id and type: "... 4 tab", "... 3 rdd".
+  if (/-contentproc/.test(cmd)) return /\s(\d+ \w+)\s*$/.exec(cmd)?.[1] ?? 'child';
+  return 'browser';
+}
+
+/**
+ * CPU of every Chrome, Edge and Firefox process over CPU_SAMPLE_MS: the whole process, its main
+ * thread (the oldest) with its state, and its busiest thread. A page that stopped answering the
+ * automation is told apart here: a content process spinning at 100 % of a core (a script or
+ * layout loop), or idle with its main thread waiting (a deadlock), or idle and fine.
+ */
+function browserCpu(cmds) {
+  const snap = `Get-Process -Name firefox,chrome,msedge -ErrorAction SilentlyContinue | ForEach-Object {
+    $th = @($_.Threads | Sort-Object { try { $_.StartTime } catch { [datetime]::MaxValue } })
+    [pscustomobject]@{ pid = $_.Id; ms = $_.TotalProcessorTime.TotalMilliseconds; threads = @($th | ForEach-Object {
+      [pscustomobject]@{ id = $_.Id; ms = $_.TotalProcessorTime.TotalMilliseconds; state = "$($_.ThreadState)$(if ($_.ThreadState -eq 'Wait') { ':' + $_.WaitReason })" } }) } }`;
+  const out = ps(`$a = @(${snap}); Start-Sleep -Milliseconds ${CPU_SAMPLE_MS}; $b = @(${snap}); @{ a = $a; b = $b } | ConvertTo-Json -Depth 5 -Compress`, { allowFail: true, timeout: 60_000 });
+  const { a = [], b = [] } = JSON.parse(out || '{}');
+  const before = new Map([a].flat().map((p) => [p.pid, p]));
+  const pct = (ms) => `${Math.round((ms / CPU_SAMPLE_MS) * 100)} %`;
+  return [b]
+    .flat()
+    .filter((p) => before.has(p.pid))
+    .map((p) => {
+      const was = before.get(p.pid);
+      const wasThread = new Map([was.threads].flat().map((t) => [t.id, t.ms]));
+      const threads = [p.threads].flat().map((t) => ({ ...t, used: t.ms - (wasThread.get(t.id) ?? t.ms) }));
+      const main = threads[0];
+      const busiest = threads.reduce((x, t) => (t.used > x.used ? t : x), threads[0]);
+      return { line: `${p.pid} ${browserRole(cmds.get(p.pid))}: ${pct(p.ms - was.ms)}; main thread ${main ? `${main.id} ${pct(main.used)} ${main.state}` : '?'}; busiest ${busiest ? `${busiest.id} ${pct(busiest.used)} ${busiest.state}` : '?'}; ${threads.length} threads`, used: p.ms - was.ms };
+    })
+    .sort((x, y) => y.used - x.used)
+    .map((x) => x.line)
+    .join('\n');
+}
+
 /**
  * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
- * TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
- * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
+ * the CPU of the browsers' processes (browserCpu), TCP listeners and UDP endpoints with their
+ * owners, and the ports Windows reserves (excludedportrange, dynamic range: Hyper-V, WSL and
+ * Docker take ports from there); then the thread stacks of Firefox (firefoxStacks). The app's
  * logs are copied by startApp's cleanup.
  */
 export function failureDump(tag) {
@@ -281,11 +345,14 @@ export function failureDump(tag) {
     return `${r.stdout ?? ''}${r.stderr ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
   };
   let names = new Map();
+  let cmds = new Map();
   add('process tree (pid, ppid, name, command line)', () => {
     const list = processes();
     names = new Map(list.map((p) => [p.pid, p.name]));
+    cmds = new Map(list.map((p) => [p.pid, p.cmd]));
     return processTree(list);
   });
+  add(`browser processes: CPU over ${CPU_SAMPLE_MS / 1000} s (whole process, main thread, busiest thread)`, () => browserCpu(cmds));
   const owner = (pid) => `${pid} ${names.get(pid) ?? '?'}`;
   add('TCP listeners (address:port owner)', () =>
     psJson('Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Select-Object LocalAddress,LocalPort,OwningProcess', { allowFail: true })
@@ -308,6 +375,35 @@ export function failureDump(tag) {
   } catch (e) {
     log(`failure dump failed: ${e.message}`);
   }
+  try {
+    firefoxStacks(tag, cmds);
+  } catch (e) {
+    log(`Firefox thread stacks failed: ${e.message}`);
+  }
+}
+
+/** The console debugger of the Windows SDK (on the GitHub Windows images), or null. */
+const CDB = ['ProgramFiles(x86)', 'ProgramFiles']
+  .map((v) => process.env[v] && path.join(process.env[v], 'Windows Kits', '10', 'Debuggers', 'x64', 'cdb.exe'))
+  .find((f) => f && fs.existsSync(f)) ?? null;
+
+/**
+ * Writes <suite>-stacks-<tag>.txt: the thread stacks of every Firefox process (cdb attached
+ * noninvasively, no symbols needed: module + offset and the system calls show where a thread
+ * waits). This is how a frozen Firefox was traced to its startup-cache write (lib/firefox.mjs).
+ * `cmds`: pid -> command line, from the process tree.
+ */
+function firefoxStacks(tag, cmds) {
+  if (!CDB) return;
+  const pids = [...cmds].filter(([, cmd]) => /\\firefox\.exe/i.test(cmd ?? '')).map(([pid]) => pid);
+  if (!pids.length) return;
+  const out = pids.map((pid) => {
+    const r = spawnSync(CDB, ['-pv', '-p', String(pid), '-c', '!runaway 7; ~*kn 40; q'], { encoding: 'utf8', timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+    return `===== ${pid} ${browserRole(cmds.get(pid))}\n${r.stdout ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
+  });
+  const file = path.join(ART, `${SUITE}-stacks-${tag}.txt`.replace(/[^\w.-]+/g, '_'));
+  fs.writeFileSync(file, out.join('\n\n'));
+  log(`thread stacks of ${pids.length} Firefox processes: ${path.basename(file)}`);
 }
 
 export function finish() {
@@ -317,9 +413,11 @@ export function finish() {
   const e = process.env;
   const run = e.GITHUB_RUN_ID ? { url: `${e.GITHUB_SERVER_URL ?? 'https://github.com'}/${e.GITHUB_REPOSITORY}/actions/runs/${e.GITHUB_RUN_ID}`, attempt: Number(e.GITHUB_RUN_ATTEMPT ?? 1), sha: e.GITHUB_SHA } : null;
   fs.writeFileSync(out, JSON.stringify({ suite: SUITE, runner: RUNNER, run, repeat: REPEAT, sectionsFilter: SECTIONS, sections: sectionRuns, results }, null, 2));
-  const icon = { pass: '✅', fail: '❌', warn: '⚠️', skip: '⏭️', info: 'ℹ️' };
+  // The same checks as JUnit next to it (<out>.junit.xml), for the CI summary; info rows are facts, not checks.
+  writeJunit(out.replace(/\.json$/, '') + '.junit.xml', `${SUITE} on ${RUNNER}`, results.filter((r) => r.status !== 'info').map((r) => ({ group: r.section, name: r.rep ? `${r.name} (run ${r.rep})` : r.name, status: r.status, detail: r.detail })));
+  const icon = { pass: '✅', fail: '❌', skip: '⏭️', info: 'ℹ️' };
   const md = [
-    `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed, ${results.filter((r) => r.status === 'warn').length} findings`,
+    `### ${SUITE} on ${RUNNER}: ${results.filter((r) => r.status === 'pass').length} passed, ${failed.length} failed`,
     '',
     '| | Section | Check | Detail |',
     '|---|---|---|---|',
@@ -340,20 +438,8 @@ export const sha256File = (f) => crypto.createHash('sha256').update(fs.readFileS
 export const readText = (f) => (fs.existsSync(f) ? fs.readFileSync(f, 'utf8') : '');
 export const pkgVersion = () => JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
 
-export async function until(fn, timeoutMs, what, every = 500) {
-  const end = Date.now() + timeoutMs;
-  let last;
-  while (Date.now() < end) {
-    try {
-      last = await fn();
-      if (last) return last;
-    } catch (e) {
-      last = e;
-    }
-    await sleep(every);
-  }
-  throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: ${what}${last instanceof Error ? ` (${last.message})` : ''}`);
-}
+/** `fn`'s first truthy value, polled every `every` ms (lib/wait.mjs poll: a throw means "not yet"). */
+export const until = (fn, timeoutMs, what, every = 500) => poll(fn, { timeoutMs, what, everyMs: every });
 
 /** Runs a PowerShell 5.1 snippet; stdout is forced to UTF-8 so non-ASCII paths survive. */
 export function ps(script, { timeout = 120_000, allowFail = false } = {}) {
@@ -420,14 +506,7 @@ export function socketsOf(pids) {
 }
 export const isLoopback = (a) => a === '127.0.0.1' || a === '::1' || /^127\./.test(a);
 
-export function listening(port, host = '127.0.0.1') {
-  return new Promise((resolve) => {
-    const s = net.connect({ port, host });
-    s.setTimeout(800, () => (s.destroy(), resolve(false)));
-    s.once('connect', () => (s.destroy(), resolve(true)));
-    s.once('error', () => resolve(false));
-  });
-}
+export const listening = isListening;
 
 /** Occupy host:port with a plain TCP listener (simulates another program). */
 export function occupy(port, host) {
@@ -449,25 +528,8 @@ export function peSubsystem(file) {
 // Release server
 // ---------------------------------------------------------------------------
 
-export function serve(root) {
-  root = path.resolve(root);
-  const requests = [];
-  return new Promise((resolve) => {
-    const srv = http.createServer((req, res) => {
-      const file = path.resolve(root, '.' + decodeURIComponent(new URL(req.url, 'http://x').pathname));
-      requests.push(req.url);
-      if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
-        res.writeHead(404).end();
-        return;
-      }
-      res.writeHead(200, { 'Content-Length': fs.statSync(file).size });
-      fs.createReadStream(file).pipe(res);
-    });
-    srv.listen(0, '127.0.0.1', () =>
-      resolve({ url: `http://127.0.0.1:${srv.address().port}`, requests, close: () => new Promise((r) => srv.close(() => r())) }),
-    );
-  });
-}
+/** The release folder `root` on 127.0.0.1 (lib/release-server.mjs): { url, port, close }. */
+export const serve = (root) => serveDir(root);
 
 // ---------------------------------------------------------------------------
 // Installer / app
@@ -476,23 +538,6 @@ export function serve(root) {
 export const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
 export const powershellExe = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 export const cmdExe = path.join(systemRoot, 'System32', 'cmd.exe');
-
-/** PATH of a fresh Windows install (no Git, Node, Chocolatey or other CI tooling). */
-export function barePath() {
-  return [`${systemRoot}\\System32`, systemRoot, `${systemRoot}\\System32\\Wbem`, `${systemRoot}\\System32\\WindowsPowerShell\\v1.0\\`].join(';');
-}
-
-/** Environment for the installer/app: bare PATH, SwarmCast variables only as requested. */
-export function bareEnv({ home, releaseUrl, extra = {} } = {}) {
-  const drop = /^(path|swarmcast_.*|node_options|npm_.*)$/i;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.test(k)));
-  env.Path = barePath();
-  env.SWARMCAST_NO_PAUSE = '1';
-  env.SWARMCAST_NO_OPEN = '1';
-  if (home) env.SWARMCAST_HOME = home;
-  if (releaseUrl) env.SWARMCAST_RELEASE_URL = releaseUrl;
-  return { ...env, ...extra };
-}
 
 let instCount = 0;
 /**
@@ -523,41 +568,22 @@ export function runInstaller({ entry = 'ps', dir, releaseUrl, home, args = [], i
   child.stderr.on('data', onData);
   const exit = new Promise((r) => child.on('exit', (c) => r(c)));
   log(`installer #${n} (${label}) pid ${child.pid}: ${entry} ${args.join(' ')} home=${home ?? '(default)'} url=${releaseUrl ?? iexUrl ?? '(none)'}`);
-  return { child, out: () => out, exit, logFile, exited: () => child.exitCode !== null };
+  // `owner`: a wait on this start script (its panel URL, the live link) fails at once when it exits.
+  return { child, out: () => out, exit, logFile, exited: () => child.exitCode !== null, owner: ownerOf(child, `start script #${n} (${label})`, () => out) };
 }
 
 /** Waits for the installer to finish (non-starting runs). */
 export async function installerResult(inst, timeoutMs = 300_000) {
-  const code = await Promise.race([inst.exit, sleep(timeoutMs).then(() => 'timeout')]);
+  const code = await orTimeout(inst.exit, timeoutMs, 'timeout');
   if (code === 'timeout') inst.child.kill();
   return { code, out: inst.out() };
 }
 
-/** Parses "Panel: http://127.0.0.1:<port>/auth/<token>" from `text()`, logs in, returns an API client. */
-export async function adminLogin(text, timeoutMs = 300_000, exited = () => false) {
-  const m = await until(() => {
-    const r = /Panel: (http:\/\/127\.0\.0\.1:(\d+))\/auth\/(\S+)/.exec(text());
-    if (!r && exited()) throw new Error('installer exited before printing the panel URL');
-    return r;
-  }, timeoutMs, 'panel URL in installer output');
-  const base = m[1];
-  const res = await fetch(`${base}/auth/${m[3]}`, { redirect: 'manual' });
-  const cookie = res.headers.getSetCookie()[0].split(';')[0];
-  const call = async (p, body, method) => {
-    const init = body === undefined && !method ? { headers: { cookie } } : { method: method ?? 'POST', headers: { cookie, origin: base, 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) };
-    const r = await fetch(base + p, init);
-    const text = await r.text();
-    let json;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = { raw: text };
-    }
-    if (json && typeof json === 'object' && !Array.isArray(json)) Object.defineProperty(json, '__status', { value: r.status });
-    return json;
-  };
-  return { base, port: Number(m[2]), loginUrl: `${base}/auth/${m[3]}`, cookie, api: call, state: () => call('/api/state') };
-}
+/**
+ * Parses "Panel: http://127.0.0.1:<port>/auth/<token>" from `text()`, logs in, returns an API
+ * client (lib/app.mjs loginFromOutput). Fails at once when a process of `abortOn` exits first.
+ */
+export const adminLogin = (text, timeoutMs = 300_000, abortOn = []) => loginFromOutput(text, { timeoutMs, abortOn });
 
 /** Starts the installed app through the installer and logs into the panel. */
 export async function startApp(o) {
@@ -570,7 +596,7 @@ export async function startApp(o) {
   if (!o.persist) onCleanup(() => inst.child.exitCode === null && killTree(inst.child.pid));
   else keepAcrossSections(inst.child.pid);
   try {
-    const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, inst.exited);
+    const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, [inst.owner]);
     return { inst, ...admin };
   } catch (e) {
     inst.child.kill();
@@ -578,20 +604,14 @@ export async function startApp(o) {
   }
 }
 
-export async function waitLiveLink(app, timeoutMs = 120_000) {
-  return until(async () => {
-    const s = await app.state();
-    if (s.phase === 'off' && s.steps?.some((x) => x.status === 'error')) throw new Error(`start failed: ${JSON.stringify(s.steps)}`);
-    return s.liveLink && (s.phase === 'waiting-obs' || s.phase === 'live') ? s : null;
-  }, timeoutMs, 'live link');
-}
+/** The state with the live link (lib/app.mjs): fails at once on a failed start or when the start script exits. */
+export const waitLiveLink = (app, timeoutMs = 120_000) => waitLiveLinkOf(app, timeoutMs, app.inst ? [app.inst.owner] : []);
 
 /** Quits through the panel API and checks: exit code, no process under home, ports closed. */
 export async function quitAndVerify(app, home, label, { via = 'api' } = {}) {
   if (via === 'api') await app.api('/api/app/quit', {}).catch(() => {});
-  const code = await Promise.race([app.inst.exit, sleep(60_000).then(() => 'timeout')]);
+  const code = await orTimeout(app.inst.exit, 60_000, 'timeout');
   check(`${label}: app quits cleanly (installer exit code 0)`, code === 0, `exit ${code}`);
-  await sleep(1500);
   const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 15_000, 'no leftovers').catch(() => processesUnder(home));
   check(`${label}: no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg/tray process left`, left.length === 0, describeProcs(left));
   check(`${label}: port 1935 closed`, !(await listening(1935)));
@@ -619,7 +639,7 @@ export async function uninstallAndVerify({ dir, home, args = [], label, envHome 
   child.stdout.on('data', (d) => (out += d));
   child.stderr.on('data', (d) => (out += d));
   const t0 = Date.now();
-  const code = await Promise.race([new Promise((r) => child.on('exit', (c) => r(c))), sleep(240_000).then(() => 'timeout')]);
+  const code = await orTimeout(new Promise((r) => child.on('exit', (c) => r(c))), 240_000, 'timeout');
   const secs = Math.round((Date.now() - t0) / 1000);
   fs.writeFileSync(path.join(ART, `${SUITE}-uninstall-${label}.log`.replace(/[^\w.\\:-]+/g, '_')), out);
   if (code === 'timeout') killTree(child.pid);
@@ -641,16 +661,29 @@ export async function uninstallAndVerify({ dir, home, args = [], label, envHome 
 }
 
 /**
- * The panel's capacity line and the adaptive upload cap (docs/QUALITY.md). Flags the case of a
- * "your upload is too low" warning while the measured upload is far above the stream bitrate.
+ * A measured upload at which "your upload is too low" (capacity.tooLow: not one direct viewer,
+ * packages/shared/src/capacity.ts) cannot come from the uplink: the 75 % of it SwarmCast uses,
+ * 37.5 Mbps, carries five viewers of a 6 Mbps stream with the 15 % per-viewer overhead, and the
+ * suites' feeds are slower still. Below it the warning can be right.
+ */
+const FAST_UPLINK_MBPS = 50;
+/**
+ * The panel's capacity line and the adaptive upload cap (docs/QUALITY.md): on a fast uplink, a
+ * "too low" warning comes from the cap, which is a bug. Reads the state once the app's own speed
+ * test (at start, then every 15 min while off) is not running; without a measurement of at least
+ * FAST_UPLINK_MBPS the line cannot be judged, and that is recorded instead.
  */
 export async function uploadCapCheck(app, label) {
-  const s = await app.state();
+  const s = await until(async () => {
+    const x = await app.state();
+    return x.speedTestRunning ? null : x;
+  }, 120_000, "the app's speed test to finish");
   const q = await app.api('/api/quality').catch(() => null);
   const u = q?.upload ?? {};
-  const detail = `capacity "${s.capacity?.code}" (${s.capacity?.directViewers} direct viewers); measured upload ${s.speedTest?.uploadMbps ?? '?'} Mbps; cap ${u.capMbps} Mbps (${u.mode}/${u.phase}), ceiling ${u.ceilingMbps}; last back-off: ${u.lastBackoff ? `${u.lastBackoff.reason} ${u.lastBackoff.fromMbps}->${u.lastBackoff.toMbps}` : 'none'}; rtt ${u.signals?.rttMs}/${u.signals?.baseRttMs} ms`;
-  const bogus = s.capacity?.code === 'capacity.tooLow' && (s.speedTest?.uploadMbps ?? 0) >= 50;
-  record(`${label}: no "upload too low" warning on a fast uplink`, bogus ? 'warn' : 'pass', bogus ? `BUG: ${detail}` : detail);
+  const up = s.speedTest?.uploadMbps;
+  const detail = `capacity "${s.capacity?.code}" (${s.capacity?.directViewers} direct viewers); measured upload ${up ?? '?'} Mbps; cap ${u.capMbps} Mbps (${u.mode}/${u.phase}), ceiling ${u.ceilingMbps}; last back-off: ${u.lastBackoff ? `${u.lastBackoff.reason} ${u.lastBackoff.fromMbps}->${u.lastBackoff.toMbps}` : 'none'}; rtt ${u.signals?.rttMs}/${u.signals?.baseRttMs} ms`;
+  if (!(up >= FAST_UPLINK_MBPS)) return info(`${label}: "upload too low" warning not judged`, `the speed test measured ${up === undefined ? 'nothing' : `${up} Mbps`} (needs ${FAST_UPLINK_MBPS} Mbps); ${detail}`);
+  check(`${label}: no "upload too low" warning on a fast uplink`, s.capacity?.code !== 'capacity.tooLow', detail);
 }
 
 export function copyAppLogs(home, tag) {
@@ -697,42 +730,30 @@ export function editConfig(home, fn) {
 // OBS-like feed
 // ---------------------------------------------------------------------------
 
-export const ffmpegBin = () => process.env.FFMPEG_BIN || 'ffmpeg';
-
 /** The feed waitPhase(…, 'live') watches: the latest one pushStream started and nobody stopped. */
 let currentFeed = null;
 let feedCount = 0;
 
-export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200, rate = 30 } = {}) {
+/**
+ * The OBS-like test feed to `rtmpUrl`/`key` (lib/ffmpeg.mjs liveFeedArgs: test pattern and tone,
+ * 30 fps, 2 s keyframes, x264 veryfast with peaks capped at `kbps`), as a tracked process
+ * (lib/proc.mjs): its output goes to <suite>-feed-NN.log with the stream key masked, and
+ * waitPhase(…, 'live') fails at once when it exits. `stop()` never throws (it is a cleanup).
+ */
+export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200 } = {}) {
   const logFile = path.join(ART, `${SUITE}-feed-${String(++feedCount).padStart(2, '0')}.log`);
-  const child = spawn(
-    ffmpegBin(),
-    ['-hide_banner', '-loglevel', 'error', '-re', '-f', 'lavfi', '-i', `testsrc2=size=${size}:rate=${rate}`, '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=48000', '-c:v', 'libx264', '-preset', 'veryfast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', String(rate * 2), '-keyint_min', String(rate * 2), '-sc_threshold', '0', '-b:v', `${kbps}k`, '-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`, '-c:a', 'aac', '-b:a', '96k', '-f', 'flv', `${rtmpUrl}/${key}`],
-    { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true },
-  );
-  let err = '';
-  let exit = null;
-  const onErr = (d) => {
-    d = key ? String(d).replaceAll(key, '[stream key]') : String(d);
-    err += d;
-    try {
-      fs.appendFileSync(logFile, d);
-    } catch {
-      /* evidence only */
-    }
-  };
-  child.stderr.on('data', onErr);
-  child.on('error', (e) => onErr(`spawn ${ffmpegBin()} failed: ${e.message}\n`));
-  child.on('exit', (code, signal) => (exit = signal ?? `code ${code}`));
-  log(`test feed #${feedCount} pid ${child.pid ?? '?'}: ${ffmpegBin()} ${size} ${kbps} kbps (stderr: ${path.basename(logFile)})`);
+  const mask = (t) => (key ? t.replaceAll(key, '[stream key]') : t);
+  const describe = `${ffmpegBin()} ${size} ${kbps} kbps`;
+  const proc = spawnTracked(ffmpegBin(), liveFeedArgs(`${rtmpUrl}/${key}`, { size, kbps, preset: 'veryfast', vbv: true }), { name: 'test feed', logFile, mask, describe });
+  log(`test feed #${feedCount} pid ${proc.pid ?? '?'}: ${describe} (output: ${path.basename(logFile)})`);
   const handle = {
-    child,
-    stderr: () => err,
-    /** null while running, else why it ended (also for a feed that never started). */
-    exited: () => exit ?? (child.pid === undefined && err ? 'spawn failed' : null),
+    proc,
+    stderr: () => proc.tail(30),
+    /** null while running, else how it ended (also for a feed that never started). */
+    exited: () => (proc.exitInfo ? formatExit(proc.exitInfo) : null),
     stop: () => {
       if (currentFeed === handle) currentFeed = null;
-      killTree(child.pid);
+      return proc.stop().catch((e) => log(`test feed: ${e.message}`));
     },
   };
   currentFeed = handle;
@@ -740,18 +761,18 @@ export function pushStream(rtmpUrl, key, { size = '640x360', kbps = 1200, rate =
   return handle;
 }
 
-/** Waits for the app's phase. Waiting for 'live' fails at once when the test feed has died. */
-export async function waitPhase(app, phase, timeoutMs = 90_000) {
-  const end = Date.now() + timeoutMs;
-  for (;;) {
-    const s = await app.state().catch(() => null);
-    if (s?.phase === phase) return s;
-    const feed = phase === 'live' ? currentFeed : null;
-    const dead = feed?.exited();
-    if (dead) throw new Error(`test feed exited (${dead}) while waiting for phase live: ${feed.stderr().trim().slice(-1500) || '(no stderr)'}`);
-    if (Date.now() >= end) throw new Error(`timed out after ${Math.round(timeoutMs / 1000)} s: phase ${phase} (phase ${s?.phase ?? 'unknown'})`);
-    await sleep(500);
-  }
+/** Waits for the app's phase. Waiting for 'live' fails at once when the test feed has exited. */
+export function waitPhase(app, phase, timeoutMs = 90_000) {
+  const feed = phase === 'live' ? currentFeed : null;
+  let last;
+  return poll(
+    async () => {
+      const s = await app.state();
+      last = s.phase;
+      return s.phase === phase ? s : null;
+    },
+    { timeoutMs, what: `phase ${phase}`, abortOn: feed ? [feed.proc] : [], detail: () => `phase ${last ?? 'unknown'}` },
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -770,6 +791,7 @@ export async function launchBrowser(kind) {
   let b;
   if (kind === 'firefox') {
     b = await firefox.launch({
+      env: firefoxEnv(),
       firefoxUserPrefs: {
         'media.peerconnection.ice.obfuscate_host_addresses': false,
         'media.autoplay.default': 0,
@@ -795,44 +817,18 @@ export async function newPage(browser, label, ctxOpts = {}) {
   return { context, page };
 }
 
-export async function gotoRetry(page, url) {
-  // A brand-new trycloudflare name may still be negatively cached by the OS resolver.
-  for (let i = 0; ; i++) {
-    try {
-      await page.goto(url, { timeout: 60_000, waitUntil: 'domcontentloaded' });
-      return;
-    } catch (e) {
-      if (!/ERR_NAME_NOT_RESOLVED|NS_ERROR_UNKNOWN_HOST|ERR_CONNECTION|NS_ERROR_NET|NS_ERROR_CONNECTION/.test(String(e)) || i >= 18) throw e;
-      await sleep(5000);
-    }
-  }
-}
-
 /**
- * Opens the join link, picks a nickname and waits for the watch page (no playback wait).
- * The join page is ready at DOMContentLoaded (its module script has run and handles the
- * button); "load" would also wait for every image and font through the tunnel (F11), and
- * "commit" clicked before the script ran, so the viewer never left /join.
+ * Opens the join link in a new page, picks a nickname and clicks Join (no wait for the watch
+ * page; lib/viewer.mjs joinIn). A quick tunnel's brand-new name is awaited first (the one infra
+ * recovery, logged); a local link is opened once.
  */
 export async function join(browser, link, nickname, ctxOpts = {}) {
   const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
-  await gotoRetry(v.page, link);
-  await v.page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'domcontentloaded' });
-  await v.page.fill('#nickname', nickname);
-  await v.page.click('#join');
+  await joinIn(v.page, link, nickname, log);
   return v;
 }
 
-export async function waitPlaying(page, timeoutMs = 90_000, minTime = 1.5) {
-  await page.waitForFunction(
-    (t) => {
-      const v = document.querySelector('video');
-      return v && v.currentTime > t && !v.paused && v.readyState >= 2;
-    },
-    minTime,
-    { timeout: timeoutMs },
-  );
-}
+export const waitPlaying = waitPlayingIn;
 
 export async function joinAndPlay(browser, link, nickname, ctxOpts = {}) {
   const v = await join(browser, link, nickname, ctxOpts);
@@ -841,7 +837,7 @@ export async function joinAndPlay(browser, link, nickname, ctxOpts = {}) {
   return v;
 }
 
-export const stats = (page) => page.evaluate(() => window.__swarmcast.stats);
+export const stats = playerStats;
 
 /**
  * Records hls.js events in the viewer page (window.__scHls): level switching/switched/loading,
@@ -895,25 +891,8 @@ export async function openPanel(browser, loginUrl, label = 'panel', ctxOpts = {}
   return v;
 }
 
-/** Health probe that resolves trycloudflare hosts through DNS-over-HTTPS. */
-export async function probe(base) {
-  const u = new URL('/healthz', base);
-  let lookup;
-  if (u.protocol === 'https:') {
-    const r = await fetch(`https://1.1.1.1/dns-query?name=${u.hostname}&type=A`, { headers: { accept: 'application/dns-json' } }).then((x) => x.json(), () => ({}));
-    const ip = r.Answer?.find((a) => a.type === 1)?.data;
-    if (ip) lookup = (_h, o, cb) => (o.all ? cb(null, [{ address: ip, family: 4 }]) : cb(null, ip, 4));
-  }
-  const mod = await import(u.protocol === 'https:' ? 'node:https' : 'node:http');
-  return new Promise((resolve) => {
-    const req = mod.get(u, { lookup, timeout: 8000, rejectUnauthorized: false }, (res) => {
-      res.resume();
-      resolve(res.statusCode === 200 ? (res.headers['x-swarmcast'] ?? 'ok') : null);
-    });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(null));
-  });
-}
+/** Health probe of a live link's base (lib/viewer.mjs probeHealth: quick tunnels through DNS-over-HTTPS). */
+export const probe = probeHealth;
 
 // ---------------------------------------------------------------------------
 // UI strings (read from the shared i18n dictionaries)

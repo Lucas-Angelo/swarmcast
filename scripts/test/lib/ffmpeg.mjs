@@ -62,15 +62,20 @@ function sourceArgs(size, seconds) {
   return ['-f', 'lavfi', ...t, '-i', `testsrc2=size=${size}:rate=30`, '-f', 'lavfi', ...t, '-i', 'sine=frequency=440:sample_rate=48000'];
 }
 
-const VIDEO = ['-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
+const video = (preset = 'ultrafast') => ['-c:v', 'libx264', '-preset', preset, '-tune', 'zerolatency', '-pix_fmt', 'yuv420p', '-g', '60', '-keyint_min', '60', '-sc_threshold', '0'];
+const VIDEO = video();
 const AUDIO = ['-c:a', 'aac', '-b:a', '96k'];
 
 /**
  * Arguments for a feed encoded live, in real time: the fallback when no pre-encoded clip fits
  * (x264 ultrafast, the lowest CPU cost; the picture quality of a test pattern does not matter).
+ * `preset` and `vbv` (peaks capped at `kbps`, a two-second buffer, like a streamer's OBS) give
+ * the system harnesses (scripts/test/windows, preflight) the feed they always sent.
  */
 export function liveFeedArgs(rtmpUrl, o = {}) {
-  return ['-hide_banner', '-loglevel', 'error', '-re', ...sourceArgs(o.size ?? '640x360'), ...VIDEO, ...rateArgs(o.kbps ?? 1200, !!o.cbr), ...AUDIO, '-f', 'flv', rtmpUrl];
+  const kbps = o.kbps ?? 1200;
+  const vbv = o.vbv && !o.cbr ? ['-maxrate', `${kbps}k`, '-bufsize', `${kbps * 2}k`] : [];
+  return ['-hide_banner', '-loglevel', 'error', '-re', ...sourceArgs(o.size ?? '640x360'), ...video(o.preset), ...rateArgs(kbps, !!o.cbr), ...vbv, ...AUDIO, '-f', 'flv', rtmpUrl];
 }
 
 // ---- Pre-encoded feeds -----------------------------------------------------------------------

@@ -1,54 +1,59 @@
 import crypto from 'node:crypto';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
-import { defaultConfig } from '../../src/core/config.js';
+import { CookieJar } from '../../../../scripts/test/lib/cookie-jar.mjs';
 import type { LiveController } from '../../src/core/live.js';
-import type { DirectMode } from '../../src/direct/direct.js';
-import type { PowLevel } from '../../src/security/pow.js';
-import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
-import { makeController } from './live-helpers.js';
+import { inactiveDirect, startController } from './live-helpers.js';
 
-const direct = { noteViewer: vi.fn(), snapshot: () => ({ active: false, viewersSeen: 0 }), active: false, ipChanged: null } as unknown as DirectMode;
-// One public port for the whole file: a browser keeps its cookies for the same address across
-// a new live. The fake MediaMTX binds nothing (port 0).
-let PORTS = { rtmp: 0, public: 0, admin: 0, mediamtxHls: 0 };
-let base = '';
-beforeAll(async () => {
-  PORTS = { ...PORTS, public: (await allocPorts(1))[0]! };
-  base = `http://127.0.0.1:${PORTS.public}`;
+// The browser check (proof-of-work on join, security/pow.ts) against the real public server of a
+// live: a browser that passed is remembered by a signed cookie (security/verified.ts) across new
+// tabs, new links, "disconnect everyone" and new lives, at the level it solved.
+//
+// The server draws the PoW counter with crypto.randomInt; the stub below makes it draw the lowest
+// counter of each level, so every solve is the same bounded work (pow.test.ts solves random ones).
+
+beforeEach(() => {
+  vi.spyOn(crypto, 'randomInt').mockImplementation(((a: number, b?: number) => (b === undefined ? 0 : a)) as typeof crypto.randomInt);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 
-/** One browser: its own cookies. */
+/**
+ * One browser: its own cookie jar (scripts/test/lib/cookie-jar.mjs) for every address of `live`.
+ * The jar keeps cookies by name, not per port, so a new live on another port is still the same
+ * site to it, and Secure ones over plain HTTP too (a real browser would not), so a live with
+ * Secure cookies can still be joined here. `jar.setCookies` keeps every Set-Cookie line.
+ */
 class Browser {
-  cookies = new Map<string, string>();
-  setCookies: string[] = [];
-  async fetch(p: string, init: RequestInit = {}): Promise<Response> {
-    const cookie = [...this.cookies].map(([k, v]) => `${k}=${v}`).join('; ');
-    const res = await fetch(p.startsWith('http') ? p : base + p, { ...init, redirect: 'manual', headers: { ...(init.headers as Record<string, string>), cookie } });
-    for (const line of res.headers.getSetCookie()) {
-      this.setCookies.push(line);
-      const [pair] = line.split(';');
-      const eq = pair!.indexOf('=');
-      const k = pair!.slice(0, eq);
-      const v = pair!.slice(eq + 1);
-      if (/max-age=0|expires=thu, 01 jan 1970/i.test(line) || v === '') this.cookies.delete(k);
-      else this.cookies.set(k, v);
-    }
-    return res;
+  readonly jar = new CookieJar();
+  constructor(private readonly live: LiveController) {}
+
+  private get base(): string {
+    return `http://127.0.0.1:${this.live.publicPort}`;
   }
-  open(link: string): Promise<Response> {
-    return this.fetch(link);
+
+  fetch(p: string, init: RequestInit = {}): Promise<Response> {
+    return this.jar.fetch(this.base + p, init);
   }
+
+  /** Opens the live link of now (a 303 to the join page when the link is valid). */
+  open(): Promise<Response> {
+    return this.fetch(`/join/${this.live.access.currentSecret}`);
+  }
+
   async challengeRequired(): Promise<boolean> {
     const res = await this.fetch('/api/join/challenge');
     expect(res.status).toBe(200);
     return ((await res.json()) as { required: boolean }).required;
   }
+
   post(nickname: string, pow?: unknown): Promise<Response> {
     return this.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pow ? { nickname, pow } : { nickname }) });
   }
+
   /** What the join page does: ask for a challenge, solve it if required, join. */
   async join(nickname: string): Promise<{ status: number; solved: boolean; code?: string }> {
     const ch = await this.fetch('/api/join/challenge');
@@ -58,147 +63,202 @@ class Browser {
     const res = await this.post(nickname, pow);
     return { status: res.status, solved: !!pow, code: res.ok ? undefined : ((await res.json()) as { code: string }).code };
   }
+
+  /** Opened the link and joined: the browser has solved the check once. */
+  async verified(nickname: string): Promise<this> {
+    await this.open();
+    expect(await this.join(nickname)).toMatchObject({ status: 200, solved: true });
+    return this;
+  }
 }
 
-const forceLevel = (live: LiveController, level: PowLevel): void => (live.shield as unknown as { setAutoPow(l: PowLevel): void }).setAutoPow(level);
-
-// The server draws the lowest proof-of-work counter of each level: every solve is the same
-// bounded work (pow.test.ts solves a random one).
-beforeEach(() => {
-  vi.spyOn(crypto, 'randomInt').mockImplementation(((a: number, b?: number) => (b === undefined ? 0 : a)) as typeof crypto.randomInt);
-});
-
-const lives: LiveController[] = [];
-afterEach(async () => {
-  vi.restoreAllMocks();
-  for (const l of lives.splice(0)) await l.stop().catch(() => {});
-});
-
-async function start(secureCookies = false): Promise<LiveController> {
-  const config = defaultConfig();
-  config.ports = PORTS;
-  const { live } = makeController(direct, { config, secureCookies });
-  lives.push(live);
-  await live.start();
-  return live;
-}
-
-const link = (live: LiveController): string => `${base}/join/${live.access.currentSecret}`;
+const live = async (secureCookies = false): Promise<LiveController> => (await startController(inactiveDirect(), { secureCookies })).live;
 
 describe('browser check: on by default, remembered per browser', () => {
-  it('solves once, then new tabs, new links, "disconnect everyone" and a new live skip it', async () => {
-    const live = await start();
-    expect(live.shield.powLevel()).toBe(1);
-    const a = new Browser();
-    expect((await a.open(link(live))).status).toBe(303);
-    expect(await a.challengeRequired()).toBe(true);
-    // No proof → refused with a challenge, as before.
+  it('is on by default: a browser without the proof is refused with a challenge', async () => {
+    // Arrange
+    const l = await live();
+    const a = new Browser(l);
+    // Act
+    const opened = await a.open();
+    const required = await a.challengeRequired();
     const refused = await a.post('Ana');
+    // Assert
+    expect(l.shield.powLevel()).toBe(1);
+    expect(opened.status).toBe(303);
+    expect(required).toBe(true);
     expect(refused.status).toBe(403);
     expect(((await refused.json()) as { code: string }).code).toBe('viewer.err.checkRequired');
-    expect(a.cookies.has(VERIFIED_COOKIE)).toBe(false);
+    expect(a.jar.has(VERIFIED_COOKIE)).toBe(false);
+  });
 
-    expect(await a.join('Ana')).toMatchObject({ status: 200, solved: true });
-    const set = a.setCookies.find((c) => c.startsWith(`${VERIFIED_COOKIE}=`))!;
+  it('a solved check sets the "verified" cookie: BROWSER_CHECK_TTL_S long, HttpOnly, Lax, site-wide, level 1', async () => {
+    // Arrange
+    const a = new Browser(await live());
+    await a.open();
+    // Act
+    const joined = await a.join('Ana');
+    // Assert
+    expect(joined).toMatchObject({ status: 200, solved: true });
+    const set = a.jar.setCookies.find((c) => c.startsWith(`${VERIFIED_COOKIE}=`))!;
     expect(set).toMatch(new RegExp(`Max-Age=${BROWSER_CHECK_TTL_S}`));
     expect(set).toMatch(/HttpOnly/);
     expect(set).toMatch(/SameSite=Lax/);
     expect(set).toMatch(/Path=\//);
-    expect(set).not.toMatch(/Secure/); // plain-HTTP test server, like the other cookies
-    expect(a.cookies.get(VERIFIED_COOKIE)).toMatch(/^v1\.1\./);
+    expect(set).not.toMatch(/Secure/);
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.1\./);
+  });
 
-    // A second tab (same cookies) opening the same link.
-    expect((await a.open(link(live))).status).toBe(303);
-    expect(await a.challengeRequired()).toBe(false);
-    expect(await a.join('Ana2')).toMatchObject({ status: 200, solved: false });
+  it('a second tab (same cookies) opening the same link skips the check', async () => {
+    // Arrange
+    const a = await new Browser(await live()).verified('Ana');
+    // Act
+    const opened = await a.open();
+    const required = await a.challengeRequired();
+    const joined = await a.join('Ana2');
+    // Assert
+    expect(opened.status).toBe(303);
+    expect(required).toBe(false);
+    expect(joined).toMatchObject({ status: 200, solved: false });
+  });
 
-    // "New link" and "Disconnect everyone" do not forget the browser (bots, not access)…
-    live.rotateLink();
-    live.access.disconnectAll();
-    // …but the new link is still required.
-    expect(await a.join('Ana3')).toMatchObject({ status: 403, code: 'viewer.err.linkInvalid' });
-    expect((await a.open(link(live))).status).toBe(303);
-    expect(await a.join('Ana3')).toMatchObject({ status: 200, solved: false });
+  it('"New link" and "Disconnect everyone" do not forget the browser, but the new link is still required', async () => {
+    // Arrange
+    const l = await live();
+    const a = await new Browser(l).verified('Ana');
+    // Act
+    l.rotateLink();
+    l.access.disconnectAll();
+    const withOldLink = await a.join('Ana3');
+    // Assert
+    expect(withOldLink).toMatchObject({ status: 403, code: 'viewer.err.linkInvalid' });
+    // Act
+    const opened = await a.open();
+    const withNewLink = await a.join('Ana3');
+    // Assert
+    expect(opened.status).toBe(303);
+    expect(withNewLink).toMatchObject({ status: 200, solved: false });
+  });
 
-    // Another browser has to solve; copying the cookie without the device cookie does not help.
-    const b = new Browser();
-    await b.open(link(live));
-    b.cookies.set(VERIFIED_COOKIE, a.cookies.get(VERIFIED_COOKIE)!);
-    expect(await b.challengeRequired()).toBe(true);
-    expect(await b.post('Bia')).toHaveProperty('status', 403);
+  it('another browser has to solve; copying the cookie without the device cookie does not help', async () => {
+    // Arrange
+    const l = await live();
+    const a = await new Browser(l).verified('Ana');
+    const b = new Browser(l);
+    await b.open();
+    // Act
+    b.jar.set(VERIFIED_COOKIE, a.jar.get(VERIFIED_COOKIE)!);
+    const required = await b.challengeRequired();
+    const joined = await b.post('Bia');
+    // Assert
+    expect(required).toBe(true);
+    expect(joined.status).toBe(403);
+  });
 
-    // A new live (same app): still remembered.
-    await live.stop();
-    await live.start();
-    expect((await a.open(link(live))).status).toBe(303);
-    expect(await a.join('Ana4')).toMatchObject({ status: 200, solved: false });
+  it('a new live (same app) still remembers the browser', async () => {
+    // Arrange
+    const l = await live();
+    const a = await new Browser(l).verified('Ana');
+    // Act
+    await l.stop();
+    await l.start();
+    const opened = await a.open();
+    const joined = await a.join('Ana4');
+    // Assert
+    expect(opened.status).toBe(303);
+    expect(joined).toMatchObject({ status: 200, solved: false });
   });
 
   it('under attack (level 2) a level-1 browser solves again and is remembered at level 2', async () => {
-    const live = await start();
-    const a = new Browser();
-    await a.open(link(live));
-    expect(await a.join('Ana')).toMatchObject({ status: 200, solved: true });
+    // Arrange
+    const l = await live();
+    const a = await new Browser(l).verified('Ana');
+    // Act
+    l.shield.setAutoPow(2);
+    await a.open();
+    const required = await a.challengeRequired();
+    const withLevel1Cookie = await a.post('Ana2');
+    const solvedAgain = await a.join('Ana2');
+    // Assert
+    expect(l.shield.powLevel()).toBe(2);
+    expect(required).toBe(true);
+    expect(withLevel1Cookie.status).toBe(403);
+    expect(solvedAgain).toMatchObject({ status: 200, solved: true });
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
+    // Act
+    await a.open();
+    const remembered = await a.join('Ana3');
+    // Assert
+    expect(remembered).toMatchObject({ status: 200, solved: false });
+  });
 
-    forceLevel(live, 2);
-    expect(live.shield.powLevel()).toBe(2);
-    await a.open(link(live));
-    expect(await a.challengeRequired()).toBe(true);
-    // The level-1 cookie alone is not enough to join.
-    expect(await a.post('Ana2')).toHaveProperty('status', 403);
-    expect(await a.join('Ana2')).toMatchObject({ status: 200, solved: true });
-    expect(a.cookies.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
-    await a.open(link(live));
-    expect(await a.join('Ana3')).toMatchObject({ status: 200, solved: false });
-
-    // Back to normal: the level-2 cookie covers level 1 too.
-    forceLevel(live, 0);
-    await a.open(link(live));
-    expect(await a.join('Ana4')).toMatchObject({ status: 200, solved: false });
+  it('back to normal, a level-2 cookie covers level 1 too', async () => {
+    // Arrange
+    const l = await live();
+    l.shield.setAutoPow(2);
+    const a = await new Browser(l).verified('Ana');
+    // Act
+    l.shield.setAutoPow(0);
+    await a.open();
+    const joined = await a.join('Ana4');
+    // Assert
+    expect(a.jar.get(VERIFIED_COOKIE)).toMatch(/^v1\.2\./);
+    expect(joined).toMatchObject({ status: 200, solved: false });
   });
 
   it('a kicked (banned) device stays blocked even though its browser was verified', async () => {
-    const live = await start();
-    const a = new Browser();
-    await a.open(link(live));
-    expect(await a.join('Troll')).toMatchObject({ status: 200, solved: true });
-    // A spare ticket from before the kick.
-    await a.open(link(live));
-    const session = [...live.access.sessions.values()].find((s) => s.nickname === 'Troll')!;
-    live.access.kick(session.id);
-    expect(await a.join('Troll2')).toMatchObject({ status: 403, code: 'viewer.err.linkInvalid' });
-    expect((await a.open(link(live))).status).toBe(403);
+    // Arrange
+    const l = await live();
+    const a = await new Browser(l).verified('Troll');
+    await a.open();
+    const session = [...l.access.sessions.values()].find((s) => s.nickname === 'Troll')!;
+    // Act
+    l.access.kick(session.id);
+    const withSpareTicket = await a.join('Troll2');
+    const reopened = await a.open();
+    // Assert
+    expect(withSpareTicket).toMatchObject({ status: 403, code: 'viewer.err.linkInvalid' });
+    expect(reopened.status).toBe(403);
   });
 
   it('turning the check off simply stops requiring it', async () => {
-    const live = await start();
-    live.updateSecurity({ ...live.securitySettings(), requireBrowserCheck: false });
-    const b = new Browser();
-    await b.open(link(live));
-    expect(await b.challengeRequired()).toBe(false);
-    expect(await b.join('Bia')).toMatchObject({ status: 200, solved: false });
-    expect(b.cookies.has(VERIFIED_COOKIE)).toBe(false);
+    // Arrange
+    const l = await live();
+    const b = new Browser(l);
+    // Act
+    l.updateSecurity({ ...l.securitySettings(), requireBrowserCheck: false });
+    await b.open();
+    const required = await b.challengeRequired();
+    const joined = await b.join('Bia');
+    // Assert
+    expect(required).toBe(false);
+    expect(joined).toMatchObject({ status: 200, solved: false });
+    expect(b.jar.has(VERIFIED_COOKIE)).toBe(false);
   });
 
   it('the cookie is Secure when the other cookies are', async () => {
-    const live = await start(true);
-    const a = new Browser();
-    await a.open(link(live));
-    // Node's fetch ignores the Secure attribute over http, so the jar still works here.
-    expect(await a.join('Ana')).toMatchObject({ status: 200, solved: true });
-    const set = a.setCookies.filter((c) => /^sc_(verified|device|session)=/.test(c));
+    // Arrange
+    const a = new Browser(await live(true));
+    await a.open();
+    // Act
+    const joined = await a.join('Ana');
+    // Assert
+    expect(joined).toMatchObject({ status: 200, solved: true });
+    const set = a.jar.setCookies.filter((c) => /^sc_(verified|device|session)=/.test(c));
     expect(set).toHaveLength(3);
     for (const c of set) expect(c).toMatch(/; Secure/);
   });
 
   it('a tampered cookie is ignored', async () => {
-    const live = await start();
-    const a = new Browser();
-    await a.open(link(live));
-    await a.join('Ana');
-    a.cookies.set(VERIFIED_COOKIE, a.cookies.get(VERIFIED_COOKIE)!.replace(/^v1\.1\./, 'v1.2.'));
-    await a.open(link(live));
-    expect(await a.challengeRequired()).toBe(true);
-    expect(await a.post('Ana2')).toHaveProperty('status', 403);
+    // Arrange
+    const a = await new Browser(await live()).verified('Ana');
+    // Act
+    a.jar.set(VERIFIED_COOKIE, a.jar.get(VERIFIED_COOKIE)!.replace(/^v1\.1\./, 'v1.2.'));
+    await a.open();
+    const required = await a.challengeRequired();
+    const joined = await a.post('Ana2');
+    // Assert
+    expect(required).toBe(true);
+    expect(joined.status).toBe(403);
   });
 });

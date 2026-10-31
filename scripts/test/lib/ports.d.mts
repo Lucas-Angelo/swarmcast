@@ -14,3 +14,6 @@ export function allocPortMap<K extends string>(names: readonly K[]): Promise<Rec
 
 /** True for the error of a server that could not bind its port (worth one retry on new ports). */
 export function isBindError(err: unknown): boolean;
+
+/** True when something accepts TCP connections on host:port right now (connect probe, 800 ms). */
+export function isListening(port: number, host?: string): Promise<boolean>;

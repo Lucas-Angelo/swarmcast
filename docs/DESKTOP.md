@@ -146,7 +146,8 @@ Notes:
   [Keep running in the tray]. Tray "Quit" and the app menu's Quit (Cmd+Q) ask the same. SIGTERM / SIGINT /
   SIGHUP (logout, `kill`) quit without asking. Quitting shows "Closing SwarmCast…" while the server stops.
   Without a tray icon (Linux desktop without an AppIndicator host) "keep running" minimizes instead.
-- **Tray / menu bar**: icons off / waiting / live (from `apps/tray/icons`), localized tooltip from
+- **Tray / menu bar**: icons off / waiting / live (`assets/brand/tray/tray-<state>-32.png`, copied into
+  `src-tauri/icons/tray/` by `apps/desktop/icons.mjs`; the same files as `apps/tray/icons`), localized tooltip from
   `phase` + `viewers`; menu: Open SwarmCast, Start live, Stop live (enabled from `canStart` /
   `canStop`), Check for updates, Export logs…, Quit. Windows / Linux: left click opens the window; macOS:
   the menu. Tray clicks are sent as `click` start / stop; Quit is handled by the shell (it sends `quit`).
