@@ -48,7 +48,9 @@ const MAX_BYTES = 250 * 1024;
 // (`npm ci --prefix site` first).
 const GUIDES = path.join(ROOT, 'site', 'src', 'assets', 'guides');
 const guideDir = (lang) => (lang === 'en' ? 'en' : 'pt-br');
-// Cards left out of the panel overview (each has its own picture or guide).
+// Cards left out of the panel overview (each has its own picture or guide). The live chat at the
+// top stays in it (with a few messages): it is the panel's main screen during a live; only the
+// Chat card with the chat settings, further down, is left out.
 const OVERVIEW_HIDDEN = ['[data-testid="quality-card"]', '[data-testid="activity"]', '[data-testid="brand-card"]', '[data-testid="chat-card"]', '[data-testid="diagnostics"]', 'footer'];
 
 const log = (msg) => console.log(`[screenshots] ${msg}`);
@@ -332,9 +334,42 @@ async function guideShot(page, target, section, lang, name, { pad = 24, callouts
 
 /** What the viewers and the streamer say in the pictures (made-up people, both languages). */
 const CHAT_LINES = {
-  en: { streamer: 'Welcome everyone! Starting in a minute :hi:', pedro: 'hi from my phone 👋', alex: 'great sound today :gg:', maria: 'can you show the map again?' },
-  'pt-BR': { streamer: 'Boa noite, pessoal! Já vamos começar :hi:', pedro: 'oi do celular 👋', alex: 'som tá ótimo hoje :gg:', maria: 'mostra o mapa de novo?' },
+  en: {
+    streamer: 'Welcome everyone! Starting in a minute :hi:',
+    pedro: 'hi from my phone 👋',
+    alex: 'great sound today :gg:',
+    mariaHello: 'First time here, love the cosy vibe 😊',
+    pedroAsks: 'what game is this?',
+    answer: "It's Celeste! Chapter 3 tonight",
+    maria: 'can you show the map again?',
+  },
+  'pt-BR': {
+    streamer: 'Boa noite, pessoal! Já vamos começar :hi:',
+    pedro: 'oi do celular 👋',
+    alex: 'som tá ótimo hoje :gg:',
+    mariaHello: 'Primeira vez aqui, adorei o clima 😊',
+    pedroAsks: 'que jogo é esse?',
+    answer: 'É Celeste! Hoje tem o capítulo 3',
+    maria: 'mostra o mapa de novo?',
+  },
 };
+
+/**
+ * A short, made-up conversation (streamer and the three viewers), before any panel picture: the
+ * live chat is on the panel's main screen during a live. Maria's next line stays typed, unsent,
+ * for the viewer's chat picture.
+ */
+async function fillChat(lang, desktop, phone, third) {
+  if ((await desktop.getByTestId('chat').count()) === 0) return;
+  const lines = CHAT_LINES[lang];
+  await adminApi('POST', '/api/chat/send', { text: lines.streamer });
+  await say(phone, lines.pedro);
+  await say(third, lines.alex);
+  await say(desktop, lines.mariaHello);
+  await say(phone, lines.pedroAsks);
+  await adminApi('POST', '/api/chat/send', { text: lines.answer });
+  await desktop.getByTestId('chat-list').getByText(lines.answer).waitFor({ timeout: 15_000 });
+}
 
 async function say(page, text) {
   const input = page.getByTestId('chat-input');
@@ -443,34 +478,40 @@ async function captureBranding(browser, lang) {
 
 /** The panel's chat and "Your page" cards, for the guides (skipped while the panel has no such card). */
 async function capturePanelGuides(browser, lang) {
+  const s = await state();
+  // The live chat as the desktop app's window shows it (its height follows the window's).
+  const liveCtx = await browser.newContext({ ...APP_WINDOW, locale: lang });
+  const livePanel = await openPanel(liveCtx);
+  const live = livePanel.getByTestId('chat-live');
+  if ((await live.count()) > 0) {
+    await live.getByTestId('chat-msg').first().waitFor({ timeout: 15_000 }).catch(() => log('no chat messages in the panel'));
+    await live.getByTestId('chat-input').fill(lang === 'en' ? 'Thanks for coming!' : 'Valeu por virem!');
+    await sanitize(livePanel, s);
+    // 1 the messages, 2 send as the streamer, 3 flood protection, 4 clear, 5 the chat settings.
+    await guideShot(livePanel, live, 'live', lang, 'chat-panel', {
+      pad: 16,
+      callouts: [live.getByTestId('chat-feed'), live.locator('form.chat-send'), live.getByTestId('chat-protect'), live.getByTestId('chat-clear'), live.getByTestId('chat-settings-link')],
+    });
+    await live.getByTestId('chat-input').fill('');
+    // A viewer's message with its moderation menu open.
+    const msg = live.getByTestId('chat-msg').filter({ hasNot: livePanel.getByTestId('chat-badge') }).last();
+    if ((await msg.count()) > 0) {
+      await msg.getByTestId('chat-more').click();
+      await live.getByTestId('chat-menu').waitFor({ timeout: 5_000 });
+      await guideShot(livePanel, live.getByTestId('chat-feed'), 'live', lang, 'chat-moderation', { pad: 16, callouts: [live.getByTestId('chat-menu')] });
+      await msg.getByTestId('chat-more').click();
+    }
+  } else log('no live chat in the panel: skipped');
+  await liveCtx.close();
+
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 2400 }, deviceScaleFactor: 1, locale: lang });
   const panel = await openPanel(ctx);
   await panel.waitForSelector('[data-testid="live-link"]');
-  const s = await state();
-
   const card = panel.getByTestId('chat-card');
   if ((await card.count()) > 0) {
-    await panel.getByTestId('chat-feed').locator('[data-testid="chat-msg"]').first().waitFor({ timeout: 15_000 }).catch(() => log('no chat messages in the panel'));
-    await panel.getByTestId('chat-input').fill(lang === 'en' ? 'Thanks for coming!' : 'Valeu por virem!');
-    await sanitize(panel, s);
-    // 1 on/off, 2 the messages, 3 send as the streamer, 4 flood protection, 5 clear.
-    await guideShot(panel, card, 'live', lang, 'chat-panel', {
-      pad: 20,
-      area: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-protect'), panel.getByTestId('chat-feed'), panel.getByTestId('chat-send')],
-      callouts: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-feed'), panel.getByTestId('chat-send'), panel.getByTestId('chat-protect'), panel.getByTestId('chat-clear')],
-    });
-    await panel.getByTestId('chat-input').fill('');
-    // A viewer's message with its moderation menu open.
-    const msg = panel.getByTestId('chat-feed').locator('[data-testid="chat-msg"]').filter({ hasNot: panel.getByTestId('chat-badge') }).last();
-    if ((await msg.count()) > 0) {
-      await msg.getByTestId('chat-more').click();
-      await panel.getByTestId('chat-menu').waitFor({ timeout: 5_000 });
-      await guideShot(panel, panel.getByTestId('chat-feed'), 'live', lang, 'chat-moderation', { pad: 16, callouts: [panel.getByTestId('chat-menu')] });
-      await panel.keyboard.press('Escape');
-      await msg.getByTestId('chat-more').click().catch(() => {});
-    }
-    const settings = panel.getByTestId('chat-settings');
-    await guideShot(panel, settings, 'live', lang, 'chat-settings', { pad: 16 });
+    await panel.getByTestId('chat-settings').waitFor({ timeout: 15_000 });
+    // 1 the chat on/off switch, 2 Save chat settings.
+    await guideShot(panel, card, 'live', lang, 'chat-settings', { pad: 16, callouts: [panel.getByTestId('chat-enabled'), panel.getByTestId('chat-save')] });
     const gifGroup = panel.locator('fieldset', { has: panel.getByTestId('chat-gif-key') });
     if ((await gifGroup.count()) > 0) {
       await guideShot(panel, gifGroup, 'live', lang, 'gif-settings', { pad: 16, callouts: [panel.getByTestId('chat-gif-key')] });
@@ -554,12 +595,13 @@ async function captureAppWindow(browser, lang) {
   await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
   await sleep(2000);
   await sanitize(panel, s);
-  // 1 status, 2 live link, 3 OBS settings, 4 Viewers & P2P help, 5 Protection.
+  // 1 status, 2 live link, 3 OBS settings, 4 Viewers & P2P help, 5 the live chat.
   const heading = (testid) => cardWith(panel, testid).locator('h2');
+  await panel.getByTestId('chat-live').getByTestId('chat-msg').first().waitFor({ timeout: 15_000 }).catch(() => log('no messages in the live chat'));
   await guideShot(panel, panel.locator('body'), 'start', lang, 'panel', {
     pad: 0,
     viewport: true,
-    callouts: [[panel.getByTestId('status'), panel.getByTestId('obs-status')], heading('live-link'), heading('rtmp-url'), heading('viewer-count'), panel.getByTestId('security').locator('h2')],
+    callouts: [[panel.getByTestId('status'), panel.getByTestId('obs-status')], heading('live-link'), heading('rtmp-url'), heading('viewer-count'), panel.getByTestId('chat-live').locator('h2')],
   });
 
   const dialog = panel.getByTestId('onboarding');
@@ -718,18 +760,20 @@ async function captureLocale(browser, lang) {
   // Give P2P a moment to connect, so "helping" and the peer stats have numbers.
   await poll('P2P helpers', async () => (await state()).stats.viewersHelping >= 1, 30_000).catch(() => log('no P2P helper yet'));
   await sleep(8000);
+  await fillChat(lang, desktop.page, phone.page, third.page);
 
   // Panel.
   const adminCtx = await browser.newContext({ ...DESKTOP, locale: lang });
   const panel = await openPanel(adminCtx);
   await panel.waitForSelector('[data-testid="live-link"]');
+  await panel.getByTestId('chat-live').getByText(CHAT_LINES[lang].answer).waitFor({ timeout: 15_000 }).catch(() => log('no live chat in the panel'));
   await panel.waitForSelector('[data-testid="viewers"] tbody tr:nth-child(3)');
   await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
   await sleep(2500);
   const s = await state();
 
-  // (1) Overview: the top of the panel (status, OBS pill, live link) and the viewers list
-  // (Phone/PC, P2P), with the cards in between left out of this one picture.
+  // (1) Overview: the top of the panel (status, OBS pill, live link), the live chat on the right
+  // and the viewers list (Phone/PC, P2P), with the cards in between left out of this one picture.
   await sanitize(panel, s);
   await panel.evaluate((hidden) => {
     for (const sel of hidden) {
@@ -774,14 +818,10 @@ async function captureLocale(browser, lang) {
   await waitPlaying(phone.page, 6);
   await shot(phone.page, `viewer-phone-${lang}.png`);
 
-  // (6b) The chat on the viewer page, for the "Chat" guide: the column with a few messages
-  // (hide, settings, emoji, send), then the viewer's chat settings (name colour).
+  // (6b) The chat on the viewer page, for the "Chat" guide: the column with the messages of
+  // fillChat (hide, settings, emoji, send), then the viewer's chat settings (name colour).
   if ((await desktop.page.getByTestId('chat').count()) > 0) {
     const lines = CHAT_LINES[lang];
-    await adminApi('POST', '/api/chat/send', { text: lines.streamer });
-    await say(phone.page, lines.pedro);
-    await say(third.page, lines.alex);
-    await desktop.page.getByTestId('chat-list').getByText(lines.alex.split(' :')[0]).waitFor({ timeout: 10_000 });
     await desktop.page.getByTestId('chat-input').fill(lines.maria);
     const chat = desktop.page.getByTestId('chat');
     await guideShot(desktop.page, chat, 'live', lang, 'chat-viewer', {

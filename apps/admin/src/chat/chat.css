@@ -1,5 +1,6 @@
 /*
- * The panel's "Chat" card. Brand tokens only (assets/brand/tokens.css, Forest & Cream). Each
+ * The panel's live chat (ChatLive: feed, protection, "Send as …"; placed by style.css "Layout")
+ * and its "Chat" card (on/off, settings). Brand tokens only (assets/brand/tokens.css, Forest & Cream). Each
  * message is its own clipped box (plan chat-0.4.0 §2.4): whatever a viewer types cannot spill
  * over the rows around it or over the panel.
  */
@@ -33,30 +34,40 @@
   display: grid;
   gap: 2px;
 }
-.chat-body {
-  display: grid;
-  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-  gap: var(--sp-4);
-  margin-top: var(--sp-3);
-  align-items: start;
-}
-@media (max-width: 900px) {
-  .chat-body {
-    grid-template-columns: minmax(0, 1fr);
-  }
-}
 .chat-card h3 {
-  margin: 0 0 var(--sp-2);
+  margin: var(--sp-3) 0 var(--sp-2);
+}
+/* The live chat: a fixed-height card (style.css) whose message list takes the room left. */
+.chat-live {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  min-height: 0;
+  padding: var(--sp-4);
+}
+.chat-live h2 {
+  margin: 0;
+}
+.chat-live .chat-protect {
+  margin-top: 0;
+}
+.chat-confirm {
+  margin: 0;
 }
 .chat-feed {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1;
   min-width: 0;
+  min-height: 0;
 }
 .chat-list {
   list-style: none;
   margin: 0;
   padding: var(--sp-2);
-  height: 420px;
+  flex: 1;
+  min-height: 6rem;
   overflow-y: auto;
   overflow-x: hidden;
   border: 1px solid var(--sc-border);
@@ -82,8 +93,14 @@
 .chat-msg-streamer {
   background: var(--sc-accent-soft);
 }
+.chat-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
 .chat-line {
-  display: block;
+  flex: 1;
+  min-width: 0;
   max-height: 7.5em;
   overflow: clip;
 }
@@ -120,10 +137,10 @@
   color: var(--sc-muted);
 }
 .chat-more {
-  float: right;
-  margin-left: 4px;
+  flex: none;
+  min-height: 22px;
   padding: 0 8px;
-  line-height: 1.4;
+  line-height: 1;
   opacity: 0.55;
 }
 .chat-msg:hover .chat-more,
@@ -165,6 +182,14 @@
 }
 .chat-settings {
   min-width: 0;
+}
+/* The settings groups side by side when the card is wide enough. */
+.chat-groups {
+  columns: 2 20rem;
+  column-gap: var(--sp-4);
+}
+.chat-groups > .chat-group {
+  break-inside: avoid;
 }
 .chat-group {
   margin: 0 0 var(--sp-3);

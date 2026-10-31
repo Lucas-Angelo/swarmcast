@@ -1,5 +1,7 @@
-// The panel's Chat card against the real server (plan chat-0.4.0 §10.3, chat-moderation.spec):
-// the streamer's badge (the role is the server's, from its roster), delete, mute (the viewer is
+// The panel's chat against the real server (plan chat-0.4.0 §10.3, chat-moderation.spec): the
+// live chat at the top of the panel while live (feed, moderation, "Send as …", protection; on
+// screen without scrolling, in the desktop window and on a narrow one), the Chat card further
+// down (on/off switch, settings), the streamer's badge (the role is the server's, from its roster), delete, mute (the viewer is
 // told until when), unmute and "until the stream ends" from the viewers table, clear, colour
 // with a lock, the modes (emotes only refuses text), blocked words, links never clickable, the
 // on/off switch, protection by hand, the length limit (the panel's own box counts against it
@@ -10,8 +12,9 @@
 //
 // Every test starts from the default chat, empty and calm, except slow mode and repeats
 // (FAST_CHAT), so scripted viewers can talk fast; the `chat` fixture puts the settings back. A
-// scripted viewer's join adds a row to the panel's viewers table, right above the Chat card:
-// the test waits for that row (panelShows) before it clicks anything in the card.
+// scripted viewer's join adds a row to the panel's viewers table, right above the Chat card,
+// and the same snapshot tells the panel which session wrote which message: the test waits for
+// that row (panelShows) before it moderates or clicks anything in the Chat card.
 //
 // An author's roster entry ('u') goes out once per live; a viewer whose join history does not
 // hold the streamer's earlier lines (here: after a clear) must still learn who the streamer is,
@@ -23,18 +26,26 @@ import type { AdminChatState, ServerMessage } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
 import { admin, adminApi, expect, FAST_CHAT, openPanel, panelShows, test, uid } from './fixtures.js';
 
+/** The desktop app's window (apps/desktop/src-tauri/src/window.rs) and a phone-sized one. */
+const APP_WINDOW = { width: 1200, height: 820 };
+const NARROW_WINDOW = { width: 420, height: 860 };
+
 test.beforeEach(async ({ chat }) => {
   await chat.change(FAST_CHAT);
   await chat.clear();
 });
 
-/** The panel (English or `lang`) scrolled to its Chat card, with the card's settings shown. */
-async function openChatCard(page: Page, lang?: 'en' | 'pt-BR'): Promise<Locator> {
+/**
+ * The panel (English or `lang`) while live: `live` is the live chat at the top (feed, protection,
+ * "Send as …"), `card` the Chat card further down (switch, settings), loaded.
+ */
+async function openChat(page: Page, lang?: 'en' | 'pt-BR'): Promise<{ live: Locator; card: Locator }> {
   await openPanel(page, lang);
+  const live = page.getByTestId('chat-live');
   const card = page.getByTestId('chat-card');
-  await card.scrollIntoViewIfNeeded();
-  await expect(card.getByTestId('chat-settings')).toBeVisible();
-  return card;
+  await expect(live.getByTestId('chat-input')).toBeVisible();
+  await expect(card.getByTestId('chat-settings')).toBeAttached();
+  return { live, card };
 }
 
 const row = (card: Locator, text: string): Locator => card.getByTestId('chat-msg').filter({ hasText: text });
@@ -43,7 +54,7 @@ const chatSettings = async (): Promise<AdminChatState['settings']> => (await adm
 
 test('the streamer posts with a badge from the role; links are never clickable; delete removes a message for everyone', { tag: '@ui' }, async ({ page, bots }) => {
   // Arrange
-  const card = await openChatCard(page);
+  const { live } = await openChat(page);
   const ana = await bots.join(uid('ana'));
   await panelShows(page, ana.nickname);
 
@@ -52,20 +63,20 @@ test('the streamer posts with a badge from the role; links are never clickable; 
 
   // Assert
   expect(sent.s).toBeGreaterThan(0);
-  const anaRow = row(card, 'hello from ana');
+  const anaRow = row(live, 'hello from ana');
   await expect(anaRow).toBeVisible();
   await expect(anaRow).toContainText(ana.nickname);
   await expect(anaRow.getByTestId('chat-badge')).toHaveCount(0);
-  await expect(card.getByTestId('chat-feed').locator('a')).toHaveCount(0);
+  await expect(live.getByTestId('chat-feed').locator('a')).toHaveCount(0);
 
   // Act
-  await card.getByTestId('chat-input').fill('Hi everyone');
-  await card.getByTestId('chat-send').click();
+  await live.getByTestId('chat-input').fill('Hi everyone');
+  await live.getByTestId('chat-send').click();
 
   // Assert
-  const mine = row(card, 'Hi everyone');
+  const mine = row(live, 'Hi everyone');
   await expect(mine.getByTestId('chat-badge')).toHaveText(translate('en', 'chat.badge.streamer'));
-  await expect(card.getByTestId('chat-input')).toHaveValue('');
+  await expect(live.getByTestId('chat-input')).toHaveValue('');
   const roster = (await adminApi<AdminChatState>('GET', '/api/chat')).roster;
   const streamer = roster.find((au) => au.r === 'streamer');
   expect(streamer).toBeDefined();
@@ -85,9 +96,35 @@ test('the streamer posts with a badge from the role; links are never clickable; 
   await anaRow.getByTestId('chat-delete').click();
 
   // Assert
-  await expect(row(card, 'hello from ana')).toHaveCount(0);
+  await expect(row(live, 'hello from ana')).toHaveCount(0);
   await expect.poll(() => ana.items().some((i) => i.k === 'd' && i.s.includes(sent.s!))).toBe(true);
 });
+
+for (const [name, size] of [
+  ['the desktop window', APP_WINDOW],
+  ['a narrow window', NARROW_WINDOW],
+] as const) {
+  test(`while live, the chat is on screen without scrolling in ${name}; Settings goes to the Chat card`, { tag: '@ui' }, async ({ page }) => {
+    // Arrange
+    await page.setViewportSize(size);
+    const { live, card } = await openChat(page);
+    await admin('/api/chat/send', { text: 'on screen right away' });
+
+    // Assert
+    await expect(row(live, 'on screen right away')).toBeInViewport();
+    await expect(live.getByTestId('chat-input')).toBeInViewport();
+    await expect(live.getByTestId('chat-send')).toBeInViewport();
+    await expect(live.getByTestId('chat-protect-slow')).toBeInViewport();
+    expect(await page.evaluate(() => scrollY)).toBe(0);
+    await expect(card.getByTestId('chat-enabled')).not.toBeInViewport();
+
+    // Act
+    await live.getByTestId('chat-settings-link').click();
+
+    // Assert
+    await expect(card.getByTestId('chat-enabled')).toBeInViewport();
+  });
+}
 
 test("a viewer who joins after the streamer was first announced still gets the streamer's roster entry (badge)", { tag: '@ui' }, async ({ bots, chat }) => {
   // Arrange
@@ -108,11 +145,11 @@ test("a viewer who joins after the streamer was first announced still gets the s
 
 test('mute tells the viewer until when and refuses their messages; unmute and "until the stream ends" from the viewers table', { tag: '@ui' }, async ({ page, bots }) => {
   // Arrange
-  const card = await openChatCard(page);
+  const { live } = await openChat(page);
   const bia = await bots.join(uid('bia'));
   await panelShows(page, bia.nickname);
   await bia.answer(bia.send('first message'));
-  const biaRow = row(card, 'first message');
+  const biaRow = row(live, 'first message');
   const viewerRow = page.getByTestId(`viewer-${bia.nickname}`);
 
   // Act
@@ -144,11 +181,11 @@ test('mute tells the viewer until when and refuses their messages; unmute and "u
 
 test('the streamer changes a name colour and locks it; clear empties the chat for everyone', { tag: '@ui' }, async ({ page, bots }) => {
   // Arrange
-  const card = await openChatCard(page);
+  const { live } = await openChat(page);
   const caio = await bots.join(uid('caio'));
   await panelShows(page, caio.nickname);
   await caio.answer(caio.send('colour me'));
-  const caioRow = row(card, 'colour me');
+  const caioRow = row(live, 'colour me');
 
   // Act
   await caioRow.getByTestId('chat-more').click();
@@ -163,18 +200,18 @@ test('the streamer changes a name colour and locks it; clear empties the chat fo
   expect(state.sessions.find((s) => s.nickname === caio.nickname)).toMatchObject({ color: '#0090ff', colorLocked: true });
 
   // Act
-  await card.getByTestId('chat-clear').click();
-  await card.getByTestId('chat-clear-yes').click();
+  await live.getByTestId('chat-clear').click();
+  await live.getByTestId('chat-clear-yes').click();
 
   // Assert
-  await expect(card.getByTestId('chat-msg')).toHaveCount(0);
-  await expect(card.getByTestId('chat-sys').last()).toHaveText(new RegExp(translate('en', 'chat.sys.cleared').replace('.', '\\.')));
+  await expect(live.getByTestId('chat-msg')).toHaveCount(0);
+  await expect(live.getByTestId('chat-sys').last()).toHaveText(new RegExp(translate('en', 'chat.sys.cleared').replace('.', '\\.')));
   await expect.poll(() => caio.items().some((i) => i.k === 'clr')).toBe(true);
 });
 
 test('modes: emotes only refuses text; text only with a blocked word; the length limit', { tag: '@ui' }, async ({ page, bots }) => {
   // Arrange
-  const card = await openChatCard(page);
+  const { live, card } = await openChat(page);
   const dani = await bots.join(uid('dani'));
   const dora = await bots.join(uid('dora'));
   await panelShows(page, dani.nickname);
@@ -204,16 +241,16 @@ test('modes: emotes only refuses text; text only with a blocked word; the length
   expect((await dora.answer(dora.send('fine text'))).s).toBeGreaterThan(0);
 
   // Act
-  await card.getByTestId('chat-input').fill('y'.repeat(21));
+  await live.getByTestId('chat-input').fill('y'.repeat(21));
 
   // Assert
-  await expect(card.getByTestId('chat-send')).toBeDisabled();
-  await expect(card.getByTestId('chat-count')).toHaveText('21/20');
+  await expect(live.getByTestId('chat-send')).toBeDisabled();
+  await expect(live.getByTestId('chat-count')).toHaveText('21/20');
 });
 
-test('the switch turns the chat off and on; protection can be set and ended by hand', { tag: '@ui' }, async ({ page, bots }) => {
+test('the switch turns the chat off (the live chat goes away) and on; protection can be set and ended by hand', { tag: '@ui' }, async ({ page, bots }) => {
   // Arrange
-  const card = await openChatCard(page);
+  const { live, card } = await openChat(page);
   const eli = await bots.join(uid('eli'));
   await panelShows(page, eli.nickname);
   const status = card.getByTestId('chat-status');
@@ -224,6 +261,7 @@ test('the switch turns the chat off and on; protection can be set and ended by h
 
   // Assert
   await expect(status).toHaveText(translate('en', 'admin.chat.status.off'));
+  await expect(live).toHaveCount(0);
   await expect.poll(async () => (await chatSettings()).enabled).toBe(false);
   expect(await eli.refused('anyone?')).toBe('chat.err.off');
 
@@ -232,30 +270,34 @@ test('the switch turns the chat off and on; protection can be set and ended by h
 
   // Assert
   await expect(status).toHaveText(translate('en', 'admin.chat.status.on'));
+  await expect(live.getByTestId('chat-status')).toHaveText(translate('en', 'admin.chat.status.on'));
 
   // Act
-  await card.getByTestId('chat-protect-lockdown').click();
+  await live.getByTestId('chat-protect-lockdown').click();
 
   // Assert
+  await expect(live.getByTestId('chat-status')).toHaveText(translate('en', 'admin.chat.status.lockdown'));
   await expect(status).toHaveText(translate('en', 'admin.chat.status.lockdown'));
-  await expect(card.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.lockdown'));
-  await expect(card.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.reason.manual'));
+  await expect(live.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.lockdown'));
+  await expect(live.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.reason.manual'));
 
   // Act
-  await card.getByTestId('chat-protect-off').click();
+  await live.getByTestId('chat-protect-off').click();
 
   // Assert
-  await expect(status).toHaveText(translate('en', 'admin.chat.status.on'));
-  await expect(card.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.off'));
+  await expect(live.getByTestId('chat-status')).toHaveText(translate('en', 'admin.chat.status.on'));
+  await expect(live.getByTestId('chat-protect-state')).toContainText(translate('en', 'chat.protect.off'));
 });
 
 test("GIFs need the streamer's own key, show the privacy text, and the card is translated", { tag: '@ui' }, async ({ page }) => {
   // Arrange
-  const card = await openChatCard(page, 'pt-BR');
+  const { live, card } = await openChat(page, 'pt-BR');
+  await card.scrollIntoViewIfNeeded();
 
   // Assert
+  await expect(live.getByRole('heading', { level: 2 })).toContainText(translate('pt-BR', 'admin.chat.live.title'));
+  await expect(live.getByTestId('chat-clear')).toHaveText(translate('pt-BR', 'admin.chat.clear'));
   await expect(card.getByRole('heading', { level: 2 })).toContainText(translate('pt-BR', 'admin.chat.title'));
-  await expect(card.getByTestId('chat-clear')).toHaveText(translate('pt-BR', 'admin.chat.clear'));
   await expect(card.getByTestId('chat-gif-privacy')).toHaveText(translate('pt-BR', 'admin.chat.gif.privacy'));
   await expect(card.getByTestId('chat-gif-enable')).not.toBeChecked();
   await expect(card.getByTestId('chat-gif-enable')).toBeDisabled();
@@ -279,10 +321,10 @@ test("GIFs need the streamer's own key, show the privacy text, and the card is t
 
 const SHOTS = process.env.SWARMCAST_SHOTS_DIR;
 
-/** Screenshots of the Chat card for the site, only when asked: SWARMCAST_SHOTS_DIR=<folder> (never in CI). */
-test('screenshots of the Chat card', { tag: '@ui' }, async ({ viewers, bots }) => {
+/** Screenshots of the live chat for the site, only when asked: SWARMCAST_SHOTS_DIR=<folder> (never in CI). */
+test('screenshots of the live chat', { tag: '@ui' }, async ({ viewers, bots }) => {
   // Arrange
-  test.skip(!SHOTS, 'set SWARMCAST_SHOTS_DIR to capture the Chat card');
+  test.skip(!SHOTS, 'set SWARMCAST_SHOTS_DIR to capture the live chat');
   test.skip(test.info().project.name !== 'chromium', 'one engine is enough for the site');
   fs.mkdirSync(SHOTS!, { recursive: true });
   const ana = await bots.join('Ana');
@@ -298,13 +340,13 @@ test('screenshots of the Chat card', { tag: '@ui' }, async ({ viewers, bots }) =
     for (const scheme of ['light', 'dark'] as const) {
       // Arrange
       const page = await (await viewers.browserContext({ context: { viewport: { width: 1280, height: 900 }, colorScheme: scheme } })).newPage();
-      const card = await openChatCard(page, lang);
-      await expect(card.getByTestId('chat-msg')).toHaveCount(4);
+      const { live } = await openChat(page, lang);
+      await expect(live.getByTestId('chat-msg')).toHaveCount(4);
 
       // Act
-      await card.screenshot({ path: path.join(SHOTS!, `chat-card-${lang}-${scheme}.png`) });
-      await row(card, 'Que jogo').getByTestId('chat-more').click();
-      await row(card, 'Que jogo').screenshot({ path: path.join(SHOTS!, `chat-menu-${lang}-${scheme}.png`) });
+      await live.screenshot({ path: path.join(SHOTS!, `chat-card-${lang}-${scheme}.png`) });
+      await row(live, 'Que jogo').getByTestId('chat-more').click();
+      await row(live, 'Que jogo').screenshot({ path: path.join(SHOTS!, `chat-menu-${lang}-${scheme}.png`) });
       await page.getByTestId('viewers').screenshot({ path: path.join(SHOTS!, `chat-viewers-${lang}-${scheme}.png`) });
     }
   }
