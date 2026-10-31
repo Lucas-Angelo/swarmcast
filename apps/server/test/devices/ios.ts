@@ -134,10 +134,12 @@ async function simulatorAppWindows(): Promise<number> {
   return Number((await run('osascript', ['-e', 'tell application "System Events" to count windows of process "Simulator"']).catch(() => ({ stdout: '0' }))).stdout.trim());
 }
 
-/** Quits Simulator.app (the simulator keeps running) and waits until its process is gone. */
-async function quitSimulatorApp(): Promise<void> {
-  await run('osascript', ['-e', 'quit app "Simulator"']);
-  await until(async () => (await run('pgrep', ['-x', 'Simulator']).then(() => true, () => false)) === false, { timeoutMs: 30_000, what: 'Simulator.app to quit' });
+/**
+ * Hides Simulator.app (its window then no longer draws the simulator's screen). Not quit: quitting
+ * it shut the simulator down (Devices run 41237131465: "Current state: Shutdown").
+ */
+async function hideSimulatorApp(): Promise<void> {
+  await run('osascript', ['-e', 'tell application "System Events" to set visible of process "Simulator" to false']);
 }
 
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
@@ -194,11 +196,11 @@ export class IosDevice {
       () => 'simulator-app',
     );
     if (rotator === 'simulator-app') {
-      // Opened once here, where its first start (up to two minutes on CI) has the fixture's time,
-      // and quit: rotate() opens it again only to turn the phone (quitSimulatorApp says why).
+      // Opened here, where its first start (up to two minutes on CI) has the fixture's time, and
+      // hidden: rotate() shows it only to turn the phone.
       await openSimulatorApp(sim.udid);
-      await quitSimulatorApp();
-      note('Simulator.app started once and quit');
+      await hideSimulatorApp();
+      note('Simulator.app started and hidden');
     }
     const inspector = await webInspectorReady(sim.udid);
     note('Web Inspector up, Safari connected to it');
@@ -253,15 +255,15 @@ export class IosDevice {
     if (this.rotator === 'devicectl') {
       await run('xcrun', ['devicectl', 'device', 'orientation', 'set', '--device', this.udid, to === 'landscape' ? 'landscapeLeft' : 'portrait']);
     } else if (to !== this.orientation) {
-      if ((await simulatorAppWindows()) === 0) await openSimulatorApp(this.udid);
       // GitHub's macOS images let osascript drive System Events (Accessibility in their TCC database).
+      // Activating it shows it again (attach() hid it).
       const item = to === 'landscape' ? 'Rotate Left' : 'Rotate Right';
       await run('osascript', ['-e', 'tell application "Simulator" to activate', '-e', `tell application "System Events" to tell process "Simulator" to click menu item "${item}" of menu "Device" of menu bar 1`]);
-      // Upright again: Simulator.app goes, so that it stops drawing the simulator's screen. With it
-      // running, taps on the loaded simulator took up to 2.4 s from finger down to up, which iOS
-      // takes for a long press: the touch reached the element and no click followed (Devices runs
-      // 41227486868, 41235159056, with the screen recording already off).
-      if (to === 'portrait') await quitSimulatorApp();
+      // Upright again: Simulator.app hidden, so that it stops drawing the simulator's screen. Shown,
+      // taps on the loaded simulator took up to 2.4 s from finger down to up, which iOS takes for a
+      // long press: the touch reached the element and no click followed (Devices runs 41227486868,
+      // 41235159056, with the screen recording already off).
+      if (to === 'portrait') await hideSimulatorApp();
     }
     this.orientation = to;
   }

@@ -26,10 +26,15 @@ const WATCHING_S = 1.5;
 /** Seconds the video must play on (not paused) after a step for playback to count as going on. */
 const PLAYS_ON_S = 3;
 /**
- * Segments the live makes while the phone is in the background: 5 x 2 s, over twice the
- * distance at which "Go live" offers to jump (max(4 s, two segments): watch.ts setupGoLive).
+ * Segments the live makes while the phone is in the background: 3 x 2 s. The page is away for
+ * that plus the trip itself (Home, Chrome stopped, Chrome back in front: about 6 s on CI), and
+ * it must come back behind by more than the distance at which "Go live" offers to jump (max(4 s,
+ * two segments): watch.ts setupGoLive) yet less than the most the stable profile lets the player
+ * fall behind before hls.js brings it back to the live point by itself (liveMaxLatencyDuration 36 s
+ * − liveSyncDuration 20 s = 16 s, packages/shared PLAYER_LIVE_DELAYS). With 5 segments the page
+ * was away 18 s in Devices run 41237131465 and came back at the live point.
  */
-const AWAY_SEGMENTS = 5;
+const AWAY_SEGMENTS = 3;
 /** Go live lands within this many seconds of the live point (as in the e2e viewer spec). */
 const AT_LIVE_S = 4;
 
