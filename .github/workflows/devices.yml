@@ -1,0 +1,202 @@
+name: Devices
+
+# The live viewer in real mobile browsers (apps/server/test/devices, docs/TESTING.md "Real
+# devices"): Mobile Safari on an iOS Simulator and Chrome on an Android emulator, against the e2e
+# server (SwarmCast from source, a temp data folder, a fake OBS). Each job joins with a nickname,
+# watches, unmutes, chats with a desktop viewer, checks the on-screen keyboard, turns the phone
+# and sends the browser to the background and back.
+#
+# Start it: the `devices` label on a pull request (remove and add it again for another run), or by
+# hand once this file is on the default branch. It reports separately: `ci-ok` (pipeline.yml)
+# does not wait for it. No schedule yet: a scheduled run reports on main's commit, so it starts
+# only once the suite has had its run of consecutive green dispatches (docs/TESTING.md).
+on:
+  pull_request:
+    types: [labeled]
+  workflow_dispatch:
+  # For pipeline.yml, once the suite has proven itself: a called workflow sees the caller's
+  # event, so a pull request run would otherwise skip both jobs (no `devices` label).
+  workflow_call:
+    inputs:
+      every-event:
+        description: Run on every event, without the `devices` label check.
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: devices-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: false
+
+env:
+  FORCE_COLOR: '1'
+
+jobs:
+  ios:
+    name: iOS Safari (Simulator)
+    if: inputs.every-event || github.event_name != 'pull_request' || github.event.label.name == 'devices'
+    # macos-26, not macos-latest: safaridriver drives iOS Simulators with Xcode 26 on macOS 26.
+    # On macOS 27 with Xcode 27 it finds no simulator for iOS 18 and later runtimes (cryptex
+    # images its HTTP service's sandbox cannot read; apps/server/test/devices/ios.ts), so this job
+    # stays on macOS 26 until a safaridriver update fixes that.
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          ffmpeg: 'true'
+      - name: Build the viewer and the panel
+        timeout-minutes: 5
+        run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer && npm run build -w @swarmcast/admin
+      - run: npm run fetch-bins
+        timeout-minutes: 5
+      # Read into a variable first: `xcodebuild -version | grep -q` stops reading at the first line,
+      # and xcodebuild then dies writing the second (NSFileHandleOperationException: Broken pipe).
+      - name: Xcode 26 (the image's default)
+        run: |
+          version="$(xcodebuild -version)"
+          echo "$version"
+          [[ "$version" == "Xcode 26."* ]] || { echo "::error::the default Xcode is not 26: safaridriver may not find the simulator (see the comment on runs-on)"; exit 1; }
+      - name: The iPhone simulator (newest iOS runtime of the image)
+        timeout-minutes: 10
+        run: scripts/test/devices/setup.sh install ios
+      - name: Allow safaridriver to drive Safari
+        run: sudo safaridriver --enable
+      # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
+      - name: Device tests, iOS
+        timeout-minutes: 25
+        run: npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node .github/scripts/test-summary.mjs --title 'Real devices, iOS Safari (macos-26)' --playwright test-results/devices.json
+      # The report holds each failed test's screen recording, screenshot and page state.
+      - name: Upload the report, recordings and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
+        with:
+          name: devices-ios
+          path: |
+            playwright-report/devices/
+            test-results/devices/
+            test-results/devices.json
+            test-results/e2e-server.log
+            ~/Library/Logs/com.apple.WebDriver/
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
+
+  android:
+    name: Android Chrome (emulator)
+    if: inputs.every-event || github.event_name != 'pull_request' || github.event.label.name == 'devices'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          ffmpeg: 'true'
+      - name: Build the viewer and the panel
+        timeout-minutes: 5
+        run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer && npm run build -w @swarmcast/admin
+      - run: npm run fetch-bins
+        timeout-minutes: 5
+      # Hardware acceleration for the emulator on GitHub's Linux runners
+      # (https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/).
+      - name: KVM for the emulator
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      # Android 16 with Google APIs (it ships Chrome, and is a debuggable build: Chrome reads the
+      # suite's command-line flags). The SDK, the emulator and the AVD as on a developer's machine: setup.sh with its pinned
+      # command-line tools (not the image's newer ones, which hand over to a tool that collects
+      # usage data), in a folder of the job's own. The image's Android SDK and other toolchains this
+      # job never uses go first, for room on the disk.
+      - name: Android SDK, emulator and AVD
+        timeout-minutes: 10
+        run: |
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
+          sdk="$RUNNER_TEMP/android-sdk"
+          { echo "ANDROID_HOME=$sdk"; echo "ANDROID_SDK_ROOT=$sdk"; } >>"$GITHUB_ENV"
+          ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" scripts/test/devices/setup.sh install android
+          df -m "$HOME"
+      # The suite boots the AVD itself (no device connected; android.ts AndroidDevice.attach), as it
+      # does on a developer's machine, and keeps the emulator's output and exit in
+      # test-results/devices/android-device/emulator.log: the emulator the action used to start
+      # vanished mid-run twice with nothing in its output and no exit status anywhere.
+      # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
+      # A crashed emulator leaves a core (its private memory only: coredump_filter 0x1 keeps the
+      # guest's RAM out), for the backtrace below.
+      - name: Device tests, Android
+        timeout-minutes: 25
+        run: |
+          sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
+          sudo sysctl -w kernel.core_pattern=/tmp/cores/core.%e.%p
+          ulimit -c unlimited
+          echo 0x1 >/proc/self/coredump_filter
+          npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
+      - name: Results in the job summary
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: node .github/scripts/test-summary.mjs --title 'Real devices, Android Chrome (ubuntu-24.04 emulator)' --playwright test-results/devices.json
+      # What the runner says about a device that stopped answering: memory, the kernel's kills, the
+      # emulator's own crash reports. Kept with the report.
+      - name: Host state (a failed run)
+        if: failure()
+        continue-on-error: true
+        timeout-minutes: 8
+        run: |
+          mkdir -p test-results/devices
+          {
+            echo "== free -m"; free -m
+            echo "== df -m"; df -m
+            echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100 || true
+            echo "== emulator crash reports"; find /tmp -maxdepth 3 -path '*emu-crash*' -ls 2>/dev/null | head -n 100 || true
+            echo "== cores"; ls -la /tmp/cores
+          } 2>&1 | tee test-results/devices/host-state.txt
+          if compgen -G '/tmp/cores/core.*' >/dev/null; then
+            command -v gdb >/dev/null || { sudo apt-get update -q && sudo apt-get install -y -q gdb; } >/dev/null
+            for core in /tmp/cores/core.*; do
+              gdb -batch -ex 'info sharedlibrary' -ex 'thread apply all bt 30' "$ANDROID_HOME/emulator/qemu/linux-x86_64/qemu-system-x86_64" "$core" >"test-results/devices/backtrace-$(basename "$core").txt" 2>&1
+              grep -n -m 1 -A 40 'received signal\|SIGSEGV' "test-results/devices/backtrace-$(basename "$core").txt" || true
+            done
+          fi
+      - name: Upload the report, recordings and logs
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        continue-on-error: true
+        timeout-minutes: 5
+        with:
+          name: devices-android
+          path: |
+            playwright-report/devices/
+            test-results/devices/
+            test-results/devices.json
+            test-results/e2e-server.log
+          if-no-files-found: warn
+          retention-days: 14
+      - uses: ./.github/actions/setup/save
+        continue-on-error: true
+        timeout-minutes: 3
+        if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
