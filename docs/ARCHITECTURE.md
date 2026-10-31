@@ -304,7 +304,7 @@ flowchart TB
   - Generally available since 2026-01-15 for any account, with the `shortlived` profile (about 160 h).
   - Only the http-01 and tls-alpn-01 challenges work. Production directory: `https://acme-v02.api.letsencrypt.org/directory`.
   - Rate limits: 50 certificates per IP per 7 days, and 5 per identical set per 7 days.
-  - acme-client 5.4.0 has no profile support, so we pass `profile` to `createOrder` manually and avoid `auto()`.
+  - We use our own minimal RFC 8555 client (`apps/server/src/direct/acme.ts`): IP identifiers (RFC 8738), http-01 and tls-alpn-01 (RFC 8737), and the `profile` field of new orders when the CA's directory advertises it. It is tested against Pebble (`apps/server/test/integration/acme-pebble.test.ts`).
   - No other free ACME CA is confirmed to issue IP certificates.
   - Sources: [GA announcement](https://letsencrypt.org/2026/01/15/6day-and-ip-general-availability), [profiles](https://letsencrypt.org/docs/profiles/), [challenge types](https://letsencrypt.org/docs/challenge-types/), [rate limits](https://letsencrypt.org/docs/rate-limits/).
 - **speed.cloudflare.com**.

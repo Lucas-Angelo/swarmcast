@@ -913,8 +913,9 @@ export function ui(lang, key) {
 
 /**
  * Facts about the runner, in ONE PowerShell call (each PowerShell 5.1 started costs seconds on a
- * cold runner; the old nine calls took 96-102 s). Get-WindowsFeature, a cold Server Manager query,
- * runs only in the app suite, the one that needs Media Foundation for Firefox.
+ * cold runner; the old nine calls took 96-102 s). The Media Foundation state (DISM, as
+ * .github/scripts/media-foundation.ps1 installs it) is read only in the app suite, the one that
+ * needs it for Firefox; client Windows has it built in and no such Server feature.
  */
 export function environmentFacts() {
   const facts = {
@@ -927,7 +928,7 @@ export function environmentFacts() {
     firewall: '(Get-NetFirewallProfile | ForEach-Object { "$($_.Name)=$($_.Enabled) in:$($_.DefaultInboundAction) notify:$($_.NotifyOnListen)" }) -join "; "',
     gpu: '(Get-CimInstance Win32_VideoController | ForEach-Object { $_.Name }) -join "; "',
     cpu: '"$((Get-CimInstance Win32_Processor | Select-Object -First 1).Name) / $([Environment]::ProcessorCount) logical cores / $([math]::Round((Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory/1GB,1)) GB"',
-    mediaFoundation: SUITE === 'app' ? '(Get-WindowsFeature Server-Media-Foundation -ErrorAction Stop).InstallState' : '"n/a (checked in the app suite only)"',
+    mediaFoundation: SUITE === 'app' ? '$s = ((dism.exe /English /Online /Get-FeatureInfo /FeatureName:ServerMediaFoundation) | Select-String "^State : (.+)$").Matches.Groups[1].Value; if ($s) { "ServerMediaFoundation: $s" } else { "built in (no ServerMediaFoundation feature)" }' : '"n/a (checked in the app suite only)"',
   };
   const body = Object.entries(facts)
     .map(([k, s]) => `try { $f['${k}'] = [string](& { ${s} }) } catch { $f['${k}'] = "error: $($_.Exception.Message)" }`)
