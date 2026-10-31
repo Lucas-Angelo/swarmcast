@@ -59,10 +59,14 @@ async function emojiBuiltAtOpen(page: Page): Promise<() => Promise<{ built: numb
   };
 }
 
+/** How often wheelToEnd looks whether a wheel turn moved the list: every frame, not expect.poll's back-off. */
+const FRAME_MS = 16;
+
 /**
  * Scrolls `list` to its end with the mouse wheel, turn after turn as a person does: Firefox
- * scrolls at most one page per wheel event, whatever its delta. Each turn waits for the list to
- * move (a smooth scroll starts on a later frame) before the next one.
+ * scrolls at most one page per wheel event, whatever its delta (about 30 turns for the whole
+ * list). Each turn waits for the list to move (a smooth scroll starts on a later frame) before
+ * the next one.
  */
 async function wheelToEnd(page: Page, list: Locator): Promise<void> {
   const position = () => list.evaluate((el) => ({ top: el.scrollTop, end: el.scrollHeight - el.clientHeight }));
@@ -71,7 +75,7 @@ async function wheelToEnd(page: Page, list: Locator): Promise<void> {
   while (top < end - 1) {
     const before = top;
     await page.mouse.wheel(0, end - top);
-    await expect.poll(async () => (({ top, end } = await position()), top)).toBeGreaterThan(before);
+    await expect.poll(async () => (({ top, end } = await position()), top), { intervals: [FRAME_MS] }).toBeGreaterThan(before);
   }
 }
 
