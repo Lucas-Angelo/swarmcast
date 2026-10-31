@@ -16,6 +16,10 @@ import {
 
 const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
 const rounds = Number(opt('rounds', '30'));
+/** Seconds a round's Firefox is up before it joins (app.mjs section 1: about 60). */
+const ageS = Number(opt('age', '0'));
+/** Whether an Edge viewer joins, gets P2P bytes from Chrome and leaves while Firefox waits (as in app.mjs). */
+const withEdge = opt('edge', 'no') === 'yes';
 const relDir = path.join(work, 'rel');
 const home = path.join(process.env.LOCALAPPDATA, 'SwarmCast');
 const srv = await serve(relDir);
@@ -57,6 +61,20 @@ await section('1. Firefox joins next to a Chrome viewer, round after round', asy
   await waitPlaylistForLateJoiners(early.page);
   for (let i = 1; i <= rounds; i++) {
     const firefox = await launchBrowser('firefox');
+    const launchedAt = Date.now();
+    if (withEdge) {
+      const edge = await launchBrowser('msedge');
+      const e = await joinAndPlay(edge, s0.liveLink, `edge${i}`);
+      await e.page.check('#p2p');
+      await until(async () => {
+        const s = await stats(e.page);
+        return s.p2pDownBytes + s.p2pUpBytes > 0;
+      }, 150_000, 'P2P bytes Chrome<->Edge');
+      await e.context.close();
+      await edge.close();
+    }
+    const left = launchedAt + ageS * 1000 - Date.now();
+    if (left > 0) await new Promise((r) => setTimeout(r, left));
     let f = null;
     let failed = true;
     onCleanup(async () => {
@@ -76,7 +94,7 @@ await section('1. Firefox joins next to a Chrome viewer, round after round', asy
       return s.p2pDownBytes + s.p2pUpBytes > 0 ? s : null;
     }, 150_000, 'P2P bytes Chrome<->Firefox');
     failed = false;
-    check('Firefox joins, plays, turns P2P on and gets P2P bytes', true, `round ${i}: plays after ${((played - t0) / 1000).toFixed(1)} s, P2P down ${Math.round(sf.p2pDownBytes / 1e3)} KB`);
+    check('Firefox joins, plays, turns P2P on and gets P2P bytes', true, `round ${i}: Firefox up ${((t0 - launchedAt) / 1000).toFixed(0)} s, plays after ${((played - t0) / 1000).toFixed(1)} s, P2P down ${Math.round(sf.p2pDownBytes / 1e3)} KB`);
     await f.context.close();
     await firefox.close();
   }
