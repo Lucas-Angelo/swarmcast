@@ -274,10 +274,11 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
 // ---- stream health (GET /health) ----
 
 /**
- * Every media playlist (video and audio) viewers get: the seconds it covers, and the
- * discontinuity number a player gives its newest segment (the sequence plus the tags before it).
+ * Every media playlist (video and audio) viewers get: the seconds it covers, the seconds of the
+ * current OBS connection in it (after its last discontinuity), and the discontinuity number a
+ * player gives its newest segment (the sequence plus the tags before it).
  */
-function mediaPlaylists(): Array<{ name: string; seconds: number; lastCc: number }> {
+function mediaPlaylists(): Array<{ name: string; seconds: number; currentS: number; lastCc: number }> {
   const multivariant = app.live.origin.getPlaylist('index.m3u8') ?? '';
   const names = new Set<string>();
   for (const line of multivariant.split('\n')) {
@@ -288,8 +289,10 @@ function mediaPlaylists(): Array<{ name: string; seconds: number; lastCc: number
     const text = app.live.origin.getPlaylist(name) ?? '';
     let seconds = 0;
     for (const m of text.matchAll(/#EXTINF:([\d.]+)/g)) seconds += Number(m[1]);
+    let currentS = 0;
+    for (const m of text.slice(text.lastIndexOf('#EXT-X-DISCONTINUITY\n') + 1).matchAll(/#EXTINF:([\d.]+)/g)) currentS += Number(m[1]);
     const lastCc = Number(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/.exec(text)?.[1] ?? 0) + (text.match(/^#EXT-X-DISCONTINUITY$/gm)?.length ?? 0);
-    return { name, seconds: Math.round(seconds * 10) / 10, lastCc };
+    return { name, seconds: Math.round(seconds * 10) / 10, currentS: Math.round(currentS * 10) / 10, lastCc };
   });
 }
 
@@ -301,7 +304,7 @@ interface Health {
   variants: number[];
   sinceSegmentMs: number | null;
   playlistS: number;
-  playlists: Array<{ name: string; seconds: number; lastCc: number }>;
+  playlists: Array<{ name: string; seconds: number; currentS: number; lastCc: number }>;
   windowSeconds: number;
   ladder: string;
   threat: string;
@@ -311,14 +314,21 @@ interface Health {
 
 /**
  * Healthy: live, `qualities` variants (1: the ladder is off), a new segment within 2.5 segment
- * durations, and every media playlist holding at least `minPlaylistS`.
+ * durations, and every media playlist holding at least `minPlaylistS` of the current OBS
+ * connection. Earlier connections do not count: a stream that "has run for a while" is one
+ * connection, and a player that starts in an earlier one meets the interruption (a stall at the
+ * discontinuity) inside the test. The playlists keep earlier connections across reconnects, as
+ * they should for viewers; after the gate reconnected OBS for a test that changed the feed
+ * (quality.spec, a rendition drop), adaptive-delay's good-network viewer started 20 s behind
+ * live in the previous test's 720p connection and stalled at the switch to this one, which the
+ * controller rightly read as an unstable network (soak 41202808716, 2 of 3 repeats).
  */
 function healthNow(minPlaylistS: number, qualities: number): Health {
   const L = app.live;
   const variants = L.origin.variants().map((v) => v.height);
   const since = L.origin.lastSegmentAt ? Date.now() - L.origin.lastSegmentAt : null;
   const playlists = mediaPlaylists();
-  const playlistS = playlists.length ? Math.min(...playlists.map((p) => p.seconds)) : 0;
+  const playlistS = playlists.length ? Math.min(...playlists.map((p) => p.currentS)) : 0;
   const problems: string[] = [];
   // A player matches audio to video (and one quality to another) by discontinuity number: if
   // the newest segments disagree, nothing new ever plays (seen when OBS reconnected twice
@@ -329,7 +339,7 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
   if (variants.length !== qualities) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected ${qualities}`);
   if (since === null) problems.push('no segment yet');
   else if (since > 2.5 * SEGMENT_DURATION_S * 1000) problems.push(`no new segment for ${since} ms`);
-  if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s, ${minPlaylistS} s wanted`);
+  if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s of the current OBS connection, ${minPlaylistS} s wanted`);
   return {
     ok: problems.length === 0,
     problems,

@@ -71,9 +71,10 @@ function streamHealth(o: { waitMs?: number; minPlaylistS?: number; qualities?: n
 }
 
 /**
- * Waits until the live playlist covers `seconds`. Viewers normally join a stream that has run
- * for a while: right after OBS starts the playlist is short, players sit at the live edge and
- * every segment is urgent (fetched over HTTPS, never from peers).
+ * Waits until the live playlist covers `seconds` of the current OBS connection (server.ts
+ * healthNow). Viewers normally join a stream that has run for a while: right after OBS starts the
+ * playlist is short, players sit at the live edge and every segment is urgent (fetched over HTTPS,
+ * never from peers).
  */
 export async function waitForPlaylist(seconds: number, o: { qualities?: number; timeoutMs?: number } = {}): Promise<void> {
   const h = await streamHealth({ waitMs: o.timeoutMs ?? 90_000, minPlaylistS: seconds, qualities: o.qualities ?? 1 });
