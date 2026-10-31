@@ -1,5 +1,6 @@
+import type { z } from 'zod';
 import type { MessageKey, MessageParams } from '../i18n/index.js';
-import type { ChatContentKind, ChatProtect, ChatSettings, GifProvider, GifRef } from './schemas.js';
+import type { ChatContentKind, ChatProtect, ChatSettings, GifProvider, GifRef, chatClientSchemas } from './schemas.js';
 
 /**
  * Chat wire format on /control (plan §4.3). Server → viewer messages are typed, not parsed at
@@ -159,6 +160,20 @@ export type ChatServerMessage =
   | { t: 'chat.settings'; settings: ChatPublicSettings }
   | { t: 'chat.you'; you: ChatYou }
   | ({ t: 'chat.reset' } & ChatSnapshot);
+
+/**
+ * Viewer → server chat messages as the viewer builds them: `chat.send` carries `text` or `gif`,
+ * never both (the rule chatSendSchema refines). The server parses them with chatClientSchemas.
+ */
+export type ChatClientMessage =
+  | { t: 'chat.send'; n: number; text: string }
+  | { t: 'chat.send'; n: number; gif: GifRef }
+  | { t: 'chat.color'; color: string }
+  | { t: 'chat.resume'; after: number };
+
+/** Compile-time check: every ChatClientMessage is an input chatClientSchemas accepts by shape. */
+type _ConformsToSchemas<T extends z.input<(typeof chatClientSchemas)[number]>> = T;
+type _ChatClientMessageCheck = _ConformsToSchemas<ChatClientMessage>;
 
 /** Counters shown in the panel's chat card (per minute, rolling). */
 export interface ChatCounters {

@@ -5,7 +5,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { FastifyInstance } from 'fastify';
 import { createAdminServer } from './admin/server.js';
-import { loadConfig, persistableConfig, saveConfig, type AppConfig } from './core/config.js';
+import { loadConfig, type AppConfig } from './core/config.js';
+import { ConfigStore } from './core/config-store.js';
 import { LiveController } from './core/live.js';
 import { ActivityLog } from './core/activity.js';
 import { createLogger, type Logger } from './core/logger.js';
@@ -145,6 +146,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
   started.log = log;
   const config = { ...loadConfig(paths.configFile), ...opts.configOverrides };
   if (opts.noTunnel) config.tunnel = { provider: 'none' };
+  const configStore = new ConfigStore(paths.configFile, config, { noTunnel: opts.noTunnel });
   if (opts.desktop) await desktopPreflight(config.ports);
   const secrets = loadOrCreateSecrets(paths.secretsFile);
   const signer = await ManifestSigner.create(secrets.manifestPrivateKeyPem);
@@ -214,8 +216,8 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
     activity,
     blocklists,
     config,
-    // Never persist ports chosen at runtime as a fallback.
-    saveConfig: (c) => saveConfig(paths.configFile, persistableConfig(c, loadConfig(paths.configFile), { noTunnel: opts.noTunnel })),
+    // Modules change `config` in place and ask for a save; ports chosen at runtime are never persisted.
+    saveConfig: () => configStore.save(),
     streamKey: secrets.streamKey,
     browserCheckKey: secrets.browserCheckKey,
     signer,
@@ -252,7 +254,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
   const diagnostics = new Diagnostics({
     paths,
     config,
-    persist: () => saveConfig(paths.configFile, persistableConfig(config, loadConfig(paths.configFile), { noTunnel: opts.noTunnel })),
+    persist: () => configStore.save(),
     live,
     log,
     version,
@@ -267,7 +269,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
     get: () => config.updates.channel,
     save: (channel) => {
       config.updates = { ...config.updates, channel };
-      saveConfig(paths.configFile, persistableConfig(config, loadConfig(paths.configFile), { noTunnel: opts.noTunnel }));
+      configStore.save();
     },
   });
   let closing: Promise<void> | null = null;

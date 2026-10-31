@@ -473,6 +473,7 @@ export function ShareStep({ s }: { s: AdminState }) {
 // ---- 8. Panel tour ----
 const AREA_TEXT: Record<AreaId, { title: Parameters<typeof t>[0]; desc: Parameters<typeof t>[0] }> = {
   top: { title: 'onb.tour.top', desc: 'onb.tour.top.desc' },
+  chat: { title: 'onb.tour.chat', desc: 'onb.tour.chat.desc' },
   link: { title: 'onb.tour.link', desc: 'onb.tour.link.desc' },
   p2p: { title: 'onb.tour.p2p', desc: 'onb.tour.p2p.desc' },
   quality: { title: 'onb.tour.quality', desc: 'onb.tour.quality.desc' },

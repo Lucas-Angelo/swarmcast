@@ -10,7 +10,7 @@ import { createApp } from '../../src/app.js';
 import { LoadGuard, type ShedReason } from '../../src/quality/load-guard.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
 import { OwnLoopDelay } from '../../../../scripts/test/lib/loop-delay.mjs';
-import { RESERVED } from '../../../../scripts/test/lib/ports.mjs';
+import { assertFixedPorts, e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import { startFeed } from '../integration/helpers.js';
 
 // Attack-reaction tests must not pop up real desktop notifications on the developer's machine.
@@ -45,20 +45,19 @@ process.stderr.write = ((chunk: unknown, ...rest: unknown[]) => {
   return stderrWrite(chunk, ...rest);
 }) as typeof process.stderr.write;
 
-// SWARMCAST_E2E_PORT_OFFSET moves every port (to run next to another copy of the suite).
+// The e2e ports (scripts/test/lib/ports.mjs FIXED_PORTS.e2e: 11080-11083 and 11935), moved by
+// SWARMCAST_E2E_PORT_OFFSET to run next to another copy of the suite. `control` is the test
+// control port below; playwright.config.ts and fixtures.ts take theirs from e2ePorts() too.
 const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
-export const E2E_PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, mediamtxHls: 38083 + OFFSET };
-/** The test control port below (fixtures.ts computes it the same way: no URL read from a file). */
-const CONTROL_PORT = 38082 + OFFSET;
-
-// SwarmCast's default ports and those of the demo SwarmCast the maintainer keeps running
-// (scripts/test/lib/ports.mjs RESERVED, which the other suites never hand out either): an offset
-// of 100, for example, would put the panel on 38181. Stop before binding anything.
-const clashes = Object.entries({ ...E2E_PORTS, control: CONTROL_PORT }).filter(([, port]) => RESERVED.has(port));
-if (!Number.isInteger(OFFSET) || clashes.length > 0) {
-  const why = clashes.length > 0 ? clashes.map(([name, port]) => `${name} would be ${port}`).join(', ') : 'it is not a whole number';
-  throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: ${why}. Pick another offset.`);
-}
+if (!Number.isInteger(OFFSET)) throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: it is not a whole number.`);
+const { control: CONTROL_PORT, ...appPorts } = e2ePorts(OFFSET);
+export const E2E_PORTS = appPorts;
+// Stop before binding anything when the offset puts a port where it cannot be relied on: out of
+// 10000-19999 (the zone also keeps clear of SwarmCast's default and demo ports, RESERVED), on
+// another harness's fixed port, or inside an ephemeral range (this machine's or any OS default),
+// where an outgoing connection can hold it. In run 41192273509 a loopback connection held 38082,
+// the control port then, and this server died with EADDRINUSE before the first test.
+assertFixedPorts('e2e', { ...E2E_PORTS, control: CONTROL_PORT }, `SWARMCAST_E2E_PORT_OFFSET=${OFFSET} (pick another offset)`);
 
 /**
  * The quality ladder's load guard drops a rendition to protect OBS when the whole machine's CPU

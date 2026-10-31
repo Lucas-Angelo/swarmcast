@@ -57,6 +57,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 env:
   FORCE_COLOR: '1'
@@ -123,7 +124,7 @@ jobs:
           cache-key: ${{ matrix.target }}
           targets: ${{ matrix.rust-target || '' }}
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: ${{ matrix.target == 'windows-x64' && 'pkg-windows-x64' || 'web-dist' }}
       - name: Version
@@ -263,7 +264,7 @@ jobs:
 
       # ---------------------------------------------------------------- preflight
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         if: ${{ !cancelled() && matrix.preflight }}
         with:
           names: pkg-${{ matrix.target }}
@@ -325,7 +326,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
-          node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:47811 \
+          node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:17811 \
             --out release/desktop/latest.json release/desktop
           run=()
           if [ "$RUNNER_OS" = Linux ]; then
@@ -333,7 +334,7 @@ jobs:
             run=(xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session --)
           fi
           "${run[@]}" node scripts/test/desktop/verify.mjs --installers release/desktop \
-            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
+            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 17811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
 
       # ---------------------------------------------------------------- AppImage, minimal host
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts

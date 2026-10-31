@@ -66,6 +66,12 @@ export const TRACKER_MAX_MESSAGE = 64 * 1024;
 export const HASH_FAILURE_THRESHOLD = 3;
 
 /**
+ * WebSocket close codes of `/control` (4000-4999: application codes, RFC 6455 §7.4.2). The watch
+ * page shows its end screen after `ended` and `kicked`, and tries to reconnect after the others.
+ */
+export const CONTROL_CLOSE = { ended: 4000, sessionEnded: 4001, disconnected: 4002, kicked: 4003 } as const;
+
+/**
  * A Cloudflare quick tunnel answers 429 above 200 requests in flight, and every open
  * WebSocket counts as one until it closes (measured 2026-10-26, docs/ARCHITECTURE.md).
  */

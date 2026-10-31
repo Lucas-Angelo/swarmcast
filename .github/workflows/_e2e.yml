@@ -29,6 +29,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 env:
   FORCE_COLOR: '1'
@@ -61,7 +62,7 @@ jobs:
           ffmpeg: 'true'
           apt-debs: ${{ runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: web-dist
       - run: npm run fetch-bins
@@ -194,7 +195,7 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 5
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: web-dist
       - name: Playwright Firefox

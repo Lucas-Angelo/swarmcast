@@ -42,6 +42,14 @@ export function commandsFor(row) {
         parse: playwrightChecks,
       },
     ],
+    // The viewer chat UI against the mock hub, as _e2e.yml runs it (one fresh run per repetition).
+    'chat-ui': [
+      {
+        name: 'playwright',
+        cmd: `PLAYWRIGHT_JSON_OUTPUT_NAME="$RUN_DIR/playwright.json" npx playwright test -c apps/viewer/test/chat/playwright.config.ts --reporter=list,json --output="$RUN_DIR/test-results" ${A}`,
+        parse: playwrightChecks,
+      },
+    ],
     // The chat load bench (docs/CHAT.md): every scenario once per run, one PASS/FAIL line each.
     'chat-load': [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/chat/bench.ts --out "$RUN_DIR/chat-bench" ${A}`, parse: lineChecks }],
     rust: [{ name: 'cargo test', cmd: `cd apps/desktop/src-tauri && cargo test --locked ${A}`, parse: cargoChecks }],
@@ -64,7 +72,7 @@ export function commandsFor(row) {
           `SC_DESKTOP_ARTIFACTS="$RUN_DIR" ` +
           (process.platform === 'linux' ? "NO_AT_BRIDGE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- " : '') +
           `node scripts/test/desktop/verify.mjs --installers release/desktop ` +
-          `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 ${A}`,
+          `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 17811 ${A}`,
         parse: lineChecks,
       },
     ],

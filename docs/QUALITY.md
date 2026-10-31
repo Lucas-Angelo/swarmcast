@@ -194,7 +194,7 @@ Simulated uplink, 30 min per scenario. The queue grows when SwarmCast + the othe
 ## 4. Measurements
 
 ### Setup
-- **Server:** `scripts/test/quality/server.ts` on ports 45080/45081/45888/45935. A synthetic 1080p30 6 Mbps CBR stream (x264, 2 s GOP) goes into MediaMTX, and the ffmpeg ladder (VideoToolbox) produces 1080p copy + 720p 3 Mbps + 480p 1.4 Mbps.
+- **Server:** `scripts/test/quality/server.ts` on ports 16080/16081/16888/16935 (`FIXED_PORTS.quality` in `scripts/test/lib/ports.mjs`). A synthetic 1080p30 6 Mbps CBR stream (x264, 2 s GOP) goes into MediaMTX, and the ffmpeg ladder (VideoToolbox) produces 1080p copy + 720p 3 Mbps + 480p 1.4 Mbps.
 - **Client:** `scripts/test/quality/bench.ts` runs Google Chrome under CDP `Network.emulateNetworkConditions`, with all 4 configurations side by side on each network for 2.5 min, after a 40 s playlist window had built up.
 - **Configurations:** "before" = the current watch.ts settings, pinned to the source, since there was no ladder before. "stable-source" isolates the effect of the buffer profile.
 - **Metrics:** stalls = `waiting` events after the first frame. Latency to edge = `hls.latency`. Wall-clock latency = now − `hls.playingDate` (program date-time from the muxer, which includes segmenting).

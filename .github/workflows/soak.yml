@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 # One soak per pull request at a time; a new one waits for the running one.
 concurrency:
@@ -117,7 +118,7 @@ jobs:
         timeout-minutes: 8
         with:
           ffmpeg: ${{ matrix.suite != 'unit' }}
-          apt-debs: ${{ matrix.suite == 'e2e' && runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
+          apt-debs: ${{ (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
       # The rest is what _quick.yml, _node.yml and _e2e.yml do before the same suite.
       - name: Install the website's dependencies (unit)
         if: matrix.suite == 'unit'
@@ -128,18 +129,24 @@ jobs:
           npm run fetch-bins
           npm run build
       - name: Playwright browsers and their system libraries (Linux)
-        if: matrix.suite == 'e2e' && runner.os == 'Linux'
+        if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'Linux'
         run: |
           npx playwright install firefox webkit
           .github/scripts/apt-retry.sh playwright-deps firefox webkit
       # The `chromium` project runs the Google Chrome of the runner image.
       - name: Playwright browsers (macOS)
-        if: matrix.suite == 'e2e' && runner.os == 'macOS'
+        if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'macOS'
         run: npx playwright install firefox webkit
+      # As _e2e.yml's chat-windows job: Google Chrome and Microsoft Edge from the runner image.
+      - name: Playwright Firefox (chat UI, Windows)
+        if: matrix.suite == 'chat-ui' && runner.os == 'Windows'
+        run: npx playwright install firefox
       - &soak-run
         name: Soak ${{ matrix.suite }} (×${{ matrix.repeat }})
         env:
           SOAK: ${{ toJSON(matrix) }}
+          # The chat UI's `edge` project on Windows (_e2e.yml's chat-windows job sets it too).
+          CHAT_EDGE: ${{ matrix.suite == 'chat-ui' && runner.os == 'Windows' && '1' || '' }}
         run: node scripts/ci/soak-run.mjs
       # A run whose results never arrive counts as failed in the report, so a failed upload is
       # never a hidden pass.
@@ -376,7 +383,7 @@ jobs:
       - name: latest.json for the update test
         run: |
           version="$(node -p "require('./package.json').version")"
-          node scripts/build/updater-manifest.mjs --version "$version" --base-url http://127.0.0.1:47811 \
+          node scripts/build/updater-manifest.mjs --version "$version" --base-url http://127.0.0.1:17811 \
             --out release/desktop/latest.json release/desktop
       - *soak-run
       - *soak-upload

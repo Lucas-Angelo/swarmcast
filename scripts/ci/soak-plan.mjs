@@ -23,6 +23,10 @@ export const SUITES = {
   integration: { job: 'node', setup: 10, run: 8 },
   'chat-load': { job: 'node', setup: 10, run: 12 },
   e2e: { job: 'node', setup: 15, run: 30, inner: true },
+  // The viewer chat UI against the mock hub (apps/viewer/test/chat): a fresh Playwright run, so
+  // fresh browsers and globalSetup, every repetition, as in CI. `args` pick the projects (Windows:
+  // --project=chromium --project=firefox --project=edge) and may add --repeat-each.
+  'chat-ui': { job: 'node', setup: 15, run: 10 },
   rust: { job: 'rust', setup: 20, run: 5 },
   'windows-installer': { job: 'windows', setup: 15, run: 20 },
   'windows-app': { job: 'windows', setup: 15, run: 20 },

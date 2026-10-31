@@ -9,7 +9,7 @@ Stream a members-only live straight from your own computer, through a secret lin
 
 **Guide, download and help: <https://lucas-angelo.github.io/swarmcast/>** (em português: <https://lucas-angelo.github.io/swarmcast/pt-br/>)
 
-![The SwarmCast panel during a live: status and OBS at the top, the live link (hidden here), and the viewers list with device and P2P.](docs/img/panel-overview-en.png)
+![The SwarmCast panel during a live: status and OBS at the top, the live link (hidden here), the live chat on the right, and the viewers list with device and P2P.](docs/img/panel-overview-en.png)
 
 ## Download
 

@@ -1,6 +1,5 @@
-import { execFile } from 'node:child_process';
 import net from 'node:net';
-import path from 'node:path';
+import { runCommand, system32 } from './exec.js';
 
 /** True when something accepts TCP connections on host:port. */
 export function isListening(port: number, host = '127.0.0.1', timeoutMs = 1000): Promise<boolean> {
@@ -81,8 +80,5 @@ export function reservePort(port: number, host: string): Promise<PortReservation
  */
 export function excludedPortRanges(timeoutMs = 5000): Promise<string | null> {
   if (process.platform !== 'win32') return Promise.resolve(null);
-  const netsh = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'netsh.exe');
-  return new Promise((resolve) => {
-    execFile(netsh, ['int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp'], { windowsHide: true, timeout: timeoutMs }, (err, stdout) => resolve(err ? null : stdout.trim()));
-  });
+  return runCommand(system32('netsh.exe'), ['int', 'ipv4', 'show', 'excludedportrange', 'protocol=tcp'], { timeoutMs }).then((r) => (r.ok ? r.stdout.trim() : null));
 }

@@ -57,6 +57,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 # Superseded pull request runs are cancelled; runs on main, tags, schedules and releases never are.
 concurrency:

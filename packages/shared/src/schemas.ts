@@ -488,4 +488,6 @@ export interface AdminState {
   direct: DirectModeState;
   bannedCount: number;
   security: SecurityState;
+  /** The chat is on (chat settings): the panel shows the live chat at the top while live. */
+  chatEnabled: boolean;
 }

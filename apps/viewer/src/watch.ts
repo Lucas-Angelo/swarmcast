@@ -4,7 +4,7 @@ import { formatNumber, t, type MessageKey } from './i18n.js';
 import Hls, { type ErrorData, type LevelDetails } from 'hls.js';
 import { HlsJsP2PEngine } from 'p2p-media-loader-hlsjs';
 import { debug as p2pDebug } from 'p2p-media-loader-core';
-import type { P2PBlockReason, ServerMessage, ViewerConfig } from '@swarmcast/shared';
+import { CONTROL_CLOSE, type P2PBlockReason, type ServerMessage, type ViewerConfig } from '@swarmcast/shared';
 import { IntegrityVerifier } from './integrity.js';
 import { attachAdaptiveDelay, delayTestFlags, type AdaptiveDelay } from './adaptive-delay.js';
 import { createLatencyToggle } from './latency-toggle.js';
@@ -664,11 +664,11 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
       trackerMux.detach(ws);
       chat.connection(false);
       if (ended) return;
-      if (ev.code === 4003) {
+      if (ev.code === CONTROL_CLOSE.kicked) {
         endScreen('watch.removed.title', 'watch.removed.text');
         return;
       }
-      if (ev.code === 4000) {
+      if (ev.code === CONTROL_CLOSE.ended) {
         endScreen('watch.ended.title', 'watch.ended.text');
         return;
       }

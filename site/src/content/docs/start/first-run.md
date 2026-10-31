@@ -53,15 +53,15 @@ Click **Finish**. To see the tutorial again, click **Redo setup tutorial** at th
 
 ## The panel
 
-![The panel during a live: 1 Live: 3 viewers and OBS: sending, 2 the live link (hidden here), 3 OBS settings, 4 Viewers & P2P help (viewers who turned P2P on share video), 5 Protection.](../../../assets/guides/start/en/panel.webp)
+![The panel during a live: 1 Live: 3 viewers and OBS: sending, 2 the live link (hidden here), 3 OBS settings, 4 Viewers & P2P help (viewers who turned P2P on share video), 5 Live chat on the right, with the viewers' messages.](../../../assets/guides/start/en/panel.webp)
 
 1. **At the top:** whether you are live, whether OBS is sending, and **Stop everything**.
 2. **Live link for your subscribers:** the link to share. See [Go live](/swarmcast/live/go-live/).
 3. **OBS settings:** the server and the stream key for OBS.
 4. **Viewers & P2P help:** how many watch and how many help. See [Help the stream (P2P)](/swarmcast/live/p2p/).
-5. **Protection:** see [Security and protection](/swarmcast/live/protection/).
+5. **Live chat:** while you are live, the chat is right here, on the right (under the status in a narrow window): read, answer and moderate without scrolling. See [Chat](/swarmcast/live/chat/).
 
-Further down: **Quality for viewers**, **Desktop app** (start with the computer, updates), **Viewers** (kick someone), **Activity** and **Problem report** (send your logs). Most buttons have a small **ⓘ**: hover or tap it for an explanation.
+Further down: **Your internet**, **Connection mode**, **Protection** (see [Security and protection](/swarmcast/live/protection/)), **Quality for viewers**, **Desktop app** (start with the computer, updates), **Viewers** (kick someone), **Chat** (turn the chat on or off, chat settings), **Activity** and **Problem report** (send your logs). Most buttons have a small **ⓘ**: hover or tap it for an explanation.
 
 ## Where SwarmCast keeps your settings
 

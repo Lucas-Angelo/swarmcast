@@ -28,7 +28,9 @@ passes sometimes is a failing test. Main is protected: nothing lands unless ever
 5. **Reuse.** One fixture/helper/builder per concept (Playwright `test.extend`, the unit `helpers.ts`,
    e2e `fixtures.ts`). Search before writing a new helper.
 6. **Independent and parallel-safe.** Unique temp dirs (`fs.mkdtemp`), port 0, no order dependence. The
-   e2e server is shared by the whole run: every test restores what it changes.
+   e2e server is shared by the whole run: every test restores what it changes. A port needed before its
+   server starts comes from `allocPorts()` (20000-31999) or `FIXED_PORTS` (10000-19999), never from an
+   OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535; `scripts/test/lib/ports.mjs`).
 7. **Cross-OS by design.** `path.join`, no CRLF assumptions, case-insensitive file systems, Windows file
    locks (close handles before deleting), no POSIX signals on Windows (taskkill trees), bind 127.0.0.1,
    pin TZ/locale, compare timing against a baseline from the same run (CI VMs, macOS above all, are
@@ -85,7 +87,9 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | Player stalls ~3 s on macOS Chrome even without load | runner noise | same-run baseline comparisons; stall comparison not on darwin, data in the spec |
 | Bench "every message reaches everyone" failed | scenario ran at the budget edge | give the scenario the headroom its claim assumes |
 | Artifact download failed after 5 retries | GitHub artifact service | `.github/actions/fetch-artifact` (3 tries, 30 s/90 s) |
+| Watch never enabled on a join page that looks ready | one of its scripts failed to load (net::ERR_NO_BUFFER_SPACE on a Windows runner): the browser never runs it nor asks again | the page reloads itself (startup guard, the one hash-allowed inline script); harnesses type the nickname only once Watch is enabled |
 | Join never posted / click did nothing | a status line above the button hid itself mid-click and moved the button (press on the button, release elsewhere, click on the ancestor) | never move a control after it appears (status below the button, page shown only when ready); Playwright checks the hit target only on press |
+| Watch page froze 2-7 s in layout (chat not visible within 5 s), on the first run of a fresh Windows runner only, in two workers' browsers at once | the machine's first load of system fonts (the corpus's CJK/Indic fallbacks) holds up every process's font lookups; Chrome's renderer lays text out with a blocking call to the browser's font service (trace: one Arial match 1.8 s) | globalSetup renders what the specs render (the watch page with the whole corpus) before any test |
 | Chat message not shown in a visible page | rAF can stop for a page that still reports visible (occluded/background windows) | timer fallback when no frame comes (`render.ts`, `stats.late`) |
 | Slow mode refused a send at the end of the countdown | client counted from send, server from receipt | count from the ack, follow the current slowS, hold Send while a message is in flight |
 | Firefox goto never reports DOMContentLoaded | automation layer (Juggler) loses the event on a COOP process switch | wait for `commit` + the real ready signal (Watch enabled), never DOMContentLoaded |
@@ -94,6 +98,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | A viewer barely played after a forced stall (macOS, once in 43 media jobs) | the quality ladder's load guard dropped 480p mid-test ("behind", the runner's CPU shared with the test's browsers); the ladder's playlists vanished and the server answered 503 "not started", which players retry for minutes | product: 404 for a playlist the stream no longer lists, so the player reloads; e2e: the guard drops a rendition only when a spec asks (`server.ts` SpecLoadGuard, `POST /shed`) |
 | After the ladder fell back to the original, the viewer froze 9 s (quality.spec, macOS and Linux) | the origin kept MediaMTX's playlists from before the ladder: they began with the gate's 2 s OBS connections, one of them in the audio playlist only; the player started on the oldest video segment and never found its audio until the stall watchdog moved it | a playlist the served stream did not list starts its window over when it comes back (`HlsOrigin.setSource`, `origin-runs.test.ts`); read the served playlists from the trace's resources before guessing |
 | Cache or upload step hung and failed the job | GitHub service incident | cache/diagnostics steps are non-fatal with short timeouts; tests and builds stay fatal |
+| Server fails at start with EADDRINUSE on a fixed port nothing else listens on (e2e control port 38082, run 41192273509) | the port lay in the OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535): an outgoing loopback connection, or its TIME_WAIT, held 127.0.0.1:<port> | port 0 where possible; else a fixed port from `FIXED_PORTS` in 10000-19999 (`scripts/test/lib/ports.mjs`), checked by `assertFixedPorts` at start and by `ports-zone.test.ts` |
 
 ## CI
 

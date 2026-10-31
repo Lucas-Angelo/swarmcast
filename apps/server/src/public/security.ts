@@ -1,8 +1,23 @@
 import { GIF_PROVIDERS, type GifProvider } from '@swarmcast/shared/chat';
+import { STARTUP_GUARD } from '@swarmcast/shared/web/startup-guard';
+import { createHash } from 'node:crypto';
 import net from 'node:net';
-import type { FastifyReply, FastifyRequest } from 'fastify';
+import type { FastifyRequest } from 'fastify';
 
-/** Strict CSP for viewer pages: no inline scripts, connections only to ourselves (+ STUN for WebRTC). */
+// Shared with the panel server, so they live in http/; re-exported for one cycle.
+export { applySecurityHeaders, originMatchesHost } from '../http/security-headers.js';
+
+/**
+ * The CSP source of the viewer pages' one inline script, their startup guard: its SHA-256, as the
+ * browser computes it from the text the viewer build wrote into the page (the same constant).
+ */
+export const STARTUP_GUARD_SOURCE = `'sha256-${createHash('sha256').update(STARTUP_GUARD, 'utf8').digest('base64')}'`;
+
+/**
+ * Strict CSP for viewer pages: scripts only from ourselves, connections only to ourselves (+ STUN
+ * for WebRTC). No inline script runs but the startup guard, allowed by its hash; never
+ * 'unsafe-inline'.
+ */
 export function viewerCsp(host: string, secure: boolean, _stunServers: string[] = [], gif?: GifProvider): string {
   const wsScheme = secure ? 'wss' : 'ws';
   // GIFs (chat, opt-in): only while the streamer has them on, and only that provider's documented
@@ -12,7 +27,7 @@ export function viewerCsp(host: string, secure: boolean, _stunServers: string[] 
   // stun: URLs as invalid sources, so they are deliberately not listed.
   return [
     "default-src 'none'",
-    "script-src 'self'",
+    `script-src 'self' ${STARTUP_GUARD_SOURCE}`,
     "style-src 'self'",
     `img-src 'self' data:${g ? ` ${g.media.join(' ')}` : ''}`,
     "media-src 'self' blob:",
@@ -25,20 +40,6 @@ export function viewerCsp(host: string, secure: boolean, _stunServers: string[] 
     "frame-ancestors 'none'",
     "object-src 'none'",
   ].join('; ');
-}
-
-export function applySecurityHeaders(reply: FastifyReply, csp: string, hsts: boolean): void {
-  reply.header('Content-Security-Policy', csp);
-  reply.header('Referrer-Policy', 'no-referrer');
-  reply.header('X-Content-Type-Options', 'nosniff');
-  reply.header('X-Frame-Options', 'DENY');
-  reply.header('Cross-Origin-Opener-Policy', 'same-origin');
-  reply.header('Cross-Origin-Resource-Policy', 'same-origin');
-  reply.header(
-    'Permissions-Policy',
-    'camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=(), browsing-topics=(), fullscreen=(self), autoplay=(self), picture-in-picture=(self)',
-  );
-  if (hsts) reply.header('Strict-Transport-Security', 'max-age=31536000');
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
@@ -58,14 +59,4 @@ export function clientIp(req: FastifyRequest | { socket: { remoteAddress?: strin
 
 export function isMobileUserAgent(ua: string | undefined): boolean {
   return /Mobi|Android|iPhone|iPad|iPod/i.test(ua ?? '');
-}
-
-/** Origin must match the Host the request was sent to (blocks cross-site WebSocket hijacking). */
-export function originMatchesHost(origin: string | undefined, host: string | undefined): boolean {
-  if (!origin || !host) return false;
-  try {
-    return new URL(origin).host === host;
-  } catch {
-    return false;
-  }
 }
