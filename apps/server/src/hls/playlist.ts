@@ -345,6 +345,19 @@ export class PlaylistStitcher {
     return added;
   }
 
+  /**
+   * Starts the window over from the next update, as a new playlist would (its numbers keep
+   * growing, and its runs keep the numbers the origin's clock gave them): for a playlist kept
+   * from an earlier source that viewers could not get meanwhile (HlsOrigin.setSource).
+   */
+  restart(): void {
+    this.window = [];
+    this.seen.clear();
+    this.seenOrder = [];
+    this.droppedCc = null;
+    this.lastMap = undefined;
+  }
+
   /** Seconds the playlist currently covers. */
   durationS(): number {
     return this.window.reduce((sum, e) => sum + e.duration, 0);
