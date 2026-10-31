@@ -77,3 +77,4 @@ its area and add a row here in the same pull request.
 | Tests: 0 % failures in 100 % of runs on every OS, no retries anywhere; retries only for network steps | a test that passes sometimes is a failing test | [TESTING.md](TESTING.md), [workflows README](../.github/workflows/README.md#rules) |
 | Every version ships as at least two betas first; published releases are never changed | installed apps update by themselves | [RELEASING.md §4](RELEASING.md#4-ship-a-release) |
 | CI downloads slow third-party files from byte-identical copies in the `ci-deps` pre-release | some publishers are very slow from GitHub's runners | [RELEASING.md §8](RELEASING.md#8-mirrored-ci-dependencies-ci-deps) |
+| Media Foundation on the Windows Server runners is enabled with DISM, not `Install-WindowsFeature` | Server Manager scans every feature twice (2-3.5 minutes of CPU-bound servicing work, once more than 14); DISM takes 6-18 s | `.github/scripts/media-foundation.ps1` |
