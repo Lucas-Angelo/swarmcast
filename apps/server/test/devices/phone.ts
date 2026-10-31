@@ -134,6 +134,9 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
     )
     .toMatch(/^(watch|refused)/);
   expect(outcome, `join as "${nickname}"`).toBe('watch');
+  // The address changes before the watch page has loaded (Safari: "null is not an object
+  // (evaluating 'v.played')" right after, Devices run 41227486868).
+  await expect.poll(() => phone.evaluate(() => document.readyState === 'complete' && !!document.querySelector('video')), { message: 'the watch page has loaded' }).toBe(true);
   return seen;
 }
 

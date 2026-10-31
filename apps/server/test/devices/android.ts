@@ -162,31 +162,35 @@ export class AndroidDevice {
     await this.shell(['wm', 'user-rotation', 'lock', '0']);
     await this.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
-    await this.keyboardOnce();
   }
 
   /**
-   * Brings the on-screen keyboard up once after the boot, in Messages' new conversation (its text
-   * field takes focus and raises the keyboard), and closes it again: a phone's keyboard has been up
-   * before the viewer opens the link. The first show after a cold boot is slow: in Devices run
-   * 41226056177 Gboard drew its first frame in 13.9 s ("Davey! duration=13945ms") on the first
-   * test's tap, the system killed it for not responding ("ANR in com.google.android.inputmethod.latin",
-   * then "Killing ... bg anr"), and the page never saw the keyboard; the later tests were fine.
+   * Brings the on-screen keyboard up once after the boot, on the join page of `link` (a tap on the
+   * nickname field), waits until the input method service reports it shown, and closes Chrome: a
+   * phone's keyboard has been up before the viewer opens the link. The first show after a cold
+   * boot is slow: in Devices run 41226056177 Gboard drew its first frame in 13.9 s ("Davey!
+   * duration=13945ms") on the first test's tap, the system killed it for not responding ("ANR in
+   * com.google.android.inputmethod.latin", then "Killing ... bg anr") and showed it again 10 s
+   * later; the page never saw the keyboard in time, and the later tests were fine.
    */
-  private async keyboardOnce(): Promise<void> {
-    const MESSAGES = 'com.google.android.apps.messaging';
-    await this.shell(['am', 'start', '-W', '-a', 'android.intent.action.SENDTO', '-d', 'sms:5550100']);
-    let state = '';
-    await until(
-      async () => {
-        state = (await this.shellOut(['dumpsys', 'input_method'])).split('\n').map((l) => l.trim()).filter((l) => /^(mInputShown|mImeWindowVis)=/.test(l)).join(' ');
-        return state.includes('mInputShown=true');
-      },
-      { timeoutMs: 120_000, what: 'the on-screen keyboard up once after the boot (Messages, new conversation)', detail: () => state, pollMs: 1_000 },
-    );
-    await this.shell(['am', 'force-stop', MESSAGES]);
-    await this.shell(['input', 'keyevent', 'KEYCODE_HOME']);
-    fs.appendFileSync(path.join(this.o.logDir, 'device.log'), `${new Date().toISOString()} keyboard shown once after the boot\n`);
+  async keyboardOnce(link: string): Promise<void> {
+    const phone = await this.newPhone();
+    try {
+      await phone.open(link);
+      await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
+      await phone.tap('#nickname');
+      let state = '';
+      await until(
+        async () => {
+          state = await phone.keyboardState();
+          return state.includes('mInputShown=true');
+        },
+        { timeoutMs: 120_000, what: 'the on-screen keyboard up once after the boot', detail: () => state, pollMs: 1_000 },
+      );
+      fs.appendFileSync(path.join(this.o.logDir, 'device.log'), `${new Date().toISOString()} keyboard shown once after the boot\n`);
+    } finally {
+      await phone.close();
+    }
   }
 
   private async stopEmulator(): Promise<void> {

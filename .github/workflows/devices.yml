@@ -72,9 +72,13 @@ jobs:
       - name: Allow safaridriver to drive Safari
         run: sudo safaridriver --enable
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
+      # No screen recording (DEVICES_VIDEO=off): simctl's video encoding competes with the simulator
+      # for the runner's CPU, and on a loaded simulator a tap took up to 1.6 s from finger down to
+      # up, which iOS takes for a long press: the touch reached the element and no click followed
+      # (runs 41184587941, 41190536745, 41227486868). A failed test keeps its screenshot and logs.
       - name: Device tests, iOS
         timeout-minutes: 25
-        run: npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests
+        run: DEVICES_VIDEO=off npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true

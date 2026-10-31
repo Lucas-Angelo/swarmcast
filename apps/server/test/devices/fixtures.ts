@@ -9,7 +9,7 @@ import path from 'node:path';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { loopbackBase } from '../../../../scripts/test/lib/loopback.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
-import { test as e2e } from '../e2e/fixtures.js';
+import { liveLink, test as e2e } from '../e2e/fixtures.js';
 import { AndroidDevice, AndroidPhone } from './android.js';
 import { IosDevice } from './ios.js';
 import type { Phone, Platform } from './phone.js';
@@ -27,6 +27,7 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
       const baseURL = workerInfo.project.use.baseURL;
       if (!baseURL) throw new Error('the devices config sets use.baseURL (the e2e server)');
       const device = platform === 'android' ? await AndroidDevice.attach({ publicPort: Number(new URL(baseURL).port), logDir }) : await IosDevice.attach({ logDir });
+      if (device instanceof AndroidDevice) await device.keyboardOnce(await liveLink());
       await use(device);
       await device.release();
     },
