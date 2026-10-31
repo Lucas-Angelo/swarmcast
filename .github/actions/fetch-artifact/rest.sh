@@ -23,7 +23,9 @@ API="${GITHUB_API_URL:-https://api.github.com}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CURL_TIMES='http=%{http_code} ip=%{remote_ip} dns=%{time_namelookup}s tcp=%{time_connect}s tls=%{time_appconnect}s first-byte=%{time_starttransfer}s total=%{time_total}s bytes=%{size_download} speed=%{speed_download}B/s curl-exit=%{exitcode}'
 
-say() { echo "fetch-artifact: $*"; }
+# One log line; control characters (CR, LF, ESC...) in what the API, curl or Azure said become
+# spaces, so no answer can forge a log line or a workflow command.
+say() { printf 'fetch-artifact: %s\n' "$(printf '%s' "$*" | tr '\000-\037\177' ' ')"; }
 
 # curl to the REST API: bounded, retried on any error (its own short outages).
 api() {

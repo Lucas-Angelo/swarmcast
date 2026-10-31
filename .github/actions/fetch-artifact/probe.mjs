@@ -14,7 +14,11 @@ const LIMIT_MS = 30_000;
 const url = new URL(process.argv[2] ?? '');
 const t0 = performance.now();
 const at = () => `${Math.round(performance.now() - t0)} ms`;
-const log = (line) => console.log(`${line} (${at()})`);
+// Every line carries values from the URL, the server's headers and body, and error messages: CR,
+// LF and the other control characters become spaces, so none can forge a log line or a workflow
+// command.
+const clean = (text) => String(text).replace(/[\r\n]/g, ' ').replace(/\p{Cc}/gu, ' ');
+const log = (line) => console.log(`${clean(line)} (${at()})`);
 
 function describe(err) {
   if (!(err instanceof Error)) return String(err);
@@ -63,7 +67,7 @@ await new Promise((resolve) => {
       }
     });
     res.on('end', () => {
-      log(`body ended after ${bytes} bytes${errorBody ? `: ${errorBody.replace(/\s+/g, ' ').slice(0, 600)}` : ''}`);
+      log(`body ended after ${bytes} bytes${errorBody ? `: ${errorBody.slice(0, 600)}` : ''}`);
       done();
     });
     res.on('error', (err) => {
