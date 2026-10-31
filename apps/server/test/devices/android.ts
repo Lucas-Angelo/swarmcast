@@ -322,12 +322,13 @@ export class AndroidDevice {
   }
 
   /**
-   * Chrome's DevTools socket forwarded to a free local port, and Playwright connected once
-   * Chrome lists a tab `wanted` accepts. Not earlier: connectOverCDP waits for every tab to be
-   * ready, and a tab Chrome creates during the handshake (the link's, right after the intent)
-   * once stayed paused for the debugger: the connection timed out after 30 s, 1 run in 12.
+   * Chrome's DevTools socket forwarded to a free local port, and Playwright connected once Chrome
+   * lists a tab `wanted` accepts (null: no tab needed). connectOverCDP waits for every tab, and
+   * for every worker, to answer during its handshake; a target created during it stays paused
+   * for the debugger and the handshake times out (30 s). AndroidPhone.open() therefore connects
+   * before the link arrives, and every connection waits for the listed tabs to answer.
    */
-  async connectChrome(wanted: (url: string) => boolean): Promise<{ browser: Browser; port: number }> {
+  async connectChrome(wanted: ((url: string) => boolean) | null): Promise<{ browser: Browser; port: number }> {
     const port = Number((await run(ADB, ['-s', this.serial, 'forward', 'tcp:0', 'localabstract:chrome_devtools_remote'])).stdout.trim());
     let seen: PageTarget[] | null = null;
     let silent: string[] = [];
@@ -340,7 +341,7 @@ export class AndroidDevice {
     await until(
       async () => {
         seen = await pageTargets(port);
-        if (!seen?.some((t) => wanted(t.url))) return false;
+        if (!seen || (wanted && !seen.some((t) => wanted(t.url)))) return false;
         silent = [];
         for (const t of seen) if (!(await answers(t))) silent.push(t.url);
         if (silent.length > 0) return false;
@@ -421,18 +422,30 @@ export class AndroidPhone implements Phone {
     return this.page;
   }
 
+  /**
+   * Connected first, then the link: the join page starts its proof-of-work worker as it loads,
+   * and connecting while the link's tab and that worker were coming up timed out in the
+   * handshake (connectOverCDP's 30 s, Devices runs 41231906472 and 41233270465, "ws connected"
+   * and nothing after). Connected to the quiet browser, Playwright takes the new tab as an event.
+   */
   async open(url: string): Promise<void> {
-    await this.device.shell(['am', 'start', '-a', 'android.intent.action.VIEW', '-d', url, CHROME]);
     const origin = new URL(url).origin;
-    await this.attach((u) => u.startsWith(origin));
+    await this.attach(
+      (u) => u.startsWith(origin),
+      () => this.device.shell(['am', 'start', '-a', 'android.intent.action.VIEW', '-d', url, CHROME]),
+    );
   }
 
-  /** Connects Playwright to Chrome and picks the newest tab whose address `match` accepts. */
-  private async attach(match: (url: string) => boolean): Promise<void> {
-    const { browser, port } = await this.device.connectChrome(match);
+  /**
+   * Connects Playwright to Chrome and picks the newest tab whose address `match` accepts; with
+   * `then`, connects first (any tabs), runs `then`, and waits for that tab to appear.
+   */
+  private async attach(match: (url: string) => boolean, then?: () => Promise<void>): Promise<void> {
+    const { browser, port } = await this.device.connectChrome(then ? null : match);
     this.browser = browser;
     this.port = port;
     const context = browser.contexts()[0]!;
+    if (then) await then();
     await until(() => context.pages().some((p) => match(p.url())), { timeoutMs: 30_000, what: 'the tab of the link', detail: () => context.pages().map((p) => p.url()).join(', ') });
     this.page = context.pages().filter((p) => match(p.url())).at(-1)!;
     this.cdp = await context.newCDPSession(this.page);

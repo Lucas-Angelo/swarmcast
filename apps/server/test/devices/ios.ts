@@ -93,23 +93,24 @@ async function hardwareKeyboardConnected(): Promise<boolean> {
  * after safaridriver had given up ("timed out ... waiting for its RWIApplication to appear", the
  * first test of Devices runs 41171340670 and 41188080970; the simulator's log of the second).
  */
-async function webInspectorReady(udid: string): Promise<void> {
+async function webInspectorReady(udid: string): Promise<net.Socket | null> {
   const running = async () => /"PID"\s*=/.test(await simctl(['spawn', udid, 'launchctl', 'list', 'com.apple.webinspectord']).catch(() => ''));
   // Already up (a simulator booted and used before the suite): Safari connected to it when it came up.
-  if (await running()) return;
+  if (await running()) return null;
   // Safari's connection logged from now on (the log keeps earlier boots' lines).
   const since = new Date(Date.now() - 1_000)
     .toISOString()
     .replace('T', ' ')
     .replace(/\.\d+Z$/, '+0000');
-  const socket = await simctl(['getenv', udid, 'RWI_LISTEN_SOCKET']);
-  await new Promise<void>((resolve, reject) => {
-    const c = net.createConnection(socket, () => {
-      c.destroy();
-      resolve();
-    });
+  const socketPath = await simctl(['getenv', udid, 'RWI_LISTEN_SOCKET']);
+  // Kept open until release(): closed at once, it let webinspectord exit again and launchd start a
+  // new one for the first session, as slowly (Devices run 41233270465: launched 19:26:31, Safari
+  // connected, the probe closed, a new webinspectord launched 19:26:46 while the session waited).
+  const socket = await new Promise<net.Socket>((resolve, reject) => {
+    const c = net.createConnection(socketPath, () => resolve(c));
     c.once('error', reject);
   });
+  socket.on('error', () => {});
   await until(running, { timeoutMs: 60_000, what: 'webinspectord running in the simulator' });
   await until(
     async () =>
@@ -120,6 +121,7 @@ async function webInspectorReady(udid: string): Promise<void> {
       ).includes('com.apple.mobilesafari'),
     { timeoutMs: 60_000, what: "Safari connected to the simulator's Web Inspector", pollMs: 2_000 },
   );
+  return socket;
 }
 
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
@@ -137,6 +139,8 @@ export class IosDevice {
     /** Booted by the suite: shut down again in release(). */
     private readonly booted: boolean,
     private readonly logDir: string,
+    /** The connection that keeps the simulator's webinspectord running (webInspectorReady). */
+    private readonly inspector: net.Socket | null,
   ) {}
 
   static async attach(o: { logDir: string }): Promise<IosDevice> {
@@ -182,14 +186,14 @@ export class IosDevice {
       );
       note("Simulator.app's window shown");
     }
-    await webInspectorReady(sim.udid);
+    const inspector = await webInspectorReady(sim.udid);
     note('Web Inspector up, Safari connected to it');
     const [port] = await allocPorts(1);
     const driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
     const base = new URL(`http://127.0.0.1:${port}`);
     await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
     note('safaridriver ready');
-    return new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir);
+    return new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector);
   }
 
   /** A WebDriver session (Safari's automation sessions start with no cookies or storage of an earlier one). */
@@ -271,6 +275,7 @@ export class IosDevice {
 
   async release(): Promise<void> {
     await this.driver.stop({ graceMs: 5_000 });
+    this.inspector?.destroy();
     if (this.booted) await simctl(['shutdown', this.udid]);
   }
 }
