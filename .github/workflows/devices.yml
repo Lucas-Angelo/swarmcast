@@ -171,8 +171,8 @@ jobs:
           {
             echo "== free -m"; free -m
             echo "== df -m"; df -m
-            echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100
-            echo "== emulator crash reports"; find /tmp -maxdepth 3 -path '*emu-crash*' -ls 2>&1 | head -n 100
+            echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100 || true
+            echo "== emulator crash reports"; find /tmp -maxdepth 3 -path '*emu-crash*' -ls 2>/dev/null | head -n 100 || true
             echo "== cores"; ls -la /tmp/cores
           } 2>&1 | tee test-results/devices/host-state.txt
           if compgen -G '/tmp/cores/core.*' >/dev/null; then

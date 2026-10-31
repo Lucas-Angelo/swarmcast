@@ -269,16 +269,21 @@ export class IosPhone implements Phone {
 
   async tap(selector: string): Promise<void> {
     const element = await this.session.find(selector);
-    await this.session.execute('arguments[0].scrollIntoView({ block: "center" });', [element]);
+    // Scrolled only when not wholly in sight, as a finger would. After a scrollIntoView the page
+    // reported the chat input at its new place while the screen (recording) still showed the old
+    // one, and the tap there reached #unmute in the player, with the element origin and with
+    // viewport coordinates alike (Devices runs 41181641808, 41183257695); unscrolled, every tap landed.
+    await this.session.execute(
+      `const el = arguments[0], r = el.getBoundingClientRect(), vv = window.visualViewport;
+       if (r.top < vv.offsetTop || r.bottom > vv.offsetTop + vv.height || r.left < vv.offsetLeft || r.right > vv.offsetLeft + vv.width) el.scrollIntoView({ block: "center" });`,
+      [element],
+    );
     let point: TouchPoint | null = null;
     await expect
       .poll(async () => (point = await this.session.execute<TouchPoint | null>(`return (${touchPoint.toString()})(arguments[0]);`, [element])) !== null, {
         message: `${selector} can be touched (enabled, partly in sight, not covered)`,
       })
       .toBe(true);
-    // At the point's viewport coordinates, not relative to the element: with the page scrolled
-    // (the chat input, below the player), safaridriver's element origin put the finger on
-    // #unmute in the player instead (Devices run 41181641808).
     await this.session.perform(tapActions(point!.clientX, point!.clientY));
   }
 
