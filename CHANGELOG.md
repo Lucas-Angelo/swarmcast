@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **The chat is right there while you are live.** The panel now shows the **Live chat** on its main screen: a column on the right of the window that stays in view while you scroll, or right under the status in a narrow window. Read, answer and moderate without scrolling down. It shows only while you are live with the chat on; turn the chat on or off and change its settings in the **Chat** card further down (the **Settings** button takes you there). The setup tutorial's panel tour points to it too.
+- **A tidier panel, without big empty boxes.** The cards at the top no longer stretch to the height of a taller card next to them: each sits next to a card of about the same size, in two columns next to the chat (three on a wide screen, one on a phone). The **Viewers** list moved up, right under the viewer numbers, so who is watching is in view while you are live, and each viewer's buttons fit on one line when the window is wide enough.
 
 ### Fixed
 
