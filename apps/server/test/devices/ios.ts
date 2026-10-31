@@ -12,6 +12,7 @@
 // Classic iOS 17 disk images still work there. docs/TESTING.md "Real devices" has the details.
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
@@ -84,6 +85,43 @@ async function hardwareKeyboardConnected(): Promise<boolean> {
   return mark === 'on';
 }
 
+/**
+ * Starts the simulator's Web Inspector daemon and waits until Safari has connected to it, before
+ * any WebDriver session. launchd starts webinspectord only when something connects to its socket
+ * (RWI_LISTEN_SOCKET, on the Mac's side); left to the first session, it took 16 s to come up on a
+ * just-booted simulator, Safari connected to it then, and the Mac's side connected 25 s later still,
+ * after safaridriver had given up ("timed out ... waiting for its RWIApplication to appear", the
+ * first test of Devices runs 41171340670 and 41188080970; the simulator's log of the second).
+ */
+async function webInspectorReady(udid: string): Promise<void> {
+  const running = async () => /"PID"\s*=/.test(await simctl(['spawn', udid, 'launchctl', 'list', 'com.apple.webinspectord']).catch(() => ''));
+  // Already up (a simulator booted and used before the suite): Safari connected to it when it came up.
+  if (await running()) return;
+  // Safari's connection logged from now on (the log keeps earlier boots' lines).
+  const since = new Date(Date.now() - 1_000)
+    .toISOString()
+    .replace('T', ' ')
+    .replace(/\.\d+Z$/, '+0000');
+  const socket = await simctl(['getenv', udid, 'RWI_LISTEN_SOCKET']);
+  await new Promise<void>((resolve, reject) => {
+    const c = net.createConnection(socket, () => {
+      c.destroy();
+      resolve();
+    });
+    c.once('error', reject);
+  });
+  await until(running, { timeoutMs: 60_000, what: 'webinspectord running in the simulator' });
+  await until(
+    async () =>
+      (
+        await simctl(['spawn', udid, 'log', 'show', '--start', since, '--style', 'compact', '--predicate', 'process == "webinspectord" AND eventMessage CONTAINS "Application Connected" AND eventMessage CONTAINS "com.apple.mobilesafari"']).catch(
+          () => '',
+        )
+      ).includes('com.apple.mobilesafari'),
+    { timeoutMs: 60_000, what: "Safari connected to the simulator's Web Inspector", pollMs: 2_000 },
+  );
+}
+
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
 type Rotator = 'devicectl' | 'simulator-app';
 
@@ -144,6 +182,8 @@ export class IosDevice {
       );
       note("Simulator.app's window shown");
     }
+    await webInspectorReady(sim.udid);
+    note('Web Inspector up, Safari connected to it');
     const [port] = await allocPorts(1);
     const driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
     const base = new URL(`http://127.0.0.1:${port}`);
