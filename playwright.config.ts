@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { firefoxEnv } from './scripts/test/lib/firefox.mjs';
 
 // Keep in sync with apps/server/test/e2e/server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
 const PUBLIC = 38080 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
@@ -68,6 +69,8 @@ export default defineConfig({
       use: {
         ...devices['Desktop Firefox'],
         launchOptions: {
+          // Its startup cache stays in memory: writing it can freeze the browser (firefox.mjs).
+          env: firefoxEnv(),
           firefoxUserPrefs: {
             'media.autoplay.default': 0,
             'media.peerconnection.ice.obfuscate_host_addresses': false,
