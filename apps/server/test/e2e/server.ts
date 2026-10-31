@@ -8,6 +8,7 @@ import type { ChildProcess } from 'node:child_process';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
+import { OwnLoopDelay } from '../../../../scripts/test/lib/loop-delay.mjs';
 import { RESERVED } from '../../../../scripts/test/lib/ports.mjs';
 import { startFeed } from '../integration/helpers.js';
 
@@ -350,7 +351,10 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
 // - POST /pow-level/<0|1|2>: the level the attack shield would choose by itself, without
 //   flooding the server;
 // - POST /playlist-window/<seconds>: how many seconds every playlist keeps (p2p.spec.ts
-//   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s).
+//   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s);
+// - POST /own-loop-delay: the p99 of how long the app's own work held up this process's event
+//   loop since the previous call (scripts/test/lib/loop-delay.mjs), then starts over.
+const ownLoopDelay = new OwnLoopDelay();
 const json = (res: http.ServerResponse, status: number, body: unknown): void => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
   let text = '';
@@ -390,6 +394,7 @@ const control = http.createServer((req, res) => {
       app.live.origin.windowSeconds = Number(w[1]);
       return json(res, 200, { windowSeconds: app.live.origin.windowSeconds });
     }
+    if (post && url.pathname === '/own-loop-delay') return json(res, 200, { p99Ms: ownLoopDelay.takeP99() });
     const m = /^\/pow-level\/([012])$/.exec(url.pathname);
     if (post && m) {
       shield.setAutoPow(Number(m[1]) as 0 | 1 | 2);
@@ -411,6 +416,7 @@ console.log('e2e server ready');
 const shutdown = async (): Promise<void> => {
   stopping = true;
   control.close();
+  ownLoopDelay.stop();
   ffmpeg?.kill('SIGKILL');
   await app.close();
   // The data folder is this run's only (mkdtemp above); the app has closed every file in it.

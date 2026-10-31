@@ -85,6 +85,15 @@ export async function forcePowLevel(level: 0 | 1 | 2): Promise<number> {
   return (await control<{ browserCheck: number }>('POST', `/pow-level/${level}`)).browserCheck;
 }
 
+/**
+ * The p99 of how long the server's own work held up its event loop since the previous call (ms;
+ * the time the OS or the VM did not run it left out: scripts/test/lib/loop-delay.mjs), then
+ * starts over.
+ */
+export async function serverOwnLoopDelayP99(): Promise<number> {
+  return (await control<{ p99Ms: number }>('POST', '/own-loop-delay')).p99Ms;
+}
+
 /** Seconds every playlist keeps (40 by default; 20 emulates v0.2.0 ladder audio). The gate puts 40 back. */
 export async function setPlaylistWindow(seconds: number): Promise<void> {
   await control('POST', `/playlist-window/${seconds}`);
