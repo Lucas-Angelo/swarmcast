@@ -207,6 +207,16 @@ export const KEYBOARD_MIN_PX = 150;
 export async function tapToType(phone: Phone, selector: string): Promise<void> {
   const before = await viewport(phone);
   await recordInput(phone);
+  if (!phone.onScreenKeyboard) {
+    // Under test (iOS): the join page's autofocus gives the field focus with no input session;
+    // the tap then reaches the field (trusted touch events) but WebKit reports no focused element
+    // to UIKit ("disableAutomaticKeyboardUI return empty") and typed keys insert nothing. Does a
+    // tap on a field that is not focused yet start the input session?
+    await phone.evaluate((s) => {
+      const el = document.querySelector(s);
+      if (el && document.activeElement === el) (el as HTMLElement).blur();
+    }, selector);
+  }
   await phone.tap(selector);
   if (!phone.onScreenKeyboard) {
     await expect

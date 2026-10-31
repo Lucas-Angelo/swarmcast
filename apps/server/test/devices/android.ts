@@ -40,16 +40,20 @@ const AVD_NAME = 'swarmcast-pixel';
 const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
 /**
- * Emulator features turned off. Vulkan: with the emulator's software GPU, Chrome draws through
- * Vulkan (SwiftShader on the host), and the emulator crashed with SIGSEGV as the second Chrome of
- * a run created its Vulkan instance: in Devices run 41177262228 all three emulators died that way,
- * each right after the log line "Created VkInstance ... for application:''" of the Chrome started
- * after the previous test's was stopped and cleared (emulator.log). Runs 41171340670 and
- * 41175462466 lost the device as the second Chrome started too; 41173958482 in the first test,
- * as Chrome began to decode the live (with no exit status kept then). Without Vulkan Chrome draws
- * with OpenGL ES, as on phones whose GPU driver Chrome does not trust with Vulkan.
+ * Emulator features turned off: two host-side parts of the emulator that crashed it (SIGSEGV in
+ * emulator.log, the device gone mid-test, nothing else in its output).
+ * - HardwareDecoder: the emulator decodes H.264 for Android on the host (Chrome gets
+ *   c2.goldfish.h264.decoder). In Devices run 41178761001 all four emulators crashed right after
+ *   "Failed to call cuInit, cannot use nvidia cuvid decoder for h264 stream", as Chrome's first
+ *   play of the live started that decoder ("C2GoldfishAvcDec: calling onInit" in the device log);
+ *   41173958482 lost the device the same way. Without it Android decodes the video itself.
+ * - Vulkan: Chrome draws through Vulkan (SwiftShader on the host). In run 41177262228 (hardware
+ *   decoder off) all three emulators crashed right after "Created VkInstance ... for
+ *   application:''" of the second Chrome of the run, started once the previous test's had been
+ *   stopped and cleared; 41175462466 lost the device at the same point. Without it Chrome draws
+ *   with OpenGL ES, as on phones whose GPU driver Chrome does not trust with Vulkan.
  */
-export const EMULATOR_FEATURES = ['-feature', '-Vulkan'] as const;
+export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as const;
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -126,9 +130,10 @@ export class AndroidDevice {
       abortOn: own ? [own] : [],
     });
     device.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
-    // Whether Android was given Vulkan (EMULATOR_FEATURES: it should not be), for the record.
+    // What the emulator gave Android (EMULATOR_FEATURES: neither should be on), for the record.
     const vulkan = await device.shellOut(['getprop', 'ro.hardware.vulkan']);
-    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.hardware.vulkan=${vulkan || '(unset)'}\n`);
+    const hostDecoder = await device.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
+    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.hardware.vulkan=${vulkan || '(unset)'} ro.boot.qemu.hwcodec.avcdec=${hostDecoder || '(unset)'}\n`);
     for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await device.shell(['settings', 'put', 'global', scale, '0']);
     await device.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
