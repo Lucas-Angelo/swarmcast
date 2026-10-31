@@ -7,7 +7,7 @@ import { MemoryStateStore } from '../../src/core/state.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
 import { CGNAT_MESSAGE, DIRECT_PORT_MAX, DIRECT_PORT_MIN, DirectMode, ipChangeMessage, type DirectDeps } from '../../src/direct/direct.js';
 import { UpnpGateway, discoverUpnp } from '../../src/direct/upnp.js';
-import { isNonPublicIPv4 } from '../../src/direct/mapper.js';
+import { defaultGateway, isNonPublicIPv4, type GatewayRunner } from '../../src/direct/mapper.js';
 import { NoTunnel, probeHealth } from '../../src/tunnel/provider.js';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { silentLog } from './helpers.js';
@@ -78,6 +78,41 @@ describe('direct mode: finding the router', () => {
     // Assert
     expect(gw?.location).toBe(`http://127.0.0.1:${igd.httpPort}/desc.xml`);
     expect(await gw!.externalIp()).toBe(PUBLIC_IP);
+  });
+});
+
+describe('direct mode: the default gateway', () => {
+  it.each([
+    ['win32', 'powershell.exe', '192.168.0.1\r\n'],
+    ['darwin', 'route', '   route to: default\ngateway: 192.168.0.1\n'],
+    ['linux', 'ip', 'default via 192.168.0.1 dev eth0\n'],
+  ] as const)('on %s it asks %s with no window of its own and a time limit', async (platform, tool, stdout) => {
+    // Arrange
+    const calls: Array<{ cmd: string; options: { windowsHide: boolean; timeout: number } }> = [];
+    const runTool: GatewayRunner = async (cmd, _args, options) => {
+      calls.push({ cmd, options });
+      return { stdout };
+    };
+
+    // Act
+    const gateway = await defaultGateway(platform, runTool);
+
+    // Assert
+    expect(gateway).toBe('192.168.0.1');
+    expect(calls).toEqual([{ cmd: tool, options: { windowsHide: true, timeout: 10_000 } }]);
+  });
+
+  it('is null when the tool fails', async () => {
+    // Arrange
+    const runTool: GatewayRunner = async () => {
+      throw new Error('spawn powershell.exe ENOENT');
+    };
+
+    // Act
+    const gateway = await defaultGateway('win32', runTool);
+
+    // Assert
+    expect(gateway).toBeNull();
   });
 });
 

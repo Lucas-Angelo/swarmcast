@@ -1,31 +1,12 @@
 // Installer system check (GET /api/system-check) → rows for the "Your PC check" step.
 // Pure functions (no DOM) so the rendering logic is unit-tested in Node.
 import { t, type MessageKey } from '@swarmcast/shared/i18n';
+import type { SystemCheck, SystemCheckResult } from '@swarmcast/shared/system-check';
 
-export type CheckStatus = 'ok' | 'warn' | 'fail' | 'skipped';
-type Value = string | number | boolean | null | undefined;
-
-export interface SystemCheckResult {
-  id: string;
-  status: CheckStatus;
-  value?: Value;
-  min?: Value;
-  recommended?: Value;
-  detail?: string;
-}
-
-/** Mirror of the server's systemCheckSchema (apps/server/src/admin/system-check-routes.ts). */
-export interface SystemCheck {
-  version: 1;
-  at: string | number;
-  os: string;
-  arch: string;
-  results: SystemCheckResult[];
-  uploadMbps?: number | null;
-  downloadMbps?: number | null;
-  viewerEstimate?: number | null;
-  belowMinimum: string[];
-}
+/** The file's types come from its schema in the shared package (also read by the server). */
+export type { SystemCheck, SystemCheckResult };
+export type CheckStatus = SystemCheckResult['status'];
+type Value = SystemCheckResult['value'];
 
 export const CHECK_IDS = ['os', 'ram', 'cpu', 'upload', 'download', 'disk', 'ports', 'obs', 'github', 'release'] as const;
 export type CheckId = (typeof CHECK_IDS)[number];

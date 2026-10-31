@@ -125,9 +125,22 @@ E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each
 fixtures put back what a test changes. Get browsers, scripted viewers, chat and branding from the
 fixtures. Test bodies hold only Arrange/Act/Assert comments. The only real-time wait is
 `measuredWindow()`, for measured windows. Names come from `uid()`, which is unique per test. Never
-retry. Run with `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e HLS
-port is 38083 + offset; the server refuses any offset that hits a reserved port
-([scripts/test/lib/ports.mjs](../scripts/test/lib/ports.mjs) `RESERVED`).
+retry. Run with `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e
+ports are 11080 (public), 11081 (panel), 11082 (test control), 11083 (MediaMTX HLS) and 11935 (RTMP),
+plus the offset; the server refuses an offset that moves one out of 10000–19999, onto another
+harness's port or into this machine's ephemeral range.
+
+**Ports.** A test server listens on port 0 when nothing needs its number in advance, or takes one from
+`allocPorts()` (a block of 20000–31999 per Vitest worker). A harness whose URL is fixed before its server
+starts (Playwright's `webServer`, the desktop update manifest, the quality and OBS scripts, the website
+tests) takes its ports from `FIXED_PORTS`, all in 10000–19999
+([scripts/test/lib/ports.mjs](../scripts/test/lib/ports.mjs)). Neither range touches an ephemeral range
+(Linux 32768–60999, macOS and Windows 49152–65535): every outgoing connection takes its local port from
+there, and while it or its TIME_WAIT holds `127.0.0.1:<port>` nobody can listen on it. The e2e control
+port used to be 38082 and once failed at start with EADDRINUSE for that reason (run 41192273509).
+`assertFixedPorts()` checks a harness's ports at start against this machine's real range, and
+`scripts/test/test/ports-zone.test.ts` checks every fixed port, and every port written out in the
+workflows and harness scripts, against the defaults and `RESERVED`.
 
 ### Real devices
 

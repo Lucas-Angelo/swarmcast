@@ -53,15 +53,15 @@ Clique em **Concluir**. Para ver o tutorial de novo, clique em **Refazer o tutor
 
 ## O painel
 
-![O painel durante uma live: 1 Ao vivo: 3 espectadores e OBS: enviando, 2 o link da live (escondido aqui), 3 Configuração do OBS, 4 Espectadores e ajuda P2P (quem ligou o P2P compartilha vídeo), 5 Proteção.](../../../../assets/guides/start/pt-br/panel.webp)
+![O painel durante uma live: 1 Ao vivo: 3 espectadores e OBS: enviando, 2 o link da live (escondido aqui), 3 Configuração do OBS, 4 Espectadores e ajuda P2P (quem ligou o P2P compartilha vídeo), 5 Chat ao vivo à direita, com as mensagens de quem assiste.](../../../../assets/guides/start/pt-br/panel.webp)
 
 1. **No alto:** se você está ao vivo, se o OBS está enviando e o botão **Desligar tudo**.
 2. **Link da live para seus inscritos:** o link para mandar. Veja [Fazer a live](/swarmcast/pt-br/live/go-live/).
 3. **Configuração do OBS:** o servidor e a chave de transmissão para o OBS.
 4. **Espectadores e ajuda P2P:** quantos assistem e quantos ajudam. Veja [Ajudar a transmissão (P2P)](/swarmcast/pt-br/live/p2p/).
-5. **Proteção:** veja [Segurança e proteção](/swarmcast/pt-br/live/protection/).
+5. **Chat ao vivo:** durante a live, o chat fica bem aqui, à direita (embaixo do status numa janela estreita): leia, responda e modere sem rolar a página. Veja [Chat](/swarmcast/pt-br/live/chat/).
 
-Mais abaixo: **Qualidade para quem assiste**, **App do SwarmCast** (iniciar com o computador, atualizações), **Espectadores** (expulsar alguém), **Atividade** e **Relatório de problema** (mandar os logs). Quase todo botão tem um **ⓘ** pequeno: passe o mouse ou toque nele para ver a explicação.
+Mais abaixo: **Sua internet**, **Modo de conexão**, **Proteção** (veja [Segurança e proteção](/swarmcast/pt-br/live/protection/)), **Qualidade para quem assiste**, **App do SwarmCast** (iniciar com o computador, atualizações), **Espectadores** (expulsar alguém), **Chat** (ligar ou desligar o chat, configurações do chat), **Atividade** e **Relatório de problema** (mandar os logs). Quase todo botão tem um **ⓘ** pequeno: passe o mouse ou toque nele para ver a explicação.
 
 ## Onde o SwarmCast guarda as suas configurações
 

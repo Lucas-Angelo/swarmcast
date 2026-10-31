@@ -4,7 +4,7 @@
 // app, writes the autostart entry, deletes the SwarmCast data folder): do not run it on yours.
 //
 //   node scripts/test/desktop/verify.mjs --installers release/desktop/<target> \
-//        [--update-from <dir A> --update-to <dir B with latest.json> --update-port 47811]
+//        [--update-from <dir A> --update-to <dir B with latest.json> --update-port 17811]
 //
 // 1. Installs the real installer (Windows NSIS /S, macOS .dmg -> ~/Applications, Linux .deb),
 //    starts the app, logs into the panel (admin API), checks /api/desktop, turns "Start with
@@ -32,6 +32,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debianVersion, isPrerelease } from '../../releases/semver.mjs';
 import { writeJunit } from '../lib/junit.mjs';
+import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 import { poll } from '../lib/wait.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -557,6 +558,7 @@ async function updateRound(dirA, manifest, env, atReady, channels = false) {
 async function updateTest(dirA, dirB, port) {
   const manifest = JSON.parse(fs.readFileSync(path.join(dirB, 'latest.json'), 'utf8'));
   console.log(`\n=== update to ${manifest.version} (${OS})`);
+  assertFixedPorts('desktopUpdate', { http: port }, `--update-port ${port}`);
   const server = http.createServer((req, res) => {
     const name = path.basename(decodeURIComponent(new URL(req.url, 'http://x').pathname.slice(1)));
     if (name.endsWith('.json')) feedRequests.push(name);
@@ -705,7 +707,7 @@ try {
     await windowsGuideShots(path.resolve(opt('installers')), path.resolve(process.env.SC_DESKTOP_SCREENSHOTS)).catch((err) => console.log(`guide screenshots failed (ignored): ${err.message}`));
   }
   if (opt('installers')) await installerTest(path.resolve(opt('installers')));
-  if (opt('update-from')) await updateTest(path.resolve(opt('update-from')), path.resolve(opt('update-to')), Number(opt('update-port') ?? 47811));
+  if (opt('update-from')) await updateTest(path.resolve(opt('update-from')), path.resolve(opt('update-to')), Number(opt('update-port') ?? FIXED_PORTS.desktopUpdate.http));
   console.log('\nAll desktop checks passed.');
 } catch (err) {
   console.log(`\n${err.stack ?? err}`);

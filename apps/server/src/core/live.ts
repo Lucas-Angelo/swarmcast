@@ -1088,6 +1088,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       direct: { ...this.d.direct.snapshot(), suggestion: suggestion?.text, suggestionCode: suggestion?.code },
       bannedCount: this.access.bannedCount,
       security: this.shield.snapshot(),
+      chatEnabled: this.d.config.chat.enabled,
     };
   }
 

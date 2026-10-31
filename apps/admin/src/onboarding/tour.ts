@@ -3,7 +3,7 @@
 // added or reordered. Returns null when an area is not on screen (e.g. SwarmCast is off).
 import { t, type MessageKey } from '@swarmcast/shared/i18n';
 
-export const AREAS = ['top', 'link', 'p2p', 'quality', 'mode', 'security', 'viewers', 'activity'] as const;
+export const AREAS = ['top', 'chat', 'link', 'p2p', 'quality', 'mode', 'security', 'viewers', 'activity'] as const;
 export type AreaId = (typeof AREAS)[number];
 
 const TITLE_KEYS: Partial<Record<AreaId, MessageKey>> = {
@@ -39,6 +39,8 @@ export function findArea(id: AreaId): HTMLElement | null {
     const el = document.querySelector<HTMLElement>('[data-testid="security"]');
     if (el) return el;
   }
+  // The live chat while live with the chat on; otherwise its Chat card (on/off and settings).
+  if (id === 'chat') return document.querySelector<HTMLElement>('[data-testid="chat-live"]') ?? document.querySelector<HTMLElement>('[data-testid="chat-card"]');
   if (id === 'activity') {
     const el = document.querySelector<HTMLElement>('[data-testid="activity"]');
     if (el) return el;

@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 # One run per branch at a time; a running one is never cancelled.
 concurrency:

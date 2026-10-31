@@ -305,6 +305,14 @@ viewer draws a translated "Streamer" badge from that role. A viewer can never ge
 
 ## Moderation (panel)
 
+While live with the chat on (`AdminState.chatEnabled`, pushed on `/ws` when the setting changes), the
+panel shows the **Live chat** at the top: the feed with a ⋯ menu per message, "Send as …", flood
+protection and Clear (`ChatLive` in `apps/admin/src/chat/ChatCard.tsx`). It is a column on the right
+of a wide window (sticky, as tall as the window, so the send box is always on screen) and sits under
+the status on a narrow one (`apps/admin/src/style.css`, "Layout"). Before and after the live, or with
+the chat off, it is not shown. The on/off switch and the settings are in the **Chat** card further
+down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `chat/panel.ts`).
+
 | Action | Effect |
 |---|---|
 | Delete | Up to 100 messages at once; a `d` item goes to everyone, the ring forgets them |
@@ -462,7 +470,7 @@ the chat stopped itself.
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
 | The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
 | Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
-| The panel's Chat card: feed, moderation menu, settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| The panel's live chat (on screen without scrolling, desktop window and narrow) and Chat card: feed, moderation menu, settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
 | The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 

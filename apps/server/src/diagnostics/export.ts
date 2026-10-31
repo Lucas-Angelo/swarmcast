@@ -1,9 +1,9 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { zipSync, type Zippable } from 'fflate';
 import type { ActivityEntry } from '@swarmcast/shared';
+import { runCommand } from '../core/exec.js';
 import { readSmallFile } from '../core/small-file.js';
 import type { Anonymizer } from './anonymize.js';
 
@@ -203,20 +203,12 @@ export function xdgDownloadDir(env: NodeJS.ProcessEnv, home: string, readFile: (
 }
 
 /** Windows: the Downloads Known Folder (users can move it), read from the registry. */
-function windowsKnownDownloads(env: NodeJS.ProcessEnv): Promise<string | null> {
-  return new Promise((resolve) => {
-    execFile(
-      'reg',
-      ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders', '/v', '{374DE290-123F-4565-9164-39C4925E467B}'],
-      { windowsHide: true, timeout: 3000 },
-      (err, stdout) => {
-        if (err) return resolve(null);
-        const m = /REG_(?:EXPAND_)?SZ\s+(.+)$/m.exec(String(stdout));
-        if (!m) return resolve(null);
-        resolve(m[1]!.trim().replace(/%([^%]+)%/g, (all, name: string) => env[name] ?? env[name.toUpperCase()] ?? all));
-      },
-    );
-  });
+async function windowsKnownDownloads(env: NodeJS.ProcessEnv): Promise<string | null> {
+  const r = await runCommand('reg', ['query', 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders', '/v', '{374DE290-123F-4565-9164-39C4925E467B}'], { timeoutMs: 3000 });
+  if (!r.ok) return null;
+  const m = /REG_(?:EXPAND_)?SZ\s+(.+)$/m.exec(r.stdout);
+  if (!m) return null;
+  return m[1]!.trim().replace(/%([^%]+)%/g, (all, name: string) => env[name] ?? env[name.toUpperCase()] ?? all);
 }
 
 /** The user's Downloads folder, or null when there is none we can write to. */

@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import { firefoxEnv } from './scripts/test/lib/firefox.mjs';
+import { e2ePorts } from './scripts/test/lib/ports.mjs';
 
-// Keep in sync with apps/server/test/e2e/server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
-const PUBLIC = 38080 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
+// The e2e server's public port (scripts/test/lib/ports.mjs, moved by SWARMCAST_E2E_PORT_OFFSET).
+const PUBLIC = e2ePorts().public;
 const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 // Dates the specs and the e2e server format (log file names, "muted until") do not depend on
 // the machine's timezone: the runner, its workers and the server it starts all use UTC.
@@ -15,8 +16,8 @@ export default defineConfig({
   // One worker, one e2e server: the media tests are CPU-sensitive (the runner also encodes the
   // stream). Tests are independent (the gate in fixtures.ts resets the server before each, and
   // every fixture puts back what its test changed). Every test is tagged @media (live video,
-  // P2P, the ladder: p2p, quality, adaptive-delay, attack) or @ui (the rest), so CI can run the
-  // two groups on separate runners: `--grep @media` / `--grep @ui`.
+  // P2P, the ladder: p2p, quality, adaptive-delay, attack, chat-flood) or @ui (the rest). CI runs
+  // the suite in three groups on separate runners, by tag and file (_e2e.yml: ui, chat, media).
   fullyParallel: false,
   workers: 1,
   // Never retried, in CI too: a test passes on its first run on every engine and runner, or its
