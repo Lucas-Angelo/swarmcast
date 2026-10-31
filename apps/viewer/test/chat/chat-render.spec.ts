@@ -7,19 +7,15 @@
 //
 // The first page of a fresh browser stalls while the system fonts are scanned for the corpus's
 // scripts and emoji (once per browser process): warmFontFallback lays them out first, so the checks
-// below time the page, not that scan.
+// below time the page, not that scan. The machine's own first load of those fonts happens earlier,
+// in globalSetup (warm-browsers.ts), not while other workers' tests run.
 import { expect, test, type Page } from '@playwright/test';
-import { canonicalizeChatText, validateNickname, type ChatAuthor } from '@swarmcast/shared/chat';
-import { CORPUS } from '../../../../packages/shared/test/chat/corpus.js';
+import { NAMES, SNAPSHOT_MAX, sayCorpus } from './corpus-hub.js';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild, reviewScreenshot, warmFontFallback } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
-/** Authors with names from several scripts (each one valid under the nickname rules). */
-const NAMES = ['Ana', 'Rafa_gamer', 'नमस्ते', 'עדי', 'アナ', 'Ζωή', 'محمد', 'ประเสริฐ', 'Nguyễn', 'క్షమ'];
-/** The snapshot of a hello carries the last 50 messages: the corpus fits. */
-const SNAPSHOT_MAX = 50;
 /** A frame's main-thread work (script, style, layout, paint recording) must stay well under this. */
 const FRAME_WORK_BUDGET_MS = 50;
 /**
@@ -30,28 +26,6 @@ const FRAME_WORK_BUDGET_MS = 50;
 const FRAME_SAMPLES = 7;
 /** Measured window: typing into the box with everything on screen must show in the counter within it. */
 const INPUT_RESPONSE_BUDGET_MS = 1000;
-
-/** The corpus authors, from NAMES: the first is the streamer. */
-function corpusAuthors(): ChatAuthor[] {
-  return NAMES.map((n, i) => {
-    const v = validateNickname(n);
-    if (!v.ok) throw new Error(`${n}: ${v.code}`);
-    return { a: `k${i}`, n: v.value, c: ['#e5484d', '#46a758', '#0090ff', '#d6409f', '#12a594'][i % 5]!, r: i === 0 ? 'streamer' : 'viewer' };
-  });
-}
-
-/** Every corpus string the server's pipeline accepts, said on `hub` in turn by the corpus authors. */
-function sayCorpus(hub: MockHub): Array<{ id: string; text: string }> {
-  const authors = corpusAuthors();
-  const sent: Array<{ id: string; text: string }> = [];
-  for (const e of CORPUS) {
-    const r = canonicalizeChatText(e.input);
-    if (!r.ok) continue;
-    hub.say(authors[sent.length % authors.length]!, r.text);
-    sent.push({ id: e.id, text: r.text });
-  }
-  return sent;
-}
 
 /**
  * Console errors of the page, except the expected ones: there is no stream behind the mock, so the
