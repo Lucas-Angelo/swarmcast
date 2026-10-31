@@ -42,31 +42,21 @@ jobs:
     steps:
       # Firefox decodes H.264/AAC through Media Foundation, which Windows Server only has as an
       # optional feature (Windows 10/11 have it, except the "N" editions; client images such as
-      # windows-11-arm have no Get-WindowsFeature). Installing it takes about 3 minutes (189 s
-      # median), so it starts first, in its own process, and runs during setup; the step before
-      # the suite waits for it.
+      # windows-11-arm need nothing). DISM enables it in 6-18 s; it starts first, in the
+      # background, and the step before the suite checks it. Not Install-WindowsFeature: Server
+      # Manager scans every feature twice, 2-3.5 minutes of CPU-bound servicing work that once
+      # had not finished after almost 15 (.github/scripts/media-foundation.ps1).
       - name: Start installing Media Foundation for Firefox (app)
         if: matrix.suite == 'app'
         shell: pwsh
         run: |
-          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
-          $dir = $env:RUNNER_TEMP
-          @'
-          param($Dir)
-          $ErrorActionPreference = 'Stop'
-          try {
-            $f = Get-WindowsFeature Server-Media-Foundation
-            $out = "Server-Media-Foundation before: $($f.InstallState)`n"
-            if ($f.InstallState -ne 'Installed') { $out += Install-WindowsFeature Server-Media-Foundation | Format-List | Out-String }
-            Set-Content (Join-Path $Dir 'media-foundation.log') $out
-            Set-Content (Join-Path $Dir 'media-foundation.done') 'done'
-          } catch {
-            Set-Content (Join-Path $Dir 'media-foundation.log') ($_ | Out-String)
-            Set-Content (Join-Path $Dir 'media-foundation.done') 'error'
-          }
-          '@ | Set-Content (Join-Path $dir 'media-foundation.ps1')
-          $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $dir 'media-foundation.ps1'), $dir)
-          "Media Foundation install started (PID $($p.Id))"
+          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').InstallationType -eq 'Client') { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
+          $d = $env:RUNNER_TEMP
+          [DateTime]::UtcNow.ToString('o') | Set-Content "$d\media-foundation.start"
+          # cmd /v:on: !errorlevel! is dism's exit code; .done appears in one move once dism has exited.
+          $c = "dism.exe /English /Online /Enable-Feature /FeatureName:ServerMediaFoundation /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
+          $p = Start-Process cmd.exe -PassThru -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
+          "Media Foundation: dism.exe started (cmd PID $($p.Id)), $([int]([Environment]::TickCount64 / 1000)) s after boot; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue))"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -100,22 +90,14 @@ jobs:
       - name: Assemble release folders and the installer zip
         run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
 
-      # 10 minutes is about 3 times the slowest install seen; past that, fail with what it printed.
+      # By now the install has had the setup's 3-4 minutes; the wait gives it 2 more (the slowest
+      # seen took 18 s in all), then prints the install log and the servicing diagnostics and
+      # fails, within the step's limit.
       - name: Wait for Media Foundation (app)
         if: matrix.suite == 'app'
-        timeout-minutes: 11
+        timeout-minutes: 4
         shell: pwsh
-        run: |
-          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
-          $done = Join-Path $env:RUNNER_TEMP 'media-foundation.done'
-          $log = Join-Path $env:RUNNER_TEMP 'media-foundation.log'
-          $sw = [Diagnostics.Stopwatch]::StartNew()
-          while (-not (Test-Path $done) -and $sw.Elapsed.TotalMinutes -lt 10) { Start-Sleep -Seconds 2 }
-          if (Test-Path $log) { Get-Content $log }
-          "Waited $([int]$sw.Elapsed.TotalSeconds) s"
-          $f = Get-WindowsFeature Server-Media-Foundation
-          "Server-Media-Foundation: $($f.InstallState)"
-          if ($f.InstallState -ne 'Installed') { throw "Media Foundation is not installed ($($f.InstallState)); see above" }
+        run: .github/scripts/media-foundation.ps1 wait -Seconds 120
 
       # 11 minutes: the slowest suite took 7.4 (installer). A step that runs out fails, so the
       # results and logs below are still uploaded (a job that runs out is cancelled).

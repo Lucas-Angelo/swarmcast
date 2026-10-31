@@ -209,6 +209,19 @@ jobs:
     env:
       SC_RUNNER_LABEL: ${{ matrix.os }}
     steps:
+      # The rest is what _build.yml and _windows.yml do before the same suite: Media Foundation
+      # first, in the background (_windows.yml), waited for before the suite.
+      - name: Start installing Media Foundation for Firefox (app)
+        if: matrix.suite == 'windows-app'
+        shell: pwsh
+        run: |
+          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').InstallationType -eq 'Client') { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
+          $d = $env:RUNNER_TEMP
+          [DateTime]::UtcNow.ToString('o') | Set-Content "$d\media-foundation.start"
+          # cmd /v:on: !errorlevel! is dism's exit code; .done appears in one move once dism has exited.
+          $c = "dism.exe /English /Online /Enable-Feature /FeatureName:ServerMediaFoundation /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
+          $p = Start-Process cmd.exe -PassThru -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
+          "Media Foundation: dism.exe started (cmd PID $($p.Id)), $([int]([Environment]::TickCount64 / 1000)) s after boot; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue))"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -217,16 +230,6 @@ jobs:
         with:
           go: 'true'
           ffmpeg: 'true'
-      # The rest is what _build.yml and _windows.yml do before the same suite.
-      # Client Windows (windows-11-arm) has Media Foundation and no Get-WindowsFeature.
-      - name: Media Foundation for Firefox (app)
-        if: matrix.suite == 'windows-app'
-        shell: pwsh
-        run: |
-          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
-          $f = Get-WindowsFeature Server-Media-Foundation
-          "Server-Media-Foundation: $($f.InstallState)"
-          if ($f.InstallState -ne 'Installed') { Install-WindowsFeature Server-Media-Foundation | Format-List }
       - name: Playwright Firefox (app)
         if: matrix.suite == 'windows-app'
         run: npx playwright install firefox
@@ -243,6 +246,11 @@ jobs:
         run: node scripts/build/package.mjs --target windows-x64
       - name: Assemble release folders and the installer zip
         run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
+      - name: Wait for Media Foundation (app)
+        if: matrix.suite == 'windows-app'
+        timeout-minutes: 4
+        shell: pwsh
+        run: .github/scripts/media-foundation.ps1 wait -Seconds 120
       - *soak-run
       - *soak-upload
 
