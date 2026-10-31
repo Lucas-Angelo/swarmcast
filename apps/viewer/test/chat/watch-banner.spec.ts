@@ -6,7 +6,7 @@
 // The page runs its branding alone (openBrandedStage): the test calls the page's firstFrame() the
 // way the player does on its first fragment. Window sizes where the 25vh cap and where the 4:1
 // ratio decide the slot's height.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures.js';
 import { openBrandedStage, requireBuild } from './watch-page.js';
 
 test.beforeAll(requireBuild);

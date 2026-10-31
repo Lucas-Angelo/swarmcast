@@ -7,7 +7,7 @@
 //
 // /api/brand is held until the test answers it; the page's timers run on page.clock and its CSS
 // animations stand still (openJoin), so each step happens exactly when the test says.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures.js';
 import { JOIN_BRAND_WAIT_MS } from '../../src/branding/loader.js';
 import { openJoin, requireBuild } from './watch-page.js';
 
