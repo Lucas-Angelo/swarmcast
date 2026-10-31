@@ -322,8 +322,9 @@ function browserCpu(cmds) {
 
 /**
  * Writes <suite>-dump-<tag>.txt to the artifacts: the process tree (PID, PPID, command line),
- * the CPU of the browsers' processes (browserCpu), TCP listeners and UDP endpoints with their owners, and the ports Windows reserves
- * (excludedportrange, dynamic range: Hyper-V, WSL and Docker take ports from there). The app's
+ * the CPU of the browsers' processes (browserCpu), TCP listeners and UDP endpoints with their
+ * owners, and the ports Windows reserves (excludedportrange, dynamic range: Hyper-V, WSL and
+ * Docker take ports from there); then the thread stacks of Firefox (firefoxStacks). The app's
  * logs are copied by startApp's cleanup.
  */
 export function failureDump(tag) {
@@ -374,6 +375,35 @@ export function failureDump(tag) {
   } catch (e) {
     log(`failure dump failed: ${e.message}`);
   }
+  try {
+    firefoxStacks(tag, cmds);
+  } catch (e) {
+    log(`Firefox thread stacks failed: ${e.message}`);
+  }
+}
+
+/** The console debugger of the Windows SDK (on the GitHub Windows images), or null. */
+const CDB = ['ProgramFiles(x86)', 'ProgramFiles']
+  .map((v) => process.env[v] && path.join(process.env[v], 'Windows Kits', '10', 'Debuggers', 'x64', 'cdb.exe'))
+  .find((f) => f && fs.existsSync(f)) ?? null;
+
+/**
+ * Writes <suite>-stacks-<tag>.txt: the thread stacks of every Firefox process (cdb attached
+ * noninvasively, no symbols needed: module + offset and the system calls show where a thread
+ * waits). This is how a frozen Firefox was traced to its startup-cache write (lib/firefox.mjs).
+ * `cmds`: pid -> command line, from the process tree.
+ */
+function firefoxStacks(tag, cmds) {
+  if (!CDB) return;
+  const pids = [...cmds].filter(([, cmd]) => /\\firefox\.exe/i.test(cmd ?? '')).map(([pid]) => pid);
+  if (!pids.length) return;
+  const out = pids.map((pid) => {
+    const r = spawnSync(CDB, ['-pv', '-p', String(pid), '-c', '!runaway 7; ~*kn 40; q'], { encoding: 'utf8', timeout: 60_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 });
+    return `===== ${pid} ${browserRole(cmds.get(pid))}\n${r.stdout ?? ''}${r.error ? `error: ${r.error.message}` : ''}`;
+  });
+  const file = path.join(ART, `${SUITE}-stacks-${tag}.txt`.replace(/[^\w.-]+/g, '_'));
+  fs.writeFileSync(file, out.join('\n\n'));
+  log(`thread stacks of ${pids.length} Firefox processes: ${path.basename(file)}`);
 }
 
 export function finish() {
