@@ -6,11 +6,11 @@
 // plus (cleanup, before Firefox closes) the thread stacks of Firefox's processes when cdb exists.
 //
 // Usage: node scripts/test/windows/ffrepro.mjs --work <dir from make-release.mjs> [--rounds 30]
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
-  ART, check, info, installerResult, joinAndPlay, killUnder, launchBrowser, log, must, onCleanup, openPanel, opt, processes, pushStream, repoRoot,
+  ART, check, info, installerResult, joinAndPlay, killUnder, launchBrowser, log, must, onCleanup, openPanel, opt, processes, ps, pushStream, repoRoot,
   runInstaller, section, serve, finish, stats, until, waitLiveLink, waitPhase, waitPlaylistForLateJoiners, startApp,
 } from './lib.mjs';
 
@@ -20,6 +20,9 @@ const rounds = Number(opt('rounds', '30'));
 const ageS = Number(opt('age', '0'));
 /** Whether an Edge viewer joins, gets P2P bytes from Chrome and leaves while Firefox waits (as in app.mjs). */
 const withEdge = opt('edge', 'no') === 'yes';
+/** Busy-loop processes kept running from Firefox's launch to the end of the round (CPU starvation, to expose races). */
+const stressN = Number(opt('stress', '0'));
+const burn = () => Array.from({ length: stressN }, () => spawn(process.execPath, ['-e', 'for(;;){}'], { stdio: 'ignore', windowsHide: true }));
 const relDir = path.join(work, 'rel');
 const home = path.join(process.env.LOCALAPPDATA, 'SwarmCast');
 const srv = await serve(relDir);
@@ -46,6 +49,7 @@ await section('0. install into the default data folder', async () => {
   const r = await installerResult(runInstaller({ entry: 'ps', dir: relDir, releaseUrl: srv.url, args: ['-Yes', '-SkipSpeedtest', '-InstallOnly'], label: 'install' }));
   must('installed', r.code === 0, `exit ${r.code}`);
   info('cdb', CDB ?? 'none');
+  info('cpu', ps('(Get-CimInstance Win32_Processor | Select-Object -First 1).Name', { allowFail: true }));
 });
 
 await section('1. Firefox joins next to a Chrome viewer, round after round', async () => {
@@ -60,6 +64,8 @@ await section('1. Firefox joins next to a Chrome viewer, round after round', asy
   await early.page.check('#p2p');
   await waitPlaylistForLateJoiners(early.page);
   for (let i = 1; i <= rounds; i++) {
+    const burners = burn();
+    onCleanup(() => burners.forEach((b) => b.kill()));
     const firefox = await launchBrowser('firefox');
     const launchedAt = Date.now();
     if (withEdge) {
@@ -84,6 +90,9 @@ await section('1. Firefox joins next to a Chrome viewer, round after round', asy
         const later = await Promise.race([f.page.evaluate(() => `${location.href} t=${document.querySelector('video')?.currentTime}`), new Promise((r) => setTimeout(() => r('no answer in 10 s'), 10_000))]).catch((e) => e.message);
         log(`round ${i}: the Firefox page after the dump: ${later}`);
       }
+      const c0 = Date.now();
+      await firefox.close().catch((e) => log(`round ${i}: closing Firefox: ${e.message}`));
+      log(`round ${i}: closing the failed Firefox took ${((Date.now() - c0) / 1000).toFixed(1)} s`);
     });
     const t0 = Date.now();
     f = await joinAndPlay(firefox, s0.liveLink, `ff${i}`);
@@ -95,8 +104,11 @@ await section('1. Firefox joins next to a Chrome viewer, round after round', asy
     }, 150_000, 'P2P bytes Chrome<->Firefox');
     failed = false;
     check('Firefox joins, plays, turns P2P on and gets P2P bytes', true, `round ${i}: Firefox up ${((t0 - launchedAt) / 1000).toFixed(0)} s, plays after ${((played - t0) / 1000).toFixed(1)} s, P2P down ${Math.round(sf.p2pDownBytes / 1e3)} KB`);
+    burners.forEach((b) => b.kill());
+    const c0 = Date.now();
     await f.context.close();
     await firefox.close();
+    if (Date.now() - c0 > 10_000) log(`round ${i}: closing Firefox took ${((Date.now() - c0) / 1000).toFixed(1)} s`);
   }
 });
 
