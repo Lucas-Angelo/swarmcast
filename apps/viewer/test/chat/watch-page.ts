@@ -102,10 +102,24 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
   });
 }
 
+/** Watch page options: the page's language and extra query string (starting with "&"). */
+type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string };
+
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
-export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; query?: string } = {}): Promise<string[]> {
+export async function openWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
   const browser = page.context().browser();
   if (browser && !warmed.has(browser)) await warmFontFallback(page);
+  const errors = await loadWatch(page, hub, o);
+  await expect(page.getByTestId('chat')).toBeVisible();
+  expect(errors).toEqual([]);
+  return errors;
+}
+
+/**
+ * Serves /watch against `hub` and navigates to it, without checking anything (openWatch checks;
+ * globalSetup only renders the page). Returns the page errors, collected from now on.
+ */
+export async function loadWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
   await serveViewer(page, (route, url) => {
     if (url.pathname === '/api/config') {
       return route.fulfill({
@@ -124,8 +138,6 @@ export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/watch?lang=${o.lang ?? 'en'}${o.query ?? ''}`);
-  await expect(page.getByTestId('chat')).toBeVisible();
-  expect(errors).toEqual([]);
   return errors;
 }
 
