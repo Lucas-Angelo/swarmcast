@@ -181,7 +181,7 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
     if (!gw) throw new Error(`host.docker.internal not found in the container's /etc/hosts:\n${hosts}`);
     ip = gw;
 
-    const published = docker('port', container, '14000/tcp').split('\n')[0]!; // "127.0.0.1:55001"
+    const published = docker('port', container, '14000/tcp').split('\n')[0]!; // "127.0.0.1:<the port Docker picked>"
     directoryUrl = `https://127.0.0.1:${published.split(':').pop()}/dir`;
     fetchImpl = fetchTrusting(fs.readFileSync(path.join(tmp, 'minica.pem'), 'utf8'));
 

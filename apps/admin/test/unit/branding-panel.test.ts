@@ -237,7 +237,7 @@ describe("Your page: what the preview renders (PublicBranding)", () => {
 
   it('only accepts its own picture URLs (panel object URLs or the branding file route)', () => {
     // Act
-    const own = safeImageSrc('blob:http://127.0.0.1:38081/0f3c1a2b-1111-4222-8333-444455556666');
+    const own = safeImageSrc('blob:http://127.0.0.1:11081/0f3c1a2b-1111-4222-8333-444455556666');
     const foreign = ['blob:https://evil.example.org/abc', 'javascript:alert(1)', '/api/branding/file/../../etc/passwd', 'data:image/svg+xml,<svg/>'].map(safeImageSrc);
     // Assert
     expect(own).toBeDefined();

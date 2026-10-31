@@ -12,6 +12,7 @@ import {
   type ChatPublicSettings,
   type ChatSettings,
   type ChatToken,
+  type LivePhase,
   type MessageKey,
   type MessageParams,
 } from '@swarmcast/shared';
@@ -36,6 +37,17 @@ export function presetOf(c: ChatSettings['content']): ContentPreset | null {
 /** A preset that needs GIFs is offered only when a key is set. */
 export function presetNeedsGifs(id: ContentPreset): boolean {
   return CONTENT_PRESETS.find((p) => p.id === id)!.content.gifs;
+}
+
+/**
+ * Whether the panel shows the live chat column next to (or, on a narrow window, under) the
+ * status at the top. Only while live with the chat on: before the live, after it, or with the
+ * chat off there is nothing to read, so the panel keeps its calm one-column layout. It follows
+ * the /ws state snapshot, which arrives with the first render, so the layout never moves when
+ * GET /api/chat answers.
+ */
+export function chatColumnShown(phase: LivePhase, chatEnabled: boolean): boolean {
+  return phase === 'live' && chatEnabled;
 }
 
 export type Tone = 'ok' | 'wait' | 'bad' | 'off';

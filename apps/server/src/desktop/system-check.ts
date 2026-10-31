@@ -1,9 +1,10 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { SpeedTestResult } from '@swarmcast/shared';
-import { readSystemCheck, type SystemCheck, type SystemCheckResult } from '../admin/system-check-routes.js';
+import type { SystemCheck, SystemCheckResult } from '@swarmcast/shared/system-check';
+import { readSystemCheck } from '../admin/system-check-routes.js';
+import { runCommand } from '../core/exec.js';
 import { writePrivateFile } from '../core/paths.js';
 import { isPortFree } from '../core/ports.js';
 import { throwIfAborted } from '../core/retry.js';
@@ -230,14 +231,10 @@ type Exec = (command: string, args: string[], timeoutMs?: number) => Promise<{ o
 
 const execWith =
   (signal?: AbortSignal): Exec =>
-  (command, args, timeoutMs = 10_000) =>
-    new Promise((resolve) => {
-      try {
-        execFile(command, args, { windowsHide: true, timeout: timeoutMs, signal }, (err, stdout) => resolve({ ok: !err, stdout: String(stdout ?? '') }));
-      } catch {
-        resolve({ ok: false, stdout: '' });
-      }
-    });
+  async (command, args, timeoutMs = 10_000) => {
+    const r = await runCommand(command, args, { timeoutMs, signal });
+    return { ok: r.ok, stdout: r.stdout };
+  };
 
 export interface GatherDeps {
   dataDir: string;

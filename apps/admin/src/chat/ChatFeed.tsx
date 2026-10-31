@@ -37,7 +37,6 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { 
 
   return (
     <div class="chat-feed">
-      <h3 class="small strong">{t('admin.chat.feed')}</h3>
       <ol class="chat-list" ref={list} onScroll={onScroll} aria-live="polite" aria-label={t('admin.chat.feed')} data-testid="chat-feed">
         {view.items.length === 0 && <li class="chat-empty muted small">{t('admin.chat.feed.empty')}</li>}
         {view.items.map((it) =>
@@ -106,38 +105,41 @@ function MessageRow({
   const tokens = item.x === undefined ? null : messageTokens(item.x);
   return (
     <li class={`chat-msg${streamer ? ' chat-msg-streamer' : ''}`} data-seq={item.s} data-testid="chat-msg">
-      <div class="chat-line">
-        <span class="chat-time muted small">{clockOf(item.at)}</span>
-        {/* The badge comes from the role the server assigned, never from the nickname. */}
-        {streamer && (
-          <span class="chat-badge" data-testid="chat-badge">
-            {t('chat.badge.streamer')}
-          </span>
-        )}
-        {/* The look-alike tag tells apart two similar names: shown on hover, not in every row. */}
-        <bdi class="chat-nick" title={author?.tag && !streamer ? `#${author.tag}` : undefined} style={author ? { color: readableName(author.c, dark) } : undefined}>
-          {nickname}
-        </bdi>
-        <span class="chat-sep">: </span>
-        <bdi class="chat-text" dir="auto">
-          {item.g ? (
-            <span class="chat-gif" title={t('admin.chat.msg.gif.tip')}>
-              {t('admin.chat.msg.gif')}
+      {/* The menu button sits next to the clipped text, never inside it: a long name or message cannot push it out of reach. */}
+      <div class="chat-row">
+        <div class="chat-line">
+          <span class="chat-time muted small">{clockOf(item.at)}</span>
+          {/* The badge comes from the role the server assigned, never from the nickname. */}
+          {streamer && (
+            <span class="chat-badge" data-testid="chat-badge">
+              {t('chat.badge.streamer')}
             </span>
-          ) : tokens === null ? (
-            <span class="muted">{t('admin.chat.msg.hidden')}</span>
-          ) : (
-            tokens.map((tk, i) =>
-              tk.k === 'e' ? (
-                <span key={i} class="chat-emote" title={t('admin.chat.msg.emote.tip', { code: tk.code })}>
-                  :{tk.code}:
-                </span>
-              ) : (
-                tk.v
-              ),
-            )
           )}
-        </bdi>
+          {/* The look-alike tag tells apart two similar names: shown on hover, not in every row. */}
+          <bdi class="chat-nick" title={author?.tag && !streamer ? `#${author.tag}` : undefined} style={author ? { color: readableName(author.c, dark) } : undefined}>
+            {nickname}
+          </bdi>
+          <span class="chat-sep">: </span>
+          <bdi class="chat-text" dir="auto">
+            {item.g ? (
+              <span class="chat-gif" title={t('admin.chat.msg.gif.tip')}>
+                {t('admin.chat.msg.gif')}
+              </span>
+            ) : tokens === null ? (
+              <span class="muted">{t('admin.chat.msg.hidden')}</span>
+            ) : (
+              tokens.map((tk, i) =>
+                tk.k === 'e' ? (
+                  <span key={i} class="chat-emote" title={t('admin.chat.msg.emote.tip', { code: tk.code })}>
+                    :{tk.code}:
+                  </span>
+                ) : (
+                  tk.v
+                ),
+              )
+            )}
+          </bdi>
+        </div>
         <button type="button" class="small chat-more" aria-expanded={open} aria-label={t('admin.chat.menu.for', { nickname })} title={t('admin.chat.menu.tip')} data-testid="chat-more" onClick={onToggle}>
           ⋯
         </button>

@@ -72,7 +72,7 @@ export function commandsFor(row) {
           `SC_DESKTOP_ARTIFACTS="$RUN_DIR" ` +
           (process.platform === 'linux' ? "NO_AT_BRIDGE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session -- " : '') +
           `node scripts/test/desktop/verify.mjs --installers release/desktop ` +
-          `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 ${A}`,
+          `--update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 17811 ${A}`,
         parse: lineChecks,
       },
     ],

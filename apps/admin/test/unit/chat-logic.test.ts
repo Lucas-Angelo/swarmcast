@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { CHAT_BG_DARK, CHAT_BG_LIGHT, contrastRatio, defaultChatSettings, type ChatCounters, type ChatPublicSettings } from '@swarmcast/shared';
 import {
   CONTENT_PRESETS,
+  chatColumnShown,
   chatStatus,
   draftLength,
   feedBackground,
@@ -56,6 +57,22 @@ describe('content presets (modes)', () => {
     const needKey = CONTENT_PRESETS.filter((p) => presetNeedsGifs(p.id)).map((p) => p.id);
     // Assert
     expect(needKey).toEqual(['all', 'gifs']);
+  });
+});
+
+describe('live chat column', () => {
+  it.each([
+    ['off', true, false],
+    ['starting', true, false],
+    ['waiting-obs', true, false],
+    ['live', true, true],
+    ['live', false, false],
+    ['stopping', true, false],
+  ] as const)('phase %s with the chat on = %s: shown = %s', (phase, chatEnabled, shown) => {
+    // Act
+    const result = chatColumnShown(phase, chatEnabled);
+    // Assert
+    expect(result).toBe(shown);
   });
 });
 

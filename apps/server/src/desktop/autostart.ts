@@ -1,8 +1,8 @@
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { DesktopAutostartState } from '@swarmcast/shared';
+import { runCommand } from '../core/exec.js';
 
 /**
  * "Start with the computer" for the desktop app (docs/DESKTOP.md), off by default: SwarmCast
@@ -210,13 +210,10 @@ export interface RunOptions {
 }
 export type Runner = (command: string, args: string[], options?: RunOptions) => Promise<RunResult>;
 
-const defaultRunner: Runner = (command, args, options = {}) =>
-  new Promise((resolve) => {
-    execFile(command, args, { windowsHide: true, windowsVerbatimArguments: !!options.verbatim, timeout: 15_000 }, (err, stdout, stderr) => {
-      const code = !err ? 0 : typeof err.code === 'number' ? err.code : 1;
-      resolve({ code, stdout: String(stdout), stderr: String(stderr) || (err?.message ?? '') });
-    });
-  });
+const defaultRunner: Runner = async (command, args, options = {}) => {
+  const r = await runCommand(command, args, { timeoutMs: 15_000, verbatim: !!options.verbatim });
+  return { code: r.ok ? 0 : (r.code ?? 1), stdout: r.stdout, stderr: r.stderr || (r.error?.message ?? '') };
+};
 
 export interface AutostartOptions {
   /** Absolute path that starts the desktop app (SWARMCAST_DESKTOP_EXE); unsupported without it. */

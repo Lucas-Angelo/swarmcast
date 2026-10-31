@@ -150,7 +150,7 @@ describe('spawnTracked', () => {
 
 describe('loopbackBase / panelLogin', () => {
   it.each([
-    ['http://127.0.0.1:38081/anything?x=1', 'http://127.0.0.1:38081/'],
+    ['http://127.0.0.1:11081/anything?x=1', 'http://127.0.0.1:11081/'],
     ['http://localhost:8080', 'http://localhost:8080/'],
     ['http://[::1]:9000/', 'http://[::1]:9000/'],
   ])('accepts http on this machine with a numeric port, rebuilt from those parts: %s', (url, base) => {
@@ -169,15 +169,15 @@ describe('loopbackBase / panelLogin', () => {
 
   it('builds the panel login URL from a loopback base and an /auth/<token> path', () => {
     // Act
-    const { loginUrl } = panelLogin({ adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '/auth/abc-DEF_123' });
+    const { loginUrl } = panelLogin({ adminUrl: 'http://127.0.0.1:11081', adminLoginPath: '/auth/abc-DEF_123' });
     // Assert
-    expect(loginUrl.href).toBe('http://127.0.0.1:38081/auth/abc-DEF_123');
+    expect(loginUrl.href).toBe('http://127.0.0.1:11081/auth/abc-DEF_123');
   });
 
   it.each([
-    ['another host in the path', { adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '//evil.example/auth/x' }, /login path/],
-    ['a path that climbs out of /auth', { adminUrl: 'http://127.0.0.1:38081', adminLoginPath: '/auth/x/../../api' }, /login path/],
-    ['a base that is not this machine', { adminUrl: 'http://evil.example:38081', adminLoginPath: '/auth/x' }, /loopback/],
+    ['another host in the path', { adminUrl: 'http://127.0.0.1:11081', adminLoginPath: '//evil.example/auth/x' }, /login path/],
+    ['a path that climbs out of /auth', { adminUrl: 'http://127.0.0.1:11081', adminLoginPath: '/auth/x/../../api' }, /login path/],
+    ['a base that is not this machine', { adminUrl: 'http://evil.example:11081', adminLoginPath: '/auth/x' }, /loopback/],
   ])('refuses %s', (_what, o, error) => {
     // Act
     const build = () => panelLogin(o);
