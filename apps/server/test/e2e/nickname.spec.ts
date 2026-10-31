@@ -128,3 +128,14 @@ test('the server refuses a look-alike of someone watching and suggests a free na
   // Assert
   await expect(page).toHaveURL(/\/watch$/);
 });
+
+// DIAG (soak only): does Firefox offer its form history under the nickname field? ArrowDown picks
+// the first suggestion of the browser's autocomplete dropdown into the field.
+test('DIAG form history under the nickname field', { tag: '@ui' }, async ({ viewers }) => {
+  const page = await viewers.atJoinPage();
+  await page.locator('#nickname').pressSequentially('A');
+  await page.waitForTimeout(1500);
+  await page.keyboard.press('ArrowDown');
+  await page.waitForTimeout(300);
+  console.log(`DIAGFH ${test.info().project.name} r${test.info().repeatEachIndex}: value after ArrowDown = ${JSON.stringify(await page.inputValue('#nickname'))}`);
+});
