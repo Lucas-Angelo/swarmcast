@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { monitorEventLoopDelay } from 'node:perf_hooks';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { App } from '../../src/app.js';
 import { variantInfoHashHex } from '../../src/tracker/tracker.js';
@@ -15,7 +16,9 @@ import { bootApp, FEEDS, FFMPEG_BIN, hasFfmpeg, isAlive, joinAs, startFeed, stop
 // (renditions, crash recovery, reconnects). On a 3-vCPU CI runner, x264 720p + 480p keeps the
 // machine at 90 % or more, so the guard would rightly drop 720p after 10 s and its playlist would
 // disappear mid-test. The guard has its own unit tests (quality-decisions.test.ts). If it drops a
-// rendition anyway, every wait fails at once, saying so.
+// rendition anyway, every wait fails at once, saying so. A wait that times out prints what the
+// ladder, the origin and the live did and when, the warnings (ffmpeg's and MediaMTX's included)
+// and how late this process ran its timers (the server runs in it).
 // The ladder runs manual with the encoder forced to x264, so it also runs on machines without a
 // GPU encoder and with fewer than 6 CPU threads (CI runners), where `encoder: 'auto'` keeps only
 // the original quality to protect OBS. The ladder probes the encoders itself when OBS connects.
@@ -36,11 +39,24 @@ class LadderLive {
   jar!: Jar;
   /** Ladder crashes a test caused on purpose. */
   deliberateCrashes = 0;
+  /** What happened since the app started, with times (as in fake-obs.log): ladder status, origin availability, phase. */
+  private readonly timeline: string[] = [];
+  /** How late this process ran its timers (a stalled event loop or VM): the server runs in it. */
+  private readonly loopDelay = monitorEventLoopDelay({ resolution: 20 });
 
   private constructor(
     readonly app: App,
     readonly ports: Ports,
-  ) {}
+  ) {
+    this.loopDelay.enable();
+    const mark = (what: string): void => void this.timeline.push(`${new Date().toISOString()} ${what}`);
+    this.ladder.on('status', (s) => mark(`ladder ${s}`));
+    app.live.origin.on('available', (v) => mark(`origin ${app.live.origin.sourceKind} available=${v}`));
+    let phase = app.live.phase;
+    app.live.on('state', () => {
+      if (app.live.phase !== phase) mark(`phase ${(phase = app.live.phase)}`);
+    });
+  }
 
   static async start(): Promise<LadderLive> {
     const { app, ports } = await bootApp({
@@ -83,7 +99,23 @@ class LadderLive {
       source: this.app.live.origin.sourceKind,
       transcoder: { status: t.status, pid: t.pid, outDir: t.outDir, launches: t.launches, crashes: t.crashes },
       quality: this.app.live.quality.state(),
+      timeline: this.timeline.slice(-40),
+      maxLoopDelayMs: Math.round(this.loopDelay.max / 1e6),
+      activity: this.activity(),
     });
+  }
+
+  /**
+   * The live's actions (OBS connected, live, not live) and every warning, ffmpeg's and
+   * MediaMTX's included, with their times: what a failed wait needs to tell why the ladder is
+   * not running.
+   */
+  activity(): string[] {
+    return this.app.live.activity
+      .list()
+      .filter((e) => e.kind === 'action' || e.level !== 'info')
+      .slice(-30)
+      .map((e) => `${new Date(e.at).toISOString()} ${e.level} ${e.code ?? ''} ${e.text}`);
   }
 
   /** Throws when the load guard dropped a rendition: every later wait would be for playlists that no longer exist. */
@@ -139,6 +171,7 @@ class LadderLive {
   }
 
   async close(): Promise<void> {
+    this.loopDelay.disable();
     await this.feed?.stop();
     await this.app.close();
     await stopTracked();
