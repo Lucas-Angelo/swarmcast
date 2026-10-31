@@ -84,23 +84,24 @@ async function pageTargets(port: number): Promise<string[] | null> {
 
 export class AndroidDevice {
   /**
-   * The device log of the whole run, streamed to logcat.txt in the log folder: unlike the
+   * The device log, streamed to logcat.txt in the log folder from each boot on: unlike the
    * per-test `logcat -d`, it keeps what the device said before it stopped answering.
    */
   private log: Tracked | null = null;
+  /** Chromes started on this boot of the device (newPhone). */
+  private chromes = 0;
 
   private constructor(
     readonly serial: string,
     /** The emulator this suite booted (it stops it at the end); null for a device that was already there. */
-    private readonly own: Tracked | null,
+    private own: Tracked | null,
+    private readonly o: { publicPort: number; logDir: string },
   ) {}
 
   /**
    * The device to test on: $ANDROID_SERIAL, else the one connected device, else (CI, and a
    * machine with no device connected) the suite boots its AVD headless, its output and exit in
-   * emulator.log, and stops it in release(). Then prepared: no animations, screen kept on, portrait, the
-   * full-screen notice already seen, and the e2e server's public port reachable on the
-   * device's 127.0.0.1.
+   * emulator.log, and stops it in release(). Then prepared (prepare()).
    */
   static async attach(o: { publicPort: number; logDir: string }): Promise<AndroidDevice> {
     if (!fs.existsSync(ADB)) throw new Error(`adb not found at ${ADB}: run scripts/test/devices/setup.sh install android (or set ANDROID_HOME)`);
@@ -110,38 +111,70 @@ export class AndroidDevice {
       .map((l) => l.trim().split(/\s+/))
       .filter((w) => w[1] === 'device')
       .map((w) => w[0]!);
-    let serial = process.env.ANDROID_SERIAL ?? (listed.length === 1 ? listed[0]! : null);
+    const serial = process.env.ANDROID_SERIAL ?? (listed.length === 1 ? listed[0]! : null);
     if (!serial && listed.length > 1) throw new Error(`${listed.length} Android devices are connected (${listed.join(', ')}): set ANDROID_SERIAL`);
-    let own: Tracked | null = null;
-    if (!serial) {
-      serial = `emulator-${OWN_EMULATOR_PORT}`;
-      const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
-      // Headless (CI boots it this way too), software GPU without Vulkan (EMULATOR_FEATURES), no
-      // audio device, a cold boot.
-      own = spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect', ...EMULATOR_FEATURES], {
-        name: 'emulator',
-        logFile: path.join(o.logDir, 'emulator.log'),
-      });
-    }
-    const device = new AndroidDevice(serial, own);
-    await until(async () => (await device.shellOut(['getprop', 'sys.boot_completed']).catch(() => '')) === '1', {
+    const device = new AndroidDevice(serial ?? `emulator-${OWN_EMULATOR_PORT}`, serial ? null : AndroidDevice.bootEmulator(o.logDir), o);
+    await device.prepare();
+    return device;
+  }
+
+  /** Starts the suite's own emulator: headless, software GPU (EMULATOR_FEATURES), no audio device, a cold boot. */
+  private static bootEmulator(logDir: string): Tracked {
+    const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
+    return spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect', ...EMULATOR_FEATURES], {
+      name: 'emulator',
+      logFile: path.join(logDir, 'emulator.log'),
+    });
+  }
+
+  /**
+   * Waits for the boot, then prepares the device: no animations, screen kept on, portrait, the
+   * full-screen notice already seen, Chrome's flags, and the e2e server's public port reachable
+   * on the device's 127.0.0.1.
+   */
+  private async prepare(): Promise<void> {
+    const { serial, own, o } = this;
+    await until(async () => (await this.shellOut(['getprop', 'sys.boot_completed']).catch(() => '')) === '1', {
       timeoutMs: BOOT_MS,
       what: `${serial} to finish booting`,
       abortOn: own ? [own] : [],
     });
-    device.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
+    this.chromes = 0;
+    this.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
     // What the emulator gave Android (EMULATOR_FEATURES: neither should be on), for the record.
-    const vulkan = await device.shellOut(['getprop', 'ro.hardware.vulkan']);
-    const hostDecoder = await device.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
+    const vulkan = await this.shellOut(['getprop', 'ro.hardware.vulkan']);
+    const hostDecoder = await this.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
     fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.hardware.vulkan=${vulkan || '(unset)'} ro.boot.qemu.hwcodec.avcdec=${hostDecoder || '(unset)'}\n`);
-    for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await device.shell(['settings', 'put', 'global', scale, '0']);
-    await device.shell(['svc', 'power', 'stayon', 'true']);
+    for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await this.shell(['settings', 'put', 'global', scale, '0']);
+    await this.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
-    await device.shell(['settings', 'put', 'secure', 'immersive_mode_confirmations', 'confirmed']);
-    await device.shell(['wm', 'user-rotation', 'lock', '0']);
-    await device.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
+    await this.shell(['settings', 'put', 'secure', 'immersive_mode_confirmations', 'confirmed']);
+    await this.shell(['wm', 'user-rotation', 'lock', '0']);
+    await this.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
-    return device;
+  }
+
+  /**
+   * The suite's own emulator, booted afresh when a Chrome already ran on it: the emulator crashed
+   * (SIGSEGV, emulator.log) while the second Chrome of a boot played the live, with Vulkan and the
+   * host H.264 decoder off (EMULATOR_FEATURES), on both emulators of Devices run 41180367812,
+   * after the first Chrome of each had passed its test; earlier runs lost the device at that same
+   * point. Each test therefore gets the first Chrome of a fresh boot, as a test gets a fresh
+   * browser. A device that was already there (a phone, an emulator started by hand) is used as it is.
+   */
+  async freshForTest(): Promise<void> {
+    if (!this.own || this.chromes === 0) return;
+    await this.stopEmulator();
+    this.own = AndroidDevice.bootEmulator(this.o.logDir);
+    await this.prepare();
+  }
+
+  private async stopEmulator(): Promise<void> {
+    await this.log?.stop();
+    this.log = null;
+    if (!this.own) return;
+    await run(ADB, ['-s', this.serial, 'emu', 'kill']).catch(() => {});
+    await this.own.stop({ graceMs: 30_000 });
   }
 
   /** How the emulator this suite booted ended, with its last output lines; null while it runs (or for a device that was already there). */
@@ -208,6 +241,7 @@ export class AndroidDevice {
 
   /** A fresh Chrome for one test: stopped, its data cleared (no cookie or remembered choice of an earlier test), portrait. */
   async newPhone(): Promise<AndroidPhone> {
+    this.chromes += 1;
     await this.shell(['am', 'force-stop', CHROME]);
     await this.shell(['pm', 'clear', CHROME]);
     // Without it, a fresh Chrome asks for it in a dialog over the page ("Chrome notifications
@@ -283,10 +317,7 @@ export class AndroidDevice {
   }
 
   async release(): Promise<void> {
-    await this.log?.stop();
-    if (!this.own) return;
-    await run(ADB, ['-s', this.serial, 'emu', 'kill']).catch(() => {});
-    await this.own.stop({ graceMs: 30_000 });
+    await this.stopEmulator();
   }
 }
 

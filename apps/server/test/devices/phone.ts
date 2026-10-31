@@ -23,7 +23,10 @@ export interface Phone {
   evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R>;
   /** A finger tap in the middle of the element, scrolled into view first. Taps raise the on-screen keyboard. */
   tap(selector: string): Promise<void>;
-  /** Types into the element (tap it first), as the on-screen keyboard does. */
+  /**
+   * Types into the element (tap it first), as the on-screen keyboard does. iOS: the text is put
+   * in the field as the keyboard would (IosPhone.type says why).
+   */
   type(selector: string, text: string): Promise<void>;
   /** Turns the phone (the system rotation, as the viewer turning it or tapping the rotate button). */
   rotate(to: Orientation): Promise<void>;
@@ -207,16 +210,6 @@ export const KEYBOARD_MIN_PX = 150;
 export async function tapToType(phone: Phone, selector: string): Promise<void> {
   const before = await viewport(phone);
   await recordInput(phone);
-  if (!phone.onScreenKeyboard) {
-    // Under test (iOS): the join page's autofocus gives the field focus with no input session;
-    // the tap then reaches the field (trusted touch events) but WebKit reports no focused element
-    // to UIKit ("disableAutomaticKeyboardUI return empty") and typed keys insert nothing. Does a
-    // tap on a field that is not focused yet start the input session?
-    await phone.evaluate((s) => {
-      const el = document.querySelector(s);
-      if (el && document.activeElement === el) (el as HTMLElement).blur();
-    }, selector);
-  }
   await phone.tap(selector);
   if (!phone.onScreenKeyboard) {
     await expect

@@ -11,8 +11,9 @@
 //   record: neither driver can read a page in the background) and plays again, behind the live
 //   by about the time away, and Go live takes the viewer back to the live point.
 // The on-screen keyboard is Android's part: the iOS Simulator under safaridriver never raises it
-// (ios.ts IosPhone.onScreenKeyboard has the evidence), so there the "in sight" checks hold with no
-// keyboard over the page, and tapToType checks that the tap reached the field as a finger's.
+// and Send Keys inserts nothing there (ios.ts IosPhone.onScreenKeyboard and type() have the
+// evidence), so on iOS the "in sight" checks hold with no keyboard over the page, tapToType checks
+// that the tap reached the field as a finger's, and the text is put in the field as the keyboard would.
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, say, sees, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';

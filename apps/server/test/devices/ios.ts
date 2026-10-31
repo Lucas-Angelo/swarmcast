@@ -86,38 +86,6 @@ async function hardwareKeyboardConnected(): Promise<boolean> {
   return mark === 'on';
 }
 
-/** The items of the I/O menu and its Keyboard submenu, for a failure message. */
-function keyboardMenuItems(): Promise<string> {
-  return osascript([
-    'tell application "System Events" to tell process "Simulator"',
-    'set io to name of every menu item of menu "I/O" of menu bar 1',
-    `set kb to name of every menu item of ${KEYBOARD_MENU}`,
-    'end tell',
-    'set AppleScript\'s text item delimiters to ", "',
-    'return "I/O: " & (io as text) & "; Keyboard: " & (kb as text)',
-  ]).catch((e: Error) => `(menus unreadable: ${e.message})`);
-}
-
-/**
- * Connects the Mac's keyboard to the simulator (I/O > Keyboard > Connect Hardware Keyboard,
- * Simulator.app's default), so that a focused field gets a text input session. Without one,
- * safaridriver's Element Send Keys (Automation.performKeyboardInteractions, InsertByKey) answers
- * OK and inserts nothing: with the keyboard disconnected, Devices run 41175462466 joined with an
- * empty nickname in every test ("Please choose a nickname."), though the tap had reached the
- * field as a finger's and focused it. Either way iOS shows no on-screen keyboard here
- * (IosPhone.onScreenKeyboard). Simulator.app keeps the choice per simulator; the menu is the one
- * switch it reads at once.
- */
-async function connectHardwareKeyboard(): Promise<void> {
-  if (await hardwareKeyboardConnected()) return;
-  await osascript([
-    'tell application "Simulator" to activate',
-    `tell application "System Events" to tell process "Simulator" to click (first menu item of ${KEYBOARD_MENU} whose name contains "Hardware Keyboard")`,
-  ]);
-  // The menu's check mark follows a moment later (CI run 41173006688 read it unchanged at once).
-  await until(() => hardwareKeyboardConnected(), { timeoutMs: 10_000, what: 'Connect Hardware Keyboard ticked after its menu item was clicked' });
-}
-
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
 type Rotator = 'devicectl' | 'simulator-app';
 
@@ -177,10 +145,6 @@ export class IosDevice {
         { timeoutMs: 60_000, what: "Simulator.app's window" },
       );
       note("Simulator.app's window shown");
-      await connectHardwareKeyboard().catch(async (e: Error) => {
-        throw new Error(`${e.message} (${await keyboardMenuItems()})`);
-      });
-      note('hardware keyboard connected');
     }
     const [port] = await allocPorts(1);
     const driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
@@ -212,7 +176,7 @@ export class IosDevice {
    * The simulator's and the Mac's unified log since a minute before `from`, filtered by
    * `predicate`, in `<name>-<time>.log` in the log folder; returns where (for a failure message).
    */
-  async logs(from: Date, name: string, predicate: string): Promise<string> {
+  private async logs(from: Date, name: string, predicate: string): Promise<string> {
     const start = new Date(from.getTime() - 60_000)
       .toISOString()
       .replace('T', ' ')
@@ -285,10 +249,9 @@ export class IosPhone implements Phone {
    * finger's (trusted pointerdown/pointerup of type touch, touchstart, touchend, then mousedown
    * and click), the field had focus, Simulator.app did not connect the Mac's keyboard (its
    * I/O > Keyboard menu, unticked then), and still the visual viewport stayed 714 px high and
-   * the screen recording showed no keyboard, in every test. With the Mac's keyboard connected
-   * (as attach() now leaves it, for typing: connectHardwareKeyboard) iOS shows none either. So on
-   * iOS the keyboard checks (what it leaves in sight) are not made; the tap, the typing and every
-   * other check are.
+   * the screen recording showed no keyboard, in every test; with the Mac's keyboard connected
+   * (Simulator.app's default) none either. type() says why. So on iOS the keyboard checks (what
+   * it leaves in sight) are not made; the tap and every other check are.
    */
   readonly onScreenKeyboard = false;
 
@@ -323,33 +286,30 @@ export class IosPhone implements Phone {
   }
 
   /**
-   * Element Send Keys. When the text does not reach the field, fails at once with what the page
-   * saw (key and input events, focus, whether the page has the window's focus) and the
-   * simulator's UIKit, text input and WebKit log of that moment.
+   * Puts the text in the field the way the keyboard does (the field's value, then an input event
+   * of type insertText), after the tap that focused it. Not safaridriver's Element Send Keys: on
+   * the iOS Simulator it delivers trusted keydown, keypress and keyup to the focused field and
+   * inserts nothing (no beforeinput, no input), with the Mac's keyboard connected or not, and with
+   * the field focused by the page's autofocus or by the tap alone (Devices runs 41175462466,
+   * 41177262228, 41178761001, 41180367812). The simulator's log then shows Safari's WKContentView
+   * as first responder with a text input session, and UIKit's "_inputViewsForResponder,
+   * disableAutomaticKeyboardUI return empty": WebKit gives UIKit no field to edit, the same reason
+   * the on-screen keyboard never shows (onScreenKeyboard). What the viewer types is checked on
+   * Android; here the rest of the flow is.
    */
   async type(selector: string, text: string): Promise<void> {
-    const from = new Date();
-    await this.evaluate(() => {
-      const w = window as unknown as { __keys?: string[]; __keysListening?: boolean };
-      w.__keys = [];
-      if (w.__keysListening) return;
-      w.__keysListening = true;
-      for (const type of ['keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'compositionstart']) window.addEventListener(type, (e) => w.__keys?.push(`${type}${e.isTrusted ? '' : ' untrusted'}`), true);
-    });
-    const element = await this.session.find(selector);
-    await this.session.sendKeys(element, text);
-    const seen = await this.evaluate(
-      (s) => ({
-        value: (document.querySelector(s) as HTMLInputElement | null)?.value ?? null,
-        focus: document.activeElement?.id ?? document.activeElement?.tagName ?? null,
-        pageHasFocus: document.hasFocus(),
-        events: [...new Set((window as unknown as { __keys?: string[] }).__keys ?? [])].join(', '),
-      }),
-      selector,
+    const typed = await this.evaluate(
+      ({ s, t }) => {
+        const el = document.querySelector(s) as HTMLInputElement | HTMLTextAreaElement | null;
+        if (!el || document.activeElement !== el) return false;
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value')!.set!;
+        setter.call(el, el.value + t);
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: t }));
+        return true;
+      },
+      { s: selector, t: text },
     );
-    if (seen.value?.includes(text)) return;
-    const logs = await this.device.logs(from, 'typing', 'subsystem == "com.apple.UIKit" OR subsystem CONTAINS[c] "webkit" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "TextInput" OR process CONTAINS[c] "keyboard" OR category CONTAINS[c] "keyboard"');
-    throw new Error(`typing "${text}" into ${selector} did not reach it: ${JSON.stringify(seen)} (${logs})`);
+    if (!typed) throw new Error(`${selector} is not the focused field: tap it first`);
   }
 
   rotate(to: Orientation): Promise<void> {
