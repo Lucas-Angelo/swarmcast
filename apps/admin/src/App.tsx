@@ -216,7 +216,7 @@ export function App() {
 
       <div class="zone-main">
         <div class="grid">
-          <section class={`card ${linkFresh ? 'highlight' : ''}`}>
+          <section class={`card card-link ${linkFresh ? 'highlight' : ''}`}>
             <h2 class="row-title">
               {t('admin.link.title')} <Info text={t('admin.link.tip')} />
             </h2>
@@ -228,12 +228,14 @@ export function App() {
                 </div>
                 <div class="row">
                   <button class="primary" title={t('admin.link.copy.tip')} onClick={() => copy('link', s.liveLink!)}>{copied === 'link' ? t('common.copied') : t('admin.link.copy')}</button>
-                </div>
-                <div class="row">
-                  <button data-testid="rotate" title={t('admin.link.rotate.tip')} disabled={busy !== null} onClick={() => act('rotate', () => post('/api/link/rotate'))}>{t('admin.link.rotate')}</button>
-                  <Info text={t('admin.link.rotate.tip')} />
-                  <button title={t('admin.link.disconnectAll.tip')} disabled={busy !== null} onClick={() => act('dc', () => post('/api/viewers/disconnect-all'))}>{t('admin.link.disconnectAll')}</button>
-                  <Info text={t('admin.link.disconnectAll.tip')} />
+                  <span class="pair">
+                    <button data-testid="rotate" title={t('admin.link.rotate.tip')} disabled={busy !== null} onClick={() => act('rotate', () => post('/api/link/rotate'))}>{t('admin.link.rotate')}</button>
+                    <Info text={t('admin.link.rotate.tip')} />
+                  </span>
+                  <span class="pair">
+                    <button title={t('admin.link.disconnectAll.tip')} disabled={busy !== null} onClick={() => act('dc', () => post('/api/viewers/disconnect-all'))}>{t('admin.link.disconnectAll')}</button>
+                    <Info text={t('admin.link.disconnectAll.tip')} />
+                  </span>
                 </div>
                 <p class="muted small">{t('admin.link.note')}</p>
               </>
@@ -242,7 +244,7 @@ export function App() {
             )}
           </section>
 
-          <section class="card">
+          <section class="card card-obs">
             <h2 class="row-title">
               {t('admin.obs.title')} <Info text={t('admin.obs.help.tip')} />
             </h2>
@@ -270,7 +272,7 @@ export function App() {
             )}
           </section>
 
-          <section class="card">
+          <section class="card card-p2p">
             <h2 class="row-title">
               {t('admin.p2p.title')} <Info text={t('admin.p2p.tip')} />
             </h2>
@@ -290,7 +292,47 @@ export function App() {
             )}
           </section>
 
-          <section class="card">
+          <section class="card card-viewers">
+            <h2 class="row-title">
+              {t('admin.viewers.title')} <Info text={t('admin.viewers.tip')} />
+              {s.bannedCount > 0 && (
+                <>
+                  <span class="muted small">· {t('admin.viewers.removed', { count: s.bannedCount })}</span>
+                  <Info text={t('admin.viewers.removed.tip')} />
+                  <button class="small" title={t('admin.viewers.unban.tip')} onClick={() => act('bans', () => post('/api/bans/clear'))}>{t('admin.viewers.unban')}</button>
+                </>
+              )}
+            </h2>
+            {s.viewers.length === 0 ? (
+              <div class="empty">
+                <span class="sc-mascot sc-mascot-sleep" aria-hidden="true" />
+                <p class="muted">{t('admin.viewers.nobody')}</p>
+              </div>
+            ) : (
+              <div class="table-wrap">
+                <table data-testid="viewers">
+                  <thead>
+                    <tr>
+                      <Th label={t('admin.col.nick')} tip={t('admin.col.nick.tip')} />
+                      <Th label={t('admin.col.device')} tip={t('admin.col.device.tip')} />
+                      <Th label={t('admin.col.p2p')} tip={t('admin.col.p2p.tip')} />
+                      <Th label={t('admin.col.shared')} tip={t('admin.col.shared.tip')} />
+                      <Th label={t('admin.col.bad')} tip={t('admin.col.bad.tip', { count: HASH_FAILURE_THRESHOLD })} />
+                      <Th label={t('admin.col.delay')} tip={t('admin.col.delay.tip')} />
+                      <Th label={t('admin.col.actions')} tip={t('admin.col.actions.tip')} />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {s.viewers.map((v) => (
+                      <ViewerRow key={v.sessionId} v={v} busy={busy !== null} act={act} />
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+
+          <section class="card card-net">
             <h2 class="row-title">
               {t('admin.net.title')} <Info text={t('admin.net.tip')} />
             </h2>
@@ -321,7 +363,7 @@ export function App() {
             />
           </section>
 
-          <section class="card">
+          <section class="card card-mode">
             <h2 class="row-title">
               {t('admin.mode.title')} <Info text={t('admin.mode.tip')} />
             </h2>
@@ -373,46 +415,6 @@ export function App() {
         <QualityCard live={s.phase === 'live'} />
 
         <DesktopCard />
-
-        <section class="card mt">
-          <h2 class="row-title">
-            {t('admin.viewers.title')} <Info text={t('admin.viewers.tip')} />
-            {s.bannedCount > 0 && (
-              <>
-                <span class="muted small">· {t('admin.viewers.removed', { count: s.bannedCount })}</span>
-                <Info text={t('admin.viewers.removed.tip')} />
-                <button class="small" title={t('admin.viewers.unban.tip')} onClick={() => act('bans', () => post('/api/bans/clear'))}>{t('admin.viewers.unban')}</button>
-              </>
-            )}
-          </h2>
-          {s.viewers.length === 0 ? (
-            <div class="empty">
-              <span class="sc-mascot sc-mascot-sleep" aria-hidden="true" />
-              <p class="muted">{t('admin.viewers.nobody')}</p>
-            </div>
-          ) : (
-            <div class="table-wrap">
-              <table data-testid="viewers">
-                <thead>
-                  <tr>
-                    <Th label={t('admin.col.nick')} tip={t('admin.col.nick.tip')} />
-                    <Th label={t('admin.col.device')} tip={t('admin.col.device.tip')} />
-                    <Th label={t('admin.col.p2p')} tip={t('admin.col.p2p.tip')} />
-                    <Th label={t('admin.col.shared')} tip={t('admin.col.shared.tip')} />
-                    <Th label={t('admin.col.bad')} tip={t('admin.col.bad.tip', { count: HASH_FAILURE_THRESHOLD })} />
-                    <Th label={t('admin.col.delay')} tip={t('admin.col.delay.tip')} />
-                    <Th label={t('admin.col.actions')} tip={t('admin.col.actions.tip')} />
-                  </tr>
-                </thead>
-                <tbody>
-                  {s.viewers.map((v) => (
-                    <ViewerRow key={v.sessionId} v={v} busy={busy !== null} act={act} />
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </section>
 
         {/* ---- chat: panel ---- */}
         <ChatCard state={s} panel={chatPanel} />
@@ -501,23 +503,25 @@ function ViewerRow({ v, busy, act }: { v: ViewerInfo; busy: boolean; act: Act })
       <td>{mb(v.p2pUpBytes)}</td>
       <td>{v.hashFailures}</td>
       <td data-testid="viewer-delay">{v.delayS === null ? '–' : t('time.secondsShort', { count: v.delayS })}</td>
-      <td class="actions">
-        {/* On the streamer's own connection P2P stays off whatever the streamer picks: no button. */}
-        {v.ownConnection ? null : v.p2pAllowed ? (
-          <button class="small" title={t('admin.viewer.removeP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: false }))}>
-            {t('admin.viewer.removeP2P')}
+      <td>
+        <div class="actions">
+          {/* On the streamer's own connection P2P stays off whatever the streamer picks: no button. */}
+          {v.ownConnection ? null : v.p2pAllowed ? (
+            <button class="small" title={t('admin.viewer.removeP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: false }))}>
+              {t('admin.viewer.removeP2P')}
+            </button>
+          ) : (
+            <button class="small" title={t('admin.viewer.allowP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: true }))}>
+              {t('admin.viewer.allowP2P')}
+            </button>
+          )}
+          {/* ---- chat: panel ---- */}
+          <ChatViewerMute sessionId={v.sessionId} busy={busy} />
+          {/* ---- end ---- */}
+          <button class="small danger" title={t('admin.viewer.kick.tip')} disabled={busy} onClick={() => act('kick', () => post(`/api/viewers/${v.sessionId}/kick`))}>
+            {t('admin.viewer.kick')}
           </button>
-        ) : (
-          <button class="small" title={t('admin.viewer.allowP2P.tip')} disabled={busy} onClick={() => act('p2p', () => post(`/api/viewers/${v.sessionId}/p2p`, { allowed: true }))}>
-            {t('admin.viewer.allowP2P')}
-          </button>
-        )}
-        {/* ---- chat: panel ---- */}
-        <ChatViewerMute sessionId={v.sessionId} busy={busy} />
-        {/* ---- end ---- */}
-        <button class="small danger" title={t('admin.viewer.kick.tip')} disabled={busy} onClick={() => act('kick', () => post(`/api/viewers/${v.sessionId}/kick`))}>
-          {t('admin.viewer.kick')}
-        </button>
+        </div>
       </td>
     </tr>
   );

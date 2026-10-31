@@ -36,7 +36,7 @@ export function SecurityCard({ s, busy, act }: { s: AdminState; busy: boolean; a
   const pill = sec.threat === 'normal' ? 'pill-ok' : sec.threat === 'suspicious' ? 'pill-wait' : 'pill-bad';
   const configured = s.settings;
   return (
-    <section class={`card ${sec.threat === 'attack' ? 'alert' : ''}`} data-testid="security">
+    <section class={`card card-security ${sec.threat === 'attack' ? 'alert' : ''}`} data-testid="security">
       <h2 class="row-title">
         {t('admin.sec.title')} <Info text={t('admin.sec.tip')} />
       </h2>

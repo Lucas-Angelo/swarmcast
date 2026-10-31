@@ -223,12 +223,63 @@ button:disabled:hover:not(.primary):not(.danger) {
   border-color: var(--sc-border);
 }
 
-/* ---- Cards ----------------------------------------------------------------------------------- */
+/* ---- Cards -----------------------------------------------------------------------------------
+ * The cards at the top (App.tsx) sit in fixed places by the width they have (next to the chat or
+ * not), each next to a card of about the same height, so none is stretched into a big empty box.
+ * Two columns: link + OBS, viewer numbers + connection mode, the viewers list across, then the
+ * internet settings + protection. Three: link, OBS and numbers, the list, then the settings. One column on a phone, in the page order. A webview without container
+ * queries keeps the auto-filled grid, with each card only as tall as what it shows.
+ */
+.zone-main {
+  container-type: inline-size;
+}
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  align-items: start;
   gap: var(--sp-4);
   margin-top: var(--sp-4);
+}
+.grid > .card-viewers {
+  grid-column: 1 / -1;
+}
+@container (min-width: 680px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas: 'link obs' 'p2p mode' 'viewers viewers' 'net security';
+    align-items: stretch;
+  }
+  .grid > .card-link {
+    grid-area: link;
+  }
+  .grid > .card-obs {
+    grid-area: obs;
+  }
+  .grid > .card-p2p {
+    grid-area: p2p;
+  }
+  .grid > .card-mode {
+    grid-area: mode;
+  }
+  .grid > .card-viewers {
+    grid-area: viewers;
+  }
+  .grid > .card-net {
+    grid-area: net;
+  }
+  .grid > .card-security {
+    grid-area: security;
+  }
+}
+@container (min-width: 1040px) {
+  .grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas: 'link obs p2p' 'viewers viewers viewers' 'net security mode';
+  }
+  /* Much shorter than the two settings cards beside it. */
+  .grid > .card-mode {
+    align-self: start;
+  }
 }
 .card {
   background: var(--sc-surface);
@@ -461,6 +512,31 @@ tbody tr:last-child td {
   flex-wrap: wrap;
   gap: 6px;
 }
+/* A viewer's buttons stay whole; they share one line when the list is wide enough. */
+.actions > * {
+  flex: none;
+  white-space: nowrap;
+}
+td .actions select {
+  max-width: 6.5rem;
+}
+.card-viewers th:not(:first-child),
+.card-viewers td:not(:first-child) {
+  padding-left: var(--sp-2);
+  padding-right: var(--sp-2);
+}
+/* The numbers take only the room they need; the actions get the rest. */
+.card-viewers th:not(:last-child),
+.card-viewers td:not(:last-child) {
+  width: 1%;
+  white-space: nowrap;
+}
+/* A button and its (i) wrap to the next line together. */
+.pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
 .badge {
   display: inline-flex;
   align-items: center;
@@ -520,7 +596,7 @@ select.lang-select {
   transition: border-color 0.12s;
 }
 .field input[type='number'] {
-  width: 6.5rem;
+  width: 5.5rem;
   margin: 0 var(--sp-1);
   font-variant-numeric: tabular-nums;
 }
