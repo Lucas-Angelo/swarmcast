@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Your new stream link opens right away on your own computer.** While it waited for a new link to come online, SwarmCast asked your computer's DNS about the address before Cloudflare had published it, and your computer (or your internet provider) could then answer "this site can't be reached" for up to a minute. It now asks Cloudflare until the address exists, and your computer only after that.
+- **Your stream link appears sooner and opens right away on your own computer.** While a new link came online, SwarmCast asked your computer's DNS about the address before Cloudflare had published it; your computer (or your internet provider) then remembered it as "does not exist" for up to a minute. On a Mac, Start took about 80 seconds to show the link; elsewhere, opening the link right away could fail with "this site can't be reached". SwarmCast now asks Cloudflare until the address exists, and your computer only after that.
 
 ## [0.4.1] - 2026-10-31
 

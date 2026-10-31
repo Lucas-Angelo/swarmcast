@@ -19,8 +19,9 @@ const CLOUDFLARE_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
  * in some of its caches, for the zone's negative TTL (60 s), and keeps answering "no such name"
  * now and then after the name exists. The app never asks this machine's resolver before
  * Cloudflare has the address (waitForReachable in apps/server/src/tunnel/provider.ts: until it
- * did, the OS's lookup here failed for up to 10 s after the link was shown, in 3 of 24 runs of
- * the DNS experiment on Windows runners and in 3 of the first 10 jobs of soak 41196129178).
+ * did, the OS's lookup here failed for up to 10 s after the link was shown in 3 of 24 runs of
+ * the DNS experiment on Windows runners and in 3 of the first 10 jobs of soak 41196129178, and on
+ * macOS runners the app itself waited 80 s for its own lookups to clear before showing the link).
  * The harness does the same: it watches for the name on Cloudflare's own resolvers, which answer
  * for its zone first-hand, and asks the runner's resolver only once they know it, so every lookup
  * after it (the OS's, the browser's) gets the address. Any other host (127.0.0.1, localhost)

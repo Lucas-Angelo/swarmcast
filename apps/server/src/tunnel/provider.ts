@@ -150,14 +150,17 @@ const realIo: ReachabilityIo = {
  * (DNS-over-HTTPS) and the request goes to the address it gives; this machine's resolver is never
  * asked about a name Cloudflare does not know yet. Cloudflare has no address for a new quick
  * tunnel for its first 4 to 19 s, and a resolver asked about it then remembers "no such name"
- * for the zone's negative TTL (60 s) in some of its caches: measured on Windows runners (DNS
- * experiment run 41197660617), after the name existed, their resolver still said "no such name"
- * to 11 of 157 lookups in 9 of 24 runs where it had been asked early, and the OS's own lookup
- * failed for up to 10 s in 3 of them (a browser opening the new link there fails); 0 of 72 and
- * 0 of 12 runs when it had not. The OS resolver is used only when neither DoH server answers at
- * all. An IP address (Direct mode: https://<public IP>:<port>) needs no DNS: asking a
- * DNS-over-HTTPS server about it would only send the streamer's address to Cloudflare and,
- * offline, wait up to 5 s on every check of "Stop everything".
+ * for the zone's negative TTL (60 s), in some or all of its caches. Measured (DNS experiment run
+ * 41197660617, lookups after Cloudflare had the address): on macOS runners the OS's lookup failed
+ * for the whole 75 s watched in 8 of 8 runs where it had been asked early, and every preflight
+ * showed the link 80 s after start (this check waited the cache out); on Windows runners the
+ * resolver still said "no such name" to 11 of 157 lookups in 9 of 24 such runs, and the OS's
+ * lookup failed for up to 10 s in 3 of them (a browser opening the new link fails). When it had
+ * not been asked early: 0 failed lookups (Windows 0 of 72 in 12 runs, macOS 0 of 12). The OS
+ * resolver is used only when neither DoH server answers at all. An IP address (Direct mode:
+ * https://<public IP>:<port>) needs no DNS: asking a DNS-over-HTTPS server about it would only
+ * send the streamer's address to Cloudflare and, offline, wait up to 5 s on every check of "Stop
+ * everything".
  */
 export async function probeHealth(url: string, probe?: string, io: ReachabilityIo = realIo): Promise<string | null> {
   const u = new URL('/healthz', url);
