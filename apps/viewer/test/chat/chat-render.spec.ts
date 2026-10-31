@@ -8,7 +8,7 @@
 // The first page of a fresh browser stalls while the system fonts are scanned for the corpus's
 // scripts and emoji (once per browser process): warmFontFallback lays them out first, so the checks
 // below time the page, not that scan.
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './diag-fixture.js';
 import { canonicalizeChatText, validateNickname, type ChatAuthor } from '@swarmcast/shared/chat';
 import { CORPUS } from '../../../../packages/shared/test/chat/corpus.js';
 import { MockHub } from './mock-hub.js';
