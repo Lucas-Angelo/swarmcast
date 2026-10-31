@@ -52,7 +52,9 @@
     "vitest": "^5.0.5"
   },
   "overrides": {
-    "ip": "$ip"
+    "ip": "$ip",
+    "glob": "^14.0.2",
+    "minimatch": "^11.0.1"
   },
   "dependencies": {
     "ip": "file:apps/server/shims/ip"
