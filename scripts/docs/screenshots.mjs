@@ -1,9 +1,14 @@
 #!/usr/bin/env node
 // Regenerates the panel and viewer screenshots in docs/img/ (used by the website in site/ and
-// README.md), in English and Portuguese. Reproducible: it starts the Playwright e2e test server
-// (SwarmCast without a tunnel + a synthetic ffmpeg "OBS" stream), joins a few viewers, and
-// captures each page with Google Chrome. Secrets never appear: the stream key stays hidden and
-// the live link is replaced by a placeholder before every capture.
+// README.md) and every website guide picture of SwarmCast's own screens
+// (site/src/assets/guides/: start/ the panel, the setup tutorial and the splash; viewers/ the
+// join, watch and "link not valid" pages; live/ the panel's cards, the chat and "Your page";
+// app/ the Desktop app card; help/ the problem report), in English and Portuguese, with the
+// numbered callouts the guide texts refer to. Pictures of OBS, the installers and the desktop
+// app's native menu and dialogs stay hand-made. Reproducible: it starts the Playwright e2e test
+// server (SwarmCast without a tunnel + a synthetic ffmpeg "OBS" stream), joins a few viewers,
+// and captures each page with Google Chrome. Secrets never appear: the stream key stays hidden
+// and the live link is replaced by a placeholder before every capture.
 //
 //   npm run build && node scripts/docs/screenshots.mjs
 //
@@ -16,7 +21,7 @@ import { createRequire } from 'node:module';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium, devices } from '@playwright/test';
 import { loopbackBase, panelLogin } from '../test/lib/loopback.mjs';
 
@@ -130,7 +135,10 @@ async function adminApi(method, pathname, body) {
 
 const state = () => adminApi('GET', '/api/state');
 
-/** Turn on 480p + 360p and make the fake OBS reconnect at 720p, so viewers get a quality menu. */
+/**
+ * Turn the quality ladder on (the automatic choice, as SwarmCast starts) and make the fake OBS
+ * reconnect at 720p, so viewers get a quality menu (720p, 480p, 360p).
+ */
 async function enableQualityLadder() {
   const q = await adminApi('GET', '/api/quality');
   if (!q.ffmpeg.available) {
@@ -139,7 +147,7 @@ async function enableQualityLadder() {
   }
   await adminApi('PUT', '/api/quality', {
     ...q.settings,
-    ladder: { ...q.settings.ladder, mode: 'manual', enabled: true, heights: [480, 360], encoder: 'auto' },
+    ladder: { ...q.settings.ladder, mode: 'auto', enabled: true, heights: [480, 360], encoder: 'auto' },
     obsWebsocket: { enabled: q.settings.obsWebsocket.enabled, url: q.settings.obsWebsocket.url },
   });
   fs.writeFileSync(PUSH_FILE, JSON.stringify({ size: '1280x720', kbps: 2500 }));
@@ -172,17 +180,18 @@ async function prepareStream() {
 /**
  * Replace secrets in the page before a capture: the live link (and its token, wherever it
  * shows up) becomes a placeholder, the stream key is never revealed, and the test RTMP port
- * shows as the default 1935.
+ * shows as the default 1935. `extra`: more [text, shown instead] pairs.
  */
-async function sanitize(page, s) {
+async function sanitize(page, s, extra = []) {
   const token = s.liveLink ? new URL(s.liveLink).pathname.split('/').pop() : null;
   await page.evaluate(
-    ({ link, token, key, rtmp, linkShown, rtmpShown }) => {
+    ({ link, token, key, rtmp, linkShown, rtmpShown, extra }) => {
       const swaps = [
         [link, linkShown],
         [rtmp, rtmpShown],
         [token, '••••••'],
         [key, '•'.repeat(18)],
+        ...extra,
       ].filter(([from]) => from);
       const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
       for (let n = walker.nextNode(); n; n = walker.nextNode()) {
@@ -191,7 +200,7 @@ async function sanitize(page, s) {
         if (text !== n.nodeValue) n.nodeValue = text;
       }
     },
-    { link: s.liveLink, token, key: s.streamKey, rtmp: s.rtmpUrl, linkShown: LINK_PLACEHOLDER, rtmpShown: RTMP_SHOWN },
+    { link: s.liveLink, token, key: s.streamKey, rtmp: s.rtmpUrl, linkShown: LINK_PLACEHOLDER, rtmpShown: RTMP_SHOWN, extra },
   );
 }
 
@@ -208,6 +217,14 @@ async function hideHarnessLines(page) {
     const box = document.querySelector('[data-testid="activity"] .console');
     if (box) box.scrollTop = box.scrollHeight;
   });
+}
+
+/** A signed-in panel in `context`. */
+async function openPanel(context) {
+  const panel = await context.newPage();
+  await panel.goto(admin.loginUrl.href);
+  await panel.waitForSelector('[data-testid="status"]');
+  return panel;
 }
 
 async function shot(target, name) {
@@ -259,15 +276,29 @@ async function toWebp(png, out) {
   await sharp(png).webp({ quality: 82, effort: 6 }).toFile(out);
 }
 
+/** The box around every visible one of `locators`, or null. */
+async function unionBox(locators) {
+  const bs = (await Promise.all(locators.map((l) => l.boundingBox()))).filter(Boolean);
+  if (bs.length === 0) return null;
+  const x0 = Math.min(...bs.map((b) => b.x));
+  const y0 = Math.min(...bs.map((b) => b.y));
+  return { x: x0, y: y0, width: Math.max(...bs.map((b) => b.x + b.width)) - x0, height: Math.max(...bs.map((b) => b.y + b.height)) - y0 };
+}
+
 /**
  * One guide picture: `target` (a locator) with `pad` px of page around it, each callout target
- * outlined in amber with its number in a badge (CSSOM styles: allowed by every CSP here).
+ * outlined in amber with its number in a badge just outside the top-left corner, off the text
+ * (CSSOM styles: allowed by every CSP here). A callout can be a list of locators (one outline
+ * around them all). `viewport`: never below the bottom of the window (the app as it opens).
  */
-async function guideShot(page, target, section, lang, name, { pad = 24, callouts = [], area = null } = {}) {
+async function guideShot(page, target, section, lang, name, { pad = 24, callouts = [], area = null, viewport = false } = {}) {
   await target.scrollIntoViewIfNeeded();
+  const groups = callouts.map((c) => (Array.isArray(c) ? c : [c]));
+  // Inside a scrolling box (the setup tutorial) the callouts are brought into view first.
+  for (const loc of groups.flat()) if (await loc.isVisible()) await loc.scrollIntoViewIfNeeded();
   const boxes = [];
-  for (const [n, loc] of callouts.entries()) {
-    const b = await loc.boundingBox();
+  for (const [n, group] of groups.entries()) {
+    const b = await unionBox(group);
     if (b) boxes.push({ n: n + 1, ...b });
     else log(`${name}: callout ${n + 1} not visible`);
   }
@@ -277,23 +308,18 @@ async function guideShot(page, target, section, lang, name, { pad = 24, callouts
       const badge = document.createElement('div');
       ring.dataset.guide = badge.dataset.guide = '1';
       Object.assign(ring.style, { position: 'absolute', left: `${b.x + scrollX - 3}px`, top: `${b.y + scrollY - 3}px`, width: `${b.width + 6}px`, height: `${b.height + 6}px`, border: '2.5px solid #e9a92c', borderRadius: '8px', zIndex: '2147483646', pointerEvents: 'none', boxSizing: 'border-box' });
-      Object.assign(badge.style, { position: 'absolute', left: `${b.x + scrollX - 13}px`, top: `${b.y + scrollY - 13}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
+      Object.assign(badge.style, { position: 'absolute', left: `${b.x + scrollX - 20}px`, top: `${b.y + scrollY - 20}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
       badge.textContent = String(b.n);
       document.body.append(ring, badge);
     }
   }, boxes);
   // `area`: crop to the union of these locators instead of the whole target.
-  let box = await target.boundingBox();
-  if (area) {
-    const bs = (await Promise.all(area.map((l) => l.boundingBox()))).filter(Boolean);
-    const x0 = Math.min(...bs.map((b) => b.x));
-    const y0 = Math.min(...bs.map((b) => b.y));
-    box = { x: x0, y: y0, width: Math.max(...bs.map((b) => b.x + b.width)) - x0, height: Math.max(...bs.map((b) => b.y + b.height)) - y0 };
-  }
+  const box = area ? await unionBox(area) : await target.boundingBox();
   const vp = page.viewportSize();
   const x = Math.max(0, Math.floor(box.x - pad));
   const y = Math.max(0, Math.floor(box.y - pad));
-  const clip = { x, y, width: Math.min(vp.width - x, Math.ceil(box.width + pad * 2)), height: Math.ceil(box.height + pad * 2) };
+  const height = Math.ceil(box.height + pad * 2);
+  const clip = { x, y, width: Math.min(vp.width - x, Math.ceil(box.width + pad * 2)), height: viewport ? Math.min(vp.height - y, height) : height };
   const png = path.join(os.tmpdir(), `sc-guide-${process.pid}-${name}.png`);
   await page.screenshot({ path: png, clip, animations: 'disabled', caret: 'hide' });
   await page.evaluate(() => document.querySelectorAll('[data-guide]').forEach((e) => e.remove()));
@@ -328,8 +354,7 @@ async function brandOn(browser, lang) {
   // The pictures go in through the panel's own picture fields, as a streamer adds them: the
   // panel crops and re-encodes them in the browser and uploads every size it needs.
   const ctx = await browser.newContext({ ...DESKTOP, locale: lang });
-  const panel = await ctx.newPage();
-  await panel.goto(admin.loginUrl.href);
+  const panel = await openPanel(ctx);
   await panel.waitForSelector('[data-testid="live-link"]');
   for (const [field, file] of [
     ['avatar', 'avatar.jpg'],
@@ -419,8 +444,7 @@ async function captureBranding(browser, lang) {
 /** The panel's chat and "Your page" cards, for the guides (skipped while the panel has no such card). */
 async function capturePanelGuides(browser, lang) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 2400 }, deviceScaleFactor: 1, locale: lang });
-  const panel = await ctx.newPage();
-  await panel.goto(admin.loginUrl.href);
+  const panel = await openPanel(ctx);
   await panel.waitForSelector('[data-testid="live-link"]');
   const s = await state();
 
@@ -465,6 +489,221 @@ async function capturePanelGuides(browser, lang) {
   await ctx.close();
 }
 
+// ---- the app window, the panel's cards and the setup tutorial (guide pictures) ----------
+
+/** The desktop app's window (apps/desktop/src-tauri/src/window.rs). */
+const APP_WINDOW = { viewport: { width: 1200, height: 820 }, deviceScaleFactor: 1 };
+/** Where "Export logs" says the file went (the e2e server saves it in its temporary folder). */
+const DOWNLOADS_SHOWN = '/Users/••••/Downloads';
+
+/** A panel card, found by something inside it (most cards have no test id of their own). */
+const cardWith = (page, testid) => page.locator('section.card', { has: page.getByTestId(testid) });
+/** The buttons in `loc`, without the (i) tooltips. */
+const buttons = (loc) => loc.locator('button:not(.tip-btn)');
+
+/**
+ * What the desktop app's first start writes to system-check.json (buildSystemCheck in
+ * apps/server/src/desktop/system-check.ts), on a made-up but typical Mac.
+ */
+function firstRunCheck(version) {
+  const results = [
+    ['os', 'macOS 15.6 (arm64)', 'macOS 12', ''],
+    ['ram', '16.0 GB', '4 GB', '8 GB'],
+    ['cpu', '10', '2', '4'],
+    ['upload', '62.4 Mbps', '10 Mbps', '50 Mbps'],
+    ['download', '312.8 Mbps', '-', '-'],
+    ['disk', '212.5 GB', '500 MB', ''],
+    ['ports', 'free', '', ''],
+    ['obs', 'installed', '', ''],
+    ['github', 'reachable', '', ''],
+    ['release', `v${version} (desktop app)`, '', ''],
+  ].map(([id, value, min, recommended]) => ({ id, status: 'ok', value, min, recommended, detail: '' }));
+  const at = new Date(Date.now() - 60_000).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return { version: 1, at, os: 'macOS 15.6', arch: 'arm64', results, uploadMbps: 62.4, downloadMbps: 312.8, viewerEstimate: 5, belowMinimum: [], appVersion: version, source: 'desktop' };
+}
+
+/**
+ * The panel as the desktop app shows it. The e2e server is a plain server, so `context` gets
+ * the answers the app's server gives (apps/server/src/desktop/bridge.ts): GET /api/desktop (the
+ * Desktop app card; the first-run check `running` or done), "Check for updates" finding nothing
+ * newer, and with `check` the first-run check's result.
+ */
+async function asDesktopApp(context, version, { running = false, check = null } = {}) {
+  const info = (update) => ({
+    desktop: true,
+    version,
+    serverVersion: version,
+    autostart: { supported: true, enabled: false },
+    update,
+    updateChecking: false,
+    updateChannel: { choice: null, effective: /^\d+\.\d+\.\d+-/.test(version) ? 'beta' : 'stable' },
+    systemCheck: running ? 'running' : 'done',
+  });
+  await context.unrouteAll();
+  await context.route('**/api/desktop', (route) => route.fulfill({ json: info(null) }));
+  await context.route('**/api/desktop/update/check', (route) => route.fulfill({ json: info({ status: 'none', current: version }) }));
+  if (check) await context.route('**/api/system-check', (route) => route.fulfill({ json: check }));
+}
+
+/** The app's window: the panel during a live and the steps of the setup tutorial (start/ guides). */
+async function captureAppWindow(browser, lang) {
+  const s = await state();
+  const ctx = await browser.newContext({ ...APP_WINDOW, locale: lang });
+  await asDesktopApp(ctx, s.version, { running: true });
+  const panel = await openPanel(ctx);
+  await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
+  await sleep(2000);
+  await sanitize(panel, s);
+  // 1 status, 2 live link, 3 OBS settings, 4 Viewers & P2P help, 5 Protection.
+  const heading = (testid) => cardWith(panel, testid).locator('h2');
+  await guideShot(panel, panel.locator('body'), 'start', lang, 'panel', {
+    pad: 0,
+    viewport: true,
+    callouts: [[panel.getByTestId('status'), panel.getByTestId('obs-status')], heading('live-link'), heading('rtmp-url'), heading('viewer-count'), panel.getByTestId('security').locator('h2')],
+  });
+
+  const dialog = panel.getByTestId('onboarding');
+  const next = () => panel.getByTestId('onb-next').click();
+  const step = async (id, name, callouts) => {
+    await panel.locator(`[data-testid="onboarding"][data-step="${id}"]`).waitFor();
+    await sleep(500);
+    await sanitize(panel, s);
+    await guideShot(panel, dialog, 'start', lang, name, { pad: 0, callouts });
+  };
+  await panel.getByTestId('redo-tutorial').click();
+  await step('welcome', 'welcome', [panel.getByTestId('onb-next')]);
+  await next();
+  // Step 2 while the app's first-run check runs, then with its result.
+  await step('pc', 'checking', [panel.getByTestId('onb-sys-checking')]);
+  await asDesktopApp(ctx, s.version, { check: firstRunCheck(s.version) });
+  await panel.reload();
+  await panel.getByTestId('redo-tutorial').click();
+  await next();
+  await panel.getByTestId('onb-syscheck').waitFor();
+  await step('pc', 'pc-check', [panel.locator('.onb-sys-list'), panel.getByTestId('onb-next')]);
+  await next();
+  await next();
+  await step('choose', 'where', [panel.getByTestId('onb-route-both'), panel.getByTestId('onb-route-only')]);
+  await next();
+  // The Copy buttons of the name, the server and the stream key.
+  await step('connect', 'obs-step', ['name', 'server', 'key'].map((id) => panel.getByTestId(`onb-copy-${id}`)));
+  await next();
+  await panel.locator('[data-testid="onb-test-status"][data-status="ok"]').waitFor({ timeout: 30_000 });
+  await step('test', 'test-it', [panel.locator('.onb-steps .ok')]);
+  await next();
+  await step('share', 'share-link', [panel.getByTestId('onb-copy-link')]);
+  await next();
+  await next();
+  await step('finish', 'finish', [panel.getByTestId('onb-finish')]);
+  await panel.getByTestId('onb-finish').click();
+  await ctx.close();
+}
+
+/** The panel's cards for the live/, app/ and help/ guides, while the viewers watch. */
+async function capturePanelCards(browser, lang) {
+  const s = await state();
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 2400 }, deviceScaleFactor: 1, locale: lang });
+  await asDesktopApp(ctx, s.version);
+  const panel = await openPanel(ctx);
+  await panel.waitForSelector('[data-testid="viewers"] tbody tr:nth-child(3)');
+  await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
+  await sleep(2500);
+  await sanitize(panel, s);
+  const shoot = (target, section, name, callouts) => guideShot(panel, target, section, lang, name, { pad: 16, callouts });
+  const labelOf = (card, testid) => card.locator('label', { has: panel.getByTestId(testid) });
+
+  await shoot(panel.locator('header.top'), 'live', 'status-live', [panel.getByTestId('obs-status'), panel.getByTestId('stop')]);
+  // Copy link, Generate new link, Disconnect everyone.
+  const link = cardWith(panel, 'live-link');
+  await shoot(link, 'live', 'link-card', [0, 1, 2].map((i) => buttons(link).nth(i)));
+  // Copy (server), Copy (stream key), "OBS is sending video".
+  const obs = cardWith(panel, 'rtmp-url');
+  await shoot(obs, 'live', 'obs-card', [buttons(obs).nth(0), buttons(obs).nth(2), obs.locator('.ok-dot')]);
+  // Max upload, turn off after, allow P2P, max viewers.
+  const net = cardWith(panel, 'max-viewers');
+  const fields = net.locator('form .field label');
+  await shoot(net, 'live', 'limits', [fields.nth(0), fields.nth(1), labelOf(net, 'allow-viewer-p2p'), labelOf(net, 'max-viewers')]);
+  const security = panel.getByTestId('security');
+  await shoot(security, 'live', 'protection-card', [panel.getByTestId('threat'), labelOf(security, 'sec-requireBrowserCheck'), labelOf(security, 'sec-blockKnownBadIps')]);
+  // Multiple qualities, "Viewers get", "Upload used by SwarmCast".
+  const quality = panel.getByTestId('quality-card');
+  await shoot(quality, 'live', 'quality-card', [
+    labelOf(quality, 'quality-switch'),
+    quality.locator('.now-line'),
+    quality.locator('input[name="upload-mode"]').first().locator('xpath=preceding::h3[1]'),
+  ]);
+
+  // Viewers: Remove from P2P and Kick, then Pedro removed from P2P (and allowed again after).
+  const viewers = cardWith(panel, 'viewers');
+  const actions = (row) => row.locator('td.actions button');
+  const firstRow = viewers.locator('tbody tr').first();
+  await shoot(viewers, 'live', 'viewers', [actions(firstRow).first(), firstRow.locator('td.actions button.danger')]);
+  const pedro = panel.getByTestId('viewer-Pedro');
+  await actions(pedro).first().click();
+  await pedro.locator('.badge.off').waitFor({ timeout: 10_000 });
+  await sleep(300);
+  await shoot(viewers, 'live', 'viewers-removed', [pedro.locator('.badge.off'), actions(pedro).first()]);
+  await actions(pedro).first().click();
+
+  const desktop = panel.getByTestId('desktop-card');
+  await panel.getByTestId('check-updates').click();
+  await panel.getByTestId('up-to-date').waitFor({ timeout: 10_000 });
+  await shoot(desktop, 'app', 'desktop-card', [labelOf(desktop, 'autostart'), panel.getByTestId('check-updates')]);
+
+  // "Export logs" and where the file went (the folder shown as a user's Downloads).
+  const exported = panel.waitForResponse((r) => new URL(r.url()).pathname === '/api/diagnostics/export');
+  await panel.getByTestId('export-logs').click();
+  const zip = (await (await exported).json()).path;
+  await panel.getByTestId('export-path').waitFor();
+  await sanitize(panel, s, [[path.dirname(zip), DOWNLOADS_SHOWN]]);
+  await shoot(panel.getByTestId('diagnostics'), 'help', 'export', [panel.getByTestId('export-logs'), panel.getByTestId('export-path'), panel.getByTestId('export-reveal')]);
+  await ctx.close();
+}
+
+/** The top of the panel after "Stop everything" (go-live guide). SwarmCast stays off. */
+async function captureStopped(browser, lang) {
+  await adminApi('POST', '/api/live/stop', {});
+  await poll('SwarmCast to stop', async () => (await state()).phase === 'off', 60_000);
+  const ctx = await browser.newContext({ ...DESKTOP, locale: lang });
+  const panel = await openPanel(ctx);
+  await panel.getByTestId('start').waitFor();
+  await guideShot(panel, panel.locator('header.top'), 'live', lang, 'stopped', { pad: 16, callouts: [panel.getByTestId('status'), panel.getByTestId('start')] });
+  await ctx.close();
+}
+
+/**
+ * The desktop app's window while it starts (first-run guide): its splash page
+ * (apps/desktop/splash/) with the brand tokens the app's build puts next to it.
+ */
+async function captureSplash(browser, lang) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-splash-'));
+  try {
+    const src = path.join(ROOT, 'apps', 'desktop', 'splash');
+    for (const f of ['index.html', 'splash.css', 'splash.js']) fs.copyFileSync(path.join(src, f), path.join(dir, f));
+    fs.copyFileSync(path.join(ROOT, 'assets', 'brand', 'tokens.css'), path.join(dir, 'tokens.css'));
+    const ctx = await browser.newContext({ ...APP_WINDOW, locale: lang });
+    const page = await ctx.newPage();
+    await page.goto(pathToFileURL(path.join(dir, 'index.html')).href);
+    await guideShot(page, page.locator('main.splash'), 'start', lang, 'splash', { pad: 120 });
+    await ctx.close();
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+/** Make the window as tall as the page, so a guide picture shows all of it from the top, unfocused. */
+async function fitViewport(page) {
+  for (let i = 0; i < 3; i++) {
+    const height = await page.evaluate(() => document.documentElement.scrollHeight);
+    if (height <= page.viewportSize().height) break;
+    await page.setViewportSize({ width: page.viewportSize().width, height });
+  }
+  await page.evaluate(() => {
+    document.activeElement?.blur();
+    scrollTo(0, 0);
+  });
+}
+
 // ---- captures ---------------------------------------------------------------------------
 
 async function captureLocale(browser, lang) {
@@ -482,8 +721,7 @@ async function captureLocale(browser, lang) {
 
   // Panel.
   const adminCtx = await browser.newContext({ ...DESKTOP, locale: lang });
-  const panel = await adminCtx.newPage();
-  await panel.goto(admin.loginUrl.href);
+  const panel = await openPanel(adminCtx);
   await panel.waitForSelector('[data-testid="live-link"]');
   await panel.waitForSelector('[data-testid="viewers"] tbody tr:nth-child(3)');
   await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
@@ -556,6 +794,30 @@ async function captureLocale(browser, lang) {
     await desktop.page.getByTestId('chat-input').fill('');
   }
 
+  // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,
+  // 3 Help the stream (P2P). On the phone the chat (40 % of the screen) is hidden, as a viewer
+  // can, so the page fits.
+  if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
+    await phone.page.getByTestId('chat-hide').click();
+    // The video moves up under the pointer; away from it, its controls fade out.
+    await phone.page.mouse.move(0, 0);
+    await sleep(4000);
+  }
+  for (const [page, name] of [
+    [desktop.page, 'watch-desktop'],
+    [phone.page, 'watch-phone'],
+  ]) {
+    await fitViewport(page);
+    await guideShot(page, page.locator('body'), 'viewers', lang, name, {
+      pad: 0,
+      callouts: [page.locator('#unmute'), page.locator('.quality-menu'), page.locator('label.toggle', { has: page.locator('#p2p') })],
+    });
+  }
+
+  // (6d) The panel's cards and the app's window with the setup tutorial (guide pictures).
+  await capturePanelCards(browser, lang);
+  await captureAppWindow(browser, lang);
+
   // (7) Join page with a nickname typed (not submitted).
   const joinCtx = await browser.newContext({ ...DESKTOP, locale: lang });
   const joinPage = await joinCtx.newPage();
@@ -568,13 +830,42 @@ async function captureLocale(browser, lang) {
   await joinPage.goto(`${BASE}/join/not-the-current-link`);
   await joinPage.waitForSelector('#invalid-message');
   await shotCard(joinPage, `link-invalid-${lang}.png`);
+  const withLogo = (page) => [page.locator('.site-head .sc-brand'), page.locator('main.card')];
+  await guideShot(joinPage, joinPage.locator('main.card'), 'viewers', lang, 'invalid', { pad: 40, area: withLogo(joinPage) });
 
-  for (const c of [joinCtx, adminCtx, desktop.context, phone.context, third.context]) await c.close();
+  // (8b) The join page for the "Watching" guide: 1 nickname, 2 Watch, 3 the browser check.
+  // The check's worker is a stand-in here that reports 40 % and then waits, so "Checking your
+  // browser…" stays up for the picture (it is gone after a second on a real join).
+  const checkCtx = await browser.newContext({ ...DESKTOP, locale: lang });
+  await checkCtx.addInitScript(() => {
+    window.Worker = class {
+      postMessage(challenge) {
+        const max = Number(challenge.parameters.data?.max) || 0;
+        setTimeout(() => this.onmessage?.({ data: { attempts: Math.round(max * 0.4) } }), 0);
+      }
+      terminate() {}
+    };
+  });
+  const checkPage = await checkCtx.newPage();
+  await checkPage.goto(s.liveLink);
+  await checkPage.waitForURL(/\/join$/);
+  await checkPage.fill('#nickname', 'Maria');
+  await checkPage.locator('#check').waitFor({ timeout: 15_000 });
+  await guideShot(checkPage, checkPage.locator('main.card'), 'viewers', lang, 'join', {
+    pad: 40,
+    area: withLogo(checkPage),
+    callouts: [checkPage.locator('#nickname'), checkPage.locator('#join'), checkPage.locator('#check')],
+  });
+
+  for (const c of [checkCtx, joinCtx, adminCtx, desktop.context, phone.context, third.context]) await c.close();
 
   // (9) The streamer's page and GIFs on the viewer side (guide pictures).
   await captureBranding(browser, lang);
   // (10) The panel's chat and "Your page" cards (guide pictures).
   await capturePanelGuides(browser, lang);
+  // (11) After "Stop everything", and the app's splash (guide pictures).
+  await captureStopped(browser, lang);
+  await captureSplash(browser, lang);
 }
 
 // ---- PNG size ---------------------------------------------------------------------------

@@ -175,7 +175,8 @@ The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may tou
   `panic = "unwind"` and `abort_on_panic` (see `Cargo.toml`); tests in `#[cfg(test)] mod tests` per module.
 - **Generated files** (regenerate and commit, never edit): `packages/shared/src/chat/*.generated.ts`
   (`node scripts/build/gen-unicode-tables.mjs`), `assets/brand/tokens.*` (`assets/brand/tools/palettes.py`),
-  desktop icons (`npm run desktop:icons`), `docs/img/*.png` (`node scripts/docs/screenshots.mjs`),
+  desktop icons (`npm run desktop:icons`), `docs/img/*.png` and the guide pictures of SwarmCast's own
+  screens in `site/src/assets/guides/` (`node scripts/docs/screenshots.mjs`, which lists them),
   `site/public/og/*.png` (`npm run og` in `site/`); the offline guide comes from the site pages.
 
 ## 7. Testing
