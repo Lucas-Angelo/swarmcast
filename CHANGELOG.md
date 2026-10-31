@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The tray icon no longer crashes on Linux desktops without a session bus;** the app keeps running with the panel only.
 - The download's third-party notices list every package again.
 - On Windows, starting SwarmCast from a piped command no longer ends with a false "Unexpected error".
-- On Windows, turning on "Start with the computer" no longer fails now and then with "did not read back as expected" when another program changes the list of startup apps at the same moment.
+- On Windows, turning "Start with the computer" on or off no longer fails now and then with "did not read back as expected" (it happened when the panel was reading the setting at the same moment).
 - Source runs keep their data in the project's own folder, never in your real SwarmCast folder; the server cleans up everything it started when it stops or fails to start; the updater only signs builds with a key it is given.
 
 ## [0.4.0] - 2026-10-30

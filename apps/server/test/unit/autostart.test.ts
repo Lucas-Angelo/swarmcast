@@ -258,14 +258,16 @@ describe('Autostart on Windows (reg.exe faked)', () => {
   /**
    * A fake HKCU Run key behind the commands Autostart may use, modelled on the registry API under
    * them: `reg query /v` (through cmd.exe, UTF-8) reads one value by its name; `reg export` walks the
-   * values by index and writes them as UTF-16 with a BOM, and `onEnumerate(i)` runs after it read
-   * index i (another program changing the key meanwhile); `add` sets a value, `delete` removes one.
+   * values by index and writes them as UTF-16 with a BOM, `onEnumerate(i)` running after it read
+   * index i (another program changing the key meanwhile), and fails as on Windows when another
+   * export runs at the same time; `add` sets a value, `delete` removes one.
    * Anything else fails like reg.exe would. Every call is recorded.
    */
   function fakeReg(initial: Array<[string, string]> = []) {
     const values = [...initial];
     const calls: string[][] = [];
     const hooks: { onEnumerate?: (i: number) => void; keepAdds: boolean } = { keepAdds: true };
+    let exporting = 0;
     const find = (name: string): number => values.findIndex(([n]) => n.toLowerCase() === name.toLowerCase());
     const run: Runner = async (command, args, options) => {
       calls.push([command, ...args]);
@@ -276,6 +278,10 @@ describe('Autostart on Windows (reg.exe faked)', () => {
       }
       if (command !== 'reg.exe' || args[1] !== WINDOWS_RUN_KEY) return { code: 1, stdout: '', stderr: 'ERROR: unexpected command' };
       if (args[0] === 'export') {
+        exporting++;
+        await new Promise((resolve) => setImmediate(resolve));
+        exporting--;
+        if (exporting > 0) return { code: 1, stdout: '', stderr: 'ERROR: Unable to write to the file. There may be a disk or file system error.\r\n' };
         const lines = ['Windows Registry Editor Version 5.00', '', `[${KEY_LINE}]`];
         for (let i = 0; i < values.length; i++) {
           lines.push(`${regString(values[i]![0])}=${regString(values[i]![1])}`);
@@ -318,9 +324,32 @@ describe('Autostart on Windows (reg.exe faked)', () => {
     expect(reg.calls.filter((c) => c[1] === 'add')).toEqual([['reg.exe', 'add', WINDOWS_RUN_KEY, '/v', 'SwarmCast', '/t', 'REG_SZ', '/d', `"${EXE}" --background`, '/f']]);
   });
 
-  // On a windows-latest runner, `reg export` (which walks the key by index) left the value out, with
-  // exit code 0, while another process added and removed other Run values: the value moved to an
-  // index the walk had already passed.
+  // On windows-latest runners, a `reg export` running while another one does (the panel reading the
+  // state) failed with "Unable to write to the file" or wrote an empty file (159 of 15,000 first
+  // enables with 4 readers): the read-back took that for "no entry" (desktop test, PR #44).
+  it('turns on while the panel reads the state at the same time', async () => {
+    // Arrange
+    const reg = fakeReg();
+    const panel = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    let toggled = false;
+    const panelReads = (async () => {
+      const reads = [];
+      while (!toggled) reads.push(await panel.status());
+      return reads;
+    })();
+    // Act
+    const on = await a.set(true).finally(() => (toggled = true));
+    const reads = await panelReads;
+    // Assert
+    expect(on).toEqual({ supported: true, enabled: true });
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((r) => r.error === undefined)).toBe(true);
+    expect(reg.value()).toBe(`"${EXE}" --background`);
+  });
+
+  // Once on a windows-latest runner, `reg export` (which walks the key by index) left the value out,
+  // with exit code 0, while another process added and removed other Run values.
   it('reads its value back while another program adds and removes the other Run values', async () => {
     // Arrange
     const reg = fakeReg([['OneDrive', '"C:\\od.exe" /background']]);

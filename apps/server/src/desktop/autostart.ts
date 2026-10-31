@@ -292,11 +292,14 @@ export class Autostart {
   }
 
   /**
-   * The Run value, read by its name. Not `reg export`: that enumerates the whole key, and while
-   * another program adds or removes one of the key's other values it can leave ours out and still
-   * exit with 0 (seen on a windows-latest runner: an export without the value between two exports
-   * with it, nothing having removed it). Exit code 1 is reg.exe's "not found" (and its other
-   * errors, told apart only by the localized text, kept for error messages).
+   * The Run value, read by its name. Not `reg export` (measured on windows-latest runners): with
+   * two exports at the same time (the panel reading the state while a toggle reads its write
+   * back) one fails now and then with "ERROR: Unable to write to the file" (exit 1) or writes an
+   * empty file (exit 0), although each writes its own file (159 of 15,000 first enables with 4
+   * readers); and once an export left the value out while another program changed the key's other
+   * values. All of these read as "no entry". `reg query /v` had none of them (0 of 15,000). Its exit
+   * code 1 is "not found" (and reg.exe's other errors, told apart only by the localized text,
+   * kept for error messages).
    */
   private async readWindows(): Promise<Entry> {
     const r = await this.run('cmd.exe', ['/d', '/s', '/c', `"${WINDOWS_QUERY_LINE}"`], { verbatim: true });
