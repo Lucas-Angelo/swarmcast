@@ -59,17 +59,21 @@ export async function openLink(page, url, log) {
 }
 
 /**
- * Opens the join link in `page`, picks a nickname and clicks Watch (no wait for the watch page).
- * Watch is disabled until the page's script handles it, and a click waits for its button to be
- * enabled: so the click itself waits for the script, and no lifecycle event is needed. "load"
- * would also wait for every image and font through the tunnel; DOMContentLoaded was lost once
- * by Firefox on Windows for a join page on screen and running (soak run 41048049827, section 2,
- * viewer caio): its automation layer can miss the event on a navigation that switches process,
- * as the join page's COOP header does (Mozilla bug 1706353).
+ * Opens the join link in `page`, waits until Watch is enabled, picks a nickname and clicks Watch
+ * (no wait for the watch page). Watch is disabled until the page's script handles it, so waiting
+ * for it waits for the script, and no lifecycle event is needed. "load" would also wait for every
+ * image and font through the tunnel; DOMContentLoaded was lost once by Firefox on Windows for a
+ * join page on screen and running (soak run 41048049827, section 2, viewer caio): its automation
+ * layer can miss the event on a navigation that switches process, as the join page's COOP header
+ * does (Mozilla bug 1706353). The nickname is typed only then: a join page that lost one of its
+ * scripts on the way reloads itself (its startup guard, packages/shared/web/startup-guard.mjs), and a nickname
+ * typed into the page it replaces is gone (soak run 41194466705, windows-app job 15: one script
+ * of the join page failed with net::ERR_NO_BUFFER_SPACE, and Watch was never enabled).
  */
 export async function joinIn(page, link, nickname, log) {
   await openLink(page, link, log);
   await page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'commit' });
+  await page.locator('#join:enabled').waitFor({ timeout: 30_000 });
   await page.fill('#nickname', nickname);
   await page.click('#join');
 }
@@ -143,7 +147,8 @@ export const renderedTwice = (page) => page.evaluate(() => new Promise((r) => re
 /**
  * What a page had done when a check failed: its address, readyState, the navigation's timings
  * (a goto that timed out on "domcontentloaded" shows here whether the event fired at all), the
- * scripts it asked for and which of them arrived, and every resource it fetched with its time.
+ * scripts it asked for and which of them arrived, and every resource it fetched with its time and
+ * HTTP status (0: the request failed, as one script of a join page did in soak run 41194466705).
  * A page stuck in a navigation may never answer: after 10 s it says so instead of hanging.
  */
 export async function pageState(page) {
@@ -153,15 +158,18 @@ export async function pageState(page) {
     .evaluate(() => {
       const nav = performance.getEntriesByType('navigation')[0];
       const res = performance.getEntriesByType('resource');
-      const got = new Set(res.map((r) => r.name));
-      const scripts = [...document.scripts].map((s) => `${s.type || 'classic'} ${s.src || '(inline)'}${s.src ? (got.has(s.src) ? ' fetched' : ' NOT fetched') : ''}`);
+      const got = new Set(res.filter((r) => r.responseStatus !== 0).map((r) => r.name));
+      const failed = new Set(res.filter((r) => r.responseStatus === 0).map((r) => r.name));
+      const fetched = (src) => (got.has(src) ? ' fetched' : failed.has(src) ? ' FAILED' : ' NOT fetched');
+      const scripts = [...document.scripts].map((s) => `${s.type || 'classic'} ${s.src || '(inline)'}${s.src ? fetched(s.src) : ''}`);
       const ms = (v) => (typeof v === 'number' ? Math.round(v) : '?');
       return [
         `url: ${location.href}`,
         `readyState: ${document.readyState}`,
         nav ? `navigation: type ${nav.type}, response end ${ms(nav.responseEnd)} ms, DOMContentLoaded ${ms(nav.domContentLoadedEventEnd)} ms, load ${ms(nav.loadEventEnd)} ms (0 = not yet)` : 'navigation: no entry',
         `scripts:\n  ${scripts.join('\n  ')}`,
-        `resources (${res.length}):\n  ${res.map((r) => `${ms(r.startTime)}+${ms(r.duration)} ms ${r.name}`).join('\n  ')}`,
+        // HTTP status 0: the request failed (Chrome lists failed requests too, with status 0).
+        `resources (${res.length}):\n  ${res.map((r) => `${ms(r.startTime)}+${ms(r.duration)} ms ${r.name}${r.responseStatus === undefined ? '' : ` ${r.responseStatus}`}`).join('\n  ')}`,
       ].join('\n');
     })
     .catch((e) => `page state unavailable: ${e.message}`);

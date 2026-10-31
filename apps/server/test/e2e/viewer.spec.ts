@@ -6,9 +6,31 @@
 // "Go live": "behind" counts from the live sync point (live edge − target delay). A viewer who
 // joined a young stream starts closer to live than that delay, so the pause first uses up the
 // gap: the test waits until it reads more than 5 s instead of pausing for a fixed time.
+//
+// A script of the join or watch page that fails to load (a dropped connection) never runs, and
+// the browser never asks for it again: the page reloads itself (its startup guard, the one inline
+// script, allowed by its hash in the CSP). The tests drop the first request for one of them.
+import type { BrowserContext } from '@playwright/test';
 import { admin, adminState, currentTime, expect, liveLink, playerStopped, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
+
+/**
+ * Drops the connection of the first request in `context` whose path matches `script` (as a
+ * network that loses it does); the result counts the loads of `page` (its navigation requests).
+ */
+async function dropFirstLoad(context: BrowserContext, script: RegExp, page: string): Promise<() => number> {
+  let requests = 0;
+  let loads = 0;
+  await context.route(
+    (url) => script.test(url.pathname),
+    (route) => (requests++ === 0 ? route.abort('connectionreset') : route.continue()),
+  );
+  context.on('request', (r) => {
+    if (r.isNavigationRequest() && new URL(r.url()).pathname === page) loads++;
+  });
+  return () => loads;
+}
 
 test('a viewer joins with the live link, picks a nickname and watches', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
@@ -119,6 +141,32 @@ test('after "Generate new link" the old link no longer works, the new one does',
 
   // Assert
   await waitPlaying(page);
+});
+
+test('a join page that lost its script on the way reloads itself, and the viewer joins', { tag: '@ui' }, async ({ viewers }) => {
+  // Arrange
+  let joinLoads = (): number => 0;
+  const setup = async (context: BrowserContext) => void (joinLoads = await dropFirstLoad(context, /^\/assets\/join-[\w-]+\.js$/, '/join'));
+
+  // Act
+  const { page } = await viewers.join(uid('reload'), { setup });
+
+  // Assert
+  await waitPlaying(page);
+  expect(joinLoads()).toBe(2);
+});
+
+test('a watch page that lost its script on the way reloads itself and plays', { tag: '@ui' }, async ({ viewers }) => {
+  // Arrange
+  let watchLoads = (): number => 0;
+  const setup = async (context: BrowserContext) => void (watchLoads = await dropFirstLoad(context, /^\/assets\/watch-[\w-]+\.js$/, '/watch'));
+
+  // Act
+  const { page } = await viewers.join(uid('reload'), { setup });
+
+  // Assert
+  await waitPlaying(page);
+  expect(watchLoads()).toBe(2);
 });
 
 test('"Go live" appears after pausing and brings the viewer back near the live edge', { tag: '@ui' }, async ({ viewers, browserName }) => {

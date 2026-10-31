@@ -408,6 +408,8 @@ async function joinAndPlay({ label, kind, contextOptions = {}, link, nickname = 
   const start = Date.now();
   await page.goto(link, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   assert(/\/join$/.test(page.url()), `${label}: expected /join, got ${page.url()} — ${(await page.textContent('body'))?.slice(0, 200)}`);
+  // Typed once Watch is enabled: a join page that lost a script on the way reloads itself first.
+  await page.locator('#join:enabled').waitFor({ timeout: 30_000 });
   await page.fill('#nickname', nickname);
   const clickAt = Date.now();
   await page.click('#join');
@@ -538,6 +540,7 @@ async function main() {
     pagesByLabel['early-viewer'] = { context, page, kind: 'chrome', nickname: 'early-viewer' };
     await joinSlot();
     await page.goto(liveLink, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    await page.locator('#join:enabled').waitFor({ timeout: 30_000 });
     await page.fill('#nickname', 'early-viewer');
     await page.click('#join');
     await page.waitForURL(/\/watch$/, { timeout: 30_000 });

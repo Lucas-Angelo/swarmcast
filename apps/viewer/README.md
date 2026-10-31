@@ -1,6 +1,6 @@
 # @swarmcast/viewer
 
-Static pages served by the public server: `join.html` (nickname form, browser check), `watch.html` (player) and `invalid.html` (expired or invalid link), in English and Brazilian Portuguese, on the Forest & Cream brand (`@swarmcast/shared/web/brand.css`). They contain no inline scripts or styles, so the strict CSP holds.
+Static pages served by the public server: `join.html` (nickname form, browser check), `watch.html` (player) and `invalid.html` (expired or invalid link), in English and Brazilian Portuguese, on the Forest & Cream brand (`@swarmcast/shared/web/brand.css`). They contain no inline styles and one inline script, the startup guard that the build writes into `join.html` and `watch.html` (`@swarmcast/shared/web/startup-guard`: a page whose own script failed to load reloads itself, at most three times in a row); the server allows exactly that script by its SHA-256, so the strict CSP holds (no `'unsafe-inline'`).
 
 - Build: `npm run build -w @swarmcast/viewer` → `dist/`, served from `web/viewer` in release packages.
 - Tested through the server's Playwright suite (`npm run test:e2e`, including `adaptive-delay.spec.ts` and `chat.spec.ts`), unit tests in `test/unit/` (`npm test`) and the chat UI suite in `test/chat/`: Playwright against a mock hub and the built page, in every engine and on phones (`npm run build -w @swarmcast/viewer`, then `npx playwright test -c apps/viewer/test/chat/playwright.config.ts`). `npm run dev -w @swarmcast/viewer` alone has no backend, so run the server for real testing.

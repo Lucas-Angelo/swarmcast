@@ -299,9 +299,13 @@ function recordConsole(page: Page): void {
 /**
  * Picks `nickname` on the join page and joins; fails with the server's status and reason when
  * the join is refused, and with the join page's own state and console when no final answer comes.
+ * Types once "Watch" is enabled, as the page's script does once it handles the form: a page that
+ * lost a script on the way reloads itself first (its startup guard), and a nickname typed into
+ * the page it replaces would be gone.
  */
 async function joinFrom(page: Page, nickname: string): Promise<void> {
   const consoleLines = consoles.get(page) ?? [];
+  await expect(page.locator('#join')).toBeEnabled();
   await page.fill('#nickname', nickname);
   // A 403 "check required" is not final: the page solves the browser check and posts again.
   const answer = page.waitForResponse(async (r) => {
