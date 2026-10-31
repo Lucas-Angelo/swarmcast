@@ -53,7 +53,7 @@ const guideDir = (lang) => (lang === 'en' ? 'en' : 'pt-br');
 // Cards left out of the panel overview (each has its own picture or guide). The live chat at the
 // top stays in it (with a few messages): it is the panel's main screen during a live; only the
 // Chat card with the chat settings, further down, is left out.
-const OVERVIEW_HIDDEN = ['[data-testid="quality-card"]', '[data-testid="activity"]', '[data-testid="brand-card"]', '[data-testid="chat-card"]', '[data-testid="diagnostics"]', 'footer'];
+const OVERVIEW_HIDDEN = ['.card-net', '[data-testid="security"]', '[data-testid="quality-card"]', '[data-testid="activity"]', '[data-testid="brand-card"]', '[data-testid="chat-card"]', '[data-testid="diagnostics"]', 'footer'];
 
 const log = (msg) => console.log(`[screenshots] ${msg}`);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -679,9 +679,9 @@ async function capturePanelCards(browser, lang) {
 
   // Viewers: Remove from P2P and Kick, then Pedro removed from P2P (and allowed again after).
   const viewers = cardWith(panel, 'viewers');
-  const actions = (row) => row.locator('td.actions button');
+  const actions = (row) => row.locator('td .actions button');
   const firstRow = viewers.locator('tbody tr').first();
-  await shoot(viewers, 'live', 'viewers', [actions(firstRow).first(), firstRow.locator('td.actions button.danger')]);
+  await shoot(viewers, 'live', 'viewers', [actions(firstRow).first(), firstRow.locator('td .actions button.danger')]);
   const pedro = panel.getByTestId('viewer-Pedro');
   await actions(pedro).first().click();
   await pedro.locator('.badge.off').waitFor({ timeout: 10_000 });
@@ -774,8 +774,10 @@ async function captureLocale(browser, lang) {
   await sleep(2500);
   const s = await state();
 
-  // (1) Overview: the top of the panel (status, OBS pill, live link), the live chat on the right
-  // and the viewers list (Phone/PC, P2P), with the cards in between left out of this one picture.
+  // (1) Overview: the panel as it opens, down to the viewers list: status, link, OBS, the viewer
+  // numbers, connection mode and the viewers list (Phone/PC, P2P), with the live chat on the
+  // right as tall as the picture (it fills the window), and the cards below left out. The window
+  // is made exactly that tall, so the chat column ends with the list instead of leaving a blank.
   await sanitize(panel, s);
   await panel.evaluate((hidden) => {
     for (const sel of hidden) {
@@ -783,8 +785,13 @@ async function captureLocale(browser, lang) {
       if (el) el.style.display = 'none';
     }
   }, OVERVIEW_HIDDEN);
-  await panel.screenshot({ path: path.join(OUT_DIR, `panel-overview-${lang}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
+  const listBottom = await panel.locator('.card-viewers').evaluate((el) => Math.ceil(el.getBoundingClientRect().bottom + scrollY));
+  await panel.setViewportSize({ width: DESKTOP.viewport.width, height: Math.max(DESKTOP.viewport.height, listBottom + 24) });
+  await panel.evaluate(() => scrollTo(0, 0));
+  await sleep(300);
+  await panel.screenshot({ path: path.join(OUT_DIR, `panel-overview-${lang}.png`), animations: 'disabled', caret: 'hide' });
   log(`captured panel-overview-${lang}.png`);
+  await panel.setViewportSize(DESKTOP.viewport);
   await panel.evaluate((hidden) => {
     for (const sel of hidden) {
       const el = document.querySelector(sel);
