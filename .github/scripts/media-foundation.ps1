@@ -1,15 +1,23 @@
 # Media Foundation for Firefox on Windows Server (the Windows app suite, _windows.yml and soak.yml).
 #
-# The first step of the job starts the install in the background (DISM, the servicing stack's own
-# tool; inline in the workflow, because it runs before the checkout that brings this file), which
-# writes, in RUNNER_TEMP:
-#   media-foundation.start  when it started (UTC, ISO 8601)
-#   media-foundation.log    what dism.exe printed
-#   media-foundation.done   dism.exe's exit code, once it has finished
+# Why DISM and not Server Manager (Install-WindowsFeature): Get-WindowsFeature and
+# Install-WindowsFeature each make the servicing stack evaluate every feature of every package
+# (CBS.log "Appl: DetectUpdate", IIS to Print Server), single-threaded in TiWorker. Measured on
+# windows-latest (Server 2025, 15 jobs each, the job's setup running alongside): Server Manager
+# 125-210 s, TiWorker 104-182 CPU-seconds, so its duration follows the CPU the VM can spare; DISM
+# enables the one feature in 6-18 s with 3-6 CPU-seconds. On 2026-10-31 the Server Manager install
+# had not finished after 885 s (pipeline run 41187360349) and the job failed with nothing printed.
 #
-#   media-foundation.ps1 wait [-Seconds N]  waits for it, sampling the servicing stack every 10 s,
-#     then checks the feature. On a failure, or when it is not done after N seconds, it prints the
-#     install log and the servicing diagnostics and fails, before the step's own time limit.
+# The first step of the job starts the install in the background (inline in the workflow, because
+# it runs before the checkout that brings this file); it writes, in RUNNER_TEMP:
+#   media-foundation.start  when it started (UTC, ISO 8601)
+#   media-foundation.log    what dism.exe printed (its own log: media-foundation-dism.log)
+#   media-foundation.done   dism.exe's exit code, once it has exited
+#
+#   media-foundation.ps1 wait [-Seconds N]  waits up to N seconds for it, sampling the servicing
+#     stack every 10 s, then checks that the feature is enabled. When dism.exe failed or is not
+#     done by then, it prints its log and the servicing diagnostics and fails, within the step's
+#     time limit.
 #   media-foundation.ps1 diagnose           prints the servicing diagnostics only.
 #
 # Client Windows (windows-11-arm) has Media Foundation built in: both modes say so and exit 0.
@@ -28,13 +36,13 @@ $dismLog = Join-Path $dir 'media-foundation-dism.log'
 function Now { [DateTime]::UtcNow.ToString('HH:mm:ss') + 'Z' }
 
 # The end of a log that another process is writing (CBS.log, dism.log): opened for shared reading,
-# only its last 256 kB read.
-function Get-Tail([string]$Path, [int]$Lines) {
+# only its last $Bytes read.
+function Get-Tail([string]$Path, [int]$Lines, [long]$Bytes = 262144) {
   if (-not (Test-Path $Path)) { return "($Path does not exist)" }
   try {
     $fs = [IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite, Delete')
     try {
-      if ($fs.Length -gt 262144) { [void]$fs.Seek(-262144, 'End') }
+      if ($fs.Length -gt $Bytes) { [void]$fs.Seek(-$Bytes, 'End') }
       $text = (New-Object IO.StreamReader($fs)).ReadToEnd()
     } finally { $fs.Dispose() }
     return ($text -split "`r?`n" | Where-Object { $_ } | Select-Object -Last $Lines)
@@ -88,6 +96,11 @@ function Show-Diagnostics {
   if (Test-Path $logFile) { Get-Content $logFile } else { "($logFile does not exist)" }
   '--- DISM log of the install, last 40 lines'
   Get-Tail $dismLog 40
+  '--- CBS.log since boot: sessions, their clients, results and errors'
+  $since = [DateTime]::Now.Subtract($uptime).ToString('yyyy-MM-dd HH:mm:ss')
+  Get-Tail "$env:windir\Logs\CBS\CBS.log" 1000000 64MB | Where-Object {
+    $_.Length -ge 19 -and $_.Substring(0, 19) -ge $since -and $_ -match 'initialized by client|Session: \S+ finalized|Exec: |Reboot|Lock: .*Exclusive|Waiting|, Error |, Warning |HRESULT = 0x8|TI: '
+  } | Select-Object -Last 80
   '--- CBS.log, last 60 lines'
   Get-Tail "$env:windir\Logs\CBS\CBS.log" 60
   '::endgroup::'

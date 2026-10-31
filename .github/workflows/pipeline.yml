@@ -1,8 +1,6 @@
 name: Pipeline
 
-# soak/mf-diag only: Media Foundation install diagnostics on windows-latest (not for main).
-# Each job starts the install first (as _windows.yml does: Server Manager as on main, or DISM),
-# runs the same setup load meanwhile, then waits while sampling the servicing stack.
+# soak/mf-diag only: the failure path of .github/scripts/media-foundation.ps1 (not for main).
 on:
   workflow_dispatch:
     inputs:
@@ -22,78 +20,40 @@ permissions:
 
 jobs:
   mf:
-    name: mf ${{ matrix.method }} ${{ matrix.i }}
+    name: mf failure path ${{ matrix.case }}
     strategy:
       fail-fast: false
-      max-parallel: 12
       matrix:
-        method: [servermanager, dism]
-        i: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
+        case: [never-finishes, dism-fails, enabled]
     runs-on: windows-latest
-    timeout-minutes: 25
-    defaults:
-      run:
-        shell: bash
+    timeout-minutes: 15
     steps:
-      - name: Start (servermanager, as on main)
-        if: matrix.method == 'servermanager'
-        shell: pwsh
-        run: |
-          "up $([int]([Environment]::TickCount64 / 1000)) s; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue)); TrustedInstaller: $((Get-Service TrustedInstaller).Status)"
-          if (-not (Get-Command Get-WindowsFeature -ErrorAction SilentlyContinue)) { 'Client Windows'; exit 0 }
-          $dir = $env:RUNNER_TEMP
-          [DateTime]::UtcNow.ToString('o') | Set-Content "$dir\media-foundation.start"
-          @'
-          param($Dir)
-          $ErrorActionPreference = 'Stop'
-          try {
-            $t0 = [DateTime]::UtcNow
-            $f = Get-WindowsFeature Server-Media-Foundation
-            $out = "Get-WindowsFeature: $([int]([DateTime]::UtcNow - $t0).TotalSeconds) s; before: $($f.InstallState)`n"
-            $t1 = [DateTime]::UtcNow
-            if ($f.InstallState -ne 'Installed') { $out += Install-WindowsFeature Server-Media-Foundation | Format-List | Out-String }
-            $out += "Install-WindowsFeature: $([int]([DateTime]::UtcNow - $t1).TotalSeconds) s`n"
-            Set-Content (Join-Path $Dir 'media-foundation.log') $out
-            Set-Content (Join-Path $Dir 'media-foundation.done') '0'
-          } catch {
-            Set-Content (Join-Path $Dir 'media-foundation.log') ($_ | Out-String)
-            Set-Content (Join-Path $Dir 'media-foundation.done') '1'
-          }
-          '@ | Set-Content (Join-Path $dir 'media-foundation.ps1')
-          $p = Start-Process powershell.exe -PassThru -WindowStyle Hidden -ArgumentList @('-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $dir 'media-foundation.ps1'), $dir)
-          "Media Foundation install started (PID $($p.Id))"
-      - name: Start (dism)
-        if: matrix.method == 'dism'
-        shell: pwsh
-        run: |
-          if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').InstallationType -eq 'Client') { 'Client Windows: Media Foundation comes with the OS'; exit 0 }
-          $d = $env:RUNNER_TEMP
-          [DateTime]::UtcNow.ToString('o') | Set-Content "$d\media-foundation.start"
-          $c = "dism.exe /English /Online /Enable-Feature /FeatureName:ServerMediaFoundation /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
-          $p = Start-Process cmd.exe -PassThru -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
-          "Media Foundation: dism.exe started (cmd PID $($p.Id)), $([int]([Environment]::TickCount64 / 1000)) s after boot; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue))"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Early diagnostics
+      - name: Simulate
         shell: pwsh
-        timeout-minutes: 3
-        run: .github/scripts/media-foundation.ps1 diagnose
-      - uses: ./.github/actions/setup
-        timeout-minutes: 8
-        with:
-          ffmpeg: 'true'
-      - name: Playwright Firefox
-        timeout-minutes: 8
-        run: npx playwright install firefox
-      - name: Wait for Media Foundation
-        timeout-minutes: 11
-        shell: pwsh
-        run: .github/scripts/media-foundation.ps1 wait -Seconds 540
-      - name: Late diagnostics
-        if: always()
-        shell: pwsh
-        timeout-minutes: 3
+        env:
+          CASE: ${{ matrix.case }}
         run: |
-          .github/scripts/media-foundation.ps1 diagnose
-          dism.exe /English /Online /Get-Features /Format:Table | Select-String -Pattern 'Media'
+          $d = $env:RUNNER_TEMP
+          [DateTime]::UtcNow.ToString('o') | Set-Content "$d\media-foundation.start"
+          $feature = if ($env:CASE -eq 'dism-fails') { 'NoSuchFeature' } else { 'ServerMediaFoundation' }
+          if ($env:CASE -ne 'never-finishes') {
+            $c = "dism.exe /English /Online /Enable-Feature /FeatureName:$feature /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
+            Start-Process cmd.exe -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
+          }
+      - name: Wait (expected to fail except for enabled)
+        id: wait
+        continue-on-error: true
+        timeout-minutes: 4
+        shell: pwsh
+        run: .github/scripts/media-foundation.ps1 wait -Seconds 120
+      - name: Check the outcome
+        shell: bash
+        env:
+          CASE: ${{ matrix.case }}
+          OUTCOME: ${{ steps.wait.outcome }}
+        run: |
+          echo "case $CASE: wait step $OUTCOME"
+          if [ "$CASE" = enabled ]; then [ "$OUTCOME" = success ]; else [ "$OUTCOME" = failure ]; fi
