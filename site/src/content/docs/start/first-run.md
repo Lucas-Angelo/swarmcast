@@ -33,7 +33,7 @@ A green tick means fine, a yellow one means it works but is not ideal. Nothing h
 
 Choose whether you also stream to Twitch, YouTube or Kick, or only to SwarmCast. The next steps show the OBS settings for that choice.
 
-![Step 5: install the Multiple output plugin in OBS and fill in a new target with 1 Name, 2 URL (server) and 3 Stream key, each with a Copy button.](../../../assets/guides/start/en/obs-step.webp)
+![Step 5: install the Multiple output plugin in OBS and fill in a new target with Name, URL (server) and Stream key: 1, 2 and 3 are their Copy buttons.](../../../assets/guides/start/en/obs-step.webp)
 
 Use the **Copy** buttons and paste into OBS. The full walkthrough with OBS pictures: [Set up OBS](/swarmcast/start/obs/).
 

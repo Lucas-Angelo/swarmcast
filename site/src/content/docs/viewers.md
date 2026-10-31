@@ -10,11 +10,11 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 1. Open the link in a current browser: Chrome, Edge or Firefox on a computer, Chrome on Android, or Safari on iPhone and iPad (iOS 17.1 or newer).
 2. Type a **nickname** and click **Watch**. Everyone in the live sees it in the chat: 2 to 24 letters (from one alphabet), numbers, spaces, `-`, `_` or `.`, no emoji.
 
-   ![The join page: 1 type a nickname, 2 Checking your browser… runs by itself for a second or two, 3 Watch.](../../assets/guides/viewers/en/join.webp)
+   ![The join page: 1 type a nickname, 2 Watch, 3 Checking your browser… runs by itself for a second or two.](../../assets/guides/viewers/en/join.webp)
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, 3 the Help the stream (P2P) switch, turned on here, and the chat on the right.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
@@ -25,7 +25,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 On a phone the same controls sit under the video:
 
-![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ## The chat
 

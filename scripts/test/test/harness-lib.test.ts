@@ -14,6 +14,7 @@ import { firefoxEnv } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { serveDir } from '../lib/release-server.mjs';
+import { waitForTunnelName } from '../lib/viewer.mjs';
 import { orTimeout, poll, WaitError } from '../lib/wait.mjs';
 
 /** A fresh folder holding `files`, removed after the test. */
@@ -344,5 +345,51 @@ describe('firefoxEnv', () => {
     expect(again.MOZ_STARTUP_CACHE).toBe(file);
     expect(fs.existsSync(path.dirname(path.dirname(file)))).toBe(true);
     expect(() => fs.openSync(file, 'w')).toThrow(expect.objectContaining({ code: 'ENOENT' }));
+  });
+});
+
+describe('waitForTunnelName', () => {
+  const LINK = 'https://brand-new-name.trycloudflare.com/join/token';
+
+  it('asks this machine only once Cloudflare knows the name, so its resolver never remembers it as unknown', async () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const calls: string[] = [];
+    let known = false;
+    const resolve4 = async (host: string): Promise<string[]> => {
+      calls.push(`cloudflare ${host}`);
+      if (!known) throw Object.assign(new Error(`queryA ENOTFOUND ${host}`), { code: 'ENOTFOUND' });
+      return ['104.16.0.1'];
+    };
+    const lookup = async (host: string): Promise<unknown> => {
+      calls.push(`os ${host}`);
+      return { address: '104.16.0.1', family: 4 };
+    };
+    const lines: string[] = [];
+
+    // Act
+    const waiting = waitForTunnelName(LINK, (l) => lines.push(l), { resolve4, lookup });
+    known = true;
+    await vi.advanceTimersByTimeAsync(5_000);
+    await waiting;
+
+    // Assert
+    expect(calls).toEqual(['cloudflare brand-new-name.trycloudflare.com', 'cloudflare brand-new-name.trycloudflare.com', 'os brand-new-name.trycloudflare.com']);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^infra recovery: DNS: brand-new-name\.trycloudflare\.com known to 1\.1\.1\.1 after \d+ s \(1 lookups there said unknown/);
+  });
+
+  it('returns at once for a host that is not a quick tunnel', async () => {
+    // Arrange
+    const resolve4 = vi.fn(async () => ['127.0.0.1']);
+    const lookup = vi.fn(async () => ({ address: '127.0.0.1', family: 4 }));
+
+    // Act
+    await waitForTunnelName('http://127.0.0.1:8080/join/token', () => {}, { resolve4, lookup });
+
+    // Assert
+    expect(resolve4).not.toHaveBeenCalled();
+    expect(lookup).not.toHaveBeenCalled();
   });
 });

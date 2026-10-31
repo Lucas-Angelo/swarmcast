@@ -11,7 +11,7 @@ Quem assiste sempre recebe a sua **qualidade original** (o que o OBS manda, por 
 - Sem esse chip, ele faz um teste rápido no processador e só oferece **uma** qualidade menor se sobrar folga.
 - O player de quem assiste escolhe a melhor qualidade que a internet dele aguenta sem travar (**Auto**) e troca quando precisa. Quem assiste também pode escolher uma qualidade na mão.
 
-![O cartão Qualidade para quem assiste: 1 Transmitir em várias qualidades (automático), 2 Quem assiste recebe: 1080p, 720p, 480p, 360p, e 3 Upload usado pelo SwarmCast.](../../../../assets/guides/live/pt-br/quality-card.webp)
+![O cartão Qualidade para quem assiste: 1 Transmitir em várias qualidades (automático), 2 Quem assiste recebe: aqui 720p, 480p e 360p (o OBS envia 720p), e 3 Upload usado pelo SwarmCast.](../../../../assets/guides/live/pt-br/quality-card.webp)
 
 ## O OBS sempre vem primeiro
 

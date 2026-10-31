@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-31
+
 ### Fixed
 
 - **Joining a live no longer fails silently.** The "Checking your browser…" line sat above the Watch button and disappeared right when people click, moving the button away mid-click, so the click did nothing. It now sits below the button, and Watch only becomes clickable once the page is ready. If the browser check's background worker ever stops answering, the check finishes on the page instead of waiting forever.
@@ -14,6 +16,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Chat slow mode matches the server.** The wait now starts when the server accepts your message (GIFs too) and follows changes to slow mode, so a message sent right as the countdown ends is no longer refused.
 - **Chat keeps showing messages in a partly covered window,** even when the browser stops drawing animation frames.
 - **Fewer pauses on slower computers.** A short decoder hiccup with plenty of video buffered no longer pauses playback for 3 seconds.
+- **"Lower delay" and "Stable" read your connection correctly.** When the player caught up or the stream's playlist brought two pieces of video at once, the player could mistake a good connection for a bad one and keep a longer delay than needed. It now measures how far behind live it is at one moment instead of mixing old and new readings.
+- **The tray icon no longer crashes on Linux desktops without a session bus;** the app keeps running with the panel only.
+- The download's third-party notices list every package again.
+- On Windows, starting SwarmCast from a piped command no longer ends with a false "Unexpected error".
+- On Windows, turning "Start with the computer" on or off no longer fails now and then with "did not read back as expected" (it happened when the panel was reading the setting at the same moment).
+- **The guides on the website show today's screens:** every picture of the panel, the first-run tutorial and the viewer pages is taken from the app itself, in English and Portuguese.
 - Source runs keep their data in the project's own folder, never in your real SwarmCast folder; the server cleans up everything it started when it stops or fails to start; the updater only signs builds with a key it is given.
 
 ## [0.4.0] - 2026-10-30
@@ -197,7 +205,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...v0.3.0
 [0.2.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.1...v0.2.2

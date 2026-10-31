@@ -10,7 +10,7 @@ SwarmCast can open by itself when you sign in to your computer, so it is ready w
 1. Open SwarmCast.
 2. In the **Desktop app** card, tick (or untick) **Start with the computer**.
 
-![The Desktop app card: 1 Start with the computer (off by default), App version 0.2.0 and 2 Check for updates.](../../../assets/guides/app/en/desktop-card.webp)
+![The Desktop app card: 1 Start with the computer (off by default), App version, Get beta versions and 2 Check for updates.](../../../assets/guides/app/en/desktop-card.webp)
 
 When it is on, SwarmCast opens **without a window**: only its icon appears in the tray (next to the clock on Windows and Linux) or in the menu bar (at the top of the screen on a Mac). Click the icon, then **Open SwarmCast**, to see the panel.
 
