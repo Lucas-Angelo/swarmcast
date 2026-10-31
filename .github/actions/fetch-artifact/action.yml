@@ -1,16 +1,21 @@
-name: Download artifacts, with retries
+name: Download artifacts, with diagnostics and a REST fallback
 description: >-
-  actions/download-artifact, tried up to three times with a pause between tries. Its own retries
-  (five, within about a minute) are not enough when the artifact service has a bad minute: a
-  stability run of ten pipelines at once saw "Artifact download failed after 5 retries" twice in a
-  row on one job, and the same download work three minutes later. Same inputs as download-artifact.
+  actions/download-artifact, tried twice 30 s apart; after each failed try, diagnostics that name
+  the cause (rest.sh diagnose); after the second, the same artifacts through the REST API with
+  curl, resumed and checked against the SHA-256 digest recorded at upload (rest.sh fetch), logged
+  as an infra-recovery warning. download-artifact alone names nothing ("Artifact download failed
+  after 5 retries."; the cause is in its debug log only), and once one runner's download of one
+  artifact started failing, it failed the same way for 3.5 minutes (pipeline run 41199245404: 15
+  attempts, 14 of them over within milliseconds, too fast to have reached the blob storage).
+  Same inputs as download-artifact; the job needs `actions: read` (the REST API).
+  .github/workflows/README.md, "Artifact downloads".
 
 inputs:
   name:
     description: One artifact by name (or use pattern).
     default: ''
   pattern:
-    description: A glob of artifact names.
+    description: A glob of artifact names (*, ? and {a,b}).
     default: ''
   path:
     description: Where to put the files.
@@ -40,8 +45,17 @@ runs:
         github-token: ${{ inputs.github-token }}
     - if: steps.try1.outcome == 'failure'
       shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        PATTERN: ${{ inputs.pattern }}
+        DEST: ${{ inputs.path }}
+        MERGE: ${{ inputs.merge-multiple }}
+        RUN_ID: ${{ inputs.run-id || github.run_id }}
+        REPO: ${{ github.repository }}
+        TOKEN: ${{ inputs.github-token || github.token }}
       run: |
-        echo "::warning::artifact download failed (try 1 of 3); retrying in 30 s"
+        echo "::warning::artifact download failed (try 1 of 2); diagnostics, then a retry in 30 s"
+        bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 1
         sleep 30
     - id: try2
       if: steps.try1.outcome == 'failure'
@@ -56,15 +70,15 @@ runs:
         github-token: ${{ inputs.github-token }}
     - if: steps.try2.outcome == 'failure'
       shell: bash
+      env:
+        NAME: ${{ inputs.name }}
+        PATTERN: ${{ inputs.pattern }}
+        DEST: ${{ inputs.path }}
+        MERGE: ${{ inputs.merge-multiple }}
+        RUN_ID: ${{ inputs.run-id || github.run_id }}
+        REPO: ${{ github.repository }}
+        TOKEN: ${{ inputs.github-token || github.token }}
       run: |
-        echo "::warning::artifact download failed (try 2 of 3); retrying in 90 s"
-        sleep 90
-    - if: steps.try2.outcome == 'failure'
-      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-      with:
-        name: ${{ inputs.name }}
-        pattern: ${{ inputs.pattern }}
-        path: ${{ inputs.path }}
-        merge-multiple: ${{ inputs.merge-multiple }}
-        run-id: ${{ inputs.run-id }}
-        github-token: ${{ inputs.github-token }}
+        echo "::warning::artifact download failed (try 2 of 2); diagnostics, then the REST fallback"
+        bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 2
+        bash "$GITHUB_ACTION_PATH/rest.sh" fetch

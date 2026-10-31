@@ -26,6 +26,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 # One soak per pull request at a time; a new one waits for the running one.
 concurrency:

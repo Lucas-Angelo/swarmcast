@@ -57,6 +57,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 env:
   FORCE_COLOR: '1'
@@ -123,7 +124,7 @@ jobs:
           cache-key: ${{ matrix.target }}
           targets: ${{ matrix.rust-target || '' }}
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: ${{ matrix.target == 'windows-x64' && 'pkg-windows-x64' || 'web-dist' }}
       - name: Version
@@ -263,7 +264,7 @@ jobs:
 
       # ---------------------------------------------------------------- preflight
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         if: ${{ !cancelled() && matrix.preflight }}
         with:
           names: pkg-${{ matrix.target }}

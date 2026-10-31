@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 env:
   FORCE_COLOR: '1'
@@ -49,7 +50,7 @@ jobs:
           ffmpeg: 'true'
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: web-dist
       # MediaMTX and cloudflared for the host into vendor/<target>/, verified against the SHA-256
