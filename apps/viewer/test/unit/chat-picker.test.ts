@@ -1,8 +1,10 @@
 // @vitest-environment happy-dom
 // The emoji and emote picker (chat/picker.ts) and the emoji data it lazy-loads (built by
 // scripts/emoji-data.mjs). Each picker keeps its tone and recent picks in a prefs store of its own
-// (memory only), so no test sees another's choices.
-import { describe, expect, it } from 'vitest';
+// (memory only), so no test sees another's choices. happy-dom lays nothing out: the picker then
+// builds every emoji at once; "on a laid-out page" gives it a layout (layOut) to build only what is
+// in view, and has no requestIdleCallback, like Safari (the picker's timer fallback).
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emojiData, PINNED_UNICODE } from '../../scripts/emoji-data.mjs';
 import { createPicker, type EmojiData } from '../../src/chat/picker.js';
 import { createPrefsStore } from '../../src/chat/prefs.js';
@@ -28,6 +30,46 @@ const emotes: Emote[] = [
   { code: 'gg', url: '/assets/gg.webp', url2x: '/assets/gg@2x.webp', w: 56, h: 56 },
   { code: 'hi', url: '/assets/hi.webp', url2x: '/assets/hi@2x.webp', w: 56, h: 56 },
 ];
+
+/** A laid-out picker list (layOut): cells of this size, this many per row, this tall a visible part. */
+const CELL = 36;
+const COLS = 10;
+const VIEW_H = 8 * CELL;
+/** Two emoji categories of 100 emoji each: 20 rows of the laid-out list. */
+const manyData: EmojiData = {
+  v: 1,
+  unicode: '17.0',
+  groups: [0, 1].map((g) => [g, Array.from({ length: 100 }, (_, i): [string, string, string] => [String.fromCodePoint(0x1f300 + g * 100 + i), `emoji ${g}-${i}`, `emoji ${g}-${i}`])]),
+};
+
+/**
+ * Lays the picker out as a browser would (happy-dom does not): grids COLS cells of CELL px wide,
+ * one under the other from the top of the list (a grid is as tall as its rows or its min-height),
+ * the visible part of the list VIEW_H px tall. Undone by vi.restoreAllMocks().
+ */
+function layOut(): void {
+  const gridHeight = (g: Element): number => Math.max(parseFloat((g as HTMLElement).style.minHeight) || 0, Math.ceil(g.children.length / COLS) * CELL);
+  const rect = (top: number, height: number): DOMRect => ({ top, bottom: top + height, left: 0, right: COLS * CELL, width: COLS * CELL, height, x: 0, y: top, toJSON: () => ({}) });
+  const size = (cell: number, list: number, grid: number) =>
+    function (this: HTMLElement): number {
+      if (this.matches('button.pick')) return cell;
+      if (this.matches('.picker-body')) return list;
+      return this.matches('.grid') ? grid : 0;
+    };
+  vi.spyOn(HTMLElement.prototype, 'offsetWidth', 'get').mockImplementation(size(CELL, COLS * CELL, COLS * CELL));
+  vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(size(CELL, VIEW_H, 0));
+  vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(size(CELL, COLS * CELL, COLS * CELL));
+  vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(size(CELL, VIEW_H, 0));
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+    if (this.matches('.picker-body')) return rect(0, VIEW_H);
+    let top = 0;
+    for (const g of document.querySelectorAll('.picker-body .grid')) {
+      if (g === this) return rect(top, gridHeight(g));
+      top += gridHeight(g);
+    }
+    return rect(0, 0);
+  });
+}
 
 /**
  * A picker on its button, with a fresh prefs store. `load` defaults to the fake data and counts
@@ -295,5 +337,84 @@ describe('picker', () => {
     expect(picker.popover.isOpen).toBe(false);
     expect(picker.panel.hidden).toBe(true);
     expect(document.activeElement).toBe(button);
+  });
+});
+
+describe('picker on a laid-out page', () => {
+  /** The emoji buttons of the list (not the emotes). */
+  const emojiOf = (buttons: HTMLButtonElement[]): HTMLButtonElement[] => buttons.filter((b) => !b.classList.contains('emote'));
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    layOut();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('builds only the emoji rows in view when it opens', async () => {
+    // Arrange
+    const rowsInView = Math.ceil((VIEW_H - CELL) / CELL);
+
+    // Act
+    const { pickButtons } = await opened({ load: () => Promise.resolve(manyData) });
+
+    // Assert
+    expect(emojiOf(pickButtons())).toHaveLength(rowsInView * COLS);
+  });
+
+  it('gives each category being built its final height', async () => {
+    // Act
+    const { picker } = await opened({ load: () => Promise.resolve(manyData) });
+
+    // Assert
+    const pending = picker.panel.querySelector<HTMLElement>('[data-group="1"] .grid')!;
+    expect(pending.children).toHaveLength(0);
+    expect(pending.style.minHeight).toBe(`${(100 / COLS) * CELL}px`);
+  });
+
+  it('builds the rest, in order, while the page is idle', async () => {
+    // Arrange
+    const { pickButtons } = await opened({ load: () => Promise.resolve(manyData) });
+
+    // Act
+    await vi.runAllTimersAsync();
+
+    // Assert
+    expect(emojiOf(pickButtons()).map((b) => b.textContent)).toEqual(rowsOf(manyData as typeof en).map(([ch]) => ch));
+  });
+
+  it('an arrow key in the grid builds every emoji first, so it can reach them all', async () => {
+    // Arrange
+    const { pickButtons } = await opened({ load: () => Promise.resolve(manyData) });
+
+    // Act
+    pickButtons()[0]!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
+
+    // Assert
+    expect(emojiOf(pickButtons())).toHaveLength(200);
+    expect(document.activeElement).toBe(pickButtons()[1]);
+  });
+
+  it('closed before it is done, it stops building, and builds again when opened', async () => {
+    // Arrange
+    const { button, pickButtons } = await opened({ load: () => Promise.resolve(manyData) });
+    const atOpen = emojiOf(pickButtons()).length;
+    button.click();
+
+    // Act
+    await vi.runAllTimersAsync();
+
+    // Assert
+    expect(emojiOf(pickButtons())).toHaveLength(atOpen);
+
+    // Act
+    button.click();
+    await vi.runAllTimersAsync();
+
+    // Assert
+    expect(emojiOf(pickButtons())).toHaveLength(200);
   });
 });

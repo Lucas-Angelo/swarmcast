@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The emoji picker in the viewer chat opens instantly,** also on slow phones and computers. It used to draw all of its almost 2,000 emoji the moment it opened, which could freeze the watch page for a second or two; it now draws the ones you can see and adds the rest as you scroll. Search, categories, skin tones, recent picks and keyboard navigation work as before.
 - **No console window flashes on Windows** when you turn Direct mode on: SwarmCast looks up your router without opening a PowerShell window.
 - **The ⋯ menu button of a chat message in the panel is always fully visible and clickable,** also next to long names and messages.
 - **Your stream link appears sooner and opens right away on your own computer.** While a new link came online, SwarmCast asked your computer's DNS about the address before Cloudflare had published it; your computer (or your internet provider) then remembered it as "does not exist" for up to a minute. On a Mac, Start took about 80 seconds to show the link; elsewhere, opening the link right away could fail with "this site can't be reached". SwarmCast now asks Cloudflare until the address exists, and your computer only after that.
