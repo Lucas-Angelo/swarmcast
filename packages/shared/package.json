@@ -13,6 +13,7 @@
     "./branding": "./src/branding/index.ts",
     "./i18n": "./src/i18n/index.ts",
     "./i18n/browser": "./src/i18n/browser.ts",
+    "./system-check": "./src/system-check.ts",
     "./web/brand.css": "./web/brand.css",
     "./web/font-licenses": "./web/font-licenses.mjs",
     "./web/startup-guard": "./web/startup-guard.mjs"

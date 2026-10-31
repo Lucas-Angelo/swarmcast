@@ -38,8 +38,9 @@ import type { TrackerService } from '../tracker/tracker.js';
 import type { Logger } from '../core/logger.js';
 import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
-import { resettableRateLimits } from './rate-limit-store.js';
-import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
+import { resettableRateLimits } from '../http/rate-limit-store.js';
+import { applySecurityHeaders, originMatchesHost } from '../http/security-headers.js';
+import { clientIp, isMobileUserAgent, viewerCsp } from './security.js';
 
 /** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
 export interface HttpStats {
