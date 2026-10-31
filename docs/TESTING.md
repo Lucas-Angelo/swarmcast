@@ -92,7 +92,7 @@ Real time that a test measures, on purpose:
 | Unit | `apps/*/test/unit`, `packages/*/test`, `scripts/*/test`, `site/test/unit` | Vitest | `npm test` |
 | Integration | `apps/server/test/integration` | Vitest | `npm run test:integration` (needs `ffmpeg`, `npm run fetch-bins`) |
 | End to end | `apps/server/test/e2e`, `apps/viewer/test` | Playwright | `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test` |
-| Real phone browsers | `apps/server/test/devices` | Playwright (+ safaridriver on iOS) | `scripts/test/devices/setup.sh install android`, then `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=6000 npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome`; `setup.sh remove all` afterwards |
+| Real phone browsers | `apps/server/test/devices` | Playwright (+ safaridriver on iOS) | `scripts/test/devices/setup.sh install android`, then `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome`; `setup.sh remove all` afterwards |
 | Desktop shell | `#[cfg(test)]` modules of `apps/desktop/src-tauri/src` | cargo test | `npm run desktop:test` |
 | Start and uninstall scripts | `scripts/test/run.sh`, `uninstall.sh`, `run.ps1`, `uninstall.ps1` | their own | `bash scripts/test/run.sh` (macOS, Linux); `powershell -File scripts\test\run.ps1` |
 | System (real installers and packages) | `scripts/test/windows`, `preflight`, `desktop`, `docker` | their own (below) | CI only: they install and start the real app on a clean machine |

@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
+import { e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import type { Platform } from './phone.js';
 
 // The live viewer in real mobile browsers (docs/TESTING.md "Real devices"): Chrome on an Android
@@ -12,8 +13,8 @@ import type { Platform } from './phone.js';
 // Platform-only tests carry @android or @ios. The second chat viewer is a desktop Google Chrome
 // (PW_CHROMIUM_CHANNEL='' for Playwright's Chromium).
 const root = path.resolve(import.meta.dirname, '..', '..', '..', '..');
-// Keep in sync with apps/server/test/e2e/server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
-const PUBLIC = 38080 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
+// The e2e server's public port, from the same table as server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
+const PUBLIC = e2ePorts().public;
 const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 const desktopViewer = { ...devices['Desktop Chrome'], ...(chromiumChannel ? { channel: chromiumChannel } : {}) };
 // As the e2e config: the runner, its workers and the server it starts all use UTC.

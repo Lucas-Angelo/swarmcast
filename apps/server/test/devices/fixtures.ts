@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { loopbackBase } from '../../../../scripts/test/lib/loopback.mjs';
+import { e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { liveLink, test as e2e } from '../e2e/fixtures.js';
 import { AndroidDevice, AndroidPhone } from './android.js';
@@ -71,8 +72,8 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
   },
 });
 
-// The e2e server's test control port (server.ts CONTROL_PORT; keep in sync, like fixtures.ts).
-const CONTROL = loopbackBase(`http://127.0.0.1:${38082 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0)}`);
+// The e2e server's test control port (e2ePorts(), as server.ts and the e2e fixtures take it).
+const CONTROL = loopbackBase(`http://127.0.0.1:${e2ePorts().control}`);
 
 /** Milliseconds since the live's newest segment (GET /health on the control port, server.ts). */
 async function sinceSegmentMs(): Promise<number | null> {
