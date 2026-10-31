@@ -62,22 +62,39 @@ export class ExternalTunnel extends TunnelProvider {
 }
 
 /**
- * Resolve a hostname through Cloudflare's DNS-over-HTTPS. A brand-new quick-tunnel hostname
- * often does not exist yet when we first ask; the OS resolver then caches that NXDOMAIN for
- * minutes, so we bypass it for the readiness check (viewers resolve the name later, after the
- * link is shown, so they are not affected).
+ * What Cloudflare's resolver says about a name: its IPv4 address; `unknown` when it has none (a
+ * brand-new quick-tunnel name for the first seconds after cloudflared prints it); `unreachable`
+ * when neither of its addresses answers (a network that blocks them).
  */
-export async function resolveViaDoh(hostname: string): Promise<string | null> {
-  try {
-    const res = await fetch(`https://1.1.1.1/dns-query?name=${encodeURIComponent(hostname)}&type=A`, {
-      headers: { accept: 'application/dns-json' },
-      signal: AbortSignal.timeout(5000),
-    });
-    const body = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
-    return body.Answer?.find((a) => a.type === 1)?.data ?? null;
-  } catch {
-    return null;
+export type CloudflareAnswer = { ip: string } | 'unknown' | 'unreachable';
+
+/** Cloudflare's DNS-over-HTTPS servers, by address: asking for them by name would need DNS too. */
+const DOH_SERVERS = ['1.1.1.1', '1.0.0.1'] as const;
+
+/**
+ * Resolve a hostname through Cloudflare's DNS-over-HTTPS, which answers for trycloudflare.com
+ * first-hand. Any DNS answer without an address (NXDOMAIN, SERVFAIL...) is `unknown`: the
+ * resolver works, the name is not there yet. `unreachable` only when no server answered at all.
+ */
+export async function resolveViaDoh(hostname: string): Promise<CloudflareAnswer> {
+  for (const server of DOH_SERVERS) {
+    try {
+      const res = await fetch(`https://${server}/dns-query?name=${encodeURIComponent(hostname)}&type=A`, {
+        headers: { accept: 'application/dns-json' },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        await res.body?.cancel();
+        continue;
+      }
+      const body = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
+      const ip = body.Answer?.find((a) => a.type === 1)?.data;
+      return ip ? { ip } : 'unknown';
+    } catch {
+      /* this server did not answer: the next one */
+    }
   }
+  return 'unreachable';
 }
 
 /** True for a URL host that is an IP address (`203.0.113.7`, `[2001:db8::5]`), not a name. */
@@ -85,73 +102,100 @@ export function isIpHost(hostname: string): boolean {
   return net.isIP(hostname.replace(/^\[(.*)\]$/, '$1')) !== 0;
 }
 
-/**
- * GET url/healthz and return the X-SwarmCast header (or null), resolving the host via DoH when
- * it is a name. An IP address (Direct mode: https://<public IP>:<port>) needs no DNS at all:
- * asking a DNS-over-HTTPS server about it would only send the streamer's address to Cloudflare
- * and, offline, wait up to 5 s on every check of "Stop everything".
- */
-export async function probeHealth(url: string, probe?: string): Promise<string | null> {
-  const u = new URL('/healthz', url);
-  const probeHeader: Record<string, string> = probe ? { 'x-swarmcast-probe': probe } : {};
-  if (u.protocol !== 'https:') {
-    const res = await fetch(u, { signal: AbortSignal.timeout(5000), cache: 'no-store', headers: probeHeader });
-    await res.body?.cancel();
-    return res.ok ? res.headers.get('x-swarmcast') : null;
-  }
-  const ip = isIpHost(u.hostname) ? null : await resolveViaDoh(u.hostname);
-  const lookup: LookupFunction | undefined = ip
-    ? (_host, opts, cb) => {
-        if ((opts as dns.LookupOptions).all) (cb as unknown as (e: null, a: dns.LookupAddress[]) => void)(null, [{ address: ip, family: 4 }]);
-        else cb(null, ip, 4);
-      }
-    : undefined;
-  return new Promise((resolve) => {
-    const req = https.get(u, { lookup, timeout: 5000, headers: { 'cache-control': 'no-store', ...probeHeader } }, (res) => {
-      res.resume();
-      resolve(res.statusCode === 200 ? ((res.headers['x-swarmcast'] as string | undefined) ?? null) : null);
-    });
-    req.on('timeout', () => req.destroy());
-    req.on('error', () => resolve(null));
-  });
+/** The network side of a reachability check (probeHealth, waitForReachable): real by default, replaced in tests. */
+export interface ReachabilityIo {
+  /** What Cloudflare's resolver says about `hostname` (resolveViaDoh). */
+  cloudflare(hostname: string): Promise<CloudflareAnswer>;
+  /** Whether this machine's own resolver (getaddrinfo, the OS's DNS cache) has an address for `hostname`. */
+  system(hostname: string): Promise<boolean>;
+  /**
+   * GET `url` and return its X-SwarmCast header, or null when it does not answer 200. With `ip`
+   * the connection goes to that address (TLS and Host still name the host); without it, a name
+   * is resolved by this machine's resolver.
+   */
+  health(url: URL, ip: string | undefined, headers: Record<string, string>): Promise<string | null>;
 }
 
-/** Poll `url` until it answers with our marker header, with growing delays (DNS can take a while). Rejects (QuitAbortError) when `signal` aborts. */
+const realIo: ReachabilityIo = {
+  cloudflare: resolveViaDoh,
+  system: (hostname) => dns.promises.lookup(hostname).then(
+    () => true,
+    () => false,
+  ),
+  health: async (url, ip, headers) => {
+    if (url.protocol !== 'https:') {
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000), cache: 'no-store', headers });
+      await res.body?.cancel();
+      return res.ok ? res.headers.get('x-swarmcast') : null;
+    }
+    const lookup: LookupFunction | undefined = ip
+      ? (_host, opts, cb) => {
+          if ((opts as dns.LookupOptions).all) (cb as unknown as (e: null, a: dns.LookupAddress[]) => void)(null, [{ address: ip, family: 4 }]);
+          else cb(null, ip, 4);
+        }
+      : undefined;
+    return new Promise((resolve) => {
+      const req = https.get(url, { lookup, timeout: 5000, headers: { 'cache-control': 'no-store', ...headers } }, (res) => {
+        res.resume();
+        resolve(res.statusCode === 200 ? ((res.headers['x-swarmcast'] as string | undefined) ?? null) : null);
+      });
+      req.on('timeout', () => req.destroy());
+      req.on('error', () => resolve(null));
+    });
+  },
+};
+
+/**
+ * GET url/healthz and return the X-SwarmCast header (or null). A name is resolved by Cloudflare
+ * (DNS-over-HTTPS) and the request goes to the address it gives; this machine's resolver is never
+ * asked about a name Cloudflare does not know yet. Cloudflare has no address for a new quick
+ * tunnel for its first 4 to 19 s, and a resolver asked about it then remembers "no such name"
+ * for the zone's negative TTL (60 s) in some of its caches: measured on Windows runners (DNS
+ * experiment run 41197660617), after the name existed, their resolver still said "no such name"
+ * to 11 of 157 lookups in 9 of 24 runs where it had been asked early, and the OS's own lookup
+ * failed for up to 10 s in 3 of them (a browser opening the new link there fails); 0 of 72 and
+ * 0 of 12 runs when it had not. The OS resolver is used only when neither DoH server answers at
+ * all. An IP address (Direct mode: https://<public IP>:<port>) needs no DNS: asking a
+ * DNS-over-HTTPS server about it would only send the streamer's address to Cloudflare and,
+ * offline, wait up to 5 s on every check of "Stop everything".
+ */
+export async function probeHealth(url: string, probe?: string, io: ReachabilityIo = realIo): Promise<string | null> {
+  const u = new URL('/healthz', url);
+  const headers: Record<string, string> = probe ? { 'x-swarmcast-probe': probe } : {};
+  if (u.protocol !== 'https:' || isIpHost(u.hostname)) return io.health(u, undefined, headers);
+  const answer = await io.cloudflare(u.hostname);
+  if (answer === 'unknown') return null;
+  return io.health(u, answer === 'unreachable' ? undefined : answer.ip, headers);
+}
+
+/**
+ * Poll `url` until it answers with our marker header, with growing delays (a new quick-tunnel
+ * name takes a few seconds to exist), then until this machine's resolver also knows the name
+ * (the streamer usually opens her link right away). That resolver is asked only after Cloudflare
+ * answered with the address (probeHealth). Rejects (QuitAbortError) when `signal` aborts.
+ */
 export async function waitForReachable(
   url: string,
   expectMarker: string,
-  opts: { timeoutMs?: number; fetchImpl?: typeof fetch; signal?: AbortSignal; /** Sent as X-SwarmCast-Probe: only then does /healthz reveal the live's marker. */ probe?: string } = {},
+  opts: { timeoutMs?: number; signal?: AbortSignal; /** Sent as X-SwarmCast-Probe: only then does /healthz reveal the live's marker. */ probe?: string; io?: ReachabilityIo } = {},
 ): Promise<boolean> {
   const { signal } = opts;
+  const io = opts.io ?? realIo;
   const deadline = Date.now() + (opts.timeoutMs ?? 60_000);
   let delay = 500;
   while (Date.now() < deadline) {
     try {
-      let marker: string | null;
-      if (opts.fetchImpl) {
-        const res = await opts.fetchImpl(`${url}/healthz`, { signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(5000)]) : AbortSignal.timeout(5000), cache: 'no-store', ...(opts.probe ? { headers: { 'x-swarmcast-probe': opts.probe } } : {}) });
-        await res.body?.cancel();
-        marker = res.ok ? res.headers.get('x-swarmcast') : null;
-      } else {
-        marker = await abortable(probeHealth(url, opts.probe), signal);
-      }
-      if (marker === expectMarker) {
-        // Reachable through Cloudflare. Before showing the link, make sure the name also
-        // resolves through this machine's normal DNS servers (the streamer will usually open
-        // the link right away, and viewers' resolvers behave like hers).
-        if (!url.startsWith('https://') || opts.fetchImpl) return true;
+      if ((await abortable(probeHealth(url, opts.probe, io), signal)) === expectMarker) {
         const host = new URL(url).hostname;
+        if (!url.startsWith('https://') || isIpHost(host)) return true;
         while (Date.now() < deadline + 30_000) {
-          try {
-            if ((await abortable(dns.promises.resolve4(host), signal)).length > 0) return true;
-          } catch {
-            /* not propagated yet */
-          }
+          if (await abortable(io.system(host), signal)) return true;
           await sleep(2000, signal);
         }
         return true;
       }
-    } catch {
+    } catch (err) {
+      if (signal?.aborted) throw err;
       /* not yet */
     }
     await sleep(delay, signal);

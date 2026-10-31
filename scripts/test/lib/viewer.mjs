@@ -15,14 +15,16 @@ const CLOUDFLARE_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
 
 /**
  * Infra recovery, not a retry of SwarmCast: a quick tunnel's name is brand new for a little
- * while after cloudflared prints it. Asking the runner's own resolver too early makes it (and
- * each of its anycast caches) remember the name as unknown for the zone's negative TTL (60 s):
- * once, a name the harness had seen resolve was still unknown to Chrome's very next lookup
- * (release run 41178893186, preflight on Windows). So the name is watched for on Cloudflare's
- * own resolvers, which answer for its zone first-hand, and the runner's resolver is asked only
- * once they know it: it has then never seen the name, has no "unknown" to remember, and every
- * lookup after it (the OS's, the browser's) gets the address. Any other host (127.0.0.1,
- * localhost) returns at once.
+ * while after cloudflared prints it. A resolver asked about it too early remembers it as unknown,
+ * in some of its caches, for the zone's negative TTL (60 s), and keeps answering "no such name"
+ * now and then after the name exists. The app never asks this machine's resolver before
+ * Cloudflare has the address (waitForReachable in apps/server/src/tunnel/provider.ts: until it
+ * did, the OS's lookup here failed for up to 10 s after the link was shown, in 3 of 24 runs of
+ * the DNS experiment on Windows runners and in 3 of the first 10 jobs of soak 41196129178).
+ * The harness does the same: it watches for the name on Cloudflare's own resolvers, which answer
+ * for its zone first-hand, and asks the runner's resolver only once they know it, so every lookup
+ * after it (the OS's, the browser's) gets the address. Any other host (127.0.0.1, localhost)
+ * returns at once.
  * @param {string} url
  * @param {(line: string) => void} [log]
  * @param {{ resolve4?: (host: string) => Promise<string[]>, lookup?: (host: string) => Promise<unknown> }} [dns]
