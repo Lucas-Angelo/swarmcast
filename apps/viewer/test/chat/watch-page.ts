@@ -75,6 +75,30 @@ type ApiRoutes = (route: Route, url: URL) => Promise<void> | false;
 
 /** The pages the server serves by path. */
 const PAGES: Record<string, string> = { '/watch': 'watch.html', '/join': 'join.html' };
+/** An empty page of the same origin (serveViewer), where firstVisit gives the origin its storage. */
+const BLANK = '/__test__/blank';
+const STORAGE_PROBE = 'sc.test.storage';
+
+/**
+ * Gives the origin its localStorage on an empty page of the same origin, before the page under
+ * test, and leaves it empty. Every test runs in a new browser context, so each page load is the
+ * origin's first visit ever, and Firefox creates the origin's storage on the first localStorage
+ * call: rows in the quota manager's database and a new localStorage database, written and
+ * flushed to disk by one parent-process thread (QuotaManager IO) that also deletes the storage of
+ * the contexts that just closed, while the call blocks the page. The watch and join pages call
+ * localStorage while their scripts load (the language from ?lang=, initBrowserLang), and on the
+ * Windows runners those flushes held the page 0.3-2.4 s (Gecko profiles, soak 41225313671: the
+ * page's main thread in Storage.setItem while that thread was in FlushFileBuffers), the stalls a
+ * 5 s check would one day miss. A visitor pays it once, on a first visit; here it is paid
+ * before the page loads. The call is synchronous, so its return is the condition waited on.
+ */
+async function firstVisit(page: Page): Promise<void> {
+  await page.goto(`${ORIGIN}${BLANK}`);
+  await page.evaluate((key) => {
+    localStorage.setItem(key, '1');
+    localStorage.removeItem(key);
+  }, STORAGE_PROBE);
+}
 
 /**
  * Serves the built viewer under ORIGIN with the server's viewer CSP: `api` answers first, then
@@ -83,6 +107,7 @@ const PAGES: Record<string, string> = { '/watch': 'watch.html', '/join': 'join.h
 async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
   await page.route(`${ORIGIN}/**`, async (route) => {
     const url = new URL(route.request().url());
+    if (url.pathname === BLANK) return route.fulfill({ body: '<!doctype html><meta charset="utf-8"><title>blank</title>', contentType: 'text/html' });
     const answered = api(route, url);
     if (answered) return answered;
     const file = PAGES[url.pathname] ?? url.pathname.slice(1);
@@ -135,6 +160,7 @@ export async function loadWatch(page: Page, hub: MockHub, o: WatchOptions = {}):
     ws.onMessage((m) => hub.onFrame(send, String(m)));
     ws.onClose(() => detach());
   });
+  await firstVisit(page);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/watch?lang=${o.lang ?? 'en'}${o.query ?? ''}`);
@@ -174,6 +200,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
     if (/^\/brand\/[0-9a-f]{64}\.png$/.test(url.pathname)) return route.fulfill({ body: PNG, contentType: 'image/png' });
     return false;
   });
+  await firstVisit(page);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/join?lang=en`);
@@ -222,6 +249,7 @@ export async function openBrandedStage(page: Page, o: { brand: unknown }): Promi
     if (/^\/brand\/[0-9a-f]{64}\.webp$/.test(url.pathname)) return route.fulfill({ body: picture, contentType: 'image/webp' });
     return false;
   });
+  await firstVisit(page);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/watch?lang=en`);
