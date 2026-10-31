@@ -10,7 +10,7 @@ name: Rendering
 # Start it: the `rendering` label on a pull request (remove and add it again for another run), by
 # hand once this file is on the default branch, or monthly. It reports separately: `ci-ok`
 # (pipeline.yml) does not wait for it. The pull request gate already runs the same specs on
-# Ubuntu and macOS (_e2e.yml, ui group).
+# Ubuntu and macOS (_e2e.yml, chat group).
 on:
   pull_request:
     types: [labeled]
