@@ -30,6 +30,6 @@ The main app (`swarmcast` executable). It starts MediaMTX and cloudflared, serve
   - `security/`: attack detector, shield and reactions, proof-of-work, `sc_verified`, public blocklists ([docs/SECURITY_RESEARCH.md](../../docs/SECURITY_RESEARCH.md)); `access/own-connection.ts` keeps P2P off for viewers on the streamer's own connection.
   - `quality/`: ffmpeg ladder, encoder probe, load guard, upload controller ([docs/QUALITY.md](../../docs/QUALITY.md)); `speedtest/`: the speed test.
   - `diagnostics/`: log retention, "Export logs" and the anonymiser (above).
-  - `core/`: also `config.ts` (`config.json` schema and migrations), `paths.ts` (data, binaries and web folders), `secrets.ts`, `logger.ts` and `messages.ts` (coded texts that clients translate).
+  - `core/`: also `config.ts` (`config.json` schema and migrations), `paths.ts` (data, binaries and web folders), `secrets.ts`, `logger.ts`, `messages.ts` (coded texts that clients translate) and `exec.ts` (runs the OS's command-line tools: netsh, reg, tar…).
   - `admin/server.ts` and `tray/tray.ts`.
   - `desktop/`: desktop mode: `protocol.ts` (stdio messages, pure), `desktop.ts` (stdio loop), `bridge.ts` (state for the panel), `autostart.ts` ("Start with the computer": Windows Run key via `reg.exe`, macOS LaunchAgent, XDG autostart), `system-check.ts` and `first-run.ts` (first start), `preflight.ts` (already running?). Panel API in `admin/desktop-routes.ts`.

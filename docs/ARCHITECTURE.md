@@ -57,7 +57,7 @@ Source map (`apps/server/src`):
 - `tracker/tracker.ts` and `control/control.ts` are the two WebSocket services.
 - `chat/` is the chat: the hub (pipeline, ring, moderation), the batcher, buckets, the flood detector and the event-loop guard; see [CHAT.md](CHAT.md). The panel's chat API is `admin/chat-routes.ts`.
 - `branding/` is "Your page": the store, the image validator, the viewer and panel routes and the link-preview page; see [BRANDING.md](BRANDING.md).
-- `media/mediamtx.ts`, `tunnel/` and `process/children.ts` manage the child processes.
+- `media/mediamtx.ts`, `tunnel/` and `process/children.ts` manage the child processes; `core/exec.ts` runs the OS's short-lived command-line tools (netsh, reg, tar…).
 - `direct/` implements direct mode.
 - `admin/server.ts` is the admin panel server.
 - `quality/` holds the quality ladder (ffmpeg renditions), encoder probing and the adaptive upload cap; see [QUALITY.md](QUALITY.md). `speedtest/` measures the connection.
