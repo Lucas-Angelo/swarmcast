@@ -2,7 +2,7 @@ name: Pipeline
 
 # The one CI entry point for pull requests and main (.github/workflows/README.md):
 #
-#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×5, windows ×5 ──────────┐
+#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×5 ──────────┐
 #            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
 #            │                              └─ desktop <target> ×5: build ─ clean-machine┤
 #            ├─ site (when the site changed) ──────────────────────────────────────────┤
