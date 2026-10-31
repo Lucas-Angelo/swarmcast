@@ -12,7 +12,7 @@ import type Hls from 'hls.js';
 import type { CoreEventMap } from 'p2p-media-loader-core';
 import { DelayController, type DelayProfileId, type FragmentSample } from './latency-controller.js';
 
-type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config'> & { targetLatency: number | null };
+type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config' | 'latestLevelDetails'> & { targetLatency: number | null };
 interface EngineLike {
   addEventListener<K extends keyof CoreEventMap>(eventName: K, listener: CoreEventMap[K]): void;
 }
@@ -112,6 +112,17 @@ export function attachAdaptiveDelay(
     if (recent.length === 0) return rawLatency();
     const sorted = [...recent].sort((a, b) => a - b);
     return sorted[Math.floor(sorted.length / 2)]!;
+  };
+  // The gap from the end of the buffer to the live edge, both read now (hls.latency is the same
+  // live edge estimate minus currentTime, as of the last timeupdate). Not latency() minus the
+  // buffer: that median trails the playhead by a few seconds, so catching up at 1.5× (the E2E
+  // rate) or two segments arriving in one playlist refresh read as a gap that grows (WebKit,
+  // macOS runner: a trend of +0.2 s/s on a 30 Mbps link, called unstable). The controller
+  // filters this reading itself.
+  const liveLag = (): number | null => {
+    const d = hls.latestLevelDetails;
+    if (!d?.live) return null;
+    return d.edge + d.age - (video.currentTime + forwardBuffer(video));
   };
 
   // p2p-media-loader knows where each segment came from and how long the real download took
@@ -225,6 +236,7 @@ export function attachAdaptiveDelay(
       now: clock(),
       latency: latency(),
       forwardBuffer: forwardBuffer(video),
+      liveLag: liveLag(),
       bandwidthEstimate: hls.bandwidthEstimate,
       levelBitrate: level?.bitrate ?? 0,
       playing: started && !video.paused && !holding && stallAt === null && !video.seeking && video.readyState >= 3,
