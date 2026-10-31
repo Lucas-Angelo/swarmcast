@@ -5,7 +5,7 @@ description: Remove someone from your live, stop someone from sharing video, and
 
 Everyone watching appears in the panel's **Viewers** card, with the nickname they typed and their device (PC or Phone).
 
-![The Viewers card: Bia, Rafa_gamer and Theo with their device, P2P on (these three turned it on), data shared, and the buttons 1 Remove from P2P and 2 Kick.](../../../assets/guides/live/en/viewers.webp)
+![The Viewers card: Maria, Pedro and Alex with their device, P2P (on for Maria and Pedro, who turned it on), data shared, delay, and the buttons 1 Remove from P2P, Mute… and 2 Kick.](../../../assets/guides/live/en/viewers.webp)
 
 ## Remove one person: Kick
 
@@ -13,7 +13,7 @@ Click **Kick** next to the person. They are disconnected right away and that bro
 
 ## Stop someone from sharing video: Remove from P2P
 
-![The Viewers card after Remove from P2P: 1 Rafa_gamer's P2P shows removed, and 2 Allow P2P again undoes it.](../../../assets/guides/live/en/viewers-removed.webp)
+![The Viewers card after Remove from P2P: 1 Pedro's P2P shows removed, and 2 Allow P2P again undoes it.](../../../assets/guides/live/en/viewers-removed.webp)
 
 Click **Remove from P2P**. The person keeps watching, straight from your computer, but no longer shares video with others. **Allow P2P again** undoes it. SwarmCast also does this by itself to a viewer whom other viewers report for broken video.
 

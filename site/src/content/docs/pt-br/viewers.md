@@ -10,11 +10,11 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 1. Abra o link num navegador atualizado: Chrome, Edge ou Firefox no computador, Chrome no Android ou Safari no iPhone e no iPad (iOS 17.1 ou mais novo).
 2. Digite um **apelido** e clique em **Assistir**. Todo mundo na live vê o apelido no chat: de 2 a 24 letras (de um só alfabeto), números, espaços, `-`, `_` ou `.`, sem emojis.
 
-   ![A página de entrada: 1 digite um apelido, 2 Verificando seu navegador… roda sozinho por um ou dois segundos, 3 Assistir.](../../../assets/guides/viewers/pt-br/join.webp)
+   ![A página de entrada: 1 digite um apelido, 2 Assistir, 3 Verificando seu navegador… roda sozinho por um ou dois segundos.](../../../assets/guides/viewers/pt-br/join.webp)
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, 3 a chave Ajudar a transmissão (P2P), ligada aqui, e o chat à direita.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
@@ -25,7 +25,7 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 No celular, os mesmos controles ficam embaixo do vídeo:
 
-![A página de quem assiste no celular: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ## O chat
 

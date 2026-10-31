@@ -10,7 +10,7 @@ O SwarmCast pode abrir sozinho quando você entra no computador, para estar pron
 1. Abra o SwarmCast.
 2. No cartão **App do SwarmCast**, marque (ou desmarque) **Iniciar com o computador**.
 
-![O cartão App do SwarmCast: 1 Iniciar com o computador (desligado por padrão), Versão do app 0.2.0 e 2 Procurar atualizações.](../../../../assets/guides/app/pt-br/desktop-card.webp)
+![O cartão App do SwarmCast: 1 Iniciar com o computador (desligado por padrão), Versão do app, Receber versões beta e 2 Procurar atualizações.](../../../../assets/guides/app/pt-br/desktop-card.webp)
 
 Com a opção ligada, o SwarmCast abre **sem janela**: só o ícone aparece na bandeja (perto do relógio, no Windows e no Linux) ou na barra de menus (no topo da tela, no Mac). Clique no ícone e em **Abrir o SwarmCast** para ver o painel.
 
