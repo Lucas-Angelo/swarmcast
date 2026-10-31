@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
+import { LoadGuard, type ShedReason } from '../../src/quality/load-guard.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
 import { OwnLoopDelay } from '../../../../scripts/test/lib/loop-delay.mjs';
 import { RESERVED } from '../../../../scripts/test/lib/ports.mjs';
@@ -59,6 +60,36 @@ if (!Number.isInteger(OFFSET) || clashes.length > 0) {
   throw new Error(`SWARMCAST_E2E_PORT_OFFSET=${process.env.SWARMCAST_E2E_PORT_OFFSET} cannot be used: ${why}. Pick another offset.`);
 }
 
+/**
+ * The quality ladder's load guard drops a rendition to protect OBS when the whole machine's CPU
+ * is saturated or the ladder falls behind real time. Here the CPU goes to the test's own
+ * browsers, not to an OBS, and a drop swaps the playlists under the scenario a spec set up: on
+ * macos-latest (3 vCPU) the CPU trigger dropped 480p 12 s after the ladder started, and
+ * barely-delivers then waited in vain for its two qualities (PR #21, run 40917266795); the
+ * behind trigger dropped it once in 43 macOS media jobs (0 in 43 on Linux), mid-way through
+ * barely-delivers' forced stall (run 41190535446). So it drops one only when a spec asks
+ * (POST /shed: quality.spec.ts, what viewers see when it happens); unit tests (load-guard,
+ * quality-decisions) cover both triggers.
+ */
+class SpecLoadGuard extends LoadGuard {
+  private asked: ShedReason | null = null;
+  ask(reason: ShedReason): void {
+    this.asked = reason;
+  }
+  /** Forgets a drop asked for and not made yet (no ladder ran since); true if there was one. */
+  cancel(): boolean {
+    const had = this.asked !== null;
+    this.asked = null;
+    return had;
+  }
+  override check(now: number, s: Parameters<LoadGuard['check']>[1]): ShedReason | null {
+    const reason = this.asked;
+    this.asked = null;
+    return reason ?? super.check(now, s);
+  }
+}
+const loadGuard = new SpecLoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
+
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
 // "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
 process.env.SWARMCAST_DOWNLOADS_DIR = path.join(dataDir, 'downloads');
@@ -66,12 +97,7 @@ fs.mkdirSync(process.env.SWARMCAST_DOWNLOADS_DIR, { recursive: true });
 const app = await createApp({
   dataDir,
   noTunnel: true,
-  // The quality ladder's load guard drops a rendition when the whole machine's CPU is saturated,
-  // to protect OBS. Here the CPU goes to the test's own browsers, not to an OBS: on macos-latest
-  // (3 vCPU) it dropped 480p 12 s after the ladder started, and barely-delivers then waited in
-  // vain for its two qualities (PR #21, run 40917266795). The guard keeps its other trigger
-  // (the ladder falling behind real time); unit and integration tests cover the CPU one.
-  loadGuard: { cpuSaturatedPercent: 101 },
+  loadGuard,
   // The chat's event-loop guard pauses GIFs, forces slow mode and refuses viewers' messages for at
   // least 10 s after two seconds of a late event loop, whatever made it late. On macos-latest it
   // paused a second before chat-privacy's GIF test (p99 222 ms with ELU 0.32, the loop mostly
@@ -230,6 +256,7 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
     did.push('branding');
   }
   let obs = !!o.hard;
+  if (loadGuard.cancel()) did.push('rendition drop asked for');
   if (!same(app.config.quality, initial.quality)) {
     L.quality.updateSettings({ ...structuredClone(initial.quality), obsWebsocket: { ...initial.quality.obsWebsocket } });
     did.push('quality settings');
@@ -364,6 +391,8 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
 //   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s);
 // - POST /own-loop-delay: the p99 of how long the app's own work held up this process's event
 //   loop since the previous call (scripts/test/lib/loop-delay.mjs), then starts over.
+// - POST /shed: the ladder's load guard drops a rendition at its next check (about 2 s), as when
+//   the streamer's PC cannot convert it in real time (SpecLoadGuard above).
 const ownLoopDelay = new OwnLoopDelay();
 const json = (res: http.ServerResponse, status: number, body: unknown): void => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
@@ -405,6 +434,10 @@ const control = http.createServer((req, res) => {
       return json(res, 200, { windowSeconds: app.live.origin.windowSeconds });
     }
     if (post && url.pathname === '/own-loop-delay') return json(res, 200, { p99Ms: ownLoopDelay.takeP99() });
+    if (post && url.pathname === '/shed') {
+      loadGuard.ask('behind');
+      return json(res, 200, { ladder: app.live.quality.state().transcoder.status });
+    }
     const m = /^\/pow-level\/([012])$/.exec(url.pathname);
     if (post && m) {
       shield.setAutoPow(Number(m[1]) as 0 | 1 | 2);

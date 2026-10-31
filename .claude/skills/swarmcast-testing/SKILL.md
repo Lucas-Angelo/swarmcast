@@ -91,6 +91,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | Firefox goto never reports DOMContentLoaded | automation layer (Juggler) loses the event on a COOP process switch | wait for `commit` + the real ready signal (Watch enabled), never DOMContentLoaded |
 | Loop-delay check fails only on macOS CI | the OS de-schedules the process (3 shared vCPUs); raw loop delay counts preemption | measure the server's own blocking (thread CPU + loop active time) |
 | Bench bot closed by the server | jitter pushed a bot over the server's 20 frames / 10 s ceiling | load generators keep a margin under every server limit |
+| A viewer barely played after a forced stall (macOS, once in 43 media jobs) | the quality ladder's load guard dropped 480p mid-test ("behind", the runner's CPU shared with the test's browsers); the ladder's playlists vanished and the server answered 503 "not started", which players retry for minutes | product: 404 for a playlist the stream no longer lists, so the player reloads; e2e: the guard drops a rendition only when a spec asks (`server.ts` SpecLoadGuard, `POST /shed`) |
 | Cache or upload step hung and failed the job | GitHub service incident | cache/diagnostics steps are non-fatal with short timeouts; tests and builds stay fatal |
 
 ## CI

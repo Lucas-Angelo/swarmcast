@@ -11,10 +11,17 @@
 // (the network did not change), so a stall on a busy runner may already have raised the target
 // inside those bounds: the check is the bounds in force and hls.js playing at a target no higher
 // than their top (the growth limit may hold it under their floor), not one exact value.
+// When the streamer's PC cannot convert a quality in real time, the ladder drops it (here only
+// when the spec asks: server.ts SpecLoadGuard), and with its last one the viewers get the
+// original alone: the playlists of the ladder are gone. A viewer watching the dropped one must go
+// on with the original before its buffer runs out (the most it holds is the Stable starting
+// delay), with no long freeze: the server answers 404 for a playlist the stream no longer lists,
+// and the player loads the stream again. Answered 503 ("not started yet", retried), the viewer was
+// still on the old playlists 120 s later (measured locally), frozen.
 // The server goes back to one quality and the default feed at the next test's gate.
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 import { ADAPTIVE_DELAY, type QualityState } from '@swarmcast/shared';
-import { adminApi, expect, ladderUpdate, playsOn, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
+import { adminApi, adminState, dropRendition, expect, ladderUpdate, playsOn, reconnectObs, startStallMonitor, stallReport, stats, test, uid, waitPlaying } from './fixtures.js';
 
 test.skip(({ browserName }) => browserName !== 'chromium', 'checked on Chromium');
 
@@ -104,4 +111,49 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   await playsOn(page, 1);
   expect(await page.evaluate(() => localStorage.getItem('sc.playback-profile'))).toBe('stable');
   await expect(page.locator('#status')).toHaveText('Live');
+});
+
+/** In `context`, the player starts on the 480p rendition (the remembered pick). */
+async function watch480(context: BrowserContext): Promise<void> {
+  await context.addInitScript(() => localStorage.setItem('sc.quality-height', '480'));
+}
+
+/** The heights the viewer's player can play now (its playlists) and the one it plays. */
+function playerLevels(page: Page): Promise<{ heights: number[]; playing: number | null }> {
+  return page.evaluate(() => {
+    const h = (window as unknown as { __hls: Hls }).__hls;
+    return { heights: h.levels.map((l) => l.height), playing: h.levels[h.currentLevel]?.height ?? null };
+  });
+}
+
+const serverQualities = async (): Promise<number[]> => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height);
+
+/** The Stable profile starts this far behind live: the most a viewer has buffered to bridge the switch (ms). */
+const STARTING_DELAY_MS = ADAPTIVE_DELAY.stable.initial * 1000;
+
+test('when the PC cannot convert a quality in real time, the viewer watching it goes on with the original', { tag: '@media' }, async ({ viewers }) => {
+  // Arrange
+  const q0 = await adminApi<QualityState>('GET', '/api/quality');
+  test.skip(!q0.ffmpeg.available, 'no ffmpeg on this machine (set SWARMCAST_FFMPEG)');
+  test.setTimeout(180_000);
+  await adminApi('PUT', '/api/quality', ladderUpdate(q0, { mode: 'manual', enabled: true, heights: [480], encoder: 'libx264' }));
+  await reconnectObs('hd');
+  await expect.poll(serverQualities, { timeout: 120_000, intervals: [1000] }).toEqual([720, 480]);
+  const { page } = await viewers.join(uid('shed'), { setup: watch480 });
+  await waitPlaying(page);
+  await expect.poll(() => playerLevels(page)).toEqual({ heights: [480, 720], playing: 480 });
+  await startStallMonitor(page);
+
+  // Act
+  await dropRendition();
+
+  // Assert
+  await expect.poll(serverQualities, { timeout: 30_000, intervals: [500] }).toEqual([720]);
+  await expect.poll(async () => (await adminState()).warnings.join(' ')).toMatch(/could not convert 480p in real time/);
+  await expect.poll(() => playerLevels(page), { timeout: STARTING_DELAY_MS, intervals: [500] }).toEqual({ heights: [720], playing: 720 });
+  await playsOn(page, 2);
+  const after = await stallReport(page);
+  const s = await stats(page);
+  console.log(`rendition dropped: longest stall ${Math.round(after.maxStallMs)} ms, ${s.reloads} source reloads (last: ${s.lastReload ?? 'none'})`);
+  expect(after.maxStallMs, 'stall while the viewer moves to the original quality').toBeLessThan(4000);
 });

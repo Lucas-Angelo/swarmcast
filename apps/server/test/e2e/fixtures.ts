@@ -109,6 +109,15 @@ export async function reconnectObs(feed: 'hd' | null): Promise<void> {
 }
 
 /**
+ * Makes the quality ladder drop a rendition at its next check (about 2 s), as when the
+ * streamer's PC cannot convert it in real time; by itself it never does here (server.ts
+ * SpecLoadGuard). The next test's gate puts the ladder settings back.
+ */
+export async function dropRendition(): Promise<void> {
+  await control('POST', '/shed');
+}
+
+/**
  * Every test starts on a server in its starting state with a healthy stream: the gate resets
  * what earlier tests changed (viewers, bans, rate limits, the attack shield, settings, the
  * ladder and the fake OBS options), then waits for the stream. If it stays unhealthy, OBS
