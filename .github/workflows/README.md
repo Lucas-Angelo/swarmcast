@@ -122,7 +122,7 @@ schedules and releases are never cancelled.
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
-| `.github/actions/fetch-artifact` | `actions/download-artifact` tried up to three times with a pause between tries (every download in these workflows goes through it) |
+| `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
@@ -130,6 +130,54 @@ schedules and releases are never cancelled.
 | `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
+
+### Artifact downloads
+
+Every artifact download goes through `.github/actions/fetch-artifact`:
+
+1. `actions/download-artifact`.
+2. If it fails: a warning, diagnostics (`rest.sh diagnose`), 30 s, then `download-artifact` again.
+3. If that fails too: a warning, diagnostics again, then the fallback (`rest.sh fetch`): the
+   artifact's REST API URL (`GET /repos/{repo}/actions/artifacts/{id}/zip`, a 302 to a signed blob
+   URL, a fresh one per try), downloaded by curl, at most 4 tries 15/30/45 s apart within 240 s,
+   each resuming the partial file (`-C -`), cut when slower than 100 kB/s for 30 s. The zip must
+   have the size and the SHA-256 digest that the API recorded at upload, or it is thrown away;
+   then it is unzipped where `download-artifact` would have put it. Success is a warning,
+   `fetch-artifact: infra recovery: ...`, so every use of the fallback is visible in the run's
+   annotations.
+
+The diagnostics, in a `fetch-artifact diagnostics` log group: the runner and its image, the
+matching artifacts (id, size, digest, expired), the blob host the API redirects to, what the
+runner's resolver answers for it (`dscacheutil`, `getent`, `nslookup`), a curl request for its first
+8 MiB (status, address, DNS/TCP/TLS/first-byte times, bytes, Azure's error XML), and one GET with
+Node.js's `https` (`probe.mjs`: the runtime `download-artifact` uses, asking the same way: socket
+lookup, connect and TLS times, status, `x-ms-request-id` and `x-ms-error-code`, the exact error
+with its code, syscall and address). They never fail the step. The signed URLs' query (their
+signature) is never printed. The REST calls need `actions: read`, which every workflow that
+downloads artifacts grants.
+
+Why: `download-artifact` (v8.0.2, `@actions/artifact` 6.3.1) prints only "Unable to download and
+extract artifact: Artifact download failed after 5 retries." Its loop (5 attempts 5 s apart, each a
+plain GET of the blob URL with a 30 s no-data limit) writes the cause with `core.debug`, which a run
+shows only with step debug logging on. Pipeline run 41199245404 on `main` lost
+`desktop macos-x64 / clean-machine (macos-15-intel)` that way: three tries of `pkg-macos-x64`
+(161,811,655 bytes) failed, 12:33:36-12:36:58 UTC, 15 attempts in all. The log shows what the
+cause was not:
+- not a slow download or the 30 s limit: tries 2 and 3 took 25.0 s each, which is the five 5 s
+  pauses alone; their ten attempts took about 14 ms together, try 1's five about 5 s;
+- the response never reached the unzip stage: `download-artifact` constructs its unzip stream (and
+  Node prints its `Buffer()` deprecation warning) once a 200 arrives, and no failed try printed it;
+- not the network path to the blob storage or a storage outage: one second after the last
+  failure, the same job downloaded `desktop-macos-x64` (169 MB) and `update-test-macos-x64` (85 MB)
+  from the same host (`productionresultssa5.blob.core.windows.net`, in East US 2) in 6 s and 4 s;
+- not the artifact: its zip is sound, and `gh run download` and curl through the REST API get it
+  with the recorded digest.
+
+An attempt that ends within a millisecond or two never reached Azure (the runner was in West US;
+a working request there takes about 200 ms to its first byte), so the client failed on the
+runner itself, and kept failing for 3.5 minutes on one artifact while it worked for others. Which
+error that was, only the debug line knew; the diagnostics above now print it from the same
+runtime, and the fallback does not depend on that client.
 
 ## Coverage
 
@@ -156,7 +204,8 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `--fail-on-flaky-tests` in every CI invocation, so a config that ever retried could not pass a test
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
-  the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`), the pinned
+  the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
+  then the REST fallback, each a warning), the pinned
   downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`) and the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`).
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
@@ -192,7 +241,8 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   artifacts are uploaded, and in `release.yml` on the signed packages and their archives. Run it
   locally after `npm run build` and `node scripts/build/package.mjs --target <host> --no-archive`:
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
-- **Permissions:** every workflow starts from `contents: read`; a job that needs more says so
+- **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
+  download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
   (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.

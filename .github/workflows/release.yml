@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 # One release run per tag; a release run is never cancelled by another one.
 concurrency:
@@ -177,7 +178,7 @@ jobs:
         with:
           npm-ci: 'false'
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: pkg-${{ matrix.target }}
       - name: The staged package is this version
@@ -339,6 +340,7 @@ jobs:
       contents: write # create and publish the release
       id-token: write # sign the build provenance attestation (Sigstore)
       attestations: write # store it with the repository's attestations
+      actions: read # fetch-artifact's REST fallback
     env:
       VERSION: ${{ needs.verify.outputs.version }}
       TAG: ${{ github.ref_name }}
