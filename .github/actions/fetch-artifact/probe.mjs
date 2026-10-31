@@ -14,11 +14,10 @@ const LIMIT_MS = 30_000;
 const url = new URL(process.argv[2] ?? '');
 const t0 = performance.now();
 const at = () => `${Math.round(performance.now() - t0)} ms`;
-// Every line carries values from the URL, the server's headers and body, and error messages: CR,
-// LF and the other control characters become spaces, so none can forge a log line or a workflow
-// command.
-const clean = (text) => String(text).replace(/[\r\n]/g, ' ').replace(/\p{Cc}/gu, ' ');
-const log = (line) => console.log(`${clean(line)} (${at()})`);
+// Every line carries values from the URL, the server's headers and body, and error messages:
+// control characters become spaces and any CR or LF left is removed, right here at the one log
+// call, so none can forge a log line or a workflow command.
+const log = (line) => console.log(`${String(line).replace(/\p{Cc}/gu, ' ').replace(/[\r\n]/g, '')} (${at()})`);
 
 function describe(err) {
   if (!(err instanceof Error)) return String(err);
