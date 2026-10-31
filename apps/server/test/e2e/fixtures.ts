@@ -10,6 +10,7 @@ import WebSocket from 'ws';
 import type { AdminChatState, AdminState, ChatItem, ChatSettings, ChatYou, QualitySettingsUpdate, QualityState, ServerMessage } from '@swarmcast/shared';
 import { NICKNAME_MAX } from '@swarmcast/shared';
 import { loopbackBase, panelLogin } from '../../../../scripts/test/lib/loopback.mjs';
+import { e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import { joinAs } from '../integration/helpers.js';
 import { currentStall, stallTick, type StallState } from './stall-monitor.js';
 
@@ -31,10 +32,10 @@ export function serverEnv(): ServerEnv {
   return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as ServerEnv;
 }
 
-// The test control port of server.ts (keep in sync: 38082 moved by SWARMCAST_E2E_PORT_OFFSET,
-// like the other e2e ports). Every request the fixtures send goes to a loopback base rebuilt from
-// checked parts (scripts/test/lib/loopback.mjs), never to a URL taken as it is from a file.
-const CONTROL = loopbackBase(`http://127.0.0.1:${38082 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0)}`);
+// The test control port of server.ts (e2ePorts(): moved by SWARMCAST_E2E_PORT_OFFSET, like the
+// other e2e ports). Every request the fixtures send goes to a loopback base rebuilt from checked
+// parts (scripts/test/lib/loopback.mjs), never to a URL taken as it is from a file.
+const CONTROL = loopbackBase(`http://127.0.0.1:${e2ePorts().control}`);
 
 /** What GET /health on the test control port answers (server.ts). */
 export interface StreamHealth {

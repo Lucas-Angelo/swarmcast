@@ -1,8 +1,11 @@
 import { defineConfig, devices } from '@playwright/test';
+import { assertFixedPorts, FIXED_PORTS } from '../scripts/test/lib/ports.mjs';
 
 // Tests the BUILT site (`npm run build` first), served like GitHub Pages by test/serve.mjs.
-// SITE_E2E_PORT moves the port (default 43210; far from SwarmCast's own ports).
-const PORT = Number(process.env.SITE_E2E_PORT ?? 43210);
+// SITE_E2E_PORT moves the port (default FIXED_PORTS.site, 13210: clear of SwarmCast's own ports and
+// of every ephemeral range, scripts/test/lib/ports.mjs).
+const PORT = Number(process.env.SITE_E2E_PORT ?? FIXED_PORTS.site.http);
+assertFixedPorts('site', { http: PORT }, `SITE_E2E_PORT=${PORT}`);
 // Google Chrome (installed on GitHub's runner images and most desktops), as the root config does:
 // no browser download. PW_CHROMIUM_CHANNEL='' uses Playwright's own Chromium instead
 // (`npx playwright install chromium` first).

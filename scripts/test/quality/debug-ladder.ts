@@ -5,8 +5,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { createApp } from '../../../apps/server/src/app.js';
 import { pushTestStream } from '../../../apps/server/test/integration/helpers.js';
+import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 
-const PORTS = { rtmp: 46935, public: 46080, admin: 46081, mediamtxHls: 46888 };
+const PORTS = FIXED_PORTS.qualityDebug;
+assertFixedPorts('qualityDebug', PORTS);
 const app = await createApp({
   dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'sc-dbg-')),
   noTunnel: true,

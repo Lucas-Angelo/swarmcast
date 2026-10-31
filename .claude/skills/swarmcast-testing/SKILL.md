@@ -28,7 +28,9 @@ passes sometimes is a failing test. Main is protected: nothing lands unless ever
 5. **Reuse.** One fixture/helper/builder per concept (Playwright `test.extend`, the unit `helpers.ts`,
    e2e `fixtures.ts`). Search before writing a new helper.
 6. **Independent and parallel-safe.** Unique temp dirs (`fs.mkdtemp`), port 0, no order dependence. The
-   e2e server is shared by the whole run: every test restores what it changes.
+   e2e server is shared by the whole run: every test restores what it changes. A port needed before its
+   server starts comes from `allocPorts()` (20000-31999) or `FIXED_PORTS` (10000-19999), never from an
+   OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535; `scripts/test/lib/ports.mjs`).
 7. **Cross-OS by design.** `path.join`, no CRLF assumptions, case-insensitive file systems, Windows file
    locks (close handles before deleting), no POSIX signals on Windows (taskkill trees), bind 127.0.0.1,
    pin TZ/locale, compare timing against a baseline from the same run (CI VMs, macOS above all, are
@@ -94,6 +96,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | A viewer barely played after a forced stall (macOS, once in 43 media jobs) | the quality ladder's load guard dropped 480p mid-test ("behind", the runner's CPU shared with the test's browsers); the ladder's playlists vanished and the server answered 503 "not started", which players retry for minutes | product: 404 for a playlist the stream no longer lists, so the player reloads; e2e: the guard drops a rendition only when a spec asks (`server.ts` SpecLoadGuard, `POST /shed`) |
 | After the ladder fell back to the original, the viewer froze 9 s (quality.spec, macOS and Linux) | the origin kept MediaMTX's playlists from before the ladder: they began with the gate's 2 s OBS connections, one of them in the audio playlist only; the player started on the oldest video segment and never found its audio until the stall watchdog moved it | a playlist the served stream did not list starts its window over when it comes back (`HlsOrigin.setSource`, `origin-runs.test.ts`); read the served playlists from the trace's resources before guessing |
 | Cache or upload step hung and failed the job | GitHub service incident | cache/diagnostics steps are non-fatal with short timeouts; tests and builds stay fatal |
+| Server fails at start with EADDRINUSE on a fixed port nothing else listens on (e2e control port 38082, run 41192273509) | the port lay in the OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535): an outgoing loopback connection, or its TIME_WAIT, held 127.0.0.1:<port> | port 0 where possible; else a fixed port from `FIXED_PORTS` in 10000-19999 (`scripts/test/lib/ports.mjs`), checked by `assertFixedPorts` at start and by `ports-zone.test.ts` |
 
 ## CI
 

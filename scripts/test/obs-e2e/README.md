@@ -24,7 +24,8 @@ It is not part of CI (it needs OBS, a GUI session and internet access).
   npm run build -w @swarmcast/shared -w @swarmcast/viewer -w @swarmcast/admin
   (cd scripts/test/obs-e2e && npm install)       # obs-websocket-js (kept out of the root lockfile)
   ```
-- Free ports: 41935 (RTMP), 48080 (public), 48081 (admin), 48888 (MediaMTX HLS), 4455 (obs-websocket).
+- Free ports: 14935 (RTMP), 14080 (public), 14081 (admin), 14888 (MediaMTX HLS) (`FIXED_PORTS.obsE2e` in
+  `scripts/test/lib/ports.mjs`), 4455 (obs-websocket).
   These are deliberately not SwarmCast's defaults so the test can run next to other work.
 
 ## OBS configuration (`setup-obs.mjs`)
@@ -62,7 +63,7 @@ Do not use `osascript -e 'quit app "OBS"'`: it answers -128 and was seen to quit
 
 Over obs-websocket the script then: sets video to 1280x720@30, creates the Media Source, sets
 `Output/Mode=Advanced` and `AdvOut/Encoder=obs_x264` (profile parameters), sets the stream service to
-`rtmp_custom` with **server = the panel's RTMP URL** (`rtmp://127.0.0.1:41935/live`) and **key = the
+`rtmp_custom` with **server = the panel's RTMP URL** (`rtmp://127.0.0.1:14935/live`) and **key = the
 panel's stream key**, and calls `StartStream`.
 
 ## Running

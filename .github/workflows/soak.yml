@@ -377,7 +377,7 @@ jobs:
       - name: latest.json for the update test
         run: |
           version="$(node -p "require('./package.json').version")"
-          node scripts/build/updater-manifest.mjs --version "$version" --base-url http://127.0.0.1:47811 \
+          node scripts/build/updater-manifest.mjs --version "$version" --base-url http://127.0.0.1:17811 \
             --out release/desktop/latest.json release/desktop
       - *soak-run
       - *soak-upload
