@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import path from 'node:path';
 import readline from 'node:readline';
+import { system32 } from '../core/exec.js';
 import type { Logger } from '../core/logger.js';
 
 /**
@@ -87,11 +87,6 @@ export interface KillTreeOptions {
   waitMs?: number;
 }
 
-/** taskkill by absolute path: a `taskkill` earlier on PATH (Git, MSYS, a shim) is never run. */
-function taskkillExe(): string {
-  return path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe');
-}
-
 /** True while the process group `pgid` has a member (POSIX). */
 function groupAlive(pgid: number): boolean {
   try {
@@ -108,7 +103,7 @@ function runTaskkill(pid: number, capMs = 5000): Promise<void> {
     let tk: ChildProcess;
     try {
       // /T: the whole tree (children found through their parent pid), /F: forced.
-      tk = spawn(taskkillExe(), ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      tk = spawn(system32('taskkill.exe'), ['/pid', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
     } catch {
       resolve();
       return;

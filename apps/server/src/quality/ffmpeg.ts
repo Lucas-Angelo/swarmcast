@@ -1,15 +1,12 @@
 import crypto from 'node:crypto';
-import { execFile } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { promisify } from 'node:util';
 import versions from '../../../../scripts/build/versions.json' with { type: 'json' };
+import { runCommand, system32, type CommandOptions } from '../core/exec.js';
 import { removeDir } from '../core/fs-cleanup.js';
 import type { Logger } from '../core/logger.js';
 import { exe, isPackaged, platformTag } from '../core/paths.js';
-
-const execFileP = promisify(execFile);
 
 export interface FfmpegPin {
   url: string;
@@ -100,6 +97,12 @@ function findFile(dir: string, name: string): string | null {
   return null;
 }
 
+/** Run a step of the install; a failure throws execFile's own error, whose message the panel shows. */
+async function mustRun(command: string, args: string[], o: CommandOptions): Promise<void> {
+  const r = await runCommand(command, args, o);
+  if (r.error) throw r.error;
+}
+
 /**
  * Download the pinned ffmpeg build for this platform straight from its publisher, verify the
  * SHA-256, extract only the ffmpeg binary and check that it runs. Started by the streamer
@@ -147,14 +150,14 @@ export async function installFfmpeg(
     fs.mkdirSync(ex);
     // bsdtar (macOS, Windows 10+) reads zip and tar.xz; GNU tar (Linux) reads tar.xz.
     // On Windows, Git's GNU tar may come first in PATH and cannot read zip; use the OS's bsdtar.
-    const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
-    await execFileP(tar, ['-xf', archive, '-C', ex], { windowsHide: true, timeout: 5 * 60_000, signal: opts.signal });
+    const tar = process.platform === 'win32' ? system32('tar.exe') : 'tar';
+    await mustRun(tar, ['-xf', archive, '-C', ex], { timeoutMs: 5 * 60_000, signal: opts.signal });
     const bin = findFile(ex, path.basename(pin.binary));
     if (!bin) throw new Error(`${pin.binary} not found inside ${pin.asset}.`);
     fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
     fs.copyFileSync(bin, `${dest}.tmp`);
     if (process.platform !== 'win32') fs.chmodSync(`${dest}.tmp`, 0o755);
-    await execFileP(`${dest}.tmp`, ['-hide_banner', '-version'], { windowsHide: true, timeout: 20_000 });
+    await mustRun(`${dest}.tmp`, ['-hide_banner', '-version'], { timeoutMs: 20_000 });
     fs.renameSync(`${dest}.tmp`, dest);
     fs.writeFileSync(path.join(path.dirname(dest), 'SOURCE.txt'), `${pin.url}\nsha256 ${pin.sha256}\nlicense ${pin.license}\nDownloaded from its publisher on this computer; SwarmCast does not redistribute ffmpeg.\n`);
     fs.writeFileSync(path.join(path.dirname(dest), 'PIN'), `${pinStamp(pin)}\n`);
