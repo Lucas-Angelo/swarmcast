@@ -62,6 +62,9 @@ jobs:
           persist-credentials: false
       - name: Expand the plan into job matrices
         id: plan
+        # bash with pipefail: a plan that does not validate fails here, not later in a step that
+        # reads its (empty) outputs.
+        shell: bash
         run: |
           node scripts/ci/soak-plan.mjs "$SOAK_PLAN" | tee -a "$GITHUB_OUTPUT" | cut -c1-200
       # desktop-test installs the installers of the newest pipeline.yml run for this commit, or of
