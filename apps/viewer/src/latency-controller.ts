@@ -41,6 +41,15 @@ export interface TickInput {
   latency: number | null;
   /** Seconds of video buffered ahead of the playhead. */
   forwardBuffer: number;
+  /**
+   * Seconds from the end of the buffer to the live edge, both read at this instant, null when
+   * unknown: what the buffer trend follows. Omitted, it is latency − forwardBuffer, for a caller
+   * whose latency is a reading of this instant too. adaptive-delay.ts passes it: its `latency`
+   * is a median of the last seconds, which trails the playhead, and that minus the buffer of now
+   * read every playbackRate change, and every playlist reload that listed two segments at once,
+   * as a trend (+0.2 s/s on a 30 Mbps link, called unstable).
+   */
+  liveLag?: number | null;
   /** hls.js bandwidth estimate, bits/s. */
   bandwidthEstimate: number;
   /** Bitrate of the rendition playing, bits/s (0 = unknown). */
@@ -188,6 +197,15 @@ export function scaledTuning(t: Tuning, speed: number, rateScale = 1): Tuning {
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+/**
+ * The buffer trend follows the median of the last this many one-second readings of the gap to
+ * the live edge (from the first full set), not each reading: the live edge estimate comes from
+ * the wall clock and the last playlist reload, so a clock step (many seconds), or a reload that
+ * lists a segment not buffered yet (one segment), widens the gap for a second or two. A trend
+ * is what lasts.
+ */
+export const LAG_SAMPLES = 5;
+
 /** Nearest-rank quantile of a non-empty list. */
 export function quantile(values: readonly number[], q: number): number {
   const s = [...values].sort((a, b) => a - b);
@@ -246,6 +264,8 @@ export class DelayController {
   private frags: FragmentSample[] = [];
   private headrooms: Array<{ t: number; v: number }> = [];
   private lags: Array<{ t: number; v: number }> = [];
+  /** The last LAG_SAMPLES raw gaps to the live edge (their median goes into `lags`). */
+  private recentLags: number[] = [];
   private stalls: Array<{ at: number; durationS: number }> = [];
   private lastStallAt = -Infinity;
   private lastHoldAt = -Infinity;
@@ -277,6 +297,7 @@ export class DelayController {
     this.frags = [];
     this.headrooms = [];
     this.lags = [];
+    this.recentLags = [];
     this.firmSince = this.unstableSince = this.calmSince = this.looseSince = null;
     this.lastTick = now ?? null;
     // Stall and P2P memory survive a profile switch: the network did not change.
@@ -424,8 +445,11 @@ export class DelayController {
     if (input.bandwidthEstimate > 0 && bitrate > 0) {
       this.headrooms.push({ t: now, v: Math.min(tu.headroomCap, input.bandwidthEstimate / bitrate) });
     }
-    if (input.playing && input.latency !== null && Number.isFinite(input.latency)) {
-      this.lags.push({ t: now, v: input.latency - input.forwardBuffer });
+    const lag = input.liveLag !== undefined ? input.liveLag : input.latency === null ? null : input.latency - input.forwardBuffer;
+    if (input.playing && lag !== null && Number.isFinite(lag)) {
+      this.recentLags.push(lag);
+      if (this.recentLags.length > LAG_SAMPLES) this.recentLags.shift();
+      if (this.recentLags.length === LAG_SAMPLES) this.lags.push({ t: now, v: quantile(this.recentLags, 0.5) });
     }
     this.frags = this.frags.filter((f) => now - f.at <= tu.windowS);
     this.headrooms = this.headrooms.filter((h) => now - h.t <= tu.windowS);
