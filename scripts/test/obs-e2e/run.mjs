@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { firefoxEnv } from '../lib/firefox.mjs';
+import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 import { setupObs, ensureMediaFile, OBS_DIR, SCENE } from './setup-obs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -24,7 +25,8 @@ const ARGS = new Set(process.argv.slice(2));
 const ARTIFACTS = path.join(here, 'artifacts');
 fs.mkdirSync(ARTIFACTS, { recursive: true });
 
-export const PORTS = { rtmp: 41935, public: 48080, admin: 48081, mediamtxHls: 48888 };
+export const PORTS = FIXED_PORTS.obsE2e;
+assertFixedPorts('obsE2e', PORTS);
 const OBS_BIN = process.env.OBS_BIN ?? '/Applications/OBS.app/Contents/MacOS/OBS';
 const OBS_FLAGS = ['--disable-updater', '--disable-missing-files-check', '--minimize-to-tray', '--profile', 'SwarmCast', '--collection', 'SwarmCast', '--scene', SCENE];
 const INPUT_NAME = 'Test video';

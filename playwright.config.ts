@@ -1,8 +1,9 @@
 import { defineConfig, devices } from '@playwright/test';
 import { firefoxEnv } from './scripts/test/lib/firefox.mjs';
+import { e2ePorts } from './scripts/test/lib/ports.mjs';
 
-// Keep in sync with apps/server/test/e2e/server.ts (SWARMCAST_E2E_PORT_OFFSET moves all ports).
-const PUBLIC = 38080 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0);
+// The e2e server's public port (scripts/test/lib/ports.mjs, moved by SWARMCAST_E2E_PORT_OFFSET).
+const PUBLIC = e2ePorts().public;
 const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 // Dates the specs and the e2e server format (log file names, "muted until") do not depend on
 // the machine's timezone: the runner, its workers and the server it starts all use UTC.

@@ -132,9 +132,11 @@ The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may tou
 - **Processes:** stop only the PIDs you started; never `pkill` / `killall` SwarmCast, MediaMTX, cloudflared,
   ffmpeg or OBS.
 - **Ports:** never bind, probe or kill 31935/38180/38181 (the maintainer's demo) or the defaults
-  1935/8080/8081/8888. Tests listen on port 0 or use `scripts/test/lib/ports.mjs`. The e2e suite takes
-  38080–38082, 38888 and 39935 plus `SWARMCAST_E2E_PORT_OFFSET`: one offset per concurrent run, never 100
-  (it lands on the demo); check first with `lsof -nP -iTCP:<port> -sTCP:LISTEN`.
+  1935/8080/8081/8888. Tests listen on port 0 or use `scripts/test/lib/ports.mjs`. A port a harness fixes
+  in advance lies in 10000–19999 (`FIXED_PORTS`), never in an ephemeral range (Linux 32768–60999, macOS
+  and Windows 49152–65535), where any outgoing connection can be holding it. The e2e suite takes
+  11080–11083 and 11935 plus `SWARMCAST_E2E_PORT_OFFSET`: one offset per concurrent run (e.g. 10, 20…;
+  the server refuses one that leaves the zone); check first with `lsof -nP -iTCP:<port> -sTCP:LISTEN`.
 - **Temporary files** go in `mktemp -d` folders or your session scratchpad, never in tracked paths or `$HOME`.
 - **Updater key:** `~/.tauri/swarmcast-updater.key` and `.password` are the real release key: never read,
   copy, print, commit or build with them. Local desktop builds sign with a throwaway key, as `_desktop.yml`

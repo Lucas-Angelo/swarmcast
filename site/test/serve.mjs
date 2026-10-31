@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 
 const DIST = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../dist');
 const BASE = '/swarmcast';
-const PORT = Number(process.argv[2] ?? process.env.SITE_E2E_PORT ?? 43210);
+const PORT = Number(process.argv[2] ?? process.env.SITE_E2E_PORT ?? 13210);
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',

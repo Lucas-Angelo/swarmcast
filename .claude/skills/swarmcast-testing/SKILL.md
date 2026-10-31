@@ -28,7 +28,9 @@ passes sometimes is a failing test. Main is protected: nothing lands unless ever
 5. **Reuse.** One fixture/helper/builder per concept (Playwright `test.extend`, the unit `helpers.ts`,
    e2e `fixtures.ts`). Search before writing a new helper.
 6. **Independent and parallel-safe.** Unique temp dirs (`fs.mkdtemp`), port 0, no order dependence. The
-   e2e server is shared by the whole run: every test restores what it changes.
+   e2e server is shared by the whole run: every test restores what it changes. A port needed before its
+   server starts comes from `allocPorts()` (20000-31999) or `FIXED_PORTS` (10000-19999), never from an
+   OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535; `scripts/test/lib/ports.mjs`).
 7. **Cross-OS by design.** `path.join`, no CRLF assumptions, case-insensitive file systems, Windows file
    locks (close handles before deleting), no POSIX signals on Windows (taskkill trees), bind 127.0.0.1,
    pin TZ/locale, compare timing against a baseline from the same run (CI VMs, macOS above all, are
@@ -92,6 +94,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | Loop-delay check fails only on macOS CI | the OS de-schedules the process (3 shared vCPUs); raw loop delay counts preemption | measure the server's own blocking (thread CPU + loop active time) |
 | Bench bot closed by the server | jitter pushed a bot over the server's 20 frames / 10 s ceiling | load generators keep a margin under every server limit |
 | Cache or upload step hung and failed the job | GitHub service incident | cache/diagnostics steps are non-fatal with short timeouts; tests and builds stay fatal |
+| Server fails at start with EADDRINUSE on a fixed port nothing else listens on (e2e control port 38082, run 41192273509) | the port lay in the OS ephemeral range (Linux 32768-60999, macOS/Windows 49152-65535): an outgoing loopback connection, or its TIME_WAIT, held 127.0.0.1:<port> | port 0 where possible; else a fixed port from `FIXED_PORTS` in 10000-19999 (`scripts/test/lib/ports.mjs`), checked by `assertFixedPorts` at start and by `ports-zone.test.ts` |
 
 ## CI
 
