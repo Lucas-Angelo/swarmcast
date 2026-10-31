@@ -16,8 +16,8 @@
 #
 #   media-foundation.ps1 wait [-Seconds N]  waits up to N seconds for it, sampling the servicing
 #     stack every 10 s, then checks that the feature is enabled. When dism.exe failed or is not
-#     done by then, it prints its log and the servicing diagnostics and fails, within the step's
-#     time limit.
+#     done by then, it prints its log and the servicing diagnostics and fails (an error
+#     annotation), within the step's time limit.
 #   media-foundation.ps1 diagnose           prints the servicing diagnostics only.
 #
 # Client Windows (windows-11-arm) has Media Foundation built in: both modes say so and exit 0.
@@ -34,6 +34,12 @@ $logFile = Join-Path $dir 'media-foundation.log'
 $dismLog = Join-Path $dir 'media-foundation-dism.log'
 
 function Now { [DateTime]::UtcNow.ToString('HH:mm:ss') + 'Z' }
+
+# Fails the step with `message` as its error annotation (the checks page shows it, not only the log).
+function Fail([string]$Message) {
+  "::error title=Media Foundation::$Message"
+  exit 1
+}
 
 # The end of a log that another process is writing (CBS.log, dism.log): opened for shared reading,
 # only its last $Bytes read.
@@ -113,7 +119,7 @@ if ((Get-ItemProperty 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion').Inst
 
 if ($Mode -eq 'diagnose') { Show-Diagnostics; exit 0 }
 
-if (-not (Test-Path $startFile)) { Show-Diagnostics; throw 'The Media Foundation install was never started (no media-foundation.start)' }
+if (-not (Test-Path $startFile)) { Show-Diagnostics; Fail 'the install was never started (no media-foundation.start)' }
 $started = [DateTime]::Parse((Get-Content $startFile), $null, 'RoundtripKind')
 $sw = [Diagnostics.Stopwatch]::StartNew()
 $samples = [Collections.Generic.List[string]]::new()
@@ -121,6 +127,7 @@ while (-not (Test-Path $doneFile) -and $sw.Elapsed.TotalSeconds -lt $Seconds) {
   $samples.Add((Get-Sample ([DateTime]::UtcNow - $started).TotalSeconds))
   Start-Sleep -Seconds 10
 }
+$waited = [int]$sw.Elapsed.TotalSeconds
 $code = if (Test-Path $doneFile) { (Get-Content $doneFile -Raw).Trim() } else { $null }
 $ended = if ($null -ne $code) { (Get-Item $doneFile).LastWriteTimeUtc } else { [DateTime]::UtcNow }
 $took = [int]($ended - $started).TotalSeconds
@@ -129,18 +136,18 @@ $samples
 '::endgroup::'
 if ($null -eq $code) {
   Show-Diagnostics
-  throw "Media Foundation: dism.exe has not finished $took s after it started (waited $([int]$sw.Elapsed.TotalSeconds) s here); see the diagnostics above"
+  Fail "dism.exe has not finished $took s after it started (waited $waited s here); see the servicing diagnostics in the log"
 }
 # 0: enabled; 3010: enabled, restart required (Media Foundation never asks for one: that would be a change to look at).
 if ($code -ne '0') {
   Show-Diagnostics
-  throw "Media Foundation: dism.exe exited with $code; see the diagnostics above"
+  Fail "dism.exe exited with $code; see its output and the servicing diagnostics in the log"
 }
 $info = & dism.exe /English /online /get-featureinfo "/featurename:$Feature"
 $state = ($info | Select-String '^State : (.+)$').Matches.Groups[1].Value
 if ($state -ne 'Enabled') {
   $info
   Show-Diagnostics
-  throw "Media Foundation: $Feature is '$state' after dism.exe exited with 0"
+  Fail "$Feature is '$state' after dism.exe exited with 0; see the servicing diagnostics in the log"
 }
-"Media Foundation ($Feature): Enabled, installed in $took s (dism.exe started $($started.ToString('HH:mm:ss'))Z; waited $([int]$sw.Elapsed.TotalSeconds) s here)"
+"Media Foundation ($Feature): Enabled, installed in $took s (dism.exe started $($started.ToString('HH:mm:ss'))Z; waited $waited s here)"
