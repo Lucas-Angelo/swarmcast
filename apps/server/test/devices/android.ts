@@ -56,13 +56,13 @@ const BOOT_MS = 240_000;
  */
 export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as const;
 /**
- * The emulator's GPU: guest-side software rendering, so that no host renderer runs. With
- * swiftshader_indirect (host-side SwiftShader through the emulator's renderer), emulators 37.2.12
- * and 37.2.13 crashed with SIGSEGV in the host renderer thread (cores named RenderThread, all at
- * the same instruction) in most runs, also without Vulkan, the host decoder and the screen
- * recording (Devices runs 41184587941, 41186692587, 41188080970).
+ * The emulator's GPU: SwiftShader on the host, through the emulator's renderer. Emulators 37.2.12
+ * and 37.2.13 crash with SIGSEGV in that renderer's thread (cores named RenderThread, all at the
+ * same instruction) in most CI runs, also without Vulkan, the host decoder and the screen
+ * recording (Devices runs 41184587941, 41186692587, 41188080970). `-gpu guest` was not honoured
+ * (run 41190536745: still "Graphics backend: gfxstream" and the same crash).
  */
-export const EMULATOR_GPU = 'guest';
+export const EMULATOR_GPU = 'swiftshader_indirect';
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -125,7 +125,7 @@ export class AndroidDevice {
     return device;
   }
 
-  /** Starts the suite's own emulator: headless, software GPU in the guest (EMULATOR_GPU, EMULATOR_FEATURES), no audio device, a cold boot. */
+  /** Starts the suite's own emulator: headless, software GPU (EMULATOR_GPU, EMULATOR_FEATURES), no audio device, a cold boot. */
   private static bootEmulator(logDir: string): Tracked {
     const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
     return spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', EMULATOR_GPU, ...EMULATOR_FEATURES], {
