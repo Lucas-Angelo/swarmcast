@@ -89,7 +89,7 @@ const en: Copy = {
   hero: {
     title: 'Members-only live streams, straight from your PC.',
     lead: 'Keep streaming from OBS. Send one secret link, and your members watch in their browser.',
-    shotAlt: 'The SwarmCast panel during a live: 3 viewers, the secret link for subscribers, the OBS settings, viewers helping through P2P, and the protection card.',
+    shotAlt: 'The SwarmCast panel during a live: 3 viewers, the secret link for subscribers, the OBS settings, viewers helping through P2P, and the live chat on the right.',
     shotCaption: 'The SwarmCast panel during a live.',
   },
   how: {
@@ -244,7 +244,7 @@ const pt: Copy = {
   hero: {
     title: 'Lives só para membros, direto do seu PC.',
     lead: 'Continue transmitindo pelo OBS. Mande um link secreto e os seus membros assistem pelo navegador.',
-    shotAlt: 'O painel do SwarmCast durante uma live: 3 espectadores, o link secreto para os inscritos, as configurações do OBS, espectadores ajudando pelo P2P e o cartão de proteção.',
+    shotAlt: 'O painel do SwarmCast durante uma live: 3 espectadores, o link secreto para os inscritos, as configurações do OBS, espectadores ajudando pelo P2P e o chat ao vivo à direita.',
     shotCaption: 'O painel do SwarmCast durante uma live.',
   },
   how: {

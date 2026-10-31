@@ -3,13 +3,15 @@ title: Chat
 description: Talk with your viewers under the video, and keep the chat friendly - delete, mute, slow mode, colours and automatic flood protection.
 ---
 
-Your live has a chat. Viewers write under the video, you read and answer in the panel's **Chat** card, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
+Your live has a chat. Viewers write under the video, you read and answer in the panel's **Live chat**, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
+
+While you are live, the **Live chat** is right on the panel's main screen, no scrolling needed: in a column on the right (under the status when the window is narrow), and it stays in view while you scroll through the rest of the panel. When you are not live, or the chat is off, it is not shown.
 
 :::note[Nicknames are public in the live]
 Everyone watching sees the nicknames in the chat. The join page says so before people type theirs.
 :::
 
-![The panel's Chat card: 1 the chat on/off switch, 2 the messages, with the Streamer badge on yours, 3 Send, to write as the streamer, 4 Flood protection, 5 Clear chat. Chat settings are on the right.](../../../assets/guides/live/en/chat-panel.webp)
+![The Live chat on the right of the panel: 1 the messages, with the Streamer badge on yours, 2 Send as …, to write as the streamer, 3 Flood protection, 4 Clear chat, 5 Settings (the chat on/off switch and the chat settings).](../../../assets/guides/live/en/chat-panel.webp)
 
 ## What viewers can send
 
@@ -17,11 +19,11 @@ Everyone watching sees the nicknames in the chat. The join page says so before p
 - **Emoji and emotes:** the usual emoji from the phone or the picker, plus the bee emotes that come with SwarmCast (`:gg:`, `:love:`, `:wow:`…).
 - **GIFs:** only if you turn them on with your own free key. See [Get a GIF key](/swarmcast/live/gif-key/).
 
-Your own messages, sent from the box **Send as …** at the bottom of the Chat card, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", or with a look-alike of the name of someone already watching.
+Your own messages, sent from the box **Send as …** at the bottom of the Live chat, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", or with a look-alike of the name of someone already watching.
 
 ## Keep the chat friendly
 
-Each message in the Chat card has an **Actions** menu:
+Each message in the Live chat has an **Actions** menu (the **⋯** button):
 
 - **Delete:** removes that message for everyone.
 - **Mute:** for 1 min, 10 min, 1 hour, or **until the stream ends**. The person keeps watching but cannot write. **Unmute** lets them write again right away. Leaving and coming back does not undo a mute.
@@ -44,7 +46,7 @@ When the chat gets too busy for your audience, or someone floods it, SwarmCast p
 - **Calm:** everyone waits longer between messages (automatic slow mode).
 - **Lock:** in a real flood, only people who were already watching can write. Newcomers can read.
 
-It goes back to normal by itself when things calm down. The card shows what is happening and why. You can also do it yourself under **Flood protection**: **Calm the chat now**, **Lock the chat to current viewers** and **Back to normal**.
+It goes back to normal by itself when things calm down. The Live chat shows what is happening and why. You can also do it yourself under **Flood protection**: **Calm the chat now**, **Lock the chat to current viewers** and **Back to normal**.
 
 :::tip
 The chat never slows the video down. Chat has its own small share of your upload, and if your computer gets busy, the chat slows down first so the video stays smooth.
@@ -52,7 +54,7 @@ The chat never slows the video down. Chat has its own small share of your upload
 
 ## Chat settings
 
-Open **Chat settings** in the Chat card, change what you want and click **Save chat settings**. Everyone watching gets the change within a second.
+Click **Settings** in the Live chat, or scroll down to the **Chat** card, change what you want and click **Save chat settings**. Everyone watching gets the change within a second.
 
 - **What viewers can send:** **Everything**, **Text + emotes**, **Text only**, **Emotes only** or **GIFs only**, or tick any mix. **Text only** means letters only: no emoji and no emotes. **Emotes only** means emoji and emotes, no letters.
 - **Slow mode: one message every…** each viewer waits this long between messages. 2 seconds by default; **Off** keeps only a short burst limit.
@@ -67,9 +69,9 @@ Open **Chat settings** in the Chat card, change what you want and click **Save c
 - **Viewers choose their name colour**, **Your name in the chat** and **Tell the chat when someone is muted**.
 - **SwarmCast emotes:** turns the bee emotes on or off.
 
-![Chat settings: what viewers can send, pace (slow mode, length, emoji, new viewers, repeats, history), safety (automatic flood protection, blocked words, links, alphabets), looks, GIFs, emotes, and Save chat settings.](../../../assets/guides/live/en/chat-settings.webp)
+![The Chat card with the chat settings: 1 the chat on/off switch; what viewers can send, pace (slow mode, length, emoji, new viewers, repeats, history), safety (automatic flood protection, blocked words, links, alphabets), looks, GIFs, emotes, and 2 Save chat settings.](../../../assets/guides/live/en/chat-settings.webp)
 
-To turn the chat off for everyone, use the switch at the top of the Chat card. Viewers then do not see the chat at all.
+To turn the chat off for everyone, use the switch at the top of the Chat card (1). Viewers then do not see the chat at all, and the Live chat leaves the panel until you turn it back on.
 
 ## What viewers see
 

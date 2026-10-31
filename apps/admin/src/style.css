@@ -53,6 +53,51 @@ p {
   margin: var(--sp-2) 0;
 }
 
+/* ---- Layout -----------------------------------------------------------------------------------
+ * Three areas (App.tsx): .zone-top (status, banners, start/stop steps), .chat-live (the live
+ * chat, only while live with the chat on: chat/ChatCard.tsx ChatLive) and .zone-main (the cards).
+ * Without the live chat the panel is one column, as before. With it, a wide window (the desktop
+ * app opens at 1200 x 820) puts the chat in a column on the right that stays in view while the
+ * cards scroll, like the chat of a streaming dashboard; a narrow one puts it under the status.
+ * Its height never depends on what it shows, so loading it never moves the cards.
+ */
+.wrap.with-chat {
+  --chat-col: clamp(300px, 28vw, 400px);
+  --chat-top: var(--sp-4);
+}
+.with-chat > .chat-live {
+  margin-top: var(--sp-4);
+  height: min(75vh, 560px);
+}
+@media (min-width: 960px) {
+  .wrap.with-chat {
+    /* Wide screens keep three columns of cards next to the chat. */
+    max-width: calc(1200px + var(--chat-col));
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) var(--chat-col);
+    grid-template-rows: auto 1fr;
+    grid-template-areas: 'top side' 'main side';
+    column-gap: var(--sp-4);
+    align-items: start;
+  }
+  .with-chat > .zone-top {
+    grid-area: top;
+    min-width: 0;
+  }
+  .with-chat > .zone-main {
+    grid-area: main;
+    min-width: 0;
+  }
+  .with-chat > .chat-live {
+    grid-area: side;
+    position: sticky;
+    top: var(--chat-top);
+    margin-top: 0;
+    /* The whole window below the top padding: the send box is always on screen. */
+    height: calc(100vh - var(--sp-6) - var(--chat-top));
+  }
+}
+
 /* ---- Header: brand, live state, main action ------------------------------------------------- */
 header.top {
   display: grid;
