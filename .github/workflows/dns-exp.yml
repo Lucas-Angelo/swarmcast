@@ -1,0 +1,42 @@
+name: DNS experiment (temporary, soak/tunneldns-exp only)
+on:
+  push:
+    branches: [soak/tunneldns-exp]
+permissions:
+  contents: read
+jobs:
+  exp:
+    name: dns-exp ${{ matrix.os }} ${{ matrix.n }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, n: 1, asset: cloudflared-windows-amd64.exe, sha: 411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8 }
+          - { os: windows-latest, n: 2, asset: cloudflared-windows-amd64.exe, sha: 411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8 }
+          - { os: windows-latest, n: 3, asset: cloudflared-windows-amd64.exe, sha: 411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8 }
+          - { os: windows-latest, n: 4, asset: cloudflared-windows-amd64.exe, sha: 411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8 }
+          - { os: ubuntu-latest, n: 1, asset: cloudflared-linux-amd64, sha: ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42 }
+          - { os: ubuntu-latest, n: 2, asset: cloudflared-linux-amd64, sha: ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42 }
+          - { os: macos-latest, n: 1, asset: cloudflared-darwin-arm64.tgz, sha: 68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f }
+          - { os: macos-latest, n: 2, asset: cloudflared-darwin-arm64.tgz, sha: 68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with: { node-version: 24 }
+      - name: cloudflared
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cf" && cd "$RUNNER_TEMP/cf"
+          curl -fsSL -o "${{ matrix.asset }}" "https://github.com/cloudflare/cloudflared/releases/download/2026.10.4/${{ matrix.asset }}"
+          echo "${{ matrix.sha }}  ${{ matrix.asset }}" | sha256sum -c - 2>/dev/null || echo "${{ matrix.sha }}  ${{ matrix.asset }}" | shasum -a 256 -c -
+          case "${{ matrix.asset }}" in *.tgz) tar xzf "${{ matrix.asset }}"; B=cloudflared;; *.exe) B="${{ matrix.asset }}";; *) chmod +x "${{ matrix.asset }}"; B="${{ matrix.asset }}";; esac
+          echo "CF_BIN=$RUNNER_TEMP/cf/$B" >> "$GITHUB_ENV"
+      - name: DNS servers
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then powershell -NoProfile -Command "Get-DnsClientServerAddress -AddressFamily IPv4 | Format-Table -AutoSize | Out-String -Width 200; Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\Dnscache\Parameters' | Out-String"; else cat /etc/resolv.conf || true; scutil --dns 2>/dev/null | head -20 || true; fi
+      - name: experiment
+        run: node .github/exp/dns-exp.mjs "${{ env.CF_BIN }}" 9
