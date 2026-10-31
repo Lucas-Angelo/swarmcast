@@ -60,9 +60,10 @@ export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as con
  * and 37.2.13 crash with SIGSEGV in that renderer's thread (cores named RenderThread, all at the
  * same instruction) in most CI runs, also without Vulkan, the host decoder and the screen
  * recording (Devices runs 41184587941, 41186692587, 41188080970). `-gpu guest` was not honoured
- * (run 41190536745: still "Graphics backend: gfxstream" and the same crash).
+ * (run 41190536745: still "Graphics backend: gfxstream" and the same crash). SWARMCAST_EMULATOR_GPU
+ * picks another mode (setup.sh's SC_ANDROID_API another Android).
  */
-export const EMULATOR_GPU = 'swiftshader_indirect';
+export const EMULATOR_GPU = process.env.SWARMCAST_EMULATOR_GPU ?? 'swiftshader_indirect';
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;

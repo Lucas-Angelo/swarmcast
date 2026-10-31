@@ -54,7 +54,7 @@ emulator_zip_sha256() {
     linux) echo "emulator-linux_x64-$EMULATOR_BUILD.zip b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1" ;;
   esac
 }
-ANDROID_API=36
+ANDROID_API="${SC_ANDROID_API:-36}"
 AVD_NAME=swarmcast-pixel
 AVD_DEVICE=pixel_7
 
