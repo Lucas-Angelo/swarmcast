@@ -7,46 +7,6 @@
     <meta name="robots" content="noindex, nofollow" />
     <title data-i18n="watch.pageTitle">Live · SwarmCast</title>
     <link rel="icon" href="../../assets/brand/favicon/favicon.svg" type="image/svg+xml" />
-    <!-- Startup guard. When one of the scripts this page starts with fails to load (a dropped
-         connection), the browser never runs it and never asks for it again: the page stayed on
-         screen looking ready, with nothing working ("Watch" disabled for good). This reloads the
-         page instead, at most three times in a row (counted in this tab, from zero again once the
-         page starts with its scripts), so a server that is gone does not reload it forever. Inline
-         on purpose: a guard in a file of its own could fail to load just the same. The server
-         allows exactly this script by its hash (apps/server/src/public/security.ts
-         inlineScriptHashes); keep it the same on join.html and watch.html
-         (test/unit/startup-guard.test.ts). -->
-    <script>
-      (function () {
-        var KEY = 'swarmcast.startupReloads';
-        var failed = false;
-        var started = false;
-        addEventListener(
-          'error',
-          function (e) {
-            var s = e.target;
-            if (failed || started || !(s instanceof HTMLScriptElement) || s.type !== 'module') return;
-            failed = true;
-            try {
-              var n = Number(sessionStorage.getItem(KEY)) || 0;
-              if (n >= 3) return;
-              sessionStorage.setItem(KEY, String(n + 1));
-            } catch (_) {
-              return;
-            }
-            location.reload();
-          },
-          true,
-        );
-        addEventListener('DOMContentLoaded', function () {
-          started = true;
-          if (failed) return;
-          try {
-            sessionStorage.removeItem(KEY);
-          } catch (_) {}
-        });
-      })();
-    </script>
   </head>
   <body class="watch">
     <!-- branding: theme (in the body on purpose: it must come after the bundled stylesheets, which

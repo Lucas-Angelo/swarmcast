@@ -26,7 +26,7 @@ const BRANDING = {
 };
 /** CSS time at which the page shows without its script (style.css: the 3 s fallback). */
 const CSS_FALLBACK_MS = 3000;
-/** How many times in a row the page reloads itself when its scripts fail to load (join.html, startup guard). */
+/** How many times in a row the page reloads itself when its scripts fail to load (its startup guard, @swarmcast/shared/web/startup-guard). */
 const STARTUP_RELOADS = 3;
 
 /** An answer the test gives when it wants: `answer` settles once `release(value)` is called. */

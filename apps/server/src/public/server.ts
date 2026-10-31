@@ -39,7 +39,7 @@ import type { Logger } from '../core/logger.js';
 import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
 import { resettableRateLimits } from './rate-limit-store.js';
-import { applySecurityHeaders, clientIp, inlineScriptHashes, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
+import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
 
 /** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
 export interface HttpStats {
@@ -166,8 +166,6 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   // Headers must arrive quickly; Node's default (60 s) is generous for a slowloris.
   app.server.headersTimeout = direct ? 8_000 : 15_000;
   const pages = loadPages(deps.viewerDir);
-  /** The viewer pages' startup guard, the one inline script the CSP allows (by its hash). */
-  const scriptHashes = inlineScriptHashes(Object.values(pages));
   const ip = (req: FastifyRequest): string => clientIp(req, opts.trustTunnel && !direct);
   const sec = deps.security;
   app.server.on('connection', (socket: Duplex) => {
@@ -199,7 +197,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     notePeak(deps.stats);
     sec.request(ip(req));
     const host = req.headers.host ?? '';
-    applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers(), deps.gifProvider?.(), scriptHashes), opts.secureCookies);
+    applySecurityHeaders(reply, viewerCsp(host, opts.secureCookies, deps.stunServers(), deps.gifProvider?.()), opts.secureCookies);
     reply.header('Cache-Control', 'private, no-store');
   });
   app.addHook('onResponse', async () => {

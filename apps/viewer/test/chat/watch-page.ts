@@ -5,7 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { expect, type Browser, type Page, type Route } from '@playwright/test';
-import { inlineScriptHashes, viewerCsp } from '../../../server/src/public/security.js';
+import { viewerCsp } from '../../../server/src/public/security.js';
 import type { MockHub } from './mock-hub.js';
 
 export const DIST = path.resolve(import.meta.dirname, '..', '..', 'dist');
@@ -76,9 +76,6 @@ type ApiRoutes = (route: Route, url: URL) => Promise<void> | false;
 /** The pages the server serves by path. */
 const PAGES: Record<string, string> = { '/watch': 'watch.html', '/join': 'join.html' };
 
-/** The server's viewer CSP, with the hash of the pages' startup guard as the server adds it. */
-const csp = (): string => viewerCsp('chat.test', false, [], undefined, inlineScriptHashes(Object.values(PAGES).map((f) => fs.readFileSync(path.join(DIST, f), 'utf8'))));
-
 /**
  * Serves the built viewer under ORIGIN with the server's viewer CSP: `api` answers first, then
  * the pages and their files from apps/viewer/dist (404 for anything else).
@@ -100,7 +97,7 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
     }
     return route.fulfill({
       body,
-      headers: { 'content-type': TYPES[path.extname(full)] ?? 'application/octet-stream', 'content-security-policy': csp(), 'referrer-policy': 'no-referrer' },
+      headers: { 'content-type': TYPES[path.extname(full)] ?? 'application/octet-stream', 'content-security-policy': viewerCsp('chat.test', false), 'referrer-policy': 'no-referrer' },
     });
   });
 }
@@ -158,7 +155,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
   });
   await serveViewer(page, (route, url) => {
     if (url.pathname === PAUSED_ANIMATIONS) return route.fulfill({ body: '*, *::before, *::after { animation-play-state: paused !important; }', contentType: 'text/css' });
-    if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': csp() } });
+    if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': viewerCsp('chat.test', false) } });
     if (o.withoutScripts && url.pathname.endsWith('.js')) return route.fulfill({ status: 404, body: 'not found' });
     if (url.pathname === '/api/brand') return o.brand.then((json) => route.fulfill({ json }));
     if (url.pathname === '/api/join/challenge') return route.fulfill({ json: { required: false } });

@@ -1,12 +1,20 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import { Window } from 'happy-dom';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { encodeTrackerFrame, parseTrackerFrame } from '@swarmcast/shared';
 import type { App } from '../../src/app.js';
 import { isListening } from '../../src/core/ports.js';
+import { STARTUP_GUARD_SOURCE } from '../../src/public/security.js';
 import { infoHashHexFor } from '../../src/tracker/tracker.js';
 import { bootApp, hasFfmpeg, isAlive, joinAs, signIn, startFeed, stopTracked, until, type Feed, type Ports } from './helpers.js';
 import { openControl, stopViewerLives, upgradeStatus } from './viewers.js';
+
+/** The text of each inline script (no src) of `html`, read by an HTML parser as a browser does. */
+function inlineScripts(html: string): string[] {
+  const doc = new new Window().DOMParser().parseFromString(html, 'text/html');
+  return Array.from(doc.querySelectorAll('script:not([src])'), (s) => s.textContent);
+}
 
 // MediaMTX, the public server and the panel of a real app, with a real RTMP stream from the
 // fake OBS. The checks that only read share one live (starting MediaMTX and the stream is the
@@ -149,9 +157,9 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     expect(res.headers.get('referrer-policy')).toBe('no-referrer');
     expect(res.headers.get('x-content-type-options')).toBe('nosniff');
     expect(res.headers.get('permissions-policy')).toContain('camera=()');
-    const inline = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => `'sha256-${crypto.createHash('sha256').update(m[1]!).digest('base64')}'`);
-    expect(inline).toHaveLength(1);
-    expect(csp).toContain(`script-src 'self' ${inline[0]};`);
+    const inline = inlineScripts(html).map((text) => `'sha256-${crypto.createHash('sha256').update(text).digest('base64')}'`);
+    expect(inline).toEqual([STARTUP_GUARD_SOURCE]);
+    expect(csp).toContain(`script-src 'self' ${STARTUP_GUARD_SOURCE};`);
   });
 
   it('keeps the admin API off the public port and locked down on its own port', async () => {

@@ -66,7 +66,7 @@ export async function openLink(page, url, log) {
  * join page on screen and running (soak run 41048049827, section 2, viewer caio): its automation
  * layer can miss the event on a navigation that switches process, as the join page's COOP header
  * does (Mozilla bug 1706353). The nickname is typed only then: a join page that lost one of its
- * scripts on the way reloads itself (its startup guard, apps/viewer/join.html), and a nickname
+ * scripts on the way reloads itself (its startup guard, packages/shared/web/startup-guard.mjs), and a nickname
  * typed into the page it replaces is gone (soak run 41194466705, windows-app job 15: one script
  * of the join page failed with net::ERR_NO_BUFFER_SPACE, and Watch was never enabled).
  */
