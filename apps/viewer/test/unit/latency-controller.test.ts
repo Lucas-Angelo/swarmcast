@@ -8,6 +8,10 @@
 // - "oscillating 4G" is 10 s good, 10 s bad: loads between 40 % and 160 % of real time, an
 //   estimate of 2.5-12 Mbps;
 // - a buffer that shrinks by 0.3 s a second while the delay stays means downloads fall behind;
+//   the gap to the live edge is read once a second and filtered (median of LAG_SAMPLES), so a
+//   clock step that shows hls.latency 17 s too high for 2 s (the 37 s blip of adaptive-delay.ts)
+//   is not a trend; the caller's own reading of that gap (liveLag) wins over latency minus the
+//   buffer, because adaptive-delay.ts's latency is a median that trails the playhead;
 // - far behind after a pause, the target does not run away from the delay, so the catch-up never
 //   stalls halfway.
 import { describe, expect, it } from 'vitest';
@@ -42,6 +46,10 @@ interface SimResult {
 const BITRATE = 3_000_000;
 const SEG = 2;
 const PROFILE_IDS = ['stable', 'low-delay'] as const;
+/** A wall-clock step (NTP, a laptop waking up) moves hls.latency, and so the gap to the live edge, this far for 2 s. */
+const CLOCK_STEP_S = 17;
+/** Late in the minute the test plays: the newest samples weigh most in a least-squares slope. */
+const CLOCK_STEP_AT_S = 50;
 
 /**
  * A tiny player model: every second the controller ticks; latency changes by (1 − playbackRate);
@@ -725,6 +733,46 @@ describe('buffer trend and user actions', () => {
     // Assert
     expect(state).toBe('unstable');
     expect(ctl.signals!.lagSlope).toBeGreaterThan(0.15);
+  });
+
+  it.each([
+    ['the profile clock', 1, 1],
+    ['the E2E flags', 10, 10],
+  ])('with %s, a 2 s blip in the gap to the live edge (a wall-clock step) is not a buffer falling behind', (_clock, speed, rateScale) => {
+    // Arrange
+    const ctl = new DelayController({ profile: 'stable', now: 0, speed, rateScale });
+
+    // Act
+    const states: string[] = [];
+    for (let t = 0; t < 60; t++) {
+      if (t % 2 === 0) ctl.onFragment({ at: t, durationS: 2, loadS: 0.2, source: 'http' });
+      const latency = t >= CLOCK_STEP_AT_S && t < CLOCK_STEP_AT_S + 2 ? 20 + CLOCK_STEP_S : 20;
+      states.push(ctl.tick({ now: t, latency, forwardBuffer: 18, bandwidthEstimate: 20_000_000, levelBitrate: BITRATE, playing: true }).state);
+    }
+
+    // Assert
+    expect(states).not.toContain('unstable');
+    expect(Math.abs(ctl.signals!.lagSlope!)).toBeLessThan(TUNING.stable.firm.maxLagSlope);
+  });
+
+  it('the trend follows the gap to the live edge the caller read (liveLag), not latency minus the buffer', () => {
+    // Arrange
+    const falling = new DelayController({ profile: 'stable', now: 0 });
+    const catchingUp = new DelayController({ profile: 'stable', now: 0 });
+
+    // Act
+    for (let t = 0; t < 60; t++) {
+      if (t % 2 === 0) for (const ctl of [falling, catchingUp]) ctl.onFragment({ at: t, durationS: 2, loadS: 0.6, source: 'http' });
+      const common = { now: t, bandwidthEstimate: 9_000_000, levelBitrate: BITRATE, playing: true };
+      falling.tick({ ...common, latency: 20, forwardBuffer: 18, liveLag: 2 + t * 0.3 });
+      catchingUp.tick({ ...common, latency: 20, forwardBuffer: Math.max(0, 18 - t * 0.3), liveLag: 2 });
+    }
+
+    // Assert
+    expect(falling.networkState).toBe('unstable');
+    expect(falling.signals!.lagSlope).toBeGreaterThan(0.15);
+    expect(catchingUp.networkState).not.toBe('unstable');
+    expect(catchingUp.signals!.lagSlope).toBe(0);
   });
 
   it('far behind after a pause: the target waits while playback catches up gently', () => {
