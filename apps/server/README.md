@@ -15,7 +15,7 @@ The main app (`swarmcast` executable). It starts MediaMTX and cloudflared, serve
 - Tests: `npm test` (unit, `test/unit`), `npm run test:integration` (real MediaMTX + ffmpeg, `test/integration`; `desktop.test.ts` drives `--desktop` as a fake desktop app), `npm run test:e2e` (Playwright, `test/e2e`, config in `playwright.config.ts`).
 - Key files in `src/`:
   - `main.ts`: CLI flags, signals, smoke test.
-  - `app.ts`: wiring.
+  - `app.ts`: wiring; `core/config-store.ts` is the one writer of `config.json` (never the run's fallback ports or `--no-tunnel`).
   - `core/live.ts`: start/stop steps, link rotation, admin state.
   - `public/server.ts`: join flow, `/hls/*`, WebSocket upgrades.
   - `access/access.ts`: links, tickets, sessions, kicks.
