@@ -87,6 +87,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 | Player stalls ~3 s on macOS Chrome even without load | runner noise | same-run baseline comparisons; stall comparison not on darwin, data in the spec |
 | Bench "every message reaches everyone" failed | scenario ran at the budget edge | give the scenario the headroom its claim assumes |
 | Artifact download failed after 5 retries | GitHub artifact service | `.github/actions/fetch-artifact` (3 tries, 30 s/90 s) |
+| Watch never enabled on a join page that looks ready | one of its scripts failed to load (net::ERR_NO_BUFFER_SPACE on a Windows runner): the browser never runs it nor asks again | the page reloads itself (startup guard, the one hash-allowed inline script); harnesses type the nickname only once Watch is enabled |
 | Join never posted / click did nothing | a status line above the button hid itself mid-click and moved the button (press on the button, release elsewhere, click on the ancestor) | never move a control after it appears (status below the button, page shown only when ready); Playwright checks the hit target only on press |
 | Chat message not shown in a visible page | rAF can stop for a page that still reports visible (occluded/background windows) | timer fallback when no frame comes (`render.ts`, `stats.late`) |
 | Slow mode refused a send at the end of the countdown | client counted from send, server from receipt | count from the ack, follow the current slowS, hold Send while a message is in flight |
