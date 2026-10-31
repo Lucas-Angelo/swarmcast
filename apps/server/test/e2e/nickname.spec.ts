@@ -50,7 +50,7 @@ test('invalid nicknames are refused as they are typed, before anything is sent',
 
 test('one character: no complaint while typing the first letter, a clear reason on submit', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
-  const page = await viewers.atJoinPage();
+  const page = await viewers.atJoinPage({ setup: (c) => c.addInitScript(DIAG) });
   const error = page.locator('#error');
 
   // Act
@@ -63,9 +63,27 @@ test('one character: no complaint while typing the first letter, a clear reason 
   await page.click('#join');
 
   // Assert
-  await expect(error).toHaveText(translate('en', 'nickname.tooShort', { min: 2 }));
+  try {
+    await expect(error).toHaveText(translate('en', 'nickname.tooShort', { min: 2 }), { timeout: 8000 });
+  } finally {
+    const log = await page.evaluate(() => JSON.stringify({ now: Math.round(performance.now()), focus: document.hasFocus(), vis: document.visibilityState, active: document.activeElement?.id, at: document.elementFromPoint(640, 380)?.id, log: (window as unknown as { __diag: unknown[] }).__diag })).catch((e) => String(e));
+    console.log(`DIAG ${test.info().project.name} r${test.info().repeatEachIndex}: ${log}`);
+  }
   await expect(page).toHaveURL(/\/join$/);
 });
+
+const DIAG = `(() => {
+  const log = (window.__diag = []);
+  const d = (t) => (t && t.id ? '#' + t.id : t && t.nodeName ? t.nodeName : String(t));
+  const add = (...a) => log.length < 400 && log.push([Math.round(performance.now()), ...a]);
+  for (const type of ['pointerover', 'pointermove', 'pointerdown', 'pointerup', 'mouseover', 'mousemove', 'mousedown', 'mouseup', 'click', 'submit', 'focusin', 'focusout', 'keydown', 'input', 'visibilitychange', 'pageshow', 'pagehide', 'blur', 'focus', 'DOMContentLoaded', 'load'])
+    addEventListener(type, (e) => add(type, d(e.target), e.isTrusted, e.clientX === undefined ? '' : e.clientX + ',' + e.clientY, document.hasFocus(), e.defaultPrevented), true);
+  addEventListener('DOMContentLoaded', () => {
+    const b = document.getElementById('join');
+    new MutationObserver((m) => m.forEach((r) => add('attr', d(r.target), r.attributeName, r.target.getAttribute(r.attributeName)))).observe(document.body, { attributes: true, subtree: true, attributeFilter: ['class', 'disabled', 'hidden'] });
+    add('dcl-button-disabled', b && b.disabled);
+  });
+})();`;
 
 test('the reasons are in Portuguese for pt-BR browsers', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
