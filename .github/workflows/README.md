@@ -179,6 +179,9 @@ runner itself, and kept failing for 3.5 minutes on one artifact while it worked 
 error that was, only the debug line knew; the diagnostics above now print it from the same
 runtime, and the fallback does not depend on that client.
 
+How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
+download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
+
 ## Coverage
 
 Measured in the test steps that already run the suites (no extra test runs), on every OS that runs
