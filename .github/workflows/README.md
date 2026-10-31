@@ -25,7 +25,7 @@ organization-owned repositories only, and this one belongs to a user.
 ## The pipeline
 
 ```
-changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×5, windows ×5 ──────────────┐
+changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×5 ──────────────┐
          ├─ build (web + windows pkgs) ─┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
          ├─ site (when the site changed) ─────────────────────────────────────────────┤
@@ -40,13 +40,13 @@ changes ─┬─ quick ──────────────────�
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the package and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
-| e2e | `_e2e.yml` | 5 (Ubuntu, macOS × `ui`, `media`; Windows chat UI) | Playwright, all three browser projects; `media` is the `@media` tests, `ui` the rest, plus the `@media` file(s) in `MEDIA_WITH_UI` to balance the two; the `ui` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, a few seconds), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
+| e2e | `_e2e.yml` | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced so each takes about 7 minutes on the slowest macOS runners; the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 1-2.5 minutes), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
-That is 28 jobs for a change to the app (7 on macOS, 7 on Windows), 29 when it also touches the
+That is 30 jobs for a change to the app (8 on macOS, 7 on Windows), 31 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
 5 of them on macOS.
 
