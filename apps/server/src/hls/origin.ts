@@ -155,6 +155,10 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   bitrateKbps = 0;
   /** Longest of the newest video segments, seconds. Segments are cut at OBS keyframes. */
   maxSegmentDurationS = 0;
+  /** Media playlists of the stream viewers last got (the multivariant of the last poll that was available). */
+  private served = new Set<string>();
+  /** Playlists kept from an earlier source that the stream viewers last got did not list (setSource). */
+  private dormant = new Set<string>();
   /** While true the origin keeps polling (so source info is known) but never reports itself available. */
   private holdOff = false;
   /**
@@ -191,10 +195,19 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   /**
    * Switch where HLS comes from (MediaMTX ↔ ladder, or a new ladder directory after OBS
    * reconnects). Stitchers are kept per playlist name, so a playlist that exists in both
-   * (v1080.m3u8 across reconnects) continues with a discontinuity instead of starting over.
+   * (v1080.m3u8 across reconnects) continues with a discontinuity instead of starting over;
+   * one that viewers could not get meanwhile starts its window over (below).
    */
   setSource(source: HlsSource): void {
     if (source === this.source) return;
+    // A playlist the stream viewers last got did not list is history when it comes back: no
+    // viewer is on it (asking for it answered 404, so the player loaded the stream again), and
+    // its window still holds the OBS connections from before it left. After the ladder fell
+    // back to the original, MediaMTX's playlists still began with the gate's 2 s connections,
+    // with runs that reached the audio playlist and not the video one and repeated
+    // PROGRAM-DATE-TIMEs; the viewer started on the oldest video segment and never found its
+    // audio, frozen 9 s until the stall watchdog moved it (quality.spec, macOS and Linux CI).
+    for (const name of this.stitchers.keys()) if (!this.served.has(name)) this.dormant.add(name);
     this.source = source;
     this.multivariant = null;
     this.multivariantRaw = '';
@@ -234,6 +247,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     this.files.clear();
     this.playlists.clear();
     this.stitchers.clear();
+    this.served.clear();
+    this.dormant.clear();
     this.discontinuities = new DiscontinuityClock();
     this.kbpsByPlaylist.clear();
     this.multivariant = null;
@@ -252,6 +267,18 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   getPlaylist(name: string): string | undefined {
     if (name === 'index.m3u8') return this.multivariant ?? undefined;
     return this.playlists.get(name);
+  }
+
+  /**
+   * A media playlist the stream being served does not list: gone for good (the rendition the
+   * quality ladder dropped, every ladder playlist once it fell back to the original quality, a
+   * quality OBS's reconnect no longer has), not one still to come. Only while the stream is
+   * available: before OBS starts, while it reconnects and while the ladder starts or switches
+   * (setSource), any playlist may still come (back).
+   */
+  isGone(name: string): boolean {
+    if (!this.available || name === 'index.m3u8') return false;
+    return !mediaPlaylistUris(this.multivariantRaw).some((uri) => fileName(uri) === name);
   }
 
   getFile(name: string): CachedFile | undefined {
@@ -367,6 +394,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
         if (src !== this.source) return;
         let st = this.stitchers.get(name);
         if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(0, this.windowSeconds, this.discontinuities)));
+        if (this.dormant.delete(name)) st.restart();
         changed = st.update(parsed, ready) || changed;
         let bytes = 0;
         let seconds = 0;
@@ -406,6 +434,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
       if (topKbps > 0) this.bitrateKbps = topKbps + audioKbps;
       const ready = this.playlists.size > 0 && this.multivariant !== null;
       this.setAvailable(ready && !this.holdOff);
+      if (this.available) this.served = active;
       if (changed) {
         this.version += 1;
         this.emit('updated');

@@ -66,7 +66,7 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 
 | What | Where | Why |
 |---|---|---|
-| A brand-new quick-tunnel name that the runner's resolver does not know yet | `waitForTunnelName` in [scripts/test/lib/viewer.mjs](../scripts/test/lib/viewer.mjs) (Windows suites, preflight); the host-side `/healthz` wait of `run.sh`'s tunnel check | the zone caches NXDOMAIN for its 60 s negative TTL: the wait is a lookup until the name resolves, then the check runs once |
+| A brand-new quick-tunnel name that the runner's resolver does not know yet | `waitForTunnelName` in [scripts/test/lib/viewer.mjs](../scripts/test/lib/viewer.mjs) (Windows suites, preflight); the host-side `/healthz` wait of `run.sh`'s tunnel check | the zone caches NXDOMAIN for its 60 s negative TTL: the wait is a lookup on Cloudflare's resolvers until they know the name, then one lookup on the runner's resolver (never asked before, by the app either), then the check runs once |
 | `hdiutil detach` while macOS services still scan a new volume ("Resource busy") | `detach` in [scripts/test/desktop/verify.mjs](../scripts/test/desktop/verify.mjs) | only "Resource busy" is waited out, then the detach is forced; any other error fails |
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
 | A registry hiccup on `docker pull` | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test |

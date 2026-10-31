@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { createApp } from '../../src/app.js';
+import { LoadGuard, type ShedReason } from '../../src/quality/load-guard.js';
 import { ensureClip } from '../../../../scripts/test/lib/ffmpeg.mjs';
 import { OwnLoopDelay } from '../../../../scripts/test/lib/loop-delay.mjs';
 import { assertFixedPorts, e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
@@ -58,6 +59,36 @@ export const E2E_PORTS = appPorts;
 // the control port then, and this server died with EADDRINUSE before the first test.
 assertFixedPorts('e2e', { ...E2E_PORTS, control: CONTROL_PORT }, `SWARMCAST_E2E_PORT_OFFSET=${OFFSET} (pick another offset)`);
 
+/**
+ * The quality ladder's load guard drops a rendition to protect OBS when the whole machine's CPU
+ * is saturated or the ladder falls behind real time. Here the CPU goes to the test's own
+ * browsers, not to an OBS, and a drop swaps the playlists under the scenario a spec set up: on
+ * macos-latest (3 vCPU) the CPU trigger dropped 480p 12 s after the ladder started, and
+ * barely-delivers then waited in vain for its two qualities (PR #21, run 40917266795); the
+ * behind trigger dropped it once in 43 macOS media jobs (0 in 43 on Linux), mid-way through
+ * barely-delivers' forced stall (run 41190535446). So it drops one only when a spec asks
+ * (POST /shed: quality.spec.ts, what viewers see when it happens); unit tests (load-guard,
+ * quality-decisions) cover both triggers.
+ */
+class SpecLoadGuard extends LoadGuard {
+  private asked: ShedReason | null = null;
+  ask(reason: ShedReason): void {
+    this.asked = reason;
+  }
+  /** Forgets a drop asked for and not made yet (no ladder ran since); true if there was one. */
+  cancel(): boolean {
+    const had = this.asked !== null;
+    this.asked = null;
+    return had;
+  }
+  override check(now: number, s: Parameters<LoadGuard['check']>[1]): ShedReason | null {
+    const reason = this.asked;
+    this.asked = null;
+    return reason ?? super.check(now, s);
+  }
+}
+const loadGuard = new SpecLoadGuard({ cpuSaturatedPercent: 101, behindSpeed: 0 });
+
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-e2e-'));
 // "Export logs" writes here, never to the real Downloads folder (diagnostics.spec.ts).
 process.env.SWARMCAST_DOWNLOADS_DIR = path.join(dataDir, 'downloads');
@@ -65,12 +96,7 @@ fs.mkdirSync(process.env.SWARMCAST_DOWNLOADS_DIR, { recursive: true });
 const app = await createApp({
   dataDir,
   noTunnel: true,
-  // The quality ladder's load guard drops a rendition when the whole machine's CPU is saturated,
-  // to protect OBS. Here the CPU goes to the test's own browsers, not to an OBS: on macos-latest
-  // (3 vCPU) it dropped 480p 12 s after the ladder started, and barely-delivers then waited in
-  // vain for its two qualities (PR #21, run 40917266795). The guard keeps its other trigger
-  // (the ladder falling behind real time); unit and integration tests cover the CPU one.
-  loadGuard: { cpuSaturatedPercent: 101 },
+  loadGuard,
   // The chat's event-loop guard pauses GIFs, forces slow mode and refuses viewers' messages for at
   // least 10 s after two seconds of a late event loop, whatever made it late. On macos-latest it
   // paused a second before chat-privacy's GIF test (p99 222 ms with ELU 0.32, the loop mostly
@@ -229,6 +255,7 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
     did.push('branding');
   }
   let obs = !!o.hard;
+  if (loadGuard.cancel()) did.push('rendition drop asked for');
   if (!same(app.config.quality, initial.quality)) {
     L.quality.updateSettings({ ...structuredClone(initial.quality), obsWebsocket: { ...initial.quality.obsWebsocket } });
     did.push('quality settings');
@@ -246,10 +273,11 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
 // ---- stream health (GET /health) ----
 
 /**
- * Every media playlist (video and audio) viewers get: the seconds it covers, and the
- * discontinuity number a player gives its newest segment (the sequence plus the tags before it).
+ * Every media playlist (video and audio) viewers get: the seconds it covers, the seconds of the
+ * current OBS connection in it (after its last discontinuity), and the discontinuity number a
+ * player gives its newest segment (the sequence plus the tags before it).
  */
-function mediaPlaylists(): Array<{ name: string; seconds: number; lastCc: number }> {
+function mediaPlaylists(): Array<{ name: string; seconds: number; currentS: number; lastCc: number }> {
   const multivariant = app.live.origin.getPlaylist('index.m3u8') ?? '';
   const names = new Set<string>();
   for (const line of multivariant.split('\n')) {
@@ -260,8 +288,10 @@ function mediaPlaylists(): Array<{ name: string; seconds: number; lastCc: number
     const text = app.live.origin.getPlaylist(name) ?? '';
     let seconds = 0;
     for (const m of text.matchAll(/#EXTINF:([\d.]+)/g)) seconds += Number(m[1]);
+    let currentS = 0;
+    for (const m of text.slice(text.lastIndexOf('#EXT-X-DISCONTINUITY\n') + 1).matchAll(/#EXTINF:([\d.]+)/g)) currentS += Number(m[1]);
     const lastCc = Number(/#EXT-X-DISCONTINUITY-SEQUENCE:(\d+)/.exec(text)?.[1] ?? 0) + (text.match(/^#EXT-X-DISCONTINUITY$/gm)?.length ?? 0);
-    return { name, seconds: Math.round(seconds * 10) / 10, lastCc };
+    return { name, seconds: Math.round(seconds * 10) / 10, currentS: Math.round(currentS * 10) / 10, lastCc };
   });
 }
 
@@ -273,7 +303,7 @@ interface Health {
   variants: number[];
   sinceSegmentMs: number | null;
   playlistS: number;
-  playlists: Array<{ name: string; seconds: number; lastCc: number }>;
+  playlists: Array<{ name: string; seconds: number; currentS: number; lastCc: number }>;
   windowSeconds: number;
   ladder: string;
   threat: string;
@@ -283,14 +313,21 @@ interface Health {
 
 /**
  * Healthy: live, `qualities` variants (1: the ladder is off), a new segment within 2.5 segment
- * durations, and every media playlist holding at least `minPlaylistS`.
+ * durations, and every media playlist holding at least `minPlaylistS` of the current OBS
+ * connection. Earlier connections do not count: a stream that "has run for a while" is one
+ * connection, and a player that starts in an earlier one meets the interruption (a stall at the
+ * discontinuity) inside the test. The playlists keep earlier connections across reconnects, as
+ * they should for viewers; after the gate reconnected OBS for a test that changed the feed
+ * (quality.spec, a rendition drop), adaptive-delay's good-network viewer started 20 s behind
+ * live in the previous test's 720p connection and stalled at the switch to this one, which the
+ * controller rightly read as an unstable network (soak 41202808716, 2 of 3 repeats).
  */
 function healthNow(minPlaylistS: number, qualities: number): Health {
   const L = app.live;
   const variants = L.origin.variants().map((v) => v.height);
   const since = L.origin.lastSegmentAt ? Date.now() - L.origin.lastSegmentAt : null;
   const playlists = mediaPlaylists();
-  const playlistS = playlists.length ? Math.min(...playlists.map((p) => p.seconds)) : 0;
+  const playlistS = playlists.length ? Math.min(...playlists.map((p) => p.currentS)) : 0;
   const problems: string[] = [];
   // A player matches audio to video (and one quality to another) by discontinuity number: if
   // the newest segments disagree, nothing new ever plays (seen when OBS reconnected twice
@@ -301,7 +338,7 @@ function healthNow(minPlaylistS: number, qualities: number): Health {
   if (variants.length !== qualities) problems.push(`${variants.length} qualities (${variants.join(', ')}), expected ${qualities}`);
   if (since === null) problems.push('no segment yet');
   else if (since > 2.5 * SEGMENT_DURATION_S * 1000) problems.push(`no new segment for ${since} ms`);
-  if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s, ${minPlaylistS} s wanted`);
+  if (playlistS < minPlaylistS) problems.push(`the playlist holds ${playlistS} s of the current OBS connection, ${minPlaylistS} s wanted`);
   return {
     ok: problems.length === 0,
     problems,
@@ -363,6 +400,8 @@ async function health(waitMs: number, minPlaylistS: number, qualities: number): 
 //   emulates v0.2.0 servers, whose ladder audio playlist held only 20 s);
 // - POST /own-loop-delay: the p99 of how long the app's own work held up this process's event
 //   loop since the previous call (scripts/test/lib/loop-delay.mjs), then starts over.
+// - POST /shed: the ladder's load guard drops a rendition at its next check (about 2 s), as when
+//   the streamer's PC cannot convert it in real time (SpecLoadGuard above).
 const ownLoopDelay = new OwnLoopDelay();
 const json = (res: http.ServerResponse, status: number, body: unknown): void => void res.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify(body));
 async function readJson(req: http.IncomingMessage): Promise<unknown> {
@@ -404,6 +443,10 @@ const control = http.createServer((req, res) => {
       return json(res, 200, { windowSeconds: app.live.origin.windowSeconds });
     }
     if (post && url.pathname === '/own-loop-delay') return json(res, 200, { p99Ms: ownLoopDelay.takeP99() });
+    if (post && url.pathname === '/shed') {
+      loadGuard.ask('behind');
+      return json(res, 200, { ladder: app.live.quality.state().transcoder.status });
+    }
     const m = /^\/pow-level\/([012])$/.exec(url.pathname);
     if (post && m) {
       shield.setAutoPow(Number(m[1]) as 0 | 1 | 2);

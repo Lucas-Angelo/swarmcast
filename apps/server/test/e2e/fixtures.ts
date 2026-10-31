@@ -72,9 +72,10 @@ function streamHealth(o: { waitMs?: number; minPlaylistS?: number; qualities?: n
 }
 
 /**
- * Waits until the live playlist covers `seconds`. Viewers normally join a stream that has run
- * for a while: right after OBS starts the playlist is short, players sit at the live edge and
- * every segment is urgent (fetched over HTTPS, never from peers).
+ * Waits until the live playlist covers `seconds` of the current OBS connection (server.ts
+ * healthNow). Viewers normally join a stream that has run for a while: right after OBS starts the
+ * playlist is short, players sit at the live edge and every segment is urgent (fetched over HTTPS,
+ * never from peers).
  */
 export async function waitForPlaylist(seconds: number, o: { qualities?: number; timeoutMs?: number } = {}): Promise<void> {
   const h = await streamHealth({ waitMs: o.timeoutMs ?? 90_000, minPlaylistS: seconds, qualities: o.qualities ?? 1 });
@@ -107,6 +108,15 @@ export async function setPlaylistWindow(seconds: number): Promise<void> {
  */
 export async function reconnectObs(feed: 'hd' | null): Promise<void> {
   await control('POST', '/obs', feed === null ? null : { feed });
+}
+
+/**
+ * Makes the quality ladder drop a rendition at its next check (about 2 s), as when the
+ * streamer's PC cannot convert it in real time; by itself it never does here (server.ts
+ * SpecLoadGuard). The next test's gate puts the ladder settings back.
+ */
+export async function dropRendition(): Promise<void> {
+  await control('POST', '/shed');
 }
 
 /**

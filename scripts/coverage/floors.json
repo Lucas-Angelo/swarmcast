@@ -15,8 +15,9 @@
     "darwin": { "total": { "lines": 53, "branches": 37, "functions": 49, "statements": 49 } }
   },
   "e2e-server": {
-    "ui": { "total": { "lines": 75 } },
-    "media": { "total": { "lines": 73 } }
+    "ui": { "total": { "lines": 72 } },
+    "chat": { "total": { "lines": 71 } },
+    "media": { "total": { "lines": 71 } }
   },
   "desktop": {
     "linux": { "total": { "lines": 32, "functions": 38, "regions": 36 } },
