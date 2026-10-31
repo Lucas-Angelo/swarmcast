@@ -20,8 +20,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      - name: Encoding probe first
+        shell: bash
+        run: node --experimental-transform-types probe/encoding-probe.mts
       - name: Probe
+        if: always()
         shell: bash
         env:
           PROBE_N: '300'
         run: node --experimental-transform-types probe/autostart-probe.mts
+      - name: Encoding probe
+        if: always()
+        shell: bash
+        run: node --experimental-transform-types probe/encoding-probe.mts
