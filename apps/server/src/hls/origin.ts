@@ -155,6 +155,10 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   bitrateKbps = 0;
   /** Longest of the newest video segments, seconds. Segments are cut at OBS keyframes. */
   maxSegmentDurationS = 0;
+  /** Media playlists of the stream viewers last got (the multivariant of the last poll that was available). */
+  private served = new Set<string>();
+  /** Playlists kept from an earlier source that the stream viewers last got did not list (setSource). */
+  private dormant = new Set<string>();
   /** While true the origin keeps polling (so source info is known) but never reports itself available. */
   private holdOff = false;
   /**
@@ -191,10 +195,19 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
   /**
    * Switch where HLS comes from (MediaMTX ↔ ladder, or a new ladder directory after OBS
    * reconnects). Stitchers are kept per playlist name, so a playlist that exists in both
-   * (v1080.m3u8 across reconnects) continues with a discontinuity instead of starting over.
+   * (v1080.m3u8 across reconnects) continues with a discontinuity instead of starting over;
+   * one that viewers could not get meanwhile starts its window over (below).
    */
   setSource(source: HlsSource): void {
     if (source === this.source) return;
+    // A playlist the stream viewers last got did not list is history when it comes back: no
+    // viewer is on it (asking for it answered 404, so the player loaded the stream again), and
+    // its window still holds the OBS connections from before it left. After the ladder fell
+    // back to the original, MediaMTX's playlists still began with the gate's 2 s connections,
+    // with runs that reached the audio playlist and not the video one and repeated
+    // PROGRAM-DATE-TIMEs; the viewer started on the oldest video segment and never found its
+    // audio, frozen 9 s until the stall watchdog moved it (quality.spec, macOS and Linux CI).
+    for (const name of this.stitchers.keys()) if (!this.served.has(name)) this.dormant.add(name);
     this.source = source;
     this.multivariant = null;
     this.multivariantRaw = '';
@@ -234,6 +247,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     this.files.clear();
     this.playlists.clear();
     this.stitchers.clear();
+    this.served.clear();
+    this.dormant.clear();
     this.discontinuities = new DiscontinuityClock();
     this.kbpsByPlaylist.clear();
     this.multivariant = null;
@@ -379,6 +394,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
         if (src !== this.source) return;
         let st = this.stitchers.get(name);
         if (!st) this.stitchers.set(name, (st = new PlaylistStitcher(0, this.windowSeconds, this.discontinuities)));
+        if (this.dormant.delete(name)) st.restart();
         changed = st.update(parsed, ready) || changed;
         let bytes = 0;
         let seconds = 0;
@@ -398,7 +414,6 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
       // Only playlists of the current source keep their files alive; a stitcher left over
       // from the other source just ages out (and is reused if that source comes back).
       const active = new Set(mediaPlaylistUris(this.multivariantRaw).map(fileName));
-      if (this.alignRuns(active, audio)) changed = true;
       for (const [name, st] of this.stitchers) {
         if (!active.has(name)) continue;
         for (const n of st.names()) {
@@ -419,6 +434,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
       if (topKbps > 0) this.bitrateKbps = topKbps + audioKbps;
       const ready = this.playlists.size > 0 && this.multivariant !== null;
       this.setAvailable(ready && !this.holdOff);
+      if (this.available) this.served = active;
       if (changed) {
         this.version += 1;
         this.emit('updated');
@@ -429,38 +445,6 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     } finally {
       this.polling = false;
     }
-  }
-
-  /**
-   * The oldest segment of every video playlist has its audio, and the other way round. A player
-   * starts at the oldest segment when the window is short and plays a segment only with the audio
-   * of the same upstream run (hls.js `cc`): a video playlist that began with a run the audio
-   * playlist no longer (or never) had left it with video and no audio, frozen until the stall
-   * watchdog moved it. Seen when the ladder fell back to the original: MediaMTX's video playlist,
-   * left over from before the ladder, still began with the one segment of a 2 s OBS connection
-   * that never reached its audio playlist (quality.spec on macOS CI: a 9 s freeze after the
-   * switch). Only such a head goes, and never a whole playlist: the window slides on, sequence and
-   * run numbers only grow. Returns true if a playlist changed.
-   */
-  private alignRuns(active: ReadonlySet<string>, audio: ReadonlySet<string>): boolean {
-    const live = [...active].flatMap((name) => {
-      const st = this.stitchers.get(name);
-      return st && st.length > 0 ? [{ name, st, audio: audio.has(name) }] : [];
-    });
-    const audios = live.filter((p) => p.audio);
-    const videos = live.filter((p) => !p.audio);
-    if (audios.length === 0 || videos.length === 0) return false;
-    const audioRuns = audios.map((p) => p.st.runs());
-    const videoRuns = videos.map((p) => p.st.runs());
-    let changed = false;
-    for (const p of live) {
-      // Video needs its run in every audio playlist; audio needs it in at least one video playlist.
-      const stale = p.audio ? (cc: number) => !videoRuns.some((r) => r.has(cc)) : (cc: number) => !audioRuns.every((r) => r.has(cc));
-      if (!p.st.dropOldRunsWhile(stale)) continue;
-      this.playlists.set(p.name, p.st.render());
-      changed = true;
-    }
-    return changed;
   }
 
   private async ensureFile(src: HlsSource, uri: string, now: number): Promise<boolean> {

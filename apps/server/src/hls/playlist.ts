@@ -345,6 +345,19 @@ export class PlaylistStitcher {
     return added;
   }
 
+  /**
+   * Starts the window over from the next update, as a new playlist would (its numbers keep
+   * growing, and its runs keep the numbers the origin's clock gave them): for a playlist kept
+   * from an earlier source that viewers could not get meanwhile (HlsOrigin.setSource).
+   */
+  restart(): void {
+    this.window = [];
+    this.seen.clear();
+    this.seenOrder = [];
+    this.droppedCc = null;
+    this.lastMap = undefined;
+  }
+
   /** Seconds the playlist currently covers. */
   durationS(): number {
     return this.window.reduce((sum, e) => sum + e.duration, 0);
@@ -369,25 +382,6 @@ export class PlaylistStitcher {
 
   get length(): number {
     return this.window.length;
-  }
-
-  /** The run numbers (cc) this playlist lists. */
-  runs(): Set<number> {
-    return new Set(this.window.map((e) => e.cc));
-  }
-
-  /**
-   * Drops the oldest entries while `stale(cc)` holds for their run, as long as an entry of a run
-   * that is not stale stays (never empties the playlist). Returns true if any was dropped.
-   */
-  dropOldRunsWhile(stale: (cc: number) => boolean): boolean {
-    if (this.window.every((e) => stale(e.cc))) return false;
-    let dropped = false;
-    while (stale(this.window[0]!.cc)) {
-      this.dropFirst();
-      dropped = true;
-    }
-    return dropped;
   }
 
   /** File names (segments and init segments) the rendered playlist references. */

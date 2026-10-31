@@ -17,10 +17,11 @@
 // on with the original before its buffer runs out (the most it holds is the Stable starting
 // delay), with no long freeze: the server answers 404 for a playlist the stream no longer lists,
 // and the player loads the stream again. Answered 503 ("not started yet", retried), the viewer was
-// still on the old playlists 120 s later (measured locally), frozen. The original's video playlist
-// may still begin with a segment from before the ladder whose audio is gone (the gate's 2 s OBS
-// connection before the 720p feed): the origin drops such a head (HlsOrigin.alignRuns), else the
-// player started on it and waited for that audio until the stall watchdog moved it (9 s, macOS CI).
+// still on the old playlists 120 s later (measured locally), frozen. Back on the original, its
+// playlists list only what came after the ladder (HlsOrigin.setSource): kept from before, they
+// began with the gate's 2 s OBS connections, one of them in the audio playlist only, and the
+// player started on the oldest video segment and never found its audio, frozen 9 s until the
+// stall watchdog moved it (macOS and Linux CI).
 // The server goes back to one quality and the default feed at the next test's gate.
 import type { BrowserContext, Page } from '@playwright/test';
 import { ADAPTIVE_DELAY, type QualityState } from '@swarmcast/shared';
