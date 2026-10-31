@@ -41,13 +41,9 @@ const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
 /**
  * Emulator features turned off. HardwareDecoder: the emulator decodes H.264 for Android on the
- * host (Chrome gets c2.goldfish.h264.decoder), and the whole emulator halted as Chrome started
- * decoding the live in both CI runs that played it: 41173958482 on the first play (the device log
- * stops 1.2 s after "C2GoldfishAvcDec: calling onInit"; then adb loses the device and the console
- * port closes, with nothing in the emulator's output), 41171340670 on the second (the video never
- * played, then the same loss). Without it Android decodes the
- * video itself (c2.android.avc.decoder), as a phone without that hardware does. devices.yml
- * passes the same.
+ * host (Chrome gets c2.goldfish.h264.decoder). In Devices run 41173958482 the device log stopped
+ * 1.2 s after "C2GoldfishAvcDec: calling onInit" and the emulator was gone; without the feature,
+ * Android decodes the video itself (no goldfish codec in run 41175462466) and the live played.
  */
 export const EMULATOR_FEATURES = ['-feature', '-HardwareDecoder'] as const;
 
@@ -92,9 +88,9 @@ export class AndroidDevice {
   ) {}
 
   /**
-   * The device to test on: $ANDROID_SERIAL, else the one connected device (CI: the emulator
-   * android-emulator-runner started), else the suite boots its AVD headless and stops it in
-   * release(). Then prepared: no animations (as on CI), screen kept on, portrait, the
+   * The device to test on: $ANDROID_SERIAL, else the one connected device, else (CI, and a
+   * machine with no device connected) the suite boots its AVD headless, its output and exit in
+   * emulator.log, and stops it in release(). Then prepared: no animations, screen kept on, portrait, the
    * full-screen notice already seen, and the e2e server's public port reachable on the
    * device's 127.0.0.1.
    */
@@ -112,7 +108,7 @@ export class AndroidDevice {
     if (!serial) {
       serial = `emulator-${OWN_EMULATOR_PORT}`;
       const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
-      // As devices.yml boots it on CI: headless, software GPU, no audio device, a cold boot, video
+      // Headless (CI boots it this way too), software GPU, no audio device, a cold boot, video
       // decoded inside Android (EMULATOR_FEATURES).
       own = spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect', ...EMULATOR_FEATURES], {
         name: 'emulator',
@@ -137,6 +133,12 @@ export class AndroidDevice {
     await device.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
     return device;
+  }
+
+  /** How the emulator this suite booted ended, with its last output lines; null while it runs (or for a device that was already there). */
+  emulatorExit(): string | null {
+    if (!this.own || this.own.running) return null;
+    return `the emulator exited (${JSON.stringify(this.own.exitInfo)}); its last lines:\n${this.own.tail(40)}`;
   }
 
   async shell(args: readonly string[]): Promise<void> {

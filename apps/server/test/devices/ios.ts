@@ -99,20 +99,23 @@ function keyboardMenuItems(): Promise<string> {
 }
 
 /**
- * Disconnects the Mac's keyboard from the simulator: with it connected (Simulator.app's default),
- * iOS treats the simulator as a phone with a keyboard attached and shows no on-screen keyboard,
- * so a tap on a text field moves nothing (CI run 41171340670: the visible height stayed 714 px).
- * Simulator.app keeps the choice per simulator; setup.sh's global ConnectHardwareKeyboard default
- * did not reach it. The menu is the one switch Simulator.app reads at once.
+ * Connects the Mac's keyboard to the simulator (I/O > Keyboard > Connect Hardware Keyboard,
+ * Simulator.app's default), so that a focused field gets a text input session. Without one,
+ * safaridriver's Element Send Keys (Automation.performKeyboardInteractions, InsertByKey) answers
+ * OK and inserts nothing: with the keyboard disconnected, Devices run 41175462466 joined with an
+ * empty nickname in every test ("Please choose a nickname."), though the tap had reached the
+ * field as a finger's and focused it. Either way iOS shows no on-screen keyboard here
+ * (IosPhone.onScreenKeyboard). Simulator.app keeps the choice per simulator; the menu is the one
+ * switch it reads at once.
  */
-async function disconnectHardwareKeyboard(): Promise<void> {
-  if (!(await hardwareKeyboardConnected())) return;
+async function connectHardwareKeyboard(): Promise<void> {
+  if (await hardwareKeyboardConnected()) return;
   await osascript([
     'tell application "Simulator" to activate',
     `tell application "System Events" to tell process "Simulator" to click (first menu item of ${KEYBOARD_MENU} whose name contains "Hardware Keyboard")`,
   ]);
-  // The menu's check mark follows a moment later (CI run 41173006688 read it still ticked at once).
-  await until(async () => !(await hardwareKeyboardConnected()), { timeoutMs: 10_000, what: 'Connect Hardware Keyboard unticked after its menu item was clicked' });
+  // The menu's check mark follows a moment later (CI run 41173006688 read it unchanged at once).
+  await until(() => hardwareKeyboardConnected(), { timeoutMs: 10_000, what: 'Connect Hardware Keyboard ticked after its menu item was clicked' });
 }
 
 /** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
@@ -174,10 +177,10 @@ export class IosDevice {
         { timeoutMs: 60_000, what: "Simulator.app's window" },
       );
       note("Simulator.app's window shown");
-      await disconnectHardwareKeyboard().catch(async (e: Error) => {
+      await connectHardwareKeyboard().catch(async (e: Error) => {
         throw new Error(`${e.message} (${await keyboardMenuItems()})`);
       });
-      note('hardware keyboard disconnected');
+      note('hardware keyboard connected');
     }
     const [port] = await allocPorts(1);
     const driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
@@ -274,9 +277,11 @@ export class IosPhone implements Phone {
    * Xcode 26, iOS 26.5, Devices run 41173958482): the tap on #nickname reached the page as a
    * finger's (trusted pointerdown/pointerup of type touch, touchstart, touchend, then mousedown
    * and click), the field had focus, Simulator.app did not connect the Mac's keyboard (its
-   * I/O > Keyboard menu, unticked by attach()), and still the visual viewport stayed 714 px
-   * high and the screen recording showed no keyboard, in every test. So on iOS the keyboard
-   * checks (what it leaves in sight) are not made; the tap, the typing and every other check are.
+   * I/O > Keyboard menu, unticked then), and still the visual viewport stayed 714 px high and
+   * the screen recording showed no keyboard, in every test. With the Mac's keyboard connected
+   * (as attach() now leaves it, for typing: connectHardwareKeyboard) iOS shows none either. So on
+   * iOS the keyboard checks (what it leaves in sight) are not made; the tap, the typing and every
+   * other check are.
    */
   readonly onScreenKeyboard = false;
 

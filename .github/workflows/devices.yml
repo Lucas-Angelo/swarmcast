@@ -108,10 +108,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      # Android 16 with Google APIs (it ships Chrome, and is a debuggable build: Chrome reads the
-      # suite's command-line flags); the same Android as scripts/test/devices/setup.sh locally.
-      API_LEVEL: '36'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -132,46 +128,27 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      # Room on the runner's disk for the emulator's data partition. The emulator will not start with
-      # less free space than the partition may take (run 41173006688: "Not enough space to create
-      # userdata partition. Available: 7038.12 MB ..., need 7372.80 MB"), and the partition grows
-      # while the tests run. The image's toolchains this job never uses go first; the emulator step
-      # then checks the room left once the SDK is installed (pre-emulator-launch-script).
-      - name: Disk space for the emulator
-        timeout-minutes: 5
+      # Android 16 with Google APIs (it ships Chrome, and is a debuggable build: Chrome reads the
+      # suite's command-line flags). The SDK, the emulator and the AVD as on a developer's machine: setup.sh with its pinned
+      # command-line tools (not the image's newer ones, which hand over to a tool that collects
+      # usage data), in a folder of the job's own. The image's Android SDK and other toolchains this
+      # job never uses go first, for room on the disk.
+      - name: Android SDK, emulator and AVD
+        timeout-minutes: 10
         run: |
-          df -m /
-          sudo rm -rf /usr/local/lib/android/sdk/ndk /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
-          df -m /
-      # One emulator, booted cold (about 30 s with KVM) with no snapshot: a boot snapshot takes
-      # gigabytes of the same disk, and a restored AVD booted cold anyway (the action appends
-      # its settings to config.ini on every start, "a different AVD configuration").
-      # The action runs each line of `script` in its own `sh -c`: one command, the suite. The suite
-      # uses the emulator the action started (the one connected device). No hardware keyboard
-      # (enable-hw-keyboard is false by default): the on-screen keyboard is part of the checks.
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
+          sdk="$RUNNER_TEMP/android-sdk"
+          { echo "ANDROID_HOME=$sdk"; echo "ANDROID_SDK_ROOT=$sdk"; } >>"$GITHUB_ENV"
+          ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" scripts/test/devices/setup.sh install android
+          df -m "$HOME"
+      # The suite boots the AVD itself (no device connected; android.ts AndroidDevice.attach), as it
+      # does on a developer's machine, and keeps the emulator's output and exit in
+      # test-results/devices/android-device/emulator.log: the emulator the action used to start
+      # vanished mid-run twice with nothing in its output and no exit status anywhere.
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       - name: Device tests, Android
         timeout-minutes: 25
-        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        env:
-          # The emulator's own floor for a 6000 MB partition (7373 MB) and room for what the run writes.
-          DISK_FREE_MB: '10000'
-        with:
-          api-level: ${{ env.API_LEVEL }}
-          target: google_apis
-          arch: x86_64
-          profile: pixel_7
-          ram-size: 4096M
-          disk-size: 6000M
-          cores: 2
-          # -feature -HardwareDecoder: Android decodes the video itself; the emulator's host-side
-          # H.264 decoder halted it (apps/server/test/devices/android.ts EMULATOR_FEATURES).
-          emulator-options: -no-snapshot -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none -no-metrics -feature -HardwareDecoder
-          disable-animations: true
-          emulator-boot-timeout: 300
-          pre-emulator-launch-script: |
-            free_mb="$(df --output=avail -m "$HOME/.android" | tail -n 1 | tr -d ' ')"; echo "free on the AVD's disk: $free_mb MB"; [ "$free_mb" -ge "$DISK_FREE_MB" ] || { echo "::error::$free_mb MB free for the emulator, $DISK_FREE_MB MB needed"; exit 1; }
-          script: npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
+        run: npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -188,7 +165,7 @@ jobs:
             echo "== free -m"; free -m
             echo "== df -m"; df -m
             echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100
-            echo "== emulator crash reports"; find /tmp/android-runner -ls 2>&1 | head -n 100
+            echo "== emulator crash reports"; find /tmp -maxdepth 3 -path '*emu-crash*' -ls 2>&1 | head -n 100
           } 2>&1 | tee test-results/devices/host-state.txt
       - name: Upload the report, recordings and logs
         if: ${{ !cancelled() }}

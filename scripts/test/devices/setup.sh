@@ -188,7 +188,6 @@ remove_android() {
 
 SIM_NAME="SwarmCast iPhone"
 SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-17
-SIM_PREFS=com.apple.iphonesimulator
 # Web Inspector and remote automation switches inside the simulator (apps/server/test/devices/ios.ts).
 SIM_KEYS="com.apple.webinspectord:RemoteInspectorEnabled com.apple.webinspectord:RemoteAutomationEnabled com.apple.webinspectord:WIRRemoteAutomationEnabled com.apple.mobilesafari:WebKitDeveloperExtrasEnabledPreferenceKey com.apple.mobilesafari:WebInspectorEnabled com.apple.mobilesafari:RemoteAutomationEnabled com.apple.mobilesafari:WebKitRemoteAutomationEnabled"
 
@@ -235,18 +234,12 @@ install_ios() {
   xcrun simctl bootstatus "$udid" -b >/dev/null || die "$SIM_NAME did not boot"
   for key in $SIM_KEYS; do xcrun simctl spawn "$udid" defaults write "${key%%:*}" "${key#*:}" -bool true || die "cannot set $key"; done
   xcrun simctl shutdown "$udid" || true
-  # Xcode 26 and older: Simulator.app (the suite rotates the simulator with its menu) shows the
-  # on-screen keyboard only without a "connected" hardware keyboard. The old value comes back on remove.
-  if [ -d "$(xcode-select -p)/Applications/Simulator.app" ]; then
-    if [ -z "$(recorded sim-pref)" ]; then record sim-pref "ConnectHardwareKeyboard=$(defaults read "$SIM_PREFS" ConnectHardwareKeyboard 2>/dev/null || echo unset)"; fi
-    defaults write "$SIM_PREFS" ConnectHardwareKeyboard -bool false
-  fi
   say "iOS ready: $SIM_NAME ($udid). safaridriver needs 'sudo safaridriver --enable' once (it asks for an admin password)."
 }
 
 remove_ios() {
   [ "$(uname -s)" = Darwin ] || return 0
-  local udid id pref
+  local udid id
   while IFS= read -r udid; do
     xcrun simctl shutdown "$udid" >/dev/null 2>&1 || true
     xcrun simctl delete "$udid" >/dev/null 2>&1 || true
@@ -258,13 +251,6 @@ remove_ios() {
     forget sim-runtime "$id"
     say "Removed the simulator runtime $id"
   done < <(recorded sim-runtime)
-  while IFS= read -r pref; do
-    case "$pref" in
-      ConnectHardwareKeyboard=unset) defaults delete "$SIM_PREFS" ConnectHardwareKeyboard >/dev/null 2>&1 || true ;;
-      ConnectHardwareKeyboard=*) defaults write "$SIM_PREFS" ConnectHardwareKeyboard -bool "${pref#*=}" ;;
-    esac
-    forget sim-pref "$pref"
-  done < <(recorded sim-pref)
 }
 
 # ---- Windows 11 VM (UTM) ----

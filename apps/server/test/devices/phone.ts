@@ -76,6 +76,11 @@ export function isShown(phone: Phone, selector: string): Promise<boolean> {
   }, selector);
 }
 
+/** The text in a form field. */
+export function fieldValue(phone: Phone, selector: string): Promise<string | null> {
+  return phone.evaluate((s) => (document.querySelector(s) as HTMLInputElement | HTMLTextAreaElement | null)?.value ?? null, selector);
+}
+
 /** The join page's own state, for a join that never reached the watch page (which step it stopped at). */
 function joinPageState(phone: Phone): Promise<string> {
   return phone
@@ -107,6 +112,7 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
+  await expect.poll(() => fieldValue(phone, '#nickname'), { message: 'the nickname is in the field' }).toBe(nickname);
   await still(phone);
   const seen = { nicknameInSight: await inSight(phone, '#nickname'), watchInSight: await inSight(phone, '#join') };
   await phone.tap('#join');

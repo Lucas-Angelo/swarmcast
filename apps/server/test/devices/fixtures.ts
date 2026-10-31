@@ -51,6 +51,8 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
           if (page) await testInfo.attach('page', { body: page, contentType: 'image/png' });
         }
         if (device instanceof AndroidDevice) {
+          const exit = device.emulatorExit();
+          if (exit) await testInfo.attach('emulator', { body: exit, contentType: 'text/plain' });
           // A file next to the recording, so CI's test-results upload keeps it too.
           const log = testInfo.outputPath('logcat.txt');
           fs.writeFileSync(log, await device.logcat().catch((e: Error) => e.message));
