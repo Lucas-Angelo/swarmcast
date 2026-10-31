@@ -3,7 +3,7 @@
 // Each test opens its own page on a hub of its own. The hub holds the echo of the page's own
 // message when a test wants to see "sending…": nothing here waits on a timer.
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Locator, type Page } from '@playwright/test';
 import { emojiData } from '../../scripts/emoji-data.mjs';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild, reviewScreenshot } from './watch-page.js';
@@ -57,6 +57,22 @@ async function emojiBuiltAtOpen(page: Page): Promise<() => Promise<{ built: numb
     await expect.poll(() => page.evaluate(() => (window as unknown as { __atOpen?: unknown }).__atOpen ?? null)).not.toBeNull();
     return page.evaluate(() => (window as unknown as { __atOpen: { built: number; fit: number } }).__atOpen);
   };
+}
+
+/**
+ * Scrolls `list` to its end with the mouse wheel, turn after turn as a person does: Firefox
+ * scrolls at most one page per wheel event, whatever its delta. Each turn waits for the list to
+ * move (a smooth scroll starts on a later frame) before the next one.
+ */
+async function wheelToEnd(page: Page, list: Locator): Promise<void> {
+  const position = () => list.evaluate((el) => ({ top: el.scrollTop, end: el.scrollHeight - el.clientHeight }));
+  await list.hover();
+  let { top, end } = await position();
+  while (top < end - 1) {
+    const before = top;
+    await page.mouse.wheel(0, end - top);
+    await expect.poll(async () => (({ top, end } = await position()), top)).toBeGreaterThan(before);
+  }
 }
 
 /** WCAG 2.2 contrast of two CSS colours "rgb(r, g, b)". */
@@ -354,8 +370,7 @@ test.describe('viewer chat (mock hub)', () => {
     expect(atOpen.fit).toBeLessThan(EMOJI_EN.length / 4);
 
     // Act
-    await picker.locator('.picker-body').hover();
-    await page.mouse.wheel(0, EMOJI_EN.length * CELL_MIN_PX);
+    await wheelToEnd(page, picker.locator('.picker-body'));
 
     // Assert
     await expect(picker.locator(`button.pick[aria-label="${last[1]}"]`)).toBeInViewport();
