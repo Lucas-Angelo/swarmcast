@@ -191,6 +191,19 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: node .github/scripts/test-summary.mjs --title 'Real devices, Android Chrome (ubuntu-24.04 emulator)' --playwright test-results/devices.json
+      # What the runner says about a device that stopped answering: memory, the kernel's kills, the
+      # emulator's own crash reports. Kept with the report.
+      - name: Host state (a failed run)
+        if: failure()
+        continue-on-error: true
+        timeout-minutes: 2
+        run: |
+          mkdir -p test-results/devices
+          {
+            echo "== free -m"; free -m
+            echo "== dmesg: memory, kills, KVM"; sudo dmesg -T | grep -iE 'oom|out of memory|killed process|segfault|kvm|qemu' | tail -n 100
+            echo "== emulator crash reports"; ls -laR /tmp/android-runner 2>&1 | head -n 100
+          } 2>&1 | tee test-results/devices/host-state.txt
       - name: Upload the report, recordings and logs
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

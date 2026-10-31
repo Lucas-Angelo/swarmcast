@@ -202,11 +202,19 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
         const settled = before.height - v.height > KEYBOARD_MIN_PX && now === previous;
         previous = now;
         if (settled) return 'up';
-        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; keyboard: ${await phone.keyboardState()}`;
+        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; focus: ${await focused(phone)}; keyboard: ${await phone.keyboardState()}`;
       },
       { message: `the on-screen keyboard is up for ${selector} and the page has stopped moving` },
     )
     .toBe('up');
+}
+
+/** The focused element as `tag#id` (`body` when nothing has focus), for a failure message. */
+function focused(phone: Phone): Promise<string> {
+  return phone.evaluate(() => {
+    const el = document.activeElement;
+    return el ? `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}` : '(none)';
+  });
 }
 
 /**

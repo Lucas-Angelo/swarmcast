@@ -68,6 +68,12 @@ async function pageTargets(port: number): Promise<string[] | null> {
 }
 
 export class AndroidDevice {
+  /**
+   * The device log of the whole run, streamed to logcat.txt in the log folder: unlike the
+   * per-test `logcat -d`, it keeps what the device said before it stopped answering.
+   */
+  private log: Tracked | null = null;
+
   private constructor(
     readonly serial: string,
     /** The emulator this suite booted (it stops it at the end); null for a device that was already there. */
@@ -107,6 +113,7 @@ export class AndroidDevice {
       what: `${serial} to finish booting`,
       abortOn: own ? [own] : [],
     });
+    device.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
     for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await device.shell(['settings', 'put', 'global', scale, '0']);
     await device.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
@@ -250,6 +257,7 @@ export class AndroidDevice {
   }
 
   async release(): Promise<void> {
+    await this.log?.stop();
     if (!this.own) return;
     await run(ADB, ['-s', this.serial, 'emu', 'kill']).catch(() => {});
     await this.own.stop({ graceMs: 30_000 });
