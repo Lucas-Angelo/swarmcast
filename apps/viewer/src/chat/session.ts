@@ -2,10 +2,11 @@
 // It turns server frames into calls on a ChatView, in seq order and without duplicates
 // (plan §4.2): items at or below lastSeq are ignored (reconnects), and a gap without a `skip`
 // item asks the server to resume from lastSeq while the newer items wait (at most RESUME_WAIT_MS).
-import { CHAT_PROTOCOL_VERSION, type GifRef, type ChatAuthor, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou } from './core/index.js';
+import { CHAT_PROTOCOL_VERSION, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
-export type ClientFrame = { t: 'chat.send'; n: number; text: string } | { t: 'chat.send'; n: number; gif: GifRef } | { t: 'chat.color'; color: string } | { t: 'chat.resume'; after: number };
+/** A chat frame this page sends on /control (the shared protocol type). */
+export type ClientFrame = ChatClientMessage;
 
 export type ChatEntry =
   | { kind: 'msg'; s: number; at: number; author: ChatAuthor; text?: string; gif?: GifRef }
