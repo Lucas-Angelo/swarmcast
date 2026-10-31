@@ -254,6 +254,18 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     return this.playlists.get(name);
   }
 
+  /**
+   * A media playlist the stream being served does not list: gone for good (the rendition the
+   * quality ladder dropped, every ladder playlist once it fell back to the original quality, a
+   * quality OBS's reconnect no longer has), not one still to come. Only while the stream is
+   * available: before OBS starts, while it reconnects and while the ladder starts or switches
+   * (setSource), any playlist may still come (back).
+   */
+  isGone(name: string): boolean {
+    if (!this.available || name === 'index.m3u8') return false;
+    return !mediaPlaylistUris(this.multivariantRaw).some((uri) => fileName(uri) === name);
+  }
+
   getFile(name: string): CachedFile | undefined {
     return this.files.get(name);
   }
