@@ -38,8 +38,9 @@ import type { TrackerService } from '../tracker/tracker.js';
 import type { Logger } from '../core/logger.js';
 import { scrub } from '../core/logger.js';
 import type { PublicSecurity } from '../security/shield.js';
-import { resettableRateLimits } from './rate-limit-store.js';
-import { applySecurityHeaders, clientIp, isMobileUserAgent, originMatchesHost, viewerCsp } from './security.js';
+import { resettableRateLimits } from '../http/rate-limit-store.js';
+import { applySecurityHeaders, originMatchesHost } from '../http/security-headers.js';
+import { clientIp, isMobileUserAgent, viewerCsp } from './security.js';
 
 /** Viewer-facing HTTP requests: in progress now, the highest count in the last window, served in total. */
 export interface HttpStats {
@@ -419,6 +420,11 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
       const pl = origin.getPlaylist(name);
       // 503 + Retry-After (not 404): players retry 5xx, so viewers who join before OBS
       // starts (or while it reconnects) pick the stream up as soon as it exists.
+      // A playlist the live stream no longer lists is 404: hls.js does not retry a 4xx, and the
+      // viewer loads the stream again (player-config.ts createManifestReloader). Answered 503, a
+      // viewer on the rendition the quality ladder dropped kept retrying it, frozen (quality.spec:
+      // still on it 120 s later; barely-delivers on macOS CI: 2.5 s played in 20 s).
+      if (!pl && origin.isGone(name)) return reply.code(404).send(apiError('viewer.err.notFound'));
       if (!pl) return reply.code(503).header('Retry-After', '2').send(apiError('viewer.err.notStarted'));
       return reply.type('application/vnd.apple.mpegurl').send(pl);
     }

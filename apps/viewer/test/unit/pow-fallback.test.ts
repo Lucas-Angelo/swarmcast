@@ -3,10 +3,13 @@
 // challenges. A silent worker used to leave the join page at "Checking your browser… 0 %" for
 // good (stability soak: Firefox on Windows); the watchdog moves the solve to the main thread, and
 // the bar keeps moving there too.
+// The watchdog runs on a manual clock, never on faked global timers: the real solver yields to the
+// event loop with setTimeout once a solve passes 200 ms, and a faked one would hold it for good
+// (a loaded runner reached that; the test then timed out).
 import { createChallenge, type Challenge, type Solution } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/sha';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { solvePow, WORKER_SILENT_MS, type PowWorker } from '../../src/pow.js';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { solvePow, WORKER_SILENT_MS, type PowTimers, type PowWorker } from '../../src/pow.js';
 import { PROGRESS_EVERY } from '../../src/pow-attempts.js';
 
 /** A challenge whose answer is `counter` attempts away; `max` is what the progress bar counts against. */
@@ -34,21 +37,42 @@ class FakeWorker implements PowWorker {
   }
 }
 
+/** The watchdog's clock: time moves only when the test says so (then pending callbacks run). */
+class ManualClock implements PowTimers {
+  private now = 0;
+  private next = 1;
+  private readonly timers = new Map<number, { at: number; fire: () => void }>();
+  setTimeout(fire: () => void, ms: number): number {
+    const id = this.next++;
+    this.timers.set(id, { at: this.now + ms, fire });
+    return id;
+  }
+  clearTimeout(timer: unknown): void {
+    this.timers.delete(timer as number);
+  }
+  async advance(ms: number): Promise<void> {
+    this.now += ms;
+    for (const [id, t] of [...this.timers]) {
+      if (t.at > this.now) continue;
+      this.timers.delete(id);
+      t.fire();
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+}
+
 describe('solvePow with a worker', () => {
-  beforeEach(() => {
-    // Only the watchdog's timers: the real solver reads performance.now for its own time budget.
-    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
-  });
   afterEach(() => {
-    vi.useRealTimers();
+    vi.restoreAllMocks();
   });
 
   it("returns the worker's solution and shows its progress against the most attempts the challenge can need", async () => {
     // Arrange
     const c = await challenge(3, 2_000);
     const worker = new FakeWorker();
+    const clock = new ManualClock();
     const progress: number[] = [];
-    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker });
+    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker, timers: clock });
     const solution: Solution = { counter: 3, derivedKey: 'k', time: 1 };
 
     // Act
@@ -67,12 +91,13 @@ describe('solvePow with a worker', () => {
     // Arrange
     const c = await challenge(3);
     const worker = new FakeWorker();
-    const solved = solvePow(c, undefined, { worker: () => worker });
+    const clock = new ManualClock();
+    const solved = solvePow(c, undefined, { worker: () => worker, timers: clock });
     const solution: Solution = { counter: 3, derivedKey: 'k', time: 1 };
 
     // Act
     for (let i = 1; i <= 3; i++) {
-      await vi.advanceTimersByTimeAsync(WORKER_SILENT_MS - 1);
+      await clock.advance(WORKER_SILENT_MS - 1);
       worker.say({ attempts: i * PROGRESS_EVERY });
     }
     worker.say({ solution });
@@ -85,18 +110,19 @@ describe('solvePow with a worker', () => {
     // Arrange
     const c = await challenge(3);
     const worker = new FakeWorker();
+    const clock = new ManualClock();
     let settled = false;
-    const solved = solvePow(c, undefined, { worker: () => worker }).finally(() => (settled = true));
+    const solved = solvePow(c, undefined, { worker: () => worker, timers: clock }).finally(() => (settled = true));
 
     // Act
-    await vi.advanceTimersByTimeAsync(WORKER_SILENT_MS - 1);
+    await clock.advance(WORKER_SILENT_MS - 1);
 
     // Assert
     expect(settled).toBe(false);
     expect(worker.terminated).toBe(false);
 
     // Act
-    await vi.advanceTimersByTimeAsync(1);
+    await clock.advance(1);
 
     // Assert
     expect((await solved).solution.counter).toBe(3);
@@ -107,7 +133,8 @@ describe('solvePow with a worker', () => {
     // Arrange
     const c = await challenge(3);
     const worker = new FakeWorker();
-    const solved = solvePow(c, undefined, { worker: () => worker });
+    const clock = new ManualClock();
+    const solved = solvePow(c, undefined, { worker: () => worker, timers: clock });
 
     // Act
     worker.crash('SyntaxError: import declarations may only appear at top level of a module');
@@ -121,8 +148,9 @@ describe('solvePow with a worker', () => {
     // Arrange
     const c = await challenge(2 * PROGRESS_EVERY + 100, 4 * PROGRESS_EVERY);
     const worker = new FakeWorker();
+    const clock = new ManualClock();
     const progress: number[] = [];
-    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker });
+    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker, timers: clock });
 
     // Act
     worker.crash('worker failed');
@@ -130,5 +158,26 @@ describe('solvePow with a worker', () => {
 
     // Assert
     expect(progress).toEqual([0.25, 0.5, 1]);
+  });
+
+  it('finishes a main-thread solve slow enough to yield to the event loop', async () => {
+    // Arrange
+    const c = await challenge(2 * PROGRESS_EVERY + 100, 4 * PROGRESS_EVERY);
+    const worker = new FakeWorker();
+    const clock = new ManualClock();
+    const progress: number[] = [];
+    const solved = solvePow(c, (f) => progress.push(f), { worker: () => worker, timers: clock });
+    let now = performance.now();
+    vi.spyOn(performance, 'now').mockImplementation(() => (now += 50));
+    const yields = vi.spyOn(globalThis, 'setTimeout');
+
+    // Act
+    worker.crash('worker failed');
+    const { solution } = await solved;
+
+    // Assert
+    expect(solution.counter).toBe(2 * PROGRESS_EVERY + 100);
+    expect(progress).toEqual([0.25, 0.5, 1]);
+    expect(yields).toHaveBeenCalledWith(expect.any(Function), 0);
   });
 });

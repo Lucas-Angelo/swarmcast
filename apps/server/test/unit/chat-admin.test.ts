@@ -164,6 +164,20 @@ describe('chat admin API', () => {
     expect(r.statusCode).toBe(400);
   });
 
+  it('the panel snapshot says whether the chat is on, and a new snapshot goes out when it changes', async () => {
+    // Arrange
+    const { live, call } = await chatPanel();
+    const before = live.snapshot().chatEnabled;
+    const pushed: boolean[] = [];
+    live.on('state', () => pushed.push(live.snapshot().chatEnabled));
+    // Act
+    const r = await call('PUT', '/api/chat/settings', { ...live.chatSettings(), enabled: false });
+    // Assert
+    expect(r.statusCode).toBe(200);
+    expect(before).toBe(true);
+    expect(pushed).toContain(false);
+  });
+
   it('the panel snapshot never carries chat (it has its own /ws message)', async () => {
     // Arrange
     const { live } = await chatPanel();

@@ -7,9 +7,20 @@ export type PowProgress = (fraction: number) => void;
 /** What the solve needs of its dedicated worker (one running pow-worker.ts). */
 export type PowWorker = Pick<Worker, 'onmessage' | 'onerror' | 'postMessage' | 'terminate'>;
 
+/** The clock of the worker's watchdog. */
+export interface PowTimers {
+  setTimeout(fire: () => void, ms: number): unknown;
+  clearTimeout(timer: unknown): void;
+}
+
 export interface SolvePowOptions {
   /** Starts the solver worker (tests pass a fake). */
   worker?: () => PowWorker;
+  /**
+   * The watchdog's clock (tests pass a manual one: faked global timers would also hold the
+   * main-thread solver, which yields to the event loop with setTimeout).
+   */
+  timers?: PowTimers;
 }
 
 /**
@@ -21,7 +32,7 @@ export async function solvePow(challenge: Challenge, onProgress?: PowProgress, o
   const report = (attempts: number): void => {
     if (onProgress && max > 0) onProgress(Math.min(0.99, attempts / max));
   };
-  const solution = await solveInWorker(challenge, report, o.worker ?? startWorker).catch(() => solveHere(challenge, report));
+  const solution = await solveInWorker(challenge, report, o.worker ?? startWorker, o.timers ?? realTimers).catch(() => solveHere(challenge, report));
   if (!solution) throw new Error('no solution');
   onProgress?.(1);
   return { challenge: { parameters: challenge.parameters, ...(challenge.signature ? { signature: challenge.signature } : {}) }, solution };
@@ -36,18 +47,28 @@ export const WORKER_SILENT_MS = 15_000;
 
 const startWorker = (): PowWorker => new Worker(new URL('./pow-worker.ts', import.meta.url), { type: 'module' });
 
-function solveInWorker(challenge: Challenge, report: (attempts: number) => void, start: () => PowWorker): Promise<Solution | null> {
+const realTimers: PowTimers = {
+  setTimeout: (fire, ms) => setTimeout(fire, ms),
+  clearTimeout: (timer) => clearTimeout(timer as ReturnType<typeof setTimeout> | undefined),
+};
+
+function solveInWorker(
+  challenge: Challenge,
+  report: (attempts: number) => void,
+  start: () => PowWorker,
+  timers: PowTimers,
+): Promise<Solution | null> {
   return new Promise((resolve, reject) => {
     const worker = start();
-    let watchdog: ReturnType<typeof setTimeout> | undefined;
+    let watchdog: unknown;
     const fail = (why: string): void => {
-      clearTimeout(watchdog);
+      timers.clearTimeout(watchdog);
       worker.terminate();
       reject(new Error(why));
     };
     const arm = (): void => {
-      clearTimeout(watchdog);
-      watchdog = setTimeout(() => fail('the worker stopped answering'), WORKER_SILENT_MS);
+      timers.clearTimeout(watchdog);
+      watchdog = timers.setTimeout(() => fail('the worker stopped answering'), WORKER_SILENT_MS);
     };
     worker.onmessage = (ev: MessageEvent<{ solution?: Solution | null; error?: string; attempts?: number }>) => {
       if (ev.data.attempts !== undefined) {
@@ -55,7 +76,7 @@ function solveInWorker(challenge: Challenge, report: (attempts: number) => void,
         report(ev.data.attempts);
         return;
       }
-      clearTimeout(watchdog);
+      timers.clearTimeout(watchdog);
       worker.terminate();
       if (ev.data.error) reject(new Error(ev.data.error));
       else resolve(ev.data.solution ?? null);

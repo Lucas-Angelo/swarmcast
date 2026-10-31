@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { scrub } from '../../src/core/logger.js';
-import { clientIp, originMatchesHost, viewerCsp } from '../../src/public/security.js';
+import { STARTUP_GUARD } from '@swarmcast/shared/web/startup-guard';
+import { clientIp, originMatchesHost, STARTUP_GUARD_SOURCE, viewerCsp } from '../../src/public/security.js';
 import { requestFrom } from './helpers-b.js';
 
 // Headers and helpers the public server relies on: whose IP a request is (CF-Connecting-IP only
@@ -33,6 +35,17 @@ describe('CSP', () => {
     expect(csp).toContain("connect-src 'self' wss://abc.trycloudflare.com;");
     expect(csp).not.toContain('stun:');
     expect(csp).toContain("frame-ancestors 'none'");
+  });
+
+  it("allows the pages' startup guard by its hash, as browsers compute it, and no other inline script", () => {
+    // Arrange
+    const hash = `'sha256-${createHash('sha256').update(STARTUP_GUARD, 'utf8').digest('base64')}'`;
+    // Act
+    const csp = viewerCsp('abc.trycloudflare.com', true, []);
+    // Assert
+    expect(STARTUP_GUARD_SOURCE).toBe(hash);
+    expect(csp).toContain(`script-src 'self' ${hash};`);
+    expect(csp).not.toContain('unsafe-inline');
   });
 });
 

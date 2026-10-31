@@ -21,7 +21,7 @@ npm run dev        # http://localhost:4321/swarmcast/ (live reload)
 npm run check      # astro check: types of the components, lib/ and the unit tests
 npm run build      # site/dist/; fails on a broken internal link (starlight-links-validator)
 npm run preview    # serves the build
-npm run test:e2e   # Playwright (Google Chrome) against the BUILT site; SITE_E2E_PORT moves its port (default 43210)
+npm run test:e2e   # Playwright (Google Chrome) against the BUILT site; SITE_E2E_PORT moves its port (default 13210)
 npm run og         # re-render the social preview cards (public/og/), see "Link previews and SEO"
 ```
 

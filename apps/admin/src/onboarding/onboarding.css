@@ -137,14 +137,15 @@ button.onb-fig-btn:hover { border-color: var(--sc-border-strong); background: va
 
 /* Tour: labeled mini-map of the panel (also the area picker) */
 .onb-map {
-  display: grid; gap: 6px; grid-template-columns: repeat(3, 1fr);
-  grid-template-areas: 'top top top' 'link p2p quality' 'mode security security' 'viewers viewers viewers' 'activity activity activity';
+  display: grid; gap: 6px; grid-template-columns: repeat(4, 1fr);
+  grid-template-areas: 'top top top chat' 'link p2p quality chat' 'mode security security chat' 'viewers viewers viewers viewers' 'activity activity activity activity';
   padding: var(--sp-2); border: 1px dashed var(--sc-border); border-radius: var(--sc-radius-md); background: var(--sc-bg);
 }
 .onb-map button { font-size: var(--fs-sm); padding: var(--sp-2); min-height: 40px; }
 .onb-map button.active { background: var(--sc-accent); color: var(--sc-on-accent); border-color: var(--sc-accent); }
 .onb-map button.absent { opacity: 0.6; border-style: dashed; }
 .onb-map-top { grid-area: top; }
+.onb-map-chat { grid-area: chat; }
 .onb-map-link { grid-area: link; }
 .onb-map-p2p { grid-area: p2p; }
 .onb-map-quality { grid-area: quality; }
@@ -176,5 +177,5 @@ button.onb-fig-btn:hover { border-color: var(--sc-border-strong); background: va
   .onb-check { grid-template-columns: 1fr; gap: 2px; }
   .onb-field-label { min-width: 100%; }
   .onb-foot { justify-content: center; }
-  .onb-map { grid-template-columns: 1fr 1fr; grid-template-areas: 'top top' 'link p2p' 'quality mode' 'security security' 'viewers viewers' 'activity activity'; }
+  .onb-map { grid-template-columns: 1fr 1fr; grid-template-areas: 'top top' 'chat chat' 'link p2p' 'quality mode' 'security security' 'viewers viewers' 'activity activity'; }
 }

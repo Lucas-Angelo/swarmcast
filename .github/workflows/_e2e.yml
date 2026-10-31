@@ -1,18 +1,25 @@
 name: e2e
 
-# The Playwright suite (pipeline.yml test stage) on Ubuntu and macOS, split by tag rather than by
-# --shard (sharding balances by file, which would put the heavy media files together):
+# The Playwright suite (pipeline.yml test stage) on Ubuntu and macOS, in three groups split by
+# tag and file rather than by --shard (sharding balances by file count, which would put the heavy
+# media files together). The three greps are exact complements: every test runs in one group.
 # - media: the tests tagged @media (live video, P2P, the quality ladder, attack) except the files
-#   in MEDIA_WITH_UI;
-# - ui: everything else: the untagged and @ui tests (so an untagged test still runs somewhere)
-#   and the @media files in MEDIA_WITH_UI.
-# The two greps are exact complements. MEDIA_WITH_UI balances the jobs: on Ubuntu the @media
-# tests took 503 s (p2p 301, adaptive-delay 152, quality 42, attack 8) and the rest 121 s, so
-# adaptive-delay moves over (about 350 s and 270 s). Playwright matches --grep against
-# "<project> <file> <describe> <title> <tags>", so a file name can be part of the pattern.
-# Each group runs every project (Google Chrome, Firefox, WebKit) with workers: 1
-# (playwright.config.ts). Windows: Google Chrome, Microsoft Edge and Firefox run the viewer chat
-# UI here (chat-windows) and the app itself in the Windows suites (_windows.yml).
+#   in MEDIA_WITH_UI and CHAT_FILES;
+# - chat: the files in CHAT_FILES, whatever their tag: the chat, its moderation, privacy and flood
+#   (@media), the nickname rules, and the browser check of the join page;
+# - ui: everything else: the untagged and @ui tests (so an untagged test or a new file still
+#   runs somewhere) and the @media files in MEDIA_WITH_UI.
+# Why three: with two groups (ui, media), the last 60 pipeline runs took 8.1-10.6 min (ui) and
+# 6.4-7.1 (media) on Ubuntu, but 7.7-12.8 and 6.3-8.0 on macOS, and one macOS ui run hit the
+# 13-minute limit 9 tests before the end: macOS runners differ by up to 2x on the UI tests (the
+# media tests wait for measured windows, so they vary less). Per file, all three projects, on the
+# slowest macOS runs: p2p 302-311 s, adaptive-delay 161, chat 99, chat-moderation-api 97, viewer
+# 78, chat-moderation 60, chat-flood 59, branding-panel 54, quality 48-53, browser-check 43, the
+# other eight files 10-30 each, so each group has 400-420 s of tests there.
+# Playwright matches --grep against "<project> <file> <describe> <title> <tags>", so a file name
+# can be part of the pattern. Each group runs every project (Google Chrome, Firefox, WebKit) with
+# workers: 1 (playwright.config.ts). Windows: Google Chrome, Microsoft Edge and Firefox run the
+# viewer chat UI here (chat-windows) and the app itself in the Windows suites (_windows.yml).
 #
 # No test is retried (retries: 0 in the configs); --fail-on-flaky-tests fails the run anyway if a
 # config ever retries and a test passes only on its retry. Each Playwright run's results go to
@@ -22,10 +29,12 @@ on:
 
 permissions:
   contents: read
+  actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
 
 env:
   FORCE_COLOR: '1'
   MEDIA_WITH_UI: 'adaptive-delay\.spec'
+  CHAT_FILES: '(chat|chat-flood|chat-moderation|chat-moderation-api|chat-privacy|nickname|browser-check)\.spec'
 
 jobs:
   e2e:
@@ -35,7 +44,7 @@ jobs:
       matrix:
         # Monthly canary on ubuntu-latest, as for the node tests.
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
-        group: [ui, media]
+        group: [ui, chat, media]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     defaults:
@@ -53,7 +62,7 @@ jobs:
           ffmpeg: 'true'
           apt-debs: ${{ runner.os == 'Linux' && format('playwright-{0}', hashFiles('package-lock.json')) || '' }}
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: web-dist
       - run: npm run fetch-bins
@@ -88,8 +97,10 @@ jobs:
         timeout-minutes: 8
         if: runner.os == 'macOS'
         run: npx playwright install firefox webkit
-      # 13 minutes: the slowest group took 9.8 (media, macOS). A step that runs out fails, so the
-      # report and the logs are still uploaded (a job that runs out is cancelled and uploads nothing).
+      # 13 minutes, a hang guard: about 7.2 min of tests per group on the slowest macOS runners seen
+      # (55 %); the first runs of the three groups took 5.9/4.3/6.0 min (ui/chat/media) on Ubuntu
+      # and 6.7/4.7/6.2 on macOS. A step that runs out fails, so the report and the logs are still
+      # uploaded (a job that runs out is cancelled and uploads nothing).
       - name: Playwright, ${{ matrix.group }} group
         timeout-minutes: 13
         env:
@@ -97,11 +108,12 @@ jobs:
           # Server-side coverage: every Node process writes its V8 coverage here when it exits.
           NODE_V8_COVERAGE: ${{ runner.temp }}/v8-e2e
         run: |
-          if [ "$GROUP" = media ]; then
-            grep=(--grep @media --grep-invert "$MEDIA_WITH_UI")
-          else
-            grep=(--grep "^(?!.*@media)|$MEDIA_WITH_UI")
-          fi
+          case "$GROUP" in
+            media) grep=(--grep @media --grep-invert "$MEDIA_WITH_UI|$CHAT_FILES") ;;
+            chat) grep=(--grep "$CHAT_FILES") ;;
+            ui) grep=(--grep "^(?!.*@media)|$MEDIA_WITH_UI" --grep-invert "$CHAT_FILES") ;;
+            *) echo "::error::unknown e2e group $GROUP"; exit 1 ;;
+          esac
           npx playwright test "${grep[@]}" --fail-on-flaky-tests
       # The e2e server's coverage (scripts/coverage/e2e-server.mjs keeps that process's files, c8
       # maps them onto the sources), its table in the job summary and this group's floors
@@ -123,11 +135,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       # The viewer chat UI against a mock hub (apps/viewer/test/chat: the built watch page, no
-      # server, no network): every engine plus an iPhone in a few seconds, so it rides along with
-      # the ui group instead of a job of its own. The same flows against the real server are in
+      # server, no network): every engine plus an iPhone in 1-2.5 minutes, so it rides along with
+      # the chat group instead of a job of its own. The same flows against the real server are in
       # apps/server/test/e2e/chat.spec.ts.
       - name: Playwright, viewer chat UI (mock hub)
-        if: ${{ !cancelled() && matrix.group == 'ui' }}
+        if: ${{ !cancelled() && matrix.group == 'chat' }}
         timeout-minutes: 5
         run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --fail-on-flaky-tests
       - name: Results in the job summary
@@ -135,7 +147,7 @@ jobs:
         continue-on-error: true
         env:
           TITLE: Playwright, ${{ matrix.group }} group (${{ matrix.os }})
-          CHAT: ${{ matrix.group == 'ui' && format('Viewer chat UI, mock hub ({0})', matrix.os) || '' }}
+          CHAT: ${{ matrix.group == 'chat' && format('Viewer chat UI, mock hub ({0})', matrix.os) || '' }}
         run: |
           node .github/scripts/test-summary.mjs --title "$TITLE" --playwright test-results/results.json
           if [ -n "$CHAT" ]; then node .github/scripts/test-summary.mjs --title "$CHAT" --playwright test-results/chat-ui.json; fi
@@ -168,7 +180,7 @@ jobs:
 
   # The viewer chat UI against the mock hub on Windows, with Windows's own fonts and text shaping:
   # Google Chrome and Microsoft Edge from the runner image, Firefox from Playwright. Linux and
-  # macOS run it in the ui group above; rendering.yml adds the screenshots and phone emulation.
+  # macOS run it in the chat group above; rendering.yml adds the screenshots and phone emulation.
   chat-windows:
     name: chat UI (windows-latest)
     runs-on: windows-latest
@@ -183,7 +195,7 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 5
       - uses: ./.github/actions/get-build
-        timeout-minutes: 5
+        timeout-minutes: 10
         with:
           names: web-dist
       - name: Playwright Firefox

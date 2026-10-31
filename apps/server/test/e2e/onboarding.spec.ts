@@ -132,6 +132,13 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   await expect(page.locator('.onb-spot')).toHaveCount(1);
 
   // Act
+  await page.getByTestId('onb-area-chat').click();
+
+  // Assert
+  await expect(page.locator('.onb-spot')).toHaveCount(1);
+  await expect(page.locator('.onb-spot')).toHaveAttribute('data-testid', /^chat-(live|card)$/);
+
+  // Act
   await next.click();
 
   // Assert

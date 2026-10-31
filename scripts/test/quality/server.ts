@@ -1,5 +1,6 @@
 // Quality-experiment server: SwarmCast without tunnel + a synthetic 1080p30 ~6 Mbps OBS
-// stream, on ports that do not collide with the e2e suite (45080/45081/45888/45935).
+// stream, on its own fixed ports (scripts/test/lib/ports.mjs FIXED_PORTS.quality: 16080-16082,
+// 16888, 16935), clear of the e2e suite's.
 //   node --import tsx scripts/test/quality/server.ts            (ladder: 1080p copy + 720p + 480p)
 //   LADDER=off node --import tsx scripts/test/quality/server.ts  (source only, like before)
 import fs from 'node:fs';
@@ -10,10 +11,13 @@ import type { ChildProcess } from 'node:child_process';
 import { createApp } from '../../../apps/server/src/app.js';
 import { defaultConfig } from '../../../apps/server/src/core/config.js';
 import { pushTestStream } from '../../../apps/server/test/integration/helpers.js';
+import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 
-export const QUALITY_PORTS = { rtmp: 45935, public: 45080, admin: 45081, mediamtxHls: 45888 };
+const { control: controlPort, ...appPorts } = FIXED_PORTS.quality;
+export const QUALITY_PORTS = appPorts;
 /** Test-only control port: GET /env, what bench.ts and menu-check.ts need to sign in to the panel. */
-export const QUALITY_CONTROL_PORT = 45082;
+export const QUALITY_CONTROL_PORT = controlPort;
+assertFixedPorts('quality', FIXED_PORTS.quality);
 const ladderOn = process.env.LADDER !== 'off';
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-quality-'));

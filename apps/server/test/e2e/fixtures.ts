@@ -10,6 +10,7 @@ import WebSocket from 'ws';
 import type { AdminChatState, AdminState, ChatItem, ChatSettings, ChatYou, QualitySettingsUpdate, QualityState, ServerMessage } from '@swarmcast/shared';
 import { NICKNAME_MAX } from '@swarmcast/shared';
 import { loopbackBase, panelLogin } from '../../../../scripts/test/lib/loopback.mjs';
+import { e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import { joinAs } from '../integration/helpers.js';
 import { currentStall, stallTick, type StallState } from './stall-monitor.js';
 
@@ -31,10 +32,10 @@ export function serverEnv(): ServerEnv {
   return JSON.parse(fs.readFileSync(path.join('test-results', 'e2e-env.json'), 'utf8')) as ServerEnv;
 }
 
-// The test control port of server.ts (keep in sync: 38082 moved by SWARMCAST_E2E_PORT_OFFSET,
-// like the other e2e ports). Every request the fixtures send goes to a loopback base rebuilt from
-// checked parts (scripts/test/lib/loopback.mjs), never to a URL taken as it is from a file.
-const CONTROL = loopbackBase(`http://127.0.0.1:${38082 + Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 0)}`);
+// The test control port of server.ts (e2ePorts(): moved by SWARMCAST_E2E_PORT_OFFSET, like the
+// other e2e ports). Every request the fixtures send goes to a loopback base rebuilt from checked
+// parts (scripts/test/lib/loopback.mjs), never to a URL taken as it is from a file.
+const CONTROL = loopbackBase(`http://127.0.0.1:${e2ePorts().control}`);
 
 /** What GET /health on the test control port answers (server.ts). */
 export interface StreamHealth {
@@ -71,9 +72,10 @@ function streamHealth(o: { waitMs?: number; minPlaylistS?: number; qualities?: n
 }
 
 /**
- * Waits until the live playlist covers `seconds`. Viewers normally join a stream that has run
- * for a while: right after OBS starts the playlist is short, players sit at the live edge and
- * every segment is urgent (fetched over HTTPS, never from peers).
+ * Waits until the live playlist covers `seconds` of the current OBS connection (server.ts
+ * healthNow). Viewers normally join a stream that has run for a while: right after OBS starts the
+ * playlist is short, players sit at the live edge and every segment is urgent (fetched over HTTPS,
+ * never from peers).
  */
 export async function waitForPlaylist(seconds: number, o: { qualities?: number; timeoutMs?: number } = {}): Promise<void> {
   const h = await streamHealth({ waitMs: o.timeoutMs ?? 90_000, minPlaylistS: seconds, qualities: o.qualities ?? 1 });
@@ -106,6 +108,15 @@ export async function setPlaylistWindow(seconds: number): Promise<void> {
  */
 export async function reconnectObs(feed: 'hd' | null): Promise<void> {
   await control('POST', '/obs', feed === null ? null : { feed });
+}
+
+/**
+ * Makes the quality ladder drop a rendition at its next check (about 2 s), as when the
+ * streamer's PC cannot convert it in real time; by itself it never does here (server.ts
+ * SpecLoadGuard). The next test's gate puts the ladder settings back.
+ */
+export async function dropRendition(): Promise<void> {
+  await control('POST', '/shed');
 }
 
 /**
@@ -299,9 +310,13 @@ function recordConsole(page: Page): void {
 /**
  * Picks `nickname` on the join page and joins; fails with the server's status and reason when
  * the join is refused, and with the join page's own state and console when no final answer comes.
+ * Types once "Watch" is enabled, as the page's script does once it handles the form: a page that
+ * lost a script on the way reloads itself first (its startup guard), and a nickname typed into
+ * the page it replaces would be gone.
  */
 async function joinFrom(page: Page, nickname: string): Promise<void> {
   const consoleLines = consoles.get(page) ?? [];
+  await expect(page.locator('#join')).toBeEnabled();
   await page.fill('#nickname', nickname);
   // A 403 "check required" is not final: the page solves the browser check and posts again.
   const answer = page.waitForResponse(async (r) => {

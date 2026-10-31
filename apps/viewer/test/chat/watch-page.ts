@@ -102,10 +102,24 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
   });
 }
 
+/** Watch page options: the page's language and extra query string (starting with "&"). */
+type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string };
+
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
-export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt-BR'; query?: string } = {}): Promise<string[]> {
+export async function openWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
   const browser = page.context().browser();
   if (browser && !warmed.has(browser)) await warmFontFallback(page);
+  const errors = await loadWatch(page, hub, o);
+  await expect(page.getByTestId('chat')).toBeVisible();
+  expect(errors).toEqual([]);
+  return errors;
+}
+
+/**
+ * Serves /watch against `hub` and navigates to it, without checking anything (openWatch checks;
+ * globalSetup only renders the page). Returns the page errors, collected from now on.
+ */
+export async function loadWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
   await serveViewer(page, (route, url) => {
     if (url.pathname === '/api/config') {
       return route.fulfill({
@@ -124,8 +138,6 @@ export async function openWatch(page: Page, hub: MockHub, o: { lang?: 'en' | 'pt
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/watch?lang=${o.lang ?? 'en'}${o.query ?? ''}`);
-  await expect(page.getByTestId('chat')).toBeVisible();
-  expect(errors).toEqual([]);
   return errors;
 }
 
@@ -143,11 +155,16 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
  * Opens /join (English) with /api/brand answered by `brand` once it settles (a test holds it to
  * see the page before and after its branding), the theme empty, the streamer's pictures 1×1, no
  * browser check and its CSS animations paused (PAUSED_ANIMATIONS). `withoutScripts`: the page's
- * scripts fail to load. Fails on any page error during load. `joins` collects the POST /api/join
- * bodies the page sends; each one is answered with a redirect to /watch.
+ * scripts fail to load (and the page reloads itself, its startup guard). Fails on any page error
+ * during load. `joins` collects the POST /api/join bodies the page sends; each one is answered
+ * with a redirect to /watch. `loads()` counts the join pages the browser has shown (commits).
  */
-export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean }): Promise<{ joins: unknown[] }> {
+export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean }): Promise<{ joins: unknown[]; loads: () => number }> {
   const joins: unknown[] = [];
+  let loads = 0;
+  page.on('framenavigated', (frame) => {
+    if (frame === page.mainFrame() && new URL(frame.url()).pathname === '/join') loads++;
+  });
   await serveViewer(page, (route, url) => {
     if (url.pathname === PAUSED_ANIMATIONS) return route.fulfill({ body: '*, *::before, *::after { animation-play-state: paused !important; }', contentType: 'text/css' });
     if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': viewerCsp('chat.test', false) } });
@@ -166,7 +183,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${ORIGIN}/join?lang=en`);
   expect(errors).toEqual([]);
-  return { joins };
+  return { joins, loads: () => loads };
 }
 
 /** The one built file of `dir` (under DIST) whose name matches `pattern`, as a URL path. */

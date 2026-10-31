@@ -106,7 +106,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `quality.obsWebsocket.enabled` / `url` / `password` | false / `ws://127.0.0.1:4455` / — | Read the main stream's health from OBS (loopback only) (panel) |
 | `ffmpegPath` | — | ffmpeg for the extra qualities. Unset: `bin/ffmpeg` if a packager bundled it, else `<data>/tools/ffmpeg/ffmpeg[.exe]` (installed by the start scripts or the panel). `SWARMCAST_FFMPEG` overrides it; `"ffmpeg"` uses the one on PATH (source checkouts only) |
 | `onboardingDone` | false | The panel's first-run tutorial was finished or skipped (it opens until then) |
-| `chat` | on, GIFs off, slow mode 2 s | The Chat card's settings: what viewers may send, slow mode, limits, blocked words, links, protection, GIFs (the streamer's own provider key). Keys and defaults: [CHAT.md](CHAT.md#settings-and-defaults) |
+| `chat` | on, GIFs off, slow mode 2 s | The chat settings (the panel's Chat card): what viewers may send, slow mode, limits, blocked words, links, protection, GIFs (the streamer's own provider key). Keys and defaults: [CHAT.md](CHAT.md#settings-and-defaults) |
 | `branding` | empty | "Your page" (panel: Your page card); its pictures are in `<data>/branding/`. Fields and limits: [BRANDING.md](BRANDING.md#data-model) |
 | `updates.channel` | — | Desktop app only: `beta` (panel: "Get beta versions") or `stable`. Unset: beta when the installed app is a pre-release, else stable ([DESKTOP.md](DESKTOP.md#updates)) |
 
@@ -137,8 +137,9 @@ npm run lint && npm run typecheck
   the real data folder of your computer; `--data-dir DIR` or `SWARMCAST_DATA_DIR` picks another folder.
 - From the repository root, `npm run dev -- --no-tunnel` does not reach the app: npm reads the flag
   itself (npm 11 and later stop with "Unknown cli flag"). Use `npm run dev -w @swarmcast/server -- --no-tunnel`.
-- `SWARMCAST_E2E_PORT_OFFSET` must keep every e2e port free and off the reserved ones in
-  `scripts/test/lib/ports.mjs` (31935, 38180, 38181…): an offset of 100, for example, collides.
+- `SWARMCAST_E2E_PORT_OFFSET` must keep every e2e port (11080–11083, 11935) free and in 10000–19999,
+  off the other harnesses' fixed ports (`scripts/test/lib/ports.mjs`): the server refuses an offset that
+  does not.
 
 Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
 
