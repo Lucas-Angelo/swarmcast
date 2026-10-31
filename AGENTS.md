@@ -175,7 +175,8 @@ The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may tou
   `panic = "unwind"` and `abort_on_panic` (see `Cargo.toml`); tests in `#[cfg(test)] mod tests` per module.
 - **Generated files** (regenerate and commit, never edit): `packages/shared/src/chat/*.generated.ts`
   (`node scripts/build/gen-unicode-tables.mjs`), `assets/brand/tokens.*` (`assets/brand/tools/palettes.py`),
-  desktop icons (`npm run desktop:icons`), `docs/img/*.png` (`node scripts/docs/screenshots.mjs`),
+  desktop icons (`npm run desktop:icons`), `docs/img/*.png` and the guide pictures of SwarmCast's own
+  screens in `site/src/assets/guides/` (`node scripts/docs/screenshots.mjs`, which lists them),
   `site/public/og/*.png` (`npm run og` in `site/`); the offline guide comes from the site pages.
 
 ## 7. Testing
@@ -221,11 +222,11 @@ flake": find its cause in the product or the test, with evidence, and fix it at 
   `# vX.Y.Z` comment), `persist-credentials: false`, secrets only in release jobs, retries only for network
   steps. Never dispatch soak or pipeline runs on `main`'s commit (a failure shows red on `main`): use a
   marker commit on a `soak/*` branch.
-- **Releases** (only when the maintainer asks; [docs/RELEASING.md](docs/RELEASING.md) §4): a new minor
-  ships as a beta first, `vX.Y.Z-beta.N` tagged on the head of its green release pull request
-  (`release/X.Y.Z`, not merged yet) and verified ("Verify a beta"); only then `vX.Y.Z`, tagged on `main`
-  after `SwarmCast vX.Y.Z` is squash-merged. Patch releases may skip the beta. A published release is never
-  changed: a mistake ships as the next version.
+- **Releases** (only when the maintainer asks; [docs/RELEASING.md](docs/RELEASING.md) §4): every
+  version, patch releases included, ships as at least two betas first, `vX.Y.Z-beta.1` and
+  `vX.Y.Z-beta.2`, each tagged on the head of its green release pull request (`release/X.Y.Z`, not merged
+  yet) and verified ("Verify a beta"); only then `vX.Y.Z`, tagged on `main` after `SwarmCast vX.Y.Z` is
+  squash-merged. A published release is never changed: a mistake ships as the next version.
 
 ## 9. Security
 

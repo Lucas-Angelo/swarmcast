@@ -11,9 +11,10 @@ import {
   linuxEntryExe,
   macLaunchAgentPlist,
   macPlistExe,
-  parseRegExport,
+  parseRegQuery,
   windowsCommandExe,
   windowsRunCommand,
+  WINDOWS_QUERY_LINE,
   WINDOWS_RUN_KEY,
   type Runner,
 } from '../../src/desktop/autostart.js';
@@ -40,17 +41,23 @@ describe('autostart entries (pure)', () => {
     expect(windowsCommandExe('C:\\x\\a.exe --flag')).toBe('C:\\x\\a.exe');
   });
 
-  it('Windows: reads the SwarmCast value back from a reg export, and nothing else', () => {
+  it('Windows: reads the SwarmCast value from reg query output, and nothing else', () => {
     // Arrange
-    const cmd = windowsRunCommand('C:\\Users\\João Silva\\SwarmCast.exe');
-    const reg = `\uFEFFWindows Registry Editor Version 5.00\r\n\r\n[${WINDOWS_RUN_KEY.replace('HKCU', 'HKEY_CURRENT_USER')}]\r\n"OneDrive"=${regString('"C:\\od.exe" /background')}\r\n"SwarmCast"=${regString(cmd)}\r\n`;
+    const cmd = windowsRunCommand('C:\\Users\\João Silva\\日本\\SwarmCast.exe');
+    const out = `\r\nHKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\r\n    SwarmCast    REG_SZ    ${cmd}\r\n\r\n`;
     // Act
-    const ours = parseRegExport(reg);
-    const others = parseRegExport(reg.replace('"SwarmCast"', '"Other"'));
-    const notAString = parseRegExport('"SwarmCast"=hex(2):43,00');
+    const ours = parseRegQuery(out);
+    const otherCase = parseRegQuery(out.replace('SwarmCast ', 'swarmcast '));
+    const expandable = parseRegQuery(out.replace('REG_SZ', 'REG_EXPAND_SZ'));
+    const others = parseRegQuery(out.replace('SwarmCast ', 'Other '));
+    const empty = parseRegQuery('    SwarmCast    REG_SZ    \r\n');
+    const notAString = parseRegQuery('    SwarmCast    REG_BINARY    4300\r\n');
     // Assert
     expect(ours).toBe(cmd);
+    expect(otherCase).toBe(cmd);
+    expect(expandable).toBe(cmd);
     expect(others).toBeNull();
+    expect(empty).toBe('');
     expect(notAString).toBe('');
   });
 
@@ -202,6 +209,24 @@ describe('Autostart (file-based OSes, temporary HOME)', () => {
     expect(relative).toBe(byDefault);
   });
 
+  it('Linux: the same file through a link (a junction on Windows) is not another copy', async () => {
+    // Arrange
+    const home = tempDir('sc-home-');
+    const exe = path.join(home, 'Apps', 'swarmcast-desktop');
+    fs.mkdirSync(path.dirname(exe));
+    fs.writeFileSync(exe, '');
+    fs.symlinkSync(path.dirname(exe), path.join(home, 'Linked'), 'junction');
+    await new Autostart({ platform: 'linux', home, exe, env: {} }).set(true);
+    const sameFile = new Autostart({ platform: 'linux', home, exe: path.join(home, 'Linked', 'swarmcast-desktop'), env: {} });
+    const otherFile = new Autostart({ platform: 'linux', home, exe: path.join(home, 'Other', 'swarmcast-desktop'), env: {} });
+    // Act
+    const same = await sameFile.status();
+    const other = await otherFile.status();
+    // Assert
+    expect(same).toEqual({ supported: true, enabled: true });
+    expect(other).toEqual({ supported: true, enabled: true, stale: true });
+  });
+
   it('Linux: honours an absolute XDG_CONFIG_HOME; an entry the desktop turned off reads as off', async () => {
     // Arrange
     const home = tempDir('sc-home-');
@@ -227,42 +252,68 @@ describe('Autostart (file-based OSes, temporary HOME)', () => {
 });
 
 describe('Autostart on Windows (reg.exe faked)', () => {
+  const NOT_FOUND = 'ERROR: The system was unable to find the specified registry key or value.\r\n';
+  const KEY_LINE = WINDOWS_RUN_KEY.replace('HKCU', 'HKEY_CURRENT_USER');
+
   /**
-   * A fake HKCU Run key behind the reg.exe arguments Autostart uses: `export` writes the key as
-   * UTF-16 with a BOM (as reg.exe does), `add` sets the SwarmCast value, `delete` removes it.
+   * A fake HKCU Run key behind the commands Autostart may use, modelled on the registry API under
+   * them: `reg query /v` (through cmd.exe, UTF-8) reads one value by its name; `reg export` walks the
+   * values by index and writes them as UTF-16 with a BOM, `onEnumerate(i)` running after it read
+   * index i (another program changing the key meanwhile), and fails as on Windows when another
+   * export runs at the same time; `add` sets a value, `delete` removes one.
    * Anything else fails like reg.exe would. Every call is recorded.
    */
-  function fakeReg(initial?: string): { run: Runner; calls: string[][]; value: () => string | undefined } {
-    let value = initial;
+  function fakeReg(initial: Array<[string, string]> = []) {
+    const values = [...initial];
     const calls: string[][] = [];
-    const run: Runner = async (command, args) => {
+    const hooks: { onEnumerate?: (i: number) => void; keepAdds: boolean } = { keepAdds: true };
+    let exporting = 0;
+    const find = (name: string): number => values.findIndex(([n]) => n.toLowerCase() === name.toLowerCase());
+    const run: Runner = async (command, args, options) => {
       calls.push([command, ...args]);
+      if (command === 'cmd.exe' && options?.verbatim && args.join(' ') === `/d /s /c "${WINDOWS_QUERY_LINE}"`) {
+        const i = find('SwarmCast');
+        if (i < 0) return { code: 1, stdout: '\r\n', stderr: NOT_FOUND };
+        return { code: 0, stdout: `\r\n${KEY_LINE}\r\n    ${values[i]![0]}    REG_SZ    ${values[i]![1]}\r\n\r\n`, stderr: '' };
+      }
       if (command !== 'reg.exe' || args[1] !== WINDOWS_RUN_KEY) return { code: 1, stdout: '', stderr: 'ERROR: unexpected command' };
       if (args[0] === 'export') {
-        const lines = ['Windows Registry Editor Version 5.00', '', '[HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run]'];
-        if (value !== undefined) lines.push(`"SwarmCast"=${regString(value)}`);
+        exporting++;
+        await new Promise((resolve) => setImmediate(resolve));
+        exporting--;
+        if (exporting > 0) return { code: 1, stdout: '', stderr: 'ERROR: Unable to write to the file. There may be a disk or file system error.\r\n' };
+        const lines = ['Windows Registry Editor Version 5.00', '', `[${KEY_LINE}]`];
+        for (let i = 0; i < values.length; i++) {
+          lines.push(`${regString(values[i]![0])}=${regString(values[i]![1])}`);
+          hooks.onEnumerate?.(i);
+        }
         fs.writeFileSync(args[2]!, Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(lines.join('\r\n') + '\r\n', 'utf16le')]));
         return { code: 0, stdout: '', stderr: '' };
       }
-      if (args[0] === 'add') {
-        value = args[7];
+      if (args[0] === 'add' && args[2] === '/v') {
+        const i = find(args[3]!);
+        if (!hooks.keepAdds) return { code: 0, stdout: '', stderr: '' };
+        if (i >= 0) values[i] = [values[i]![0], args[7]!];
+        else values.push([args[3]!, args[7]!]);
         return { code: 0, stdout: '', stderr: '' };
       }
-      if (args[0] === 'delete') {
-        value = undefined;
+      if (args[0] === 'delete' && args[2] === '/v') {
+        const i = find(args[3]!);
+        if (i < 0) return { code: 1, stdout: '', stderr: NOT_FOUND };
+        values.splice(i, 1);
         return { code: 0, stdout: '', stderr: '' };
       }
       return { code: 1, stdout: '', stderr: 'ERROR: unexpected command' };
     };
-    return { run, calls, value: () => value };
+    return { run, calls, hooks, values, value: () => values[find('SwarmCast')]?.[1] };
   }
 
   const EXE = 'C:\\Users\\João\\AppData\\Local\\Programs\\SwarmCast\\SwarmCast.exe';
 
-  it('adds the Run value with reg add and reads it back (UTF-16 export, accents)', async () => {
+  it('adds the Run value with reg add and reads it back by name (accents)', async () => {
     // Arrange
     const reg = fakeReg();
-    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
     // Act
     const before = await a.status();
     const on = await a.set(true);
@@ -273,25 +324,69 @@ describe('Autostart on Windows (reg.exe faked)', () => {
     expect(reg.calls.filter((c) => c[1] === 'add')).toEqual([['reg.exe', 'add', WINDOWS_RUN_KEY, '/v', 'SwarmCast', '/t', 'REG_SZ', '/d', `"${EXE}" --background`, '/f']]);
   });
 
-  it('an entry for another copy is stale and rewritten; the same path in another case is the same file', async () => {
+  // On windows-latest runners, a `reg export` running while another one does (the panel reading the
+  // state) failed with "Unable to write to the file" or wrote an empty file (159 of 15,000 first
+  // enables with 4 readers): the read-back took that for "no entry" (desktop test, PR #44).
+  it('turns on while the panel reads the state at the same time', async () => {
     // Arrange
-    const old = fakeReg('"D:\\Old\\SwarmCast.exe" --background');
-    const tmpDir = tempDir('sc-reg-');
-    const a = new Autostart({ platform: 'win32', exe: EXE, run: old.run, tmpDir });
+    const reg = fakeReg();
+    const panel = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    let toggled = false;
+    const panelReads = (async () => {
+      const reads = [];
+      while (!toggled) reads.push(await panel.status());
+      return reads;
+    })();
+    // Act
+    const on = await a.set(true).finally(() => (toggled = true));
+    const reads = await panelReads;
+    // Assert
+    expect(on).toEqual({ supported: true, enabled: true });
+    expect(reads.length).toBeGreaterThan(0);
+    expect(reads.every((r) => r.error === undefined)).toBe(true);
+    expect(reg.value()).toBe(`"${EXE}" --background`);
+  });
+
+  // Once on a windows-latest runner, `reg export` (which walks the key by index) left the value out,
+  // with exit code 0, while another process added and removed other Run values.
+  it('reads its value back while another program adds and removes the other Run values', async () => {
+    // Arrange
+    const reg = fakeReg([['OneDrive', '"C:\\od.exe" /background']]);
+    reg.hooks.onEnumerate = (i) => {
+      if (i === 0 && reg.values.length > 1) reg.values.push(reg.values.shift()!);
+    };
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    // Act
+    const on = await a.set(true);
+    const off = await a.set(false);
+    // Assert
+    expect(on).toEqual({ supported: true, enabled: true });
+    expect(off).toEqual({ supported: true, enabled: false });
+    expect(reg.value()).toBeUndefined();
+    expect(reg.values.map(([n]) => n)).toEqual(['OneDrive']);
+  });
+
+  it('an entry for another copy is stale and rewritten; the same path in another case or with \\\\?\\ is the same file', async () => {
+    // Arrange
+    const old = fakeReg([['SwarmCast', '"D:\\Old\\SwarmCast.exe" --background']]);
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: old.run });
     // Act
     const stale = await a.status();
     await a.set(true);
-    const upperCase = await new Autostart({ platform: 'win32', exe: EXE.toUpperCase(), run: old.run, tmpDir }).status();
+    const upperCase = await new Autostart({ platform: 'win32', exe: EXE.toUpperCase(), run: old.run }).status();
+    const extendedLength = await new Autostart({ platform: 'win32', exe: `\\\\?\\${EXE}`, run: old.run }).status();
     // Assert
     expect(stale).toEqual({ supported: true, enabled: true, stale: true });
     expect(old.value()).toBe(`"${EXE}" --background`);
     expect(upperCase).toEqual({ supported: true, enabled: true });
+    expect(extendedLength).toEqual({ supported: true, enabled: true });
   });
 
   it('deletes the Run value, and calls no reg delete when there is nothing to delete', async () => {
     // Arrange
-    const reg = fakeReg(`"${EXE}" --background`);
-    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    const reg = fakeReg([['SwarmCast', `"${EXE}" --background`]]);
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
     // Act
     const off = await a.set(false);
     const callsAfterDelete = reg.calls.length;
@@ -303,27 +398,58 @@ describe('Autostart on Windows (reg.exe faked)', () => {
     expect(reg.calls.slice(callsAfterDelete).map((c) => c[1])).not.toContain('delete');
   });
 
-  it('every reg.exe call targets the Run key of the current user', async () => {
+  it('every command reads or changes only the SwarmCast value of the current user\'s Run key', async () => {
     // Arrange
     const reg = fakeReg();
-    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run, tmpDir: tempDir('sc-reg-') });
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
     // Act
     await a.set(true);
     await a.set(false);
     // Assert
     expect(reg.calls.length).toBeGreaterThan(0);
-    expect(reg.calls.every((c) => c[0] === 'reg.exe' && c[2] === WINDOWS_RUN_KEY)).toBe(true);
+    for (const c of reg.calls) {
+      expect(c[0] === 'cmd.exe' ? c.slice(1) : c.slice(0, 5)).toEqual(c[0] === 'cmd.exe' ? ['/d', '/s', '/c', `"${WINDOWS_QUERY_LINE}"`] : ['reg.exe', c[1], WINDOWS_RUN_KEY, '/v', 'SwarmCast']);
+    }
+    expect(WINDOWS_QUERY_LINE).toBe(`chcp 65001 >nul & reg.exe query "${WINDOWS_RUN_KEY}" /v SwarmCast`);
   });
 
-  it('reports reg.exe failures', async () => {
+  it('says what it read back when the new value is not there (removed by another program)', async () => {
     // Arrange
-    const run: Runner = async (_c, args) => (args[0] === 'export' ? { code: 1, stdout: '', stderr: '' } : { code: 1, stdout: '', stderr: 'Access is denied.' });
-    const a = new Autostart({ platform: 'win32', exe: 'C:\\SwarmCast\\SwarmCast.exe', run, tmpDir: tempDir('sc-reg-') });
+    const reg = fakeReg();
+    reg.hooks.keepAdds = false;
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
     // Act
-    const status = await a.status();
     const turnOn = a.set(true);
+    // Assert
+    await expect(turnOn).rejects.toThrow(`The new autostart entry did not read back as expected (no SwarmCast value (reg query exit 1: ${NOT_FOUND.trim()})).`);
+  });
+
+  it('says what it read back when the value starts another program', async () => {
+    // Arrange
+    const reg = fakeReg([['SwarmCast', `"${EXE}" --background`]]);
+    const other = new Autostart({ platform: 'win32', exe: 'D:\\Other\\SwarmCast.exe', run: reg.run });
+    const a = new Autostart({ platform: 'win32', exe: EXE, run: reg.run });
+    reg.hooks.keepAdds = false;
+    // Act
+    const turnOn = other.set(true);
+    const status = await a.status();
+    // Assert
+    await expect(turnOn).rejects.toThrow(`(the Run value is ${JSON.stringify(`"${EXE}" --background`)}).`);
+    expect(status).toEqual({ supported: true, enabled: true });
+  });
+
+  it('reports reg.exe failures; output it cannot read is an error, not "off"', async () => {
+    // Arrange
+    const denied: Runner = async () => ({ code: 1, stdout: '', stderr: 'Access is denied.' });
+    const garbled: Runner = async () => ({ code: 0, stdout: '\r\nHKEY_CURRENT_USER\\...\r\n    SwarmCast REG_SZ x\r\n', stderr: '' });
+    const exe = 'C:\\SwarmCast\\SwarmCast.exe';
+    // Act
+    const status = await new Autostart({ platform: 'win32', exe, run: denied }).status();
+    const turnOn = new Autostart({ platform: 'win32', exe, run: denied }).set(true);
+    const unreadable = await new Autostart({ platform: 'win32', exe, run: garbled }).status();
     // Assert
     expect(status).toEqual({ supported: true, enabled: false });
     await expect(turnOn).rejects.toThrow(/Access is denied/);
+    expect(unreadable).toMatchObject({ supported: true, enabled: false, error: expect.stringMatching(/printed no data/) });
   });
 });

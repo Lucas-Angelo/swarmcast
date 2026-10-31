@@ -233,10 +233,13 @@ never return them. Desktop apps with **Get beta versions** on read the beta feed
 `https://lucas-angelo.github.io/swarmcast/updates/beta.json`, which the website build copies from the
 `latest.json` of the highest release, beta or stable (docs/DESKTOP.md, "Updates").
 
-**The rule: a new minor ships as a beta first, and the stable version only after the beta was verified.**
-`X.Y.0` is refused by the release workflow unless `vX.Y.0-beta.N` (or `-rc.N`) is published. Patch
-releases (`X.Y.Z`, Z > 0) normally skip betas. Merge and release only after `ci-ok` passed on the pull
-request.
+**The rule: every version, patch releases included, ships as at least two betas first, and the stable
+version only after both were verified.** `vX.Y.Z-beta.1`, then **Verify a beta**; `vX.Y.Z-beta.2`, then
+**Verify a beta** again, which also proves that an app on the first beta updates itself to the second
+through the beta feed; only then `vX.Y.Z`. `X.Y.0` is refused by the release workflow unless
+`vX.Y.0-beta.N` (or `-rc.N`) is published. Merge and release only after every check passed on the pull
+request (not only `ci-ok`), and a change to the tests or the pipeline lands only after repeated full
+pipeline runs with no failure at all.
 
 **A published release is never changed.** Release immutability is on (section 1): once published, its
 assets and its tag cannot be edited, replaced or deleted, and GitHub adds a release attestation.

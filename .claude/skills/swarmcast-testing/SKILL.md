@@ -97,7 +97,7 @@ the root, never "a flake". Retries are off everywhere (`retries: 0` in every Pla
 
 `pipeline.yml` is the one entry point; `ci-ok` is the single required check and is red on any failure or
 cancellation. Merge only with every check green on the exact head (`gh pr merge --squash
---match-head-commit`). Release: verify, full pipeline, sign, publish; X.Y.0 needs a published beta first.
+--match-head-commit`). Release: verify, full pipeline, sign, publish; every version ships as at least two verified betas first.
 The run never passes on a re-run (`ci-ok` fails on `run_attempt > 1`): after an outage, start a new run. The build fails if a devDependency reaches anything shipped (`.github/scripts/no-dev-deps.mjs`). Details: `.github/workflows/README.md`, docs/RELEASING.md, docs/TESTING.md, AGENTS.md.
 
 ## References used to shape these rules
