@@ -1,7 +1,7 @@
 // What a viewer does in a real browser, for the system harnesses (scripts/test/windows,
 // scripts/test/preflight): open the live link, join, wait for playback, read the player. These
 // take Playwright pages; the harnesses own the browsers and the artifacts.
-import { lookup } from 'node:dns/promises';
+import { Resolver, lookup } from 'node:dns/promises';
 import { poll } from './wait.mjs';
 
 /** Hosts of Cloudflare quick tunnels: brand-new names that may not resolve for a while. */
@@ -10,30 +10,49 @@ const QUICK_TUNNEL_HOST = /\.trycloudflare\.com$/i;
 const NAME_LOOKUP_EVERY_MS = 5000;
 const NAME_LOOKUP_TIMEOUT_MS = 90_000;
 
+/** Cloudflare's own public resolvers: where a brand-new quick-tunnel name is watched for. */
+const CLOUDFLARE_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
+
 /**
- * Infra recovery, not a retry of SwarmCast: a quick tunnel's name is brand new, and the
- * resolver of the runner may still have it cached as unknown (NXDOMAIN, the zone's negative
- * TTL is 60 s). Waits until the OS resolver knows it, logging that it had to. Any other host
- * (127.0.0.1, localhost) returns at once.
+ * Infra recovery, not a retry of SwarmCast: a quick tunnel's name is brand new for a little
+ * while after cloudflared prints it. A resolver asked about it too early remembers it as unknown,
+ * in some of its caches, for the zone's negative TTL (60 s), and keeps answering "no such name"
+ * now and then after the name exists. The app never asks this machine's resolver before
+ * Cloudflare has the address (waitForReachable in apps/server/src/tunnel/provider.ts: until it
+ * did, the OS's lookup here failed for up to 10 s after the link was shown in 3 of 24 runs of
+ * the DNS experiment on Windows runners and in 3 of the first 10 jobs of soak 41196129178, and on
+ * macOS runners the app itself waited 80 s for its own lookups to clear before showing the link).
+ * The harness does the same: it watches for the name on Cloudflare's own resolvers, which answer
+ * for its zone first-hand, and asks the runner's resolver only once they know it, so every lookup
+ * after it (the OS's, the browser's) gets the address. Any other host (127.0.0.1, localhost)
+ * returns at once.
+ * @param {string} url
+ * @param {(line: string) => void} [log]
+ * @param {{ resolve4?: (host: string) => Promise<string[]>, lookup?: (host: string) => Promise<unknown> }} [dns]
  */
-export async function waitForTunnelName(url, log = console.log) {
+export async function waitForTunnelName(url, log = console.log, dns = {}) {
   const host = new URL(url).hostname;
   if (!QUICK_TUNNEL_HOST.test(host)) return;
+  const resolver = new Resolver();
+  resolver.setServers(CLOUDFLARE_RESOLVERS);
+  const resolve4 = dns.resolve4 ?? ((h) => resolver.resolve4(h));
+  const osLookup = dns.lookup ?? lookup;
   const t0 = Date.now();
   let misses = 0;
   await poll(
     async () => {
       try {
-        await lookup(host);
+        await resolve4(host);
         return true;
       } catch (err) {
         misses++;
         throw err;
       }
     },
-    { timeoutMs: NAME_LOOKUP_TIMEOUT_MS, everyMs: NAME_LOOKUP_EVERY_MS, what: `the quick tunnel name ${host} to resolve` },
+    { timeoutMs: NAME_LOOKUP_TIMEOUT_MS, everyMs: NAME_LOOKUP_EVERY_MS, what: `the quick tunnel name ${host} to resolve on ${CLOUDFLARE_RESOLVERS[0]}` },
   );
-  if (misses) log(`infra recovery: DNS: ${host} resolved after ${Math.round((Date.now() - t0) / 1000)} s (${misses} lookups said unknown: a brand-new name)`);
+  await osLookup(host);
+  if (misses) log(`infra recovery: DNS: ${host} known to ${CLOUDFLARE_RESOLVERS[0]} after ${Math.round((Date.now() - t0) / 1000)} s (${misses} lookups there said unknown: a brand-new name)`);
 }
 
 /** Opens `url` (a live link) in `page` once its name resolves (waitForTunnelName): until the response commits. */

@@ -113,6 +113,35 @@ async function nothingLeft(what) {
   step(`${what}: nothing left running`, left.length === 0, left.join('; '));
 }
 
+// ---------------------------------------------------------------- the Run key (Windows)
+
+/**
+ * Windows: every state of HKCU\...\Run during the test, with the time (run-key.log), printed when
+ * the test fails: another program writing the key while "Start with the computer" is switched
+ * shows up here. Read-only (.NET registry API, every 10 ms).
+ */
+const RUN_KEY_JOURNAL_PS = `
+$p = 'Software\\Microsoft\\Windows\\CurrentVersion\\Run'; $last = $null
+while ($true) {
+  $k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey($p)
+  if ($k) { $s = ($k.GetValueNames() | Sort-Object | ForEach-Object { $_ + '=' + $k.GetValue($_, '', 'DoNotExpandEnvironmentNames') }) -join ' | '; $k.Close(); if ($s -eq '') { $s = '(empty)' } } else { $s = '(no Run key)' }
+  if ($s -ne $last) { [Console]::Out.WriteLine([DateTime]::UtcNow.ToString('o') + ' ' + $s); [Console]::Out.Flush(); $last = $s }
+  Start-Sleep -Milliseconds 10
+}`;
+const runKeyLog = path.join(work, 'run-key.log');
+let runKeyJournal = null;
+function startRunKeyJournal() {
+  if (OS !== 'windows') return;
+  const out = fs.openSync(runKeyLog, 'a');
+  runKeyJournal = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', RUN_KEY_JOURNAL_PS], { stdio: ['ignore', out, out], windowsHide: true });
+  fs.closeSync(out);
+}
+/** Windows: what Microsoft Defender detected on this machine (a removed Run value would be one). */
+function defenderDetections() {
+  const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', 'Get-MpThreatDetection | Format-List InitialDetectionTime,ThreatID,ProcessName,Resources,ActionSuccess | Out-String -Width 300'], { encoding: 'utf8', timeout: 60_000 });
+  return `${r.stdout ?? ''}${r.stderr ?? ''}`.trim() || 'none';
+}
+
 // ---------------------------------------------------------------- the app and its panel
 
 let child = null;
@@ -671,6 +700,7 @@ async function windowsGuideShots(dir, out) {
 // ---------------------------------------------------------------- main
 
 try {
+  startRunKeyJournal();
   if (process.env.SC_DESKTOP_SCREENSHOTS && OS === 'windows' && opt('installers')) {
     await windowsGuideShots(path.resolve(opt('installers')), path.resolve(process.env.SC_DESKTOP_SCREENSHOTS)).catch((err) => console.log(`guide screenshots failed (ignored): ${err.message}`));
   }
@@ -679,16 +709,18 @@ try {
   console.log('\nAll desktop checks passed.');
 } catch (err) {
   console.log(`\n${err.stack ?? err}`);
-  for (const f of [path.join(work, 'app-output.log'), path.join(dataDir, 'logs', 'desktop.log')]) {
+  for (const f of [path.join(work, 'app-output.log'), path.join(dataDir, 'logs', 'desktop.log'), runKeyLog]) {
     if (fs.existsSync(f)) console.log(`\n--- ${f} (last 80 lines)\n${fs.readFileSync(f, 'utf8').split('\n').slice(-80).join('\n')}`);
   }
+  if (OS === 'windows') console.log(`\n--- Microsoft Defender detections\n${defenderDetections()}`);
   console.log(`\nStill running: ${ours().join('; ') || 'nothing'}`);
   process.exitCode = 1;
 } finally {
   if (child && child.exitCode === null) child.kill();
+  runKeyJournal?.kill();
   if (process.env.SC_DESKTOP_ARTIFACTS) {
     fs.mkdirSync(process.env.SC_DESKTOP_ARTIFACTS, { recursive: true });
-    for (const f of [path.join(work, 'app-output.log'), path.join(dataDir, 'logs', 'desktop.log')]) {
+    for (const f of [path.join(work, 'app-output.log'), path.join(dataDir, 'logs', 'desktop.log'), runKeyLog]) {
       if (fs.existsSync(f)) fs.copyFileSync(f, path.join(process.env.SC_DESKTOP_ARTIFACTS, path.basename(f)));
     }
   }

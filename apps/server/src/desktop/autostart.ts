@@ -54,26 +54,23 @@ export function windowsCommandExe(command: string): string {
 }
 
 /**
- * The Run value from `reg export` (UTF-16 .reg file text), or null when there is none.
- * `"SwarmCast"="\"C:\\Program Files\\x.exe\" --background"`; a non-string value (hex) is
- * reported as an empty command (exists, but not ours).
+ * cmd.exe line that prints the SwarmCast Run value with `reg query`, in UTF-8. reg.exe writes to a
+ * pipe in the console code page, which garbles a path outside it (C:\Users\Ñandú, 日本); `chcp 65001`
+ * switches the hidden console cmd.exe and reg.exe share to UTF-8 first. Constant: no path in it.
  */
-export function parseRegExport(text: string, name = WINDOWS_VALUE_NAME): string | null {
-  const lines = text.replace(/^\uFEFF/, '').split(/\r?\n/);
-  const prefix = `"${name.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"=`;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]!;
-    if (!line.toLowerCase().startsWith(prefix.toLowerCase())) continue;
-    const raw = line.slice(prefix.length);
-    if (!raw.startsWith('"')) return '';
-    let out = '';
-    for (let j = 1; j < raw.length; j++) {
-      const ch = raw[j]!;
-      if (ch === '\\' && j + 1 < raw.length) out += raw[++j];
-      else if (ch === '"') return out;
-      else out += ch;
-    }
-    return out;
+export const WINDOWS_QUERY_LINE = `chcp 65001 >nul & reg.exe query "${WINDOWS_RUN_KEY}" /v ${WINDOWS_VALUE_NAME}`;
+
+/**
+ * Data of the Run value from `reg query <key> /v <name>` output, or null when the output has no
+ * line for it: `    SwarmCast    REG_SZ    "C:\Program Files\x.exe" --background`. A value that is
+ * not a string (binary, number) is reported as an empty command (exists, but not ours).
+ */
+export function parseRegQuery(stdout: string, name = WINDOWS_VALUE_NAME): string | null {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const line = new RegExp(`^ {4}${escaped} {4}(REG_[A-Z_]+)(?: {4}(.*))?$`, 'i');
+  for (const l of stdout.split(/\r?\n/)) {
+    const m = line.exec(l);
+    if (m) return m[1] === 'REG_SZ' || m[1] === 'REG_EXPAND_SZ' ? (m[2] ?? '') : '';
   }
   return null;
 }
@@ -207,11 +204,15 @@ export interface RunResult {
   stdout: string;
   stderr: string;
 }
-export type Runner = (command: string, args: string[]) => Promise<RunResult>;
+export interface RunOptions {
+  /** Pass the arguments to the program as they are, unquoted (cmd.exe's own command line). */
+  verbatim?: boolean;
+}
+export type Runner = (command: string, args: string[], options?: RunOptions) => Promise<RunResult>;
 
-const defaultRunner: Runner = (command, args) =>
+const defaultRunner: Runner = (command, args, options = {}) =>
   new Promise((resolve) => {
-    execFile(command, args, { windowsHide: true, timeout: 15_000 }, (err, stdout, stderr) => {
+    execFile(command, args, { windowsHide: true, windowsVerbatimArguments: !!options.verbatim, timeout: 15_000 }, (err, stdout, stderr) => {
       const code = !err ? 0 : typeof err.code === 'number' ? err.code : 1;
       resolve({ code, stdout: String(stdout), stderr: String(stderr) || (err?.message ?? '') });
     });
@@ -224,15 +225,31 @@ export interface AutostartOptions {
   /** Home folder (tests use a temporary one). */
   home?: string;
   env?: NodeJS.ProcessEnv;
-  /** Runs reg.exe (Windows); replaced in tests. */
+  /** Runs cmd.exe and reg.exe (Windows); replaced in tests. */
   run?: Runner;
-  /** Folder for reg.exe's export file. */
-  tmpDir?: string;
 }
 
-/** Normalize for comparison: Windows paths are case-insensitive. */
+/** What the OS entry starts (null: no entry), and what was read, for error messages. */
+interface Entry {
+  exe: string | null;
+  detail: string;
+}
+
+/**
+ * The same program? Both paths resolved to the file they name when it exists (links; on Windows
+ * 8.3 short names such as C:\PROGRA~1), Windows without the `\\?\` prefix and case-insensitive.
+ */
 function samePath(a: string, b: string, platform: NodeJS.Platform): boolean {
-  return platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+  const canonical = (p: string): string => {
+    let real = p;
+    try {
+      real = fs.realpathSync.native(p);
+    } catch {
+      // not there (another copy, moved or removed): compare the path as written
+    }
+    return platform === 'win32' ? real.replace(/^\\\\\?\\UNC\\/i, '\\\\').replace(/^\\\\\?\\/, '').toLowerCase() : real;
+  };
+  return canonical(a) === canonical(b);
 }
 
 export class Autostart {
@@ -260,42 +277,47 @@ export class Autostart {
     return path.join(config, 'autostart', 'swarmcast.desktop');
   }
 
-  /** Program the OS entry starts; null when there is no entry. */
-  private async readEntry(): Promise<string | null> {
+  private async readEntry(): Promise<Entry> {
     if (this.platform === 'win32') return this.readWindows();
+    const file = this.entryFile();
     let text: string;
     try {
-      text = fs.readFileSync(this.entryFile(), 'utf8');
+      text = fs.readFileSync(file, 'utf8');
     } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { exe: null, detail: `no ${file}` };
       throw err;
     }
-    return this.platform === 'darwin' ? (macPlistExe(text) ?? '') : linuxEntryExe(text);
+    const exe = this.platform === 'darwin' ? (macPlistExe(text) ?? '') : linuxEntryExe(text);
+    return { exe, detail: exe === null ? `${file} is turned off` : `${file} starts ${JSON.stringify(exe)}` };
   }
 
-  private async readWindows(): Promise<string | null> {
-    // `reg export` writes UTF-16, so paths with accents (C:\Users\João) read back exactly;
-    // `reg query` prints them in the console code page.
-    const dir = fs.mkdtempSync(path.join(this.o.tmpDir ?? os.tmpdir(), 'sc-reg-'));
-    const file = path.join(dir, 'run.reg');
-    try {
-      const r = await this.run('reg.exe', ['export', WINDOWS_RUN_KEY, file, '/y']);
-      if (r.code !== 0 || !fs.existsSync(file)) return null;
-      const buf = fs.readFileSync(file);
-      const text = buf[0] === 0xff && buf[1] === 0xfe ? buf.subarray(2).toString('utf16le') : buf.toString('utf8');
-      const command = parseRegExport(text);
-      return command === null ? null : windowsCommandExe(command);
-    } finally {
-      fs.rmSync(dir, { recursive: true, force: true });
-    }
+  /**
+   * The Run value, read by its name. Not `reg export` (measured on windows-latest runners): with
+   * two exports at the same time (the panel reading the state while a toggle reads its write
+   * back) one fails now and then with "ERROR: Unable to write to the file" (exit 1) or writes an
+   * empty file (exit 0), although each writes its own file (159 of 15,000 first enables with 4
+   * readers); and once an export left the value out while another program changed the key's other
+   * values. All of these read as "no entry". `reg query /v` had none of them (0 of 15,000). Its exit
+   * code 1 is "not found" (and reg.exe's other errors, told apart only by the localized text,
+   * kept for error messages).
+   */
+  private async readWindows(): Promise<Entry> {
+    const r = await this.run('cmd.exe', ['/d', '/s', '/c', `"${WINDOWS_QUERY_LINE}"`], { verbatim: true });
+    if (r.code !== 0) return { exe: null, detail: `no ${WINDOWS_VALUE_NAME} value (reg query exit ${r.code}${r.stderr.trim() ? `: ${r.stderr.trim()}` : ''})` };
+    const command = parseRegQuery(r.stdout);
+    if (command === null) throw new Error(`reg query found the ${WINDOWS_VALUE_NAME} value but printed no data: ${JSON.stringify(r.stdout.slice(0, 300))}`);
+    return { exe: windowsCommandExe(command), detail: `the Run value is ${JSON.stringify(command)}` };
+  }
+
+  private stateOf(exe: string | null): DesktopAutostartState {
+    if (exe === null) return { supported: true, enabled: false };
+    return { supported: true, enabled: true, ...(samePath(exe, this.o.exe!, this.platform) ? {} : { stale: true }) };
   }
 
   async status(): Promise<DesktopAutostartState> {
     if (!this.supported) return { supported: false, enabled: false };
     try {
-      const current = await this.readEntry();
-      if (current === null) return { supported: true, enabled: false };
-      return { supported: true, enabled: true, ...(samePath(current, this.o.exe!, this.platform) ? {} : { stale: true }) };
+      return this.stateOf((await this.readEntry()).exe);
     } catch (err) {
       return { supported: true, enabled: false, error: (err as Error).message };
     }
@@ -305,9 +327,9 @@ export class Autostart {
     if (!this.supported) throw new Error('Starting with the computer is only available in the SwarmCast desktop app.');
     if (enabled) await this.write(this.o.exe!);
     else await this.remove();
-    const s = await this.status();
-    if (s.error) throw new Error(s.error);
-    if (s.enabled !== enabled || s.stale) throw new Error(`The ${enabled ? 'new' : 'removed'} autostart entry did not read back as expected.`);
+    const entry = await this.readEntry();
+    const s = this.stateOf(entry.exe);
+    if (s.enabled !== enabled || s.stale) throw new Error(`The ${enabled ? 'new' : 'removed'} autostart entry did not read back as expected (${entry.detail}).`);
     return s;
   }
 
@@ -327,7 +349,7 @@ export class Autostart {
 
   private async remove(): Promise<void> {
     if (this.platform === 'win32') {
-      if ((await this.readWindows()) === null) return;
+      if ((await this.readWindows()).exe === null) return;
       const r = await this.run('reg.exe', ['delete', WINDOWS_RUN_KEY, '/v', WINDOWS_VALUE_NAME, '/f']);
       if (r.code !== 0) throw new Error(`reg delete failed: ${r.stderr.trim() || `exit ${r.code}`}`);
       return;

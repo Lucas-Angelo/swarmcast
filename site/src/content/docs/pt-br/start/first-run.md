@@ -33,7 +33,7 @@ Verde quer dizer tudo certo; amarelo, funciona mas não é o ideal. Nada disso i
 
 Escolha se você também transmite na Twitch, no YouTube ou na Kick, ou só no SwarmCast. Os próximos passos mostram as configurações do OBS para essa escolha.
 
-![Passo 5: instale o plugin Multiple output no OBS e preencha um destino novo com 1 Nome, 2 URL (servidor) e 3 Chave de transmissão, cada um com um botão Copiar.](../../../../assets/guides/start/pt-br/obs-step.webp)
+![Passo 5: instale o plugin Multiple output no OBS e preencha um destino novo com Nome, URL (servidor) e Chave de transmissão: 1, 2 e 3 são os botões Copiar de cada um.](../../../../assets/guides/start/pt-br/obs-step.webp)
 
 Use os botões **Copiar** e cole no OBS. O passo a passo completo, com imagens do OBS: [Configurar o OBS](/swarmcast/pt-br/start/obs/).
 

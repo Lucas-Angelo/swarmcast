@@ -5,7 +5,7 @@ description: Tire alguém da live, impeça alguém de compartilhar vídeo e troq
 
 Todo mundo que está assistindo aparece no cartão **Espectadores** do painel, com o apelido que digitou e o aparelho (PC ou Celular).
 
-![O cartão Espectadores: Bia, Rafa_gamer e Theo com o aparelho, P2P ligado (os três ligaram), dados compartilhados e os botões 1 Tirar do P2P e 2 Expulsar.](../../../../assets/guides/live/pt-br/viewers.webp)
+![O cartão Espectadores: Maria, Pedro e Alex com o aparelho, P2P (ligado para Maria e Pedro, que ligaram), dados compartilhados, atraso e os botões 1 Tirar do P2P, Silenciar… e 2 Expulsar.](../../../../assets/guides/live/pt-br/viewers.webp)
 
 ## Tirar uma pessoa: Expulsar
 
@@ -13,7 +13,7 @@ Clique em **Expulsar** ao lado da pessoa. Ela cai na hora e aquele navegador nã
 
 ## Impedir alguém de compartilhar vídeo: Tirar do P2P
 
-![O cartão Espectadores depois de Tirar do P2P: 1 o P2P da Rafa_gamer mostra removido, e 2 Liberar P2P de novo desfaz.](../../../../assets/guides/live/pt-br/viewers-removed.webp)
+![O cartão Espectadores depois de Tirar do P2P: 1 o P2P do Pedro mostra removido, e 2 Liberar P2P de novo desfaz.](../../../../assets/guides/live/pt-br/viewers-removed.webp)
 
 Clique em **Tirar do P2P**. A pessoa continua assistindo, direto do seu computador, mas não compartilha mais vídeo com os outros. **Liberar P2P de novo** desfaz. O SwarmCast também faz isso sozinho com quem os outros espectadores denunciam por mandar vídeo quebrado.
 

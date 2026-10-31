@@ -184,6 +184,12 @@ source of truth (read back on every request):
 | macOS | `~/Library/LaunchAgents/io.github.lucas-angelo.swarmcast.plist` (`RunAtLoad`, args `<exe> --background`) |
 | Linux | `~/.config/autostart/swarmcast.desktop` (`TryExec=<exe>`, `Exec="<exe>" --background`) |
 
+Windows reads the value back by its name (`reg query /v`, run as `cmd /c "chcp 65001 & reg query …"` so
+reg.exe prints UTF-8 and any path reads back exactly), never with `reg export`: two exports at the same time
+(the panel reading the state while a toggle reads its write back) make one fail ("Unable to write to the
+file") or write an empty file now and then, which read as "no entry". A read-back that does not match says
+what it read (the panel shows it in the error).
+
 Panel API (admin auth like the other routes):
 
 - `GET /api/desktop` → `{ desktop: true, version, serverVersion, autostart: { supported, enabled, stale?, error? },
