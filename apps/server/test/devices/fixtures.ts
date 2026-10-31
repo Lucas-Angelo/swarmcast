@@ -1,8 +1,7 @@
 // Fixtures of the device suite, on top of the e2e ones (one e2e server for the run, reset and
 // checked by the e2e stream gate before every test):
 // - `device` (worker): the project's phone, once for the run: the Android emulator (attached or
-//   booted) or the iOS Simulator with safaridriver; `freshDevice` (test): the suite's own
-//   emulator booted afresh for each test after the first (android.ts freshForTest);
+//   booted) or the iOS Simulator with safaridriver;
 // - `phone` (test): a fresh browser on it. Its screen is recorded; a failed test keeps the
 //   recording, a screenshot of the whole screen and the device's log.
 import fs from 'node:fs';
@@ -19,7 +18,7 @@ export { expect } from '../e2e/fixtures.js';
 
 type Device = AndroidDevice | IosDevice;
 
-export const test = e2e.extend<{ phone: Phone; freshDevice: Device }, { platform: Platform; device: Device }>({
+export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: Device }>({
   platform: ['android', { scope: 'worker', option: true }],
   device: [
     async ({ platform }, use, workerInfo) => {
@@ -34,16 +33,7 @@ export const test = e2e.extend<{ phone: Phone; freshDevice: Device }, { platform
     // A cold emulator boot or a simulator's first boot after its automation settings.
     { scope: 'worker', timeout: 600_000 },
   ],
-  // The suite's Android emulator booted afresh for each test after the first (AndroidDevice.freshForTest).
-  freshDevice: [
-    async ({ device }, use) => {
-      if (device instanceof AndroidDevice) await device.freshForTest();
-      await use(device);
-    },
-    // A cold boot of the emulator, as the device fixture's.
-    { timeout: 600_000 },
-  ],
-  phone: async ({ freshDevice: device }, use, testInfo) => {
+  phone: async ({ device }, use, testInfo) => {
     const phone = await device.newPhone();
     const recordingFile = testInfo.outputPath(device instanceof AndroidDevice ? 'screen.mp4' : 'screen.mov');
     const recording = process.env.DEVICES_VIDEO === 'off' ? null : device.startRecording(recordingFile);

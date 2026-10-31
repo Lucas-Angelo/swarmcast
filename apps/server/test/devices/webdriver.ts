@@ -22,8 +22,8 @@ export interface Capabilities {
   [name: string]: unknown;
 }
 
-/** A W3C touch tap (pointer down and up) at `dx`, `dy` CSS pixels from the middle of the element's part in view. */
-export function tapActions(element: ElementRef, dx = 0, dy = 0): unknown {
+/** A W3C touch tap (pointer down and up) at `x`, `y` CSS pixels of the viewport (the page's client coordinates). */
+export function tapActions(x: number, y: number): unknown {
   return {
     actions: [
       {
@@ -31,7 +31,7 @@ export function tapActions(element: ElementRef, dx = 0, dy = 0): unknown {
         id: 'finger',
         parameters: { pointerType: 'touch' },
         actions: [
-          { type: 'pointerMove', duration: 0, origin: element, x: Math.round(dx), y: Math.round(dy) },
+          { type: 'pointerMove', duration: 0, origin: 'viewport', x: Math.round(x), y: Math.round(y) },
           { type: 'pointerDown', button: 0 },
           { type: 'pointerUp', button: 0 },
         ],

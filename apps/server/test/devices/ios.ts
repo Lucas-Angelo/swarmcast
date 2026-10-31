@@ -1,7 +1,7 @@
 // Mobile Safari on an iOS Simulator, through Apple's safaridriver (W3C WebDriver; `man
 // safaridriver`: platformName iOS, safari:useSimulator, safari:deviceUDID). Taps are W3C touch
 // actions, rotation is the simulator's (devicectl on Xcode 27+, Simulator.app's Rotate menu on
-// Xcode 26), "background" is switching to the Settings app.
+// Xcode 26). No "background": the session ends when Safari leaves the screen (IosPhone.background).
 //
 // Where it runs: Xcode 26 on macOS 26 (GitHub's macos-26 image, .github/workflows/devices.yml).
 // On macOS 27 with Xcode 27, safaridriver finds no simulator for iOS 18 and later runtimes:
@@ -26,8 +26,6 @@ const run = promisify(execFile);
 /** scripts/test/devices/setup.sh install ios (and devices.yml) create it. */
 const SIMULATOR_NAME = 'SwarmCast iPhone';
 const SAFARI = 'com.apple.mobilesafari';
-/** The app the viewer switches to in background(): Settings, there on every simulator. */
-const OTHER_APP = 'com.apple.Preferences';
 /**
  * Web Inspector and remote automation switches inside the simulator. Apple says simulators need
  * none since iOS 14, but a new simulator answered safaridriver only with a timeout waiting for
@@ -213,10 +211,6 @@ export class IosDevice {
     );
   }
 
-  async launch(bundleId: string): Promise<void> {
-    await simctl(['launch', this.udid, bundleId]);
-  }
-
   async screenshot(): Promise<Buffer> {
     const { stdout } = await run('xcrun', ['simctl', 'io', this.udid, 'screenshot', '--type=png', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
     return stdout;
@@ -282,7 +276,10 @@ export class IosPhone implements Phone {
         message: `${selector} can be touched (enabled, partly in sight, not covered)`,
       })
       .toBe(true);
-    await this.session.perform(tapActions(element, point!.dx, point!.dy));
+    // At the point's viewport coordinates, not relative to the element: with the page scrolled
+    // (the chat input, below the player), safaridriver's element origin put the finger on
+    // #unmute in the player instead (Devices run 41181641808).
+    await this.session.perform(tapActions(point!.clientX, point!.clientY));
   }
 
   /**
@@ -320,14 +317,18 @@ export class IosPhone implements Phone {
     throw new Error('iOS has no system Back');
   }
 
-  async background(): Promise<void> {
-    await this.device.launch(OTHER_APP);
+  /**
+   * Not possible under safaridriver: when Safari leaves the screen the automation session ends.
+   * In Devices run 41181641808, once Settings was launched over Safari (`simctl launch`), every
+   * command answered "invalid session id", also after Safari was launched back in front, and a
+   * new session opens a new page. The background check runs on Android (viewer.spec.ts).
+   */
+  background(): Promise<void> {
+    throw new Error('iOS: the safaridriver session ends when Safari goes to the background');
   }
 
-  async foreground(): Promise<void> {
-    await this.device.launch(SAFARI);
-    // The automation session answers again once Safari is in front.
-    await until(() => this.session.url().then(() => true, () => false), { timeoutMs: 30_000, what: 'Safari back in front' });
+  foreground(): Promise<void> {
+    throw new Error('iOS: the safaridriver session ends when Safari goes to the background');
   }
 
   screenshot(): Promise<Buffer> {

@@ -88,13 +88,11 @@ export class AndroidDevice {
    * per-test `logcat -d`, it keeps what the device said before it stopped answering.
    */
   private log: Tracked | null = null;
-  /** Chromes started on this boot of the device (newPhone). */
-  private chromes = 0;
 
   private constructor(
     readonly serial: string,
     /** The emulator this suite booted (it stops it at the end); null for a device that was already there. */
-    private own: Tracked | null,
+    private readonly own: Tracked | null,
     private readonly o: { publicPort: number; logDir: string },
   ) {}
 
@@ -139,7 +137,6 @@ export class AndroidDevice {
       what: `${serial} to finish booting`,
       abortOn: own ? [own] : [],
     });
-    this.chromes = 0;
     this.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
     // What the emulator gave Android (EMULATOR_FEATURES: neither should be on), for the record.
     const vulkan = await this.shellOut(['getprop', 'ro.hardware.vulkan']);
@@ -152,21 +149,6 @@ export class AndroidDevice {
     await this.shell(['wm', 'user-rotation', 'lock', '0']);
     await this.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
-  }
-
-  /**
-   * The suite's own emulator, booted afresh when a Chrome already ran on it: the emulator crashed
-   * (SIGSEGV, emulator.log) while the second Chrome of a boot played the live, with Vulkan and the
-   * host H.264 decoder off (EMULATOR_FEATURES), on both emulators of Devices run 41180367812,
-   * after the first Chrome of each had passed its test; earlier runs lost the device at that same
-   * point. Each test therefore gets the first Chrome of a fresh boot, as a test gets a fresh
-   * browser. A device that was already there (a phone, an emulator started by hand) is used as it is.
-   */
-  async freshForTest(): Promise<void> {
-    if (!this.own || this.chromes === 0) return;
-    await this.stopEmulator();
-    this.own = AndroidDevice.bootEmulator(this.o.logDir);
-    await this.prepare();
   }
 
   private async stopEmulator(): Promise<void> {
@@ -241,7 +223,6 @@ export class AndroidDevice {
 
   /** A fresh Chrome for one test: stopped, its data cleared (no cookie or remembered choice of an earlier test), portrait. */
   async newPhone(): Promise<AndroidPhone> {
-    this.chromes += 1;
     await this.shell(['am', 'force-stop', CHROME]);
     await this.shell(['pm', 'clear', CHROME]);
     // Without it, a fresh Chrome asks for it in a dialog over the page ("Chrome notifications

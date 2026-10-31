@@ -348,6 +348,9 @@ export interface TouchPoint {
   /** From the middle of the element's part inside the layout viewport (W3C's "in-view center point"). */
   dx: number;
   dy: number;
+  /** In layout-viewport CSS pixels (getBoundingClientRect's), W3C's "viewport" origin. */
+  clientX: number;
+  clientY: number;
 }
 
 /**
@@ -373,5 +376,5 @@ export function touchPoint(el: Element): TouchPoint | null {
   if (!hit || !(hit === el || el.contains(hit))) return null;
   const inViewX = (Math.max(r.left, 0) + Math.min(r.right, innerWidth)) / 2;
   const inViewY = (Math.max(r.top, 0) + Math.min(r.bottom, innerHeight)) / 2;
-  return { x: (cx - vv.offsetLeft) * vv.scale, y: (cy - vv.offsetTop) * vv.scale, dx: cx - inViewX, dy: cy - inViewY };
+  return { x: (cx - vv.offsetLeft) * vv.scale, y: (cy - vv.offsetTop) * vv.scale, dx: cx - inViewX, dy: cy - inViewY, clientX: cx, clientY: cy };
 }

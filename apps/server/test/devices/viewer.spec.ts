@@ -14,6 +14,8 @@
 // and Send Keys inserts nothing there (ios.ts IosPhone.onScreenKeyboard and type() have the
 // evidence), so on iOS the "in sight" checks hold with no keyboard over the page, tapToType checks
 // that the tap reached the field as a finger's, and the text is put in the field as the keyboard would.
+// The trip to the background runs on Android: under safaridriver the session ends as Safari leaves
+// the screen (ios.ts IosPhone.background has the evidence).
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, say, sees, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
@@ -83,7 +85,7 @@ test('the chat sits under the player; a message goes from the phone to another v
   await expect.poll(() => chatShows(phone, fromDesktop)).toBe(true);
 });
 
-test('back from the background the video plays again, behind the live; Go live returns to the live point', async ({ phone }) => {
+test('back from the background the video plays again, behind the live; Go live returns to the live point', { tag: '@android' }, async ({ phone }) => {
   // Arrange
   await joinOnPhone(phone, uid('away'), await liveLink());
   await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);

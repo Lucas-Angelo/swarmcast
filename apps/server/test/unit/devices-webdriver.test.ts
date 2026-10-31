@@ -76,13 +76,12 @@ describe('the device suite WebDriver client', () => {
     ]);
   });
 
-  it('taps with one touch pointer in the middle of the element, then releases the input state', async () => {
+  it('taps with one touch pointer at a point of the viewport, rounded to whole pixels, then releases the input state', async () => {
     // Arrange
-    const element = { [ELEMENT_KEY]: 'e9' };
     const driver = await fakeDriver((r) => (r.path === '/session' ? NEW_SESSION : { value: null }));
     const session = await Session.create(driver.base, {});
     // Act
-    await session.perform(tapActions(element));
+    await session.perform(tapActions(139.15, 356.92));
     // Assert
     expect(driver.requests.slice(1)).toEqual([
       {
@@ -94,7 +93,7 @@ describe('the device suite WebDriver client', () => {
               type: 'pointer',
               id: 'finger',
               parameters: { pointerType: 'touch' },
-              actions: [{ type: 'pointerMove', duration: 0, origin: element, x: 0, y: 0 }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }],
+              actions: [{ type: 'pointerMove', duration: 0, origin: 'viewport', x: 139, y: 357 }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }],
             },
           ],
         },

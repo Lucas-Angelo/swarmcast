@@ -154,10 +154,12 @@ sideways layout; iOS: the sideways layout).
   41180367812). The keyboard checks (what it leaves in sight) and real typing run on Android; on
   iOS the tap is checked to reach the field as a finger's, the text is put in the field as the
   keyboard would (`IosPhone.type`), and every other check runs (`Phone.onScreenKeyboard`).
-- **Android emulator:** its host-side H.264 decoder and Vulkan crashed it (SIGSEGV), and so did a
-  second Chrome on one boot, so it runs with `-feature -Vulkan,-HardwareDecoder` and each test gets
-  a fresh boot (`android.ts` `EMULATOR_FEATURES`, `freshForTest`); CI boots it the suite's way,
-  after `setup.sh install android`, so `emulator.log` keeps its output and exit.
+- **Background on iOS:** under safaridriver the session ends as Safari leaves the screen ("invalid
+  session id" from then on), so the trip to the background runs on Android (`@android`).
+- **Android emulator:** its host-side H.264 decoder and Vulkan crashed it (SIGSEGV), so it runs with
+  `-feature -Vulkan,-HardwareDecoder` (`android.ts` `EMULATOR_FEATURES`). CI boots it the suite's
+  way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
+  leaves a core and its backtrace with the job's artifacts.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a
