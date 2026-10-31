@@ -20,8 +20,6 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-      - name: First enable creates the Run key
+      - name: First enable with readers, at scale
         shell: bash
-        env:
-          PROBE_N: '500'
-        run: node --experimental-transform-types probe/create.mts
+        run: node --experimental-transform-types probe/create2.mts
