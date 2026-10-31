@@ -147,6 +147,11 @@ sideways layout; iOS: the sideways layout).
   keeps an attached page visible); taps wait for the keyboard and for two identical layout readings
   and aim at the visible part of an enabled, uncovered element; a mouse click does not raise the
   keyboard, a touch does.
+- **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
+  tap reaches the field as trusted touch events, the field has focus and Simulator.app does not
+  connect the Mac's keyboard (Devices run 41173958482). The keyboard checks (what it leaves in
+  sight) run on Android; on iOS the tap is checked to reach the field as a finger's, and every
+  other check runs (`Phone.onScreenKeyboard`).
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a

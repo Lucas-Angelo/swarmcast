@@ -9,6 +9,12 @@ export type Orientation = 'portrait' | 'landscape';
 
 export interface Phone {
   readonly platform: Platform;
+  /**
+   * Whether a tap on a text field raises the on-screen keyboard here. False on the iOS Simulator
+   * driven by safaridriver (ios.ts IosPhone.onScreenKeyboard has the evidence): the checks of
+   * what the keyboard leaves in sight then run on Android only.
+   */
+  readonly onScreenKeyboard: boolean;
   /** Opens a link the way a viewer does: handed to the browser by the system (Android: a VIEW intent). */
   open(url: string): Promise<void>;
   /** The address of the page the browser shows. */
@@ -182,7 +188,9 @@ export const KEYBOARD_MIN_PX = 150;
 
 /**
  * Taps a text field and waits until the on-screen keyboard it raised is up and the page has
- * stopped moving. Up: the visible part of the page (the visual viewport) is at least a keyboard
+ * stopped moving. On a phone with no on-screen keyboard under automation (`onScreenKeyboard`
+ * false: the iOS Simulator), it waits instead for the tap to reach the field as a finger's
+ * (trusted touch events on it) and the field to have focus, then for the page to stop moving. Up: the visible part of the page (the visual viewport) is at least a keyboard
  * shorter than before the tap. That holds whether the browser only covers the page (Chrome's
  * default, Safari) or resizes it (a page with interactive-widget=resizes-content, where the
  * layout viewport shrinks with it). The keyboard slides in after the tap and the browser then
@@ -194,6 +202,15 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
   const before = await viewport(phone);
   await recordInput(phone);
   await phone.tap(selector);
+  if (!phone.onScreenKeyboard) {
+    await expect
+      .poll(async () => ((await touchedAndFocused(phone, selector)) ? 'touched' : `not yet: focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}`), {
+        message: `a finger's tap reached ${selector} and focused it`,
+      })
+      .toBe('touched');
+    await still(phone);
+    return;
+  }
   let previous = '';
   await expect
     .poll(
@@ -217,21 +234,32 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
  */
 function recordInput(phone: Phone): Promise<void> {
   return phone.evaluate(() => {
-    const w = window as unknown as { __input?: string[] };
+    const w = window as unknown as { __input?: string[]; __touched?: Element[]; __inputListening?: boolean };
     w.__input = [];
-    if ((window as unknown as { __inputListening?: boolean }).__inputListening) return;
-    (window as unknown as { __inputListening?: boolean }).__inputListening = true;
+    w.__touched = [];
+    if (w.__inputListening) return;
+    w.__inputListening = true;
     for (const type of ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'mousedown', 'click', 'focusin', 'focusout']) {
       window.addEventListener(
         type,
         (e) => {
           const t = e.target as Element | null;
           w.__input?.push(`${type}@${t?.id || t?.tagName?.toLowerCase() || '?'}${e.isTrusted ? '' : ' untrusted'}${e instanceof PointerEvent ? ` (${e.pointerType})` : ''}`);
+          if (type === 'touchend' && e.isTrusted && t) w.__touched?.push(t);
         },
         true,
       );
     }
   });
+}
+
+/** Since recordInput(): a trusted touch ended on the element (or inside it), and the element has focus. */
+function touchedAndFocused(phone: Phone, selector: string): Promise<boolean> {
+  return phone.evaluate((s) => {
+    const el = document.querySelector(s);
+    const touched = (window as unknown as { __touched?: Element[] }).__touched ?? [];
+    return !!el && document.activeElement === el && touched.some((t) => t === el || el.contains(t));
+  }, selector);
 }
 
 function inputEvents(phone: Phone): Promise<string> {

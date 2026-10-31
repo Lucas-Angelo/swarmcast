@@ -269,6 +269,16 @@ export class IosDevice {
 
 export class IosPhone implements Phone {
   readonly platform = 'ios' as const;
+  /**
+   * The iOS Simulator under safaridriver never raised the on-screen keyboard (CI, macos-26,
+   * Xcode 26, iOS 26.5, Devices run 41173958482): the tap on #nickname reached the page as a
+   * finger's (trusted pointerdown/pointerup of type touch, touchstart, touchend, then mousedown
+   * and click), the field had focus, Simulator.app did not connect the Mac's keyboard (its
+   * I/O > Keyboard menu, unticked by attach()), and still the visual viewport stayed 714 px
+   * high and the screen recording showed no keyboard, in every test. So on iOS the keyboard
+   * checks (what it leaves in sight) are not made; the tap, the typing and every other check are.
+   */
+  readonly onScreenKeyboard = false;
 
   constructor(
     private readonly device: IosDevice,

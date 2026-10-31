@@ -39,6 +39,17 @@ const AVD_NAME = 'swarmcast-pixel';
 /** The emulator the suite boots when no device is connected (an even port in 5554-5584). */
 const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
+/**
+ * Emulator features turned off. HardwareDecoder: the emulator decodes H.264 for Android on the
+ * host (Chrome gets c2.goldfish.h264.decoder), and the whole emulator halted as Chrome started
+ * decoding the live in both CI runs that played it: 41173958482 on the first play (the device log
+ * stops 1.2 s after "C2GoldfishAvcDec: calling onInit"; then adb loses the device and the console
+ * port closes, with nothing in the emulator's output), 41171340670 on the second (the video never
+ * played, then the same loss). Without it Android decodes the
+ * video itself (c2.android.avc.decoder), as a phone without that hardware does. devices.yml
+ * passes the same.
+ */
+export const EMULATOR_FEATURES = ['-feature', '-HardwareDecoder'] as const;
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -101,8 +112,9 @@ export class AndroidDevice {
     if (!serial) {
       serial = `emulator-${OWN_EMULATOR_PORT}`;
       const emulator = path.join(sdkRoot(), 'emulator', process.platform === 'win32' ? 'emulator.exe' : 'emulator');
-      // As devices.yml boots it on CI: headless, software GPU, no audio device, a cold boot.
-      own = spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect'], {
+      // As devices.yml boots it on CI: headless, software GPU, no audio device, a cold boot, video
+      // decoded inside Android (EMULATOR_FEATURES).
+      own = spawnTracked(emulator, ['-avd', AVD_NAME, '-port', String(OWN_EMULATOR_PORT), '-no-window', '-no-boot-anim', '-no-snapshot', '-no-metrics', '-no-audio', '-gpu', 'swiftshader_indirect', ...EMULATOR_FEATURES], {
         name: 'emulator',
         logFile: path.join(o.logDir, 'emulator.log'),
       });
@@ -114,6 +126,9 @@ export class AndroidDevice {
       abortOn: own ? [own] : [],
     });
     device.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
+    // Whether the emulator offers Android its host-side video decoders (2: it does; EMULATOR_FEATURES).
+    const hostDecoders = await device.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
+    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.boot.qemu.hwcodec.avcdec=${hostDecoders || '(unset)'}\n`);
     for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await device.shell(['settings', 'put', 'global', scale, '0']);
     await device.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
@@ -266,6 +281,8 @@ export class AndroidDevice {
 
 export class AndroidPhone implements Phone {
   readonly platform = 'android' as const;
+  /** Gboard comes up for a tap on a text field (the AVD has no hardware keyboard). */
+  readonly onScreenKeyboard = true;
   private browser: Browser | null = null;
   private port = 0;
   private page: Page | null = null;
