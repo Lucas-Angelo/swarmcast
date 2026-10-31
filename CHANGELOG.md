@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **No console window flashes on Windows** when you turn Direct mode on: SwarmCast looks up your router without opening a PowerShell window.
 - **Your stream link appears sooner and opens right away on your own computer.** While a new link came online, SwarmCast asked your computer's DNS about the address before Cloudflare had published it; your computer (or your internet provider) then remembered it as "does not exist" for up to a minute. On a Mac, Start took about 80 seconds to show the link; elsewhere, opening the link right away could fail with "this site can't be reached". SwarmCast now asks Cloudflare until the address exists, and your computer only after that.
 
 ## [0.4.1] - 2026-10-31
