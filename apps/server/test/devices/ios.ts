@@ -324,7 +324,26 @@ export class IosPhone implements Phone {
         message: `${selector} can be touched (enabled, partly in sight, not covered)`,
       })
       .toBe(true);
+    // What the tap delivers to the element, kept in sessionStorage: a tap on Watch may navigate.
+    await this.session.execute(
+      `const el = arguments[0];
+       window.__tapStop?.();
+       sessionStorage.setItem('__tap', '');
+       const note = (e) => { if (e.isTrusted && (e.target === el || el.contains(e.target))) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + ' '); };
+       const types = ['touchstart', 'touchend', 'click'];
+       for (const type of types) window.addEventListener(type, note, true);
+       window.__tapStop = () => { for (const type of types) window.removeEventListener(type, note, true); };`,
+      [element],
+    );
+    const started = Date.now();
     await this.session.perform(tapActions(point!.clientX, point!.clientY));
+    const took = Date.now() - started;
+    // A finger's tap ends in a click. When it does not (the touch reached the element and no click
+    // followed: runs 41184587941, 41190536745, the second with a tap that took 9.5 s to perform on
+    // an overloaded simulator), the test fails here, with what arrived.
+    await expect
+      .poll(() => this.evaluate(() => sessionStorage.getItem('__tap') ?? ''), { message: `the tap on ${selector} ended in a click (it took ${took} ms to perform)` })
+      .toContain('click');
   }
 
   /**

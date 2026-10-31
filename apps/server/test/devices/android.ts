@@ -56,14 +56,17 @@ const BOOT_MS = 240_000;
  */
 export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as const;
 /**
- * The emulator's GPU: SwiftShader on the host, through the emulator's renderer. Emulators 37.2.12
- * and 37.2.13 crash with SIGSEGV in that renderer's thread (cores named RenderThread, all at the
- * same instruction) in most CI runs, also without Vulkan, the host decoder and the screen
- * recording (Devices runs 41184587941, 41186692587, 41188080970). `-gpu guest` was not honoured
- * (run 41190536745: still "Graphics backend: gfxstream" and the same crash). SWARMCAST_EMULATOR_GPU
- * picks another mode (setup.sh's SC_ANDROID_API another Android).
+ * The emulator's GPU: swangle_indirect, OpenGL ES through ANGLE on the host (over SwiftShader's
+ * Vulkan). With swiftshader_indirect (SwiftShader's own OpenGL ES) emulators 37.2.12 and 37.2.13
+ * crashed with SIGSEGV in the host renderer thread (cores named RenderThread, all at one
+ * instruction) in most CI runs, on Android 16 and on Android 15 (Devices runs 41184587941 to
+ * 41190536745, and 41223725642). Measured side by side in run 41223725642: swangle_indirect
+ * passed every test on one emulator; -gpu software (ANGLE over Lavapipe) crashed the same way in
+ * its fourth test; swiftshader_indirect on Android 15 lost two emulators. `-gpu guest` is not
+ * honoured (run 41190536745). SWARMCAST_EMULATOR_GPU picks another mode (setup.sh's SC_ANDROID_API
+ * another Android).
  */
-export const EMULATOR_GPU = process.env.SWARMCAST_EMULATOR_GPU ?? 'swiftshader_indirect';
+export const EMULATOR_GPU = process.env.SWARMCAST_EMULATOR_GPU ?? 'swangle_indirect';
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;

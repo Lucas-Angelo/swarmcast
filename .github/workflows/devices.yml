@@ -101,22 +101,10 @@ jobs:
         if: ${{ !cancelled() && github.ref == 'refs/heads/main' }}
 
   android:
-    name: Android Chrome (emulator, ${{ matrix.label }})
+    name: Android Chrome (emulator)
     if: inputs.every-event || github.event_name != 'pull_request' || github.event.label.name == 'devices'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Under measurement: the emulator's host renderer crashed with swiftshader_indirect on API 36
-    # (apps/server/test/devices/android.ts EMULATOR_GPU); each entry is one candidate.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { label: api36-software, gpu: software, api: '36' }
-          - { label: api36-swangle, gpu: swangle_indirect, api: '36' }
-          - { label: api35-swiftshader, gpu: swiftshader_indirect, api: '35' }
-    env:
-      SWARMCAST_EMULATOR_GPU: ${{ matrix.gpu }}
-      SC_ANDROID_API: ${{ matrix.api }}
     defaults:
       run:
         shell: bash
@@ -171,7 +159,7 @@ jobs:
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true
-        run: node .github/scripts/test-summary.mjs --title 'Real devices, Android Chrome (ubuntu-24.04 emulator, ${{ matrix.label }})' --playwright test-results/devices.json
+        run: node .github/scripts/test-summary.mjs --title 'Real devices, Android Chrome (ubuntu-24.04 emulator)' --playwright test-results/devices.json
       # What the runner says about a device that stopped answering: memory, the kernel's kills, the
       # emulator's own crash reports. Kept with the report.
       - name: Host state (a failed run)
@@ -200,7 +188,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 5
         with:
-          name: devices-android-${{ matrix.label }}
+          name: devices-android
           path: |
             playwright-report/devices/
             test-results/devices/

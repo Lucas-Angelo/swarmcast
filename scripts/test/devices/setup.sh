@@ -42,9 +42,9 @@ cmdline_sha1() {
   esac
 }
 # Pinned: Android Emulator 37.2.12 (build 16428233), SHA-256 of Google's archives (no longer in its
-# repository listing, which offers only the newest). 37.2.13 crashed with SIGSEGV in its host
-# renderer thread (a core named RenderThread) in most CI runs of the device suite; the one change in
-# its release notes is that it now frees a guest process's GLES contexts and surfaces when it exits.
+# repository listing, which offers only the newest): a known build under the device suite, not
+# whatever Google released last (37.2.13 came out mid-way through the suite's first CI runs).
+# Both crashed alike with one GPU mode (apps/server/test/devices/android.ts EMULATOR_GPU).
 EMULATOR_VERSION=37.2.12
 EMULATOR_BUILD=16428233
 emulator_zip_sha256() {

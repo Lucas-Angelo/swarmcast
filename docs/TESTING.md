@@ -156,9 +156,11 @@ sideways layout; iOS: the sideways layout).
   keyboard would (`IosPhone.type`), and every other check runs (`Phone.onScreenKeyboard`).
 - **Background on iOS:** under safaridriver the session ends as Safari leaves the screen ("invalid
   session id" from then on), so the trip to the background runs on Android (`@android`).
-- **Android emulator:** `setup.sh` pins version 37.2.12: 37.2.13 crashed (SIGSEGV in its host
-  renderer thread) in most runs. Its host-side H.264 decoder and Vulkan crashed it too, so it runs
-  with `-feature -Vulkan,-HardwareDecoder` (`android.ts` `EMULATOR_FEATURES`). CI boots it the suite's
+- **Android emulator:** `-gpu swangle_indirect` (`android.ts` `EMULATOR_GPU`): with
+  `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
+  versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
+  held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), and `setup.sh`
+  pins version 37.2.12 (a known build, not whatever is newest). CI boots it the suite's
   way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
   leaves a core and its backtrace with the job's artifacts.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
