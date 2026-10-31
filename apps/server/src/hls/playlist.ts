@@ -371,6 +371,25 @@ export class PlaylistStitcher {
     return this.window.length;
   }
 
+  /** The run numbers (cc) this playlist lists. */
+  runs(): Set<number> {
+    return new Set(this.window.map((e) => e.cc));
+  }
+
+  /**
+   * Drops the oldest entries while `stale(cc)` holds for their run, as long as an entry of a run
+   * that is not stale stays (never empties the playlist). Returns true if any was dropped.
+   */
+  dropOldRunsWhile(stale: (cc: number) => boolean): boolean {
+    if (this.window.every((e) => stale(e.cc))) return false;
+    let dropped = false;
+    while (stale(this.window[0]!.cc)) {
+      this.dropFirst();
+      dropped = true;
+    }
+    return dropped;
+  }
+
   /** File names (segments and init segments) the rendered playlist references. */
   names(): string[] {
     const out = new Set<string>();

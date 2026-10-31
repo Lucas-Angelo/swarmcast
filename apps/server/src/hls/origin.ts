@@ -398,6 +398,7 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
       // Only playlists of the current source keep their files alive; a stitcher left over
       // from the other source just ages out (and is reused if that source comes back).
       const active = new Set(mediaPlaylistUris(this.multivariantRaw).map(fileName));
+      if (this.alignRuns(active, audio)) changed = true;
       for (const [name, st] of this.stitchers) {
         if (!active.has(name)) continue;
         for (const n of st.names()) {
@@ -428,6 +429,38 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     } finally {
       this.polling = false;
     }
+  }
+
+  /**
+   * The oldest segment of every video playlist has its audio, and the other way round. A player
+   * starts at the oldest segment when the window is short and plays a segment only with the audio
+   * of the same upstream run (hls.js `cc`): a video playlist that began with a run the audio
+   * playlist no longer (or never) had left it with video and no audio, frozen until the stall
+   * watchdog moved it. Seen when the ladder fell back to the original: MediaMTX's video playlist,
+   * left over from before the ladder, still began with the one segment of a 2 s OBS connection
+   * that never reached its audio playlist (quality.spec on macOS CI: a 9 s freeze after the
+   * switch). Only such a head goes, and never a whole playlist: the window slides on, sequence and
+   * run numbers only grow. Returns true if a playlist changed.
+   */
+  private alignRuns(active: ReadonlySet<string>, audio: ReadonlySet<string>): boolean {
+    const live = [...active].flatMap((name) => {
+      const st = this.stitchers.get(name);
+      return st && st.length > 0 ? [{ name, st, audio: audio.has(name) }] : [];
+    });
+    const audios = live.filter((p) => p.audio);
+    const videos = live.filter((p) => !p.audio);
+    if (audios.length === 0 || videos.length === 0) return false;
+    const audioRuns = audios.map((p) => p.st.runs());
+    const videoRuns = videos.map((p) => p.st.runs());
+    let changed = false;
+    for (const p of live) {
+      // Video needs its run in every audio playlist; audio needs it in at least one video playlist.
+      const stale = p.audio ? (cc: number) => !videoRuns.some((r) => r.has(cc)) : (cc: number) => !audioRuns.every((r) => r.has(cc));
+      if (!p.st.dropOldRunsWhile(stale)) continue;
+      this.playlists.set(p.name, p.st.render());
+      changed = true;
+    }
+    return changed;
   }
 
   private async ensureFile(src: HlsSource, uri: string, now: number): Promise<boolean> {
