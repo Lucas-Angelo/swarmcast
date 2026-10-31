@@ -40,8 +40,9 @@ const AVD_NAME = 'swarmcast-pixel';
 const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
 /**
- * Emulator features turned off: two host-side parts of the emulator that crashed it (SIGSEGV in
- * emulator.log, the device gone mid-test, nothing else in its output).
+ * Emulator features turned off: two host-side parts of the emulator that crashed it, version
+ * 37.2.13 (SIGSEGV in emulator.log, the device gone mid-test, nothing else in its output; setup.sh
+ * now pins 37.2.12, see there).
  * - HardwareDecoder: the emulator decodes H.264 for Android on the host (Chrome gets
  *   c2.goldfish.h264.decoder). In Devices run 41178761001 all four emulators crashed right after
  *   "Failed to call cuInit, cannot use nvidia cuvid decoder for h264 stream", as Chrome's first

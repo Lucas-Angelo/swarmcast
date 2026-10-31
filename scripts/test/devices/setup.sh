@@ -41,6 +41,19 @@ cmdline_sha1() {
     linux) echo 040d3996a65543d22ec4bf73e4c37aa37a8d4af4 ;;
   esac
 }
+# Pinned: Android Emulator 37.2.12 (build 16428233), SHA-256 of Google's archives (no longer in its
+# repository listing, which offers only the newest). 37.2.13 crashed with SIGSEGV in its host
+# renderer thread (a core named RenderThread) in most CI runs of the device suite; the one change in
+# its release notes is that it now frees a guest process's GLES contexts and surfaces when it exits.
+EMULATOR_VERSION=37.2.12
+EMULATOR_BUILD=16428233
+emulator_zip_sha256() {
+  case "$1" in
+    mac_arm64) echo "emulator-darwin_aarch64-$EMULATOR_BUILD.zip f4c4a142bda54fcec064bdb32b51f19e25bae0a45ad019197ef968bf7a48979b" ;;
+    mac_x86_64) echo "emulator-darwin_x64-$EMULATOR_BUILD.zip 9fdae8c07ac92155aeb175835669ef9b12adf19130f5557792139fb4ebd01256" ;;
+    linux) echo "emulator-linux_x64-$EMULATOR_BUILD.zip b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1" ;;
+  esac
+}
 ANDROID_API=36
 AVD_NAME=swarmcast-pixel
 AVD_DEVICE=pixel_7
@@ -140,6 +153,7 @@ install_android() {
   { yes 2>/dev/null || true; } | "$sdkmanager" --sdk_root="$sdk" --licenses >/dev/null || die "sdkmanager --licenses failed"
   "$sdkmanager" --sdk_root="$sdk" --install platform-tools emulator "$image" | grep -v '^\[' || true
   [ -d "$sdk/system-images/android-$ANDROID_API/google_apis/$abi" ] || die "$image did not install"
+  install_emulator "$sdk" "$host"
 
   mkdir -p "$HOME/.android/avd"
   if [ ! -d "$HOME/.android/avd/$AVD_NAME.avd" ]; then
@@ -162,6 +176,29 @@ install_android() {
     fi
   done
   say "Android ready: SDK $sdk ($(size_of "$sdk")), AVD $AVD_NAME ($(size_of "$HOME/.android/avd/$AVD_NAME.avd"))."
+}
+
+# The pinned emulator in place of the one sdkmanager installed (the newest), its package.xml kept
+# with the pinned version so that sdkmanager lists what is there.
+install_emulator() {
+  local sdk="$1" host="$2" zip sum tmp
+  [ "$(cat "$sdk/emulator/.swarmcast-build" 2>/dev/null)" = "$EMULATOR_BUILD" ] && return 0
+  read -r zip sum <<<"$(emulator_zip_sha256 "$host")"
+  make_dir "$STATE/downloads"
+  tmp="$(mktemp -d "$STATE/downloads/emulator.XXXXXX")" || die "no temp folder"
+  say "Downloading the Android Emulator $EMULATOR_VERSION ($zip)"
+  curl -fsSL --retry 3 -o "$tmp/$zip" "https://dl.google.com/android/repository/$zip" || die "download failed: $zip"
+  [ "$(shasum -a 256 "$tmp/$zip" | cut -d ' ' -f1)" = "$sum" ] || die "$zip: SHA-256 differs from $sum"
+  (cd "$tmp" && unzip -q "$zip") || die "cannot unzip $zip"
+  if [ -f "$sdk/emulator/package.xml" ]; then
+    sed -e "s|<major>[0-9]*</major>|<major>${EMULATOR_VERSION%%.*}</major>|" \
+      -e "s|<minor>[0-9]*</minor>|<minor>$(echo "$EMULATOR_VERSION" | cut -d . -f2)</minor>|" \
+      -e "s|<micro>[0-9]*</micro>|<micro>${EMULATOR_VERSION##*.}</micro>|" "$sdk/emulator/package.xml" >"$tmp/emulator/package.xml"
+  fi
+  echo "$EMULATOR_BUILD" >"$tmp/emulator/.swarmcast-build"
+  rm -rf "${sdk:?}/emulator"
+  mv "$tmp/emulator" "$sdk/emulator" || die "cannot move the emulator into $sdk"
+  rm -rf "${tmp:?}"
 }
 
 remove_android() {

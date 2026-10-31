@@ -156,8 +156,9 @@ sideways layout; iOS: the sideways layout).
   keyboard would (`IosPhone.type`), and every other check runs (`Phone.onScreenKeyboard`).
 - **Background on iOS:** under safaridriver the session ends as Safari leaves the screen ("invalid
   session id" from then on), so the trip to the background runs on Android (`@android`).
-- **Android emulator:** its host-side H.264 decoder and Vulkan crashed it (SIGSEGV), so it runs with
-  `-feature -Vulkan,-HardwareDecoder` (`android.ts` `EMULATOR_FEATURES`). CI boots it the suite's
+- **Android emulator:** `setup.sh` pins version 37.2.12: 37.2.13 crashed (SIGSEGV in its host
+  renderer thread) in most runs. Its host-side H.264 decoder and Vulkan crashed it too, so it runs
+  with `-feature -Vulkan,-HardwareDecoder` (`android.ts` `EMULATOR_FEATURES`). CI boots it the suite's
   way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
   leaves a core and its backtrace with the job's artifacts.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes

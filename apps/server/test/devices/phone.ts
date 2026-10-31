@@ -243,11 +243,20 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
  */
 function recordInput(phone: Phone): Promise<void> {
   return phone.evaluate(() => {
-    const w = window as unknown as { __input?: string[]; __touched?: Element[]; __inputListening?: boolean };
+    const w = window as unknown as { __input?: string[]; __touched?: Element[]; __inputListening?: boolean; __changes?: Record<string, number> };
     w.__input = [];
     w.__touched = [];
+    w.__changes = {};
     if (w.__inputListening) return;
     w.__inputListening = true;
+    // What the page changed meanwhile (iOS drops the click of a tap when content appears in response to it).
+    new MutationObserver((list) => {
+      for (const m of list) {
+        const t = (m.target.nodeType === 1 ? m.target : m.target.parentElement) as Element | null;
+        const key = `${m.type}@${t?.id || t?.getAttribute?.('data-testid') || t?.className || t?.tagName?.toLowerCase() || '?'}${m.attributeName ? `[${m.attributeName}]` : ''}`;
+        if (w.__changes) w.__changes[key] = (w.__changes[key] ?? 0) + 1;
+      }
+    }).observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     for (const type of ['touchstart', 'touchend', 'pointerdown', 'pointerup', 'mousedown', 'click', 'focusin', 'focusout']) {
       window.addEventListener(
         type,
@@ -272,7 +281,13 @@ function touchedAndFocused(phone: Phone, selector: string): Promise<boolean> {
 }
 
 function inputEvents(phone: Phone): Promise<string> {
-  return phone.evaluate(() => (window as unknown as { __input?: string[] }).__input?.join(', ') || '(none)');
+  return phone.evaluate(() => {
+    const w = window as unknown as { __input?: string[]; __changes?: Record<string, number> };
+    const changes = Object.entries(w.__changes ?? {})
+      .map(([k, n]) => `${k} x${n}`)
+      .join(', ');
+    return `${w.__input?.join(', ') || '(none)'}; page changes since: ${changes || '(none)'}`;
+  });
 }
 
 /** The focused element as `tag#id` (`body` when nothing has focus), for a failure message. */
