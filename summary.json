@@ -1,67 +1,67 @@
 {
   "version": 1,
-  "generatedAt": "2026-10-31T08:46:43.998Z",
+  "generatedAt": "2026-10-31T09:50:18.805Z",
   "repo": "Lucas-Angelo/swarmcast",
   "downloads": {
-    "total": 206,
+    "total": 224,
     "byKind": {
-      "installer": 145,
-      "package": 61
+      "installer": 157,
+      "package": 67
     },
     "byOs": {
-      "windows": 38,
-      "macos": 69,
-      "linux": 99
+      "windows": 42,
+      "macos": 75,
+      "linux": 107
     },
-    "about": 200
+    "about": 220
   },
   "apps": {
-    "week": 95,
-    "checks": 291,
-    "days": 3.5,
+    "week": 100,
+    "checks": 303,
+    "days": 3.6,
     "partial": true,
     "checksPerApp": 3
   },
   "latest": {
-    "tag": "v0.4.0",
-    "version": "0.4.0",
-    "url": "https://github.com/Lucas-Angelo/swarmcast/releases/tag/v0.4.0",
-    "publishedAt": "2026-10-30T06:13:52Z",
+    "tag": "v0.4.1",
+    "version": "0.4.1",
+    "url": "https://github.com/Lucas-Angelo/swarmcast/releases/tag/v0.4.1",
+    "publishedAt": "2026-10-31T09:50:01Z",
     "assets": {
       "linux-appimage-arm64": {
-        "name": "SwarmCast_0.4.0_aarch64.AppImage",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_aarch64.AppImage",
-        "size": 153127432
+        "name": "SwarmCast_0.4.1_aarch64.AppImage",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_aarch64.AppImage",
+        "size": 153135624
       },
       "macos-arm64": {
-        "name": "SwarmCast_0.4.0_aarch64.dmg",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_aarch64.dmg",
-        "size": 76901069
+        "name": "SwarmCast_0.4.1_aarch64.dmg",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_aarch64.dmg",
+        "size": 76913711
       },
       "linux-appimage-x64": {
-        "name": "SwarmCast_0.4.0_amd64.AppImage",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_amd64.AppImage",
-        "size": 155642360
+        "name": "SwarmCast_0.4.1_amd64.AppImage",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_amd64.AppImage",
+        "size": 155646456
       },
       "linux-deb-x64": {
-        "name": "SwarmCast_0.4.0_amd64.deb",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_amd64.deb",
-        "size": 83392410
+        "name": "SwarmCast_0.4.1_amd64.deb",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_amd64.deb",
+        "size": 83394296
       },
       "linux-deb-arm64": {
-        "name": "SwarmCast_0.4.0_arm64.deb",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_arm64.deb",
-        "size": 83700780
+        "name": "SwarmCast_0.4.1_arm64.deb",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_arm64.deb",
+        "size": 83699824
       },
       "windows-x64": {
-        "name": "SwarmCast_0.4.0_x64-setup.exe",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_x64-setup.exe",
-        "size": 68285384
+        "name": "SwarmCast_0.4.1_x64-setup.exe",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_x64-setup.exe",
+        "size": 68271873
       },
       "macos-x64": {
-        "name": "SwarmCast_0.4.0_x64.dmg",
-        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.0/SwarmCast_0.4.0_x64.dmg",
-        "size": 83139081
+        "name": "SwarmCast_0.4.1_x64.dmg",
+        "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/v0.4.1/SwarmCast_0.4.1_x64.dmg",
+        "size": 83156318
       }
     }
   }
