@@ -7,7 +7,7 @@
 // Read from the built files, once (@bundle: the chromium project only, see playwright.config.ts).
 import fs from 'node:fs';
 import path from 'node:path';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures.js';
 import { DIST, requireBuild } from './watch-page.js';
 
 test.beforeAll(requireBuild);

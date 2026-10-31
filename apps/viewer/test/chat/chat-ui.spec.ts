@@ -3,7 +3,7 @@
 // Each test opens its own page on a hub of its own. The hub holds the echo of the page's own
 // message when a test wants to see "sending…": nothing here waits on a timer.
 import path from 'node:path';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test, type Page } from './fixtures.js';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild, reviewScreenshot } from './watch-page.js';
 
