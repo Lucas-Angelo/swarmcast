@@ -14,7 +14,8 @@
 //
 // Needs: `npm ci`, `npm run fetch-bins`, `npm run build`, ffmpeg on PATH and Google Chrome.
 // macOS/Linux only (the fake OBS is reconnected with SIGUSR2). Ports: the e2e ports moved by
-// SWARMCAST_E2E_PORT_OFFSET (default 1500 here, so it can run next to the e2e suite).
+// SWARMCAST_E2E_PORT_OFFSET (default SCREENSHOTS_OFFSET here, so it can run next to the e2e suite;
+// scripts/test/lib/ports.mjs).
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
@@ -24,12 +25,13 @@ import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { chromium, devices } from '@playwright/test';
 import { loopbackBase, panelLogin } from '../test/lib/loopback.mjs';
+import { e2ePorts, SCREENSHOTS_OFFSET } from '../test/lib/ports.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const OUT_DIR = path.join(ROOT, 'docs', 'img');
-const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? 1500);
-// Keep in sync with apps/server/test/e2e/server.ts.
-const PORTS = { rtmp: 39935 + OFFSET, public: 38080 + OFFSET, admin: 38081 + OFFSET, control: 38082 + OFFSET, mediamtxHls: 38083 + OFFSET };
+const OFFSET = Number(process.env.SWARMCAST_E2E_PORT_OFFSET ?? SCREENSHOTS_OFFSET);
+// The e2e server's ports moved by OFFSET (the server refuses an offset that puts one out of place).
+const PORTS = e2ePorts(OFFSET);
 const BASE = `http://127.0.0.1:${PORTS.public}`;
 // The e2e server's test control port: GET /env gives the panel's address and login path.
 const CONTROL = loopbackBase(`http://127.0.0.1:${PORTS.control}`);

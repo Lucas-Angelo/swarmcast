@@ -325,7 +325,7 @@ jobs:
         if: ${{ !cancelled() }}
         timeout-minutes: 10
         run: |
-          node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:47811 \
+          node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:17811 \
             --out release/desktop/latest.json release/desktop
           run=()
           if [ "$RUNNER_OS" = Linux ]; then
@@ -333,7 +333,7 @@ jobs:
             run=(xvfb-run -a -s '-screen 0 1280x800x24' dbus-run-session --)
           fi
           "${run[@]}" node scripts/test/desktop/verify.mjs --installers release/desktop \
-            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 47811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
+            --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 17811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
 
       # ---------------------------------------------------------------- AppImage, minimal host
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts

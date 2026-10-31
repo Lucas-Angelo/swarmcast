@@ -8,6 +8,7 @@ import path from 'node:path';
 import { build } from 'esbuild';
 import { chromium } from '@playwright/test';
 import { loopbackBase, panelLogin } from '../lib/loopback.mjs';
+import { FIXED_PORTS } from '../lib/ports.mjs';
 
 type W = Window & {
   __hls: { levels: Array<{ height: number }>; currentLevel: number; autoLevelEnabled: boolean; latency: number; targetLatency: number };
@@ -15,9 +16,9 @@ type W = Window & {
 };
 
 const root = path.resolve(import.meta.dirname, '../../..');
-// The quality server's test control port (QUALITY_CONTROL_PORT in server.ts): GET /env gives the
+// The quality server's test control port (FIXED_PORTS.quality.control, as in server.ts): GET /env gives the
 // panel's address and login path, checked by panelLogin().
-const env = (await (await fetch(new URL('/env', loopbackBase('http://127.0.0.1:45082')))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
+const env = (await (await fetch(new URL('/env', loopbackBase(`http://127.0.0.1:${FIXED_PORTS.quality.control}`)))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
 const admin = panelLogin(env);
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-menu-'));
 const entry = path.join(tmp, 'entry.ts');

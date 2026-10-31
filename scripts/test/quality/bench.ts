@@ -9,6 +9,7 @@ import { createRequire } from 'node:module';
 import { chromium, type BrowserContext, type CDPSession } from '@playwright/test';
 import { hlsConfigFor } from '../../../apps/viewer/src/player-config.js';
 import { loopbackBase, panelLogin } from '../lib/loopback.mjs';
+import { FIXED_PORTS } from '../lib/ports.mjs';
 
 const require = createRequire(import.meta.url);
 const HLS_JS = fs.readFileSync(require.resolve('hls.js/dist/hls.min.js'), 'utf8');
@@ -18,9 +19,9 @@ function arg(name: string, fallback: string): string {
   return i > 0 ? process.argv[i + 1]! : fallback;
 }
 
-// The quality server's test control port (QUALITY_CONTROL_PORT in server.ts): GET /env gives the
+// The quality server's test control port (FIXED_PORTS.quality.control, as in server.ts): GET /env gives the
 // panel's address and login path, checked by panelLogin().
-const env = (await (await fetch(new URL('/env', loopbackBase('http://127.0.0.1:45082')))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
+const env = (await (await fetch(new URL('/env', loopbackBase(`http://127.0.0.1:${FIXED_PORTS.quality.control}`)))).json()) as { adminUrl: string; adminLoginPath: string; base: string; readyAt: number };
 const admin = panelLogin(env);
 const MINUTES = Number(arg('minutes', '2.5'));
 

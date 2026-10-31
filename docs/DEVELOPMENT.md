@@ -137,8 +137,9 @@ npm run lint && npm run typecheck
   the real data folder of your computer; `--data-dir DIR` or `SWARMCAST_DATA_DIR` picks another folder.
 - From the repository root, `npm run dev -- --no-tunnel` does not reach the app: npm reads the flag
   itself (npm 11 and later stop with "Unknown cli flag"). Use `npm run dev -w @swarmcast/server -- --no-tunnel`.
-- `SWARMCAST_E2E_PORT_OFFSET` must keep every e2e port free and off the reserved ones in
-  `scripts/test/lib/ports.mjs` (31935, 38180, 38181…): an offset of 100, for example, collides.
+- `SWARMCAST_E2E_PORT_OFFSET` must keep every e2e port (11080–11083, 11935) free and in 10000–19999,
+  off the other harnesses' fixed ports (`scripts/test/lib/ports.mjs`): the server refuses an offset that
+  does not.
 
 Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
 
