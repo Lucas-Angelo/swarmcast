@@ -1,0 +1,36 @@
+name: Restore a cache, with a time limit
+description: >-
+  actions/cache/restore with a time limit per try and one more try after a try that timed out or
+  failed (.github/actions/cache-restore/restore.mjs): a stalled download from the cache's storage hung
+  actions/cache/restore for 12 minutes in a simulation, whatever SEGMENT_DOWNLOAD_TIMEOUT_MINS
+  says, and steps of a composite action cannot have timeout-minutes. It runs actions/cache's own
+  restore code, so the job must also reference actions/cache (any of its actions, any step, even
+  a skipped one) for the runner to download it. Never fails the step: an outcome is a hit or a
+  miss.
+
+inputs:
+  path:
+    description: As actions/cache/restore's `path` (one path or glob per line).
+    required: true
+  key:
+    description: As actions/cache/restore's `key`.
+    required: true
+  restore-keys:
+    description: As actions/cache/restore's `restore-keys` (one prefix per line).
+    default: ''
+  timeout-seconds:
+    description: Time limit per try.
+    default: '90'
+  tries:
+    description: Tries when a try timed out or failed (a plain miss is not retried).
+    default: '2'
+
+outputs:
+  cache-hit:
+    description: '`true` when the entry for `key` itself was restored.'
+  cache-matched-key:
+    description: The key of the restored entry (`key` or a `restore-keys` match), empty on a miss.
+
+runs:
+  using: node24
+  main: main.mjs
