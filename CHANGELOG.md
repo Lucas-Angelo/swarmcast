@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The screen stays on while people watch.** Phones and computers no longer dim or lock in the middle of your live while the video plays (pausing lets them sleep again). Browsers that cannot do this simply behave as before.
 - **Play and pause from the lock screen.** With the sound on, viewers' phones show your name and picture from **Your page** on the lock screen and in the notifications, with a play / pause button. Without a picture, SwarmCast's own icon shows.
 
+### Changed
+
+- **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
+
+### Security
+
+- The updated cloudflared includes security fixes in two of its libraries: go-jose (a key with a huge RSA size could make it work very hard; now refused) and chi. The quick tunnel SwarmCast opens does not use the affected parts, but your copy now has the fixes too.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed

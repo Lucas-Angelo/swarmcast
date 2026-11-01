@@ -4,8 +4,8 @@
  * cloudflared asks `https://api.trycloudflare.com/tunnel` for a new quick tunnel before anything
  * else; when that request fails, it prints the error as a bare line on stderr (no timestamp, no
  * level: urfave/cli's exit message) and exits with code 1. Measured with cloudflared 2026.10.3 and
- * the code of 2026.10.4 (`cmd/cloudflared/tunnel/quick_tunnel.go`) against a fake quick-tunnel
- * service:
+ * the code of 2026.10.4 (`cmd/cloudflared/tunnel/quick_tunnel.go`, unchanged up to 2026.10.7) against
+ * a fake quick-tunnel service:
  *
  *   quick tunnel provisioning failed with status 429
  *   quick tunnel provisioning failed with status 429: [1015] You are being rate limited
@@ -105,7 +105,7 @@ export function retryDelayMs(attempt: number, failure: StartFailure, random: () 
 /**
  * cloudflared lines that say it could not reach Cloudflare's edge over QUIC (UDP port 7844), as
  * cloudflared 2026.10.4 prints them (CI run 41283791976 on a macOS runner; a local stand-in edge
- * that drops UDP, apps/server/test/integration/quick-tunnel.test.ts):
+ * that drops UDP, apps/server/test/integration/quick-tunnel.test.ts; the same with 2026.10.7):
  *
  *   ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=0 …
  *   ERR Serve tunnel error error="accept stream listener error: failed to accept QUIC stream: timeout: no recent network activity" connIndex=0 …
