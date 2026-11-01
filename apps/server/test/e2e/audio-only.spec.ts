@@ -64,6 +64,8 @@ async function playingAudioOnly(page: Page): Promise<void> {
   await expect(page.getByTestId('audio-only')).toBeVisible();
   await expect(page.getByTestId('audio-only')).toContainText('Audio only');
   await expect(page.locator('.quality-menu option:checked')).toHaveText(AUDIO_ONLY);
+  // No screen to keep on while only the sound plays: the wake lock lets go (or the browser has none).
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __swarmcast: { wakeLock: string } }).__swarmcast.wakeLock)).toMatch(/^(off|unsupported)$/);
 }
 
 /**

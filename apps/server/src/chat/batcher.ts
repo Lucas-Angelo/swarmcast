@@ -1,4 +1,4 @@
-import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_SOCKET_BUFFER_MAX, type ChatAuthor, type ChatItem } from '@swarmcast/shared';
+import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_EPHEMERAL_PENDING_MAX, CHAT_SOCKET_BUFFER_MAX, type ChatAuthor, type ChatItem } from '@swarmcast/shared';
 import { TokenBucket } from './buckets.js';
 
 /** What the batcher needs of a viewer socket (a `ws` WebSocket). */
@@ -26,12 +26,19 @@ interface Pending {
   /** Streamer messages and moderation items are never dropped. */
   prio: boolean;
   at: number;
+  /** Other authors this item names (a reply's parent, a mention, a pin): every socket gets their roster entry first. */
+  refs?: readonly string[];
+}
+
+/** Any batch item with a kind; ephemeral kinds are defined by the features that send them. */
+export interface EphemeralItem {
+  readonly k: string;
 }
 
 interface SocketDebt {
   /** Viewer messages this socket did not get (sent as one `skip` item when it catches up). */
   skipped: number;
-  /** It missed a delete, clear or roster change: it gets a fresh snapshot instead. */
+  /** It missed a durable item (delete, clear, roster change…): it gets a fresh snapshot instead. Never set by ephemeral items. */
   missedPrio: boolean;
 }
 
@@ -53,9 +60,19 @@ export interface BatcherOptions {
  * viewers, 1 s under pressure); then ONE JSON.stringify and the same string goes to every socket
  * whose send buffer is below 64 KB. The upload budget is a byte token bucket: when a batch does
  * not fit, it waits up to 1 s and then drops the oldest viewer messages, announcing a `skip`.
+ *
+ * Three classes of items (docs/CHAT.md, "Item classes and frame budgets"):
+ * - viewer messages (`m`, `prio` false): dropped oldest first under budget pressure, with a `skip`;
+ * - durable items (`prio` true: streamer messages, roster, delete, clear, system lines): never
+ *   dropped; a slow socket that missed one gets a fresh snapshot;
+ * - ephemeral items (`pushLatest`: latest-wins state such as vote or reaction counts): at most one
+ *   pending per key, sent after the queue's items, dropped first under budget pressure, silently
+ *   (no `skip`, which counts messages), and never a reason for a snapshot. They never take a seq.
  */
 export class ChatBatcher {
   private queue: Pending[] = [];
+  /** Ephemeral items by key, in first-push order (a replaced one keeps its place). */
+  private latest = new Map<string, { item: EphemeralItem }>();
   private timer: NodeJS.Timeout | null = null;
   private readonly debts = new WeakMap<ChatSocket, SocketDebt>();
   /** Authors each socket has a roster entry for (from its hello, a reset or a batch). */
@@ -70,6 +87,8 @@ export class ChatBatcher {
   droppedForBudget = 0;
   /** Viewer messages not delivered to slow sockets (this live). */
   skippedSlow = 0;
+  /** Ephemeral items dropped for the budget or the pending cap (this live); a newer one replaced them. */
+  droppedEphemeral = 0;
   /** Bytes sent since the live began. */
   bytesSent = 0;
 
@@ -79,9 +98,12 @@ export class ChatBatcher {
     this.budget = new TokenBucket(b, b, this.now());
   }
 
-  /** Queue an item for the next batch. */
-  push(item: ChatItem, prio: boolean): void {
-    this.queue.push({ item, prio, at: this.now() });
+  /**
+   * Queue an item for the next batch. `refs`: other authors the item names besides its own author
+   * (`m.a`); a socket that has no roster entry for one of them gets it just before the batch.
+   */
+  push(item: ChatItem, prio: boolean, refs?: readonly string[]): void {
+    this.queue.push({ item, prio, at: this.now(), ...(refs?.length ? { refs } : {}) });
     if (this.queue.length > MAX_PENDING) {
       const i = this.queue.findIndex((p) => !p.prio && p.item.k === 'm');
       if (i >= 0) {
@@ -92,6 +114,31 @@ export class ChatBatcher {
       }
     }
     this.schedule();
+  }
+
+  /**
+   * Queue an ephemeral, latest-wins item under `key`: it replaces the one pending under that key, or
+   * `merge` folds the two (e.g. reaction counts add up). See the class comment for what it never does.
+   */
+  pushLatest<T extends EphemeralItem>(key: string, item: T, merge?: (pending: T, next: T) => T): void {
+    const prev = this.latest.get(key);
+    if (prev) {
+      prev.item = merge ? merge(prev.item as T, item) : item;
+    } else {
+      this.latest.set(key, { item });
+      if (this.latest.size > CHAT_EPHEMERAL_PENDING_MAX) {
+        this.latest.delete(this.latest.keys().next().value!);
+        this.droppedEphemeral++;
+      }
+    }
+    this.schedule();
+  }
+
+  /** What one batch carries: the queue's items, then the ephemeral ones. */
+  private payload(): string {
+    const items: unknown[] = this.queue.map((p) => p.item);
+    for (const e of this.latest.values()) items.push(e.item);
+    return JSON.stringify({ t: 'chat.batch', items });
   }
 
   private mergeSkips(): void {
@@ -169,13 +216,13 @@ export class ChatBatcher {
 
   /** Send now (also called by tests). */
   flush(): void {
-    if (this.queue.length === 0) return;
+    if (this.queue.length === 0 && this.latest.size === 0) return;
     const now = this.now();
     const sockets = [...this.o.transport.sockets()].filter((s) => s.readyState === OPEN);
     const b = this.o.budgetBps();
     this.budget.capacity = b;
     this.budget.ratePerS = b;
-    let payload = JSON.stringify({ t: 'chat.batch', items: this.queue.map((p) => p.item) });
+    let payload = this.payload();
     const cost = payload.length * sockets.length;
     // The bucket holds one second of budget, which a single batch to a big audience can exceed
     // even when chat is quiet (120 viewers × 500 B > 50 KB). So a batch goes out whenever the
@@ -190,11 +237,17 @@ export class ChatBatcher {
         this.schedule(Math.min(250, MAX_HOLD_MS - (now - oldest)));
         return;
       }
-      // Drop the oldest viewer messages until the batch fits the allowance (priority items
-      // always go). Sizes are estimated per item, so this stays linear; the batch is serialised
-      // once afterwards.
+      // Drop ephemeral items first (a newer count replaces them anyway), then the oldest viewer
+      // messages, until the batch fits the allowance (priority items always go). Sizes are
+      // estimated per item, so this stays linear; the batch is serialised once afterwards.
       const perSocket = Math.max(0, allowance) / sockets.length;
       let size = payload.length + 24;
+      for (const [key, e] of this.latest) {
+        if (size <= perSocket) break;
+        size -= JSON.stringify(e.item).length + 1;
+        this.latest.delete(key);
+        this.droppedEphemeral++;
+      }
       let dropped = 0;
       const keep: Pending[] = [];
       for (const p of this.queue) {
@@ -209,20 +262,24 @@ export class ChatBatcher {
         this.queue.push({ item: { k: 'skip', n: dropped }, prio: true, at: now });
         this.mergeSkips();
       }
-      payload = JSON.stringify({ t: 'chat.batch', items: this.queue.map((p) => p.item) });
+      payload = this.payload();
     }
     const messages = this.queue.filter((p) => p.item.k === 'm').length;
+    // Only the queue's durable items count: ephemeral ones are never a reason for a snapshot.
     const hasPrio = this.queue.some((p) => p.item.k !== 'm' && p.item.k !== 'skip');
-    // Every socket must know the author of every message it gets. The batch's own roster items
-    // cover first appearances; a socket that joined later (and whose hello only listed the authors
-    // of its history) gets the missing entries in a small frame just before the batch.
+    // Every socket must know every author an item names: the author of a message and the authors
+    // it refers to (`refs`). The batch's own roster items cover first appearances; a socket that
+    // joined later (and whose hello only listed the authors of its history) gets the missing
+    // entries in a small frame just before the batch.
     const announcedNow = new Set<string>();
     const authors = new Set<string>();
     for (const p of this.queue) {
       if (p.item.k === 'u') announcedNow.add(p.item.au.a);
       else if (p.item.k === 'm') authors.add(p.item.a);
+      if (p.refs) for (const a of p.refs) authors.add(a);
     }
     this.queue = [];
+    this.latest.clear();
     let sent = 0;
     for (const s of sockets) {
       if (s.bufferedAmount > CHAT_SOCKET_BUFFER_MAX) {
@@ -271,15 +328,18 @@ export class ChatBatcher {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
     this.queue = [];
+    this.latest.clear();
     this.droppedForBudget = 0;
     this.skippedSlow = 0;
+    this.droppedEphemeral = 0;
     this.bytesSent = 0;
     this.egressEwma = 0;
     this.egressAcc = 0;
     this.egressSec = 0;
   }
 
+  /** Items waiting for the next batch (queue and ephemeral). */
   get pending(): number {
-    return this.queue.length;
+    return this.queue.length + this.latest.size;
   }
 }

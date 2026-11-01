@@ -2,7 +2,10 @@
 // It turns server frames into calls on a ChatView, in seq order and without duplicates
 // (plan §4.2): items at or below lastSeq are ignored (reconnects), and a gap without a `skip`
 // item asks the server to resume from lastSeq while the newer items wait (at most RESUME_WAIT_MS).
-import { CHAT_PROTOCOL_VERSION, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+// Only `m` and `sys` count in that order (isChatSeqItem); every other kind, known or not, is
+// seq-less, so items a newer server adds can never look like a gap. A malformed item is skipped on
+// its own: it never stops the items after it.
+import { CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
 /** A chat frame this page sends on /control (the shared protocol type). */
@@ -33,7 +36,8 @@ export interface ChatView {
 export const RESUME_WAIT_MS = 3000;
 const DELETED_MEMORY = 500;
 
-const hasSeq = (i: ChatItem): i is Extract<ChatItem, { s: number; at: number }> => i.k === 'm' || i.k === 'sys';
+/** A seq item with a usable seq (anything else is handled, or dropped, as a seq-less item). */
+const hasSeq = (i: ChatItem): i is Extract<ChatItem, { s: number; at: number }> => isChatSeqItem(i) && Number.isSafeInteger(i.s);
 
 export class ChatSession {
   settings: ChatPublicSettings | null = null;
@@ -145,7 +149,7 @@ export class ChatSession {
     let skipSeen = false;
     for (let i = 0; i < items.length; i++) {
       const item = items[i]!;
-      if (item.k === 'skip') skipSeen = true;
+      if (item?.k === 'skip') skipSeen = true;
       if (hasSeq(item) && item.s > this.lastSeq + 1 && !skipSeen && this.lastSeq > 0) {
         // A gap: ask for the missing items, hold these until they come (or the wait ends).
         this.held = items.slice(i);
@@ -183,7 +187,15 @@ export class ChatSession {
     this.held = null;
   }
 
+  /** One item into `out`; a malformed one (missing fields, wrong types) is skipped without stopping the rest. */
   private collect(item: ChatItem, out: ChatEntry[], gapOk: boolean): void {
+    if (item === null || typeof item !== 'object') return;
+    try {
+      this.collectItem(item, out, gapOk);
+    } catch {}
+  }
+
+  private collectItem(item: ChatItem, out: ChatEntry[], gapOk: boolean): void {
     switch (item.k) {
       case 'u': {
         if (!item.au || typeof item.au.a !== 'string') return;

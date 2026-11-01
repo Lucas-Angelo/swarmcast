@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
-import type { ChatAuthor, ChatMessageItem, ChatSystemItem, MessageParams } from '@swarmcast/shared';
+import type { ChatAuthor, ChatMessageItem, ChatSystemItem } from '@swarmcast/shared';
 import { t } from '@swarmcast/shared/i18n';
 import { chatApi, errorText } from '../api.js';
 import { Info } from '../Info.js';
 import { clockOf } from './hooks.js';
-import { draftLength, messageTokens, readableName } from './logic.js';
+import { draftLength, messageTokens, readableName, systemText } from './logic.js';
 import { ModerationMenu } from './ModerationMenu.js';
 import type { ChatView } from './store.js';
 
@@ -77,7 +77,7 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { 
 function SystemLine({ item }: { item: ChatSystemItem }) {
   return (
     <li class="chat-sys muted small" data-seq={item.s} data-testid="chat-sys">
-      <span class="chat-time">{clockOf(item.at)}</span> {t(item.code, item.params as MessageParams | undefined)}
+      <span class="chat-time">{clockOf(item.at)}</span> {systemText(item)}
     </li>
   );
 }

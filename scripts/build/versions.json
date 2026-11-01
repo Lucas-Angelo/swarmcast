@@ -32,35 +32,35 @@
     }
   },
   "cloudflared": {
-    "version": "2026.10.4",
+    "version": "2026.10.7",
     "license": "Apache-2.0",
     "url": "https://github.com/cloudflare/cloudflared/releases/download/{version}/{asset}",
     "assets": {
       "windows-x64": {
         "asset": "cloudflared-windows-amd64.exe",
-        "sha256": "411b16d40c8d872243efeb52c550053d00af0a8a97fbb32e730fb8aba429eaa8",
+        "sha256": "2493dbc168923bb3e59e5e7716f71deced92992eea9acd6e9d74f84ac7751343",
         "binary": "cloudflared.exe"
       },
       "macos-arm64": {
         "asset": "cloudflared-darwin-arm64.tgz",
-        "sha256": "68b6bc4080ac1330234db2a9002d07f98b000537a1bd531a687b660d4160fa7f",
+        "sha256": "3586ccf397e98e5f437e60e7c307ca6ac463e110580503af8bb8e6f9ebf831bd",
         "binary": "cloudflared",
-        "binarySha256": "49e7963072b2ca83fb44c09f4d4a7cda52d390c0c9c6f55bac83454a5bc43910"
+        "binarySha256": "2136431d5eb467bf447d2ee514b713e192719b143aec1d9e09bf7dc290d5bb12"
       },
       "macos-x64": {
         "asset": "cloudflared-darwin-amd64.tgz",
-        "sha256": "f11fbef4207d715892331917dafd437f032cf4b7137ed64dea3008338c1c613d",
+        "sha256": "02f3edfd87684dd5b705607688e4eb4b323f6e777b81e7b3a85af556aa356848",
         "binary": "cloudflared",
-        "binarySha256": "fdec0f9a1c726f4c10283fc0cd70e602d510c72887b737270433c81a08c883a9"
+        "binarySha256": "5c55e77da7012cebca19170357e196176c48c9647cc2ead404702fa125ddbd86"
       },
       "linux-x64": {
         "asset": "cloudflared-linux-amd64",
-        "sha256": "ae5e8add7884b0531d66bbca4570d1de491ff6da51e4ebe7eb160cdf241d9e42",
+        "sha256": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872",
         "binary": "cloudflared"
       },
       "linux-arm64": {
         "asset": "cloudflared-linux-arm64",
-        "sha256": "2b7203b4fb0ba28a0c1e12f8855ce2c25f76d266a8d5edafac5540b6812acff6",
+        "sha256": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775",
         "binary": "cloudflared"
       }
     }

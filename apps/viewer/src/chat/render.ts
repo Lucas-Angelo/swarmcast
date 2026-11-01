@@ -8,7 +8,11 @@
 // hidden or the tab is in the background (messages wait, up to DOM_MAX). A visible page whose
 // frames are late or do not come (the browser may skip rendering opportunities of a page it still
 // reports as visible) gets its messages from a timer instead, FRAME_FALLBACK_MS later.
-import { formatNumber, getLang, t } from '@swarmcast/shared/i18n';
+//
+// One row never breaks the others: a system line whose code this page does not know (a newer
+// server) shows a neutral line, and a row that fails to build for any reason is shown as
+// "Message hidden" while the rest of the batch is drawn.
+import { formatNumber, getLang, t, translateWire } from '@swarmcast/shared/i18n';
 import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, gifMediaUrl, isHexColor, tokenizeChat, type ChatAuthor, type GifProvider, type GifRef } from './core/index.js';
 import type { Emote } from './emotes.js';
 import type { ChatEntry } from './session.js';
@@ -51,6 +55,8 @@ export interface ListStats {
   skipped: number;
   /** Draws the fallback timer did because no animation frame came in FRAME_FALLBACK_MS. */
   late: number;
+  /** Rows that failed to build (malformed entries): shown as "Message hidden" instead. */
+  failed: number;
 }
 
 interface Pending {
@@ -76,7 +82,7 @@ export class ChatList {
   readonly list: HTMLUListElement;
   readonly pill: HTMLButtonElement;
   readonly live: HTMLDivElement;
-  readonly stats: ListStats = { rendered: 0, hidden: 0, skipped: 0, late: 0 };
+  readonly stats: ListStats = { rendered: 0, hidden: 0, skipped: 0, late: 0, failed: 0 };
   private queue: ChatEntry[] = [];
   private scheduled = false;
   private stuck = true;
@@ -304,7 +310,7 @@ export class ChatList {
         }
         if (this.bySeq.has(e.s)) continue;
       }
-      const li = this.build(e);
+      const li = this.buildSafe(e);
       if (e.kind !== 'skip') this.bySeq.set(e.s, li);
       frag.append(li);
       added++;
@@ -343,6 +349,22 @@ export class ChatList {
     this.list.append(li);
   }
 
+  /** One row, or a "Message hidden" row when this entry cannot be built: the rest of the batch still shows. */
+  private buildSafe(e: ChatEntry): HTMLLIElement {
+    try {
+      return this.build(e);
+    } catch {
+      this.stats.failed++;
+      const li = el('li', 'msg hidden-msg');
+      if (e.kind !== 'skip' && Number.isSafeInteger(e.s)) li.dataset.seq = String(e.s);
+      const text = el('span', 'text muted');
+      text.textContent = t('chat.viewer.hidden');
+      text.title = t('chat.viewer.hidden.tip');
+      li.append(text);
+      return li;
+    }
+  }
+
   /** One row. Exported for tests through buildEntry(). */
   build(e: ChatEntry): HTMLLIElement {
     if (e.kind === 'skip') {
@@ -361,7 +383,7 @@ export class ChatList {
     }
     if (e.kind === 'sys') {
       const text = el('bdi', 'text');
-      text.textContent = t(e.code, e.params);
+      text.textContent = translateWire(e.code, e.params, 'chat.sys.unknown');
       li.append(text);
       this.stats.rendered++;
       return li;

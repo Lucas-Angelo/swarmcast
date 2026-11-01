@@ -58,6 +58,15 @@ export const CHAT_BURST_REFILL_PER_S = 0.5;
 /** Raw chat frames per socket per 10 s before the socket is terminated (4× what the UI can send). */
 export const CHAT_MAX_FRAMES_PER_10S = 20;
 
+/**
+ * Reaction frames (`chat.react`, reserved for 0.5.0) per socket per 10 s. They have a counter of
+ * their own and never count against CHAT_MAX_FRAMES_PER_10S, so tapping reactions while chatting can
+ * never cost a viewer the socket (which also carries P2P). Frames past the first limit are ignored;
+ * past the second (only scripts get there) the socket is terminated.
+ */
+export const CHAT_REACT_FRAMES_PER_10S = 10;
+export const CHAT_REACT_FRAMES_MAX_PER_10S = 20;
+
 /** Seconds between two GIFs from one viewer. */
 export const CHAT_GIF_INTERVAL_S = 30;
 
@@ -104,6 +113,12 @@ export const CHAT_BATCH_LARGE_AUDIENCE = 40;
 
 /** Chat is not sent to a socket with more than this many bytes waiting to go out. */
 export const CHAT_SOCKET_BUFFER_MAX = 64 * 1024;
+
+/** Ephemeral (latest-wins) items waiting for the next batch, by key; beyond it the oldest key is dropped. */
+export const CHAT_EPHEMERAL_PENDING_MAX = 32;
+
+/** Per-network limits group IPv6 addresses by this prefix length (one subscriber usually has a whole /64). */
+export const CHAT_IPV6_NETWORK_PREFIX = 64;
 
 /** Nickname length (graphemes); the same as NICKNAME_MAX. */
 export const CHAT_NICKNAME_MAX = 24;

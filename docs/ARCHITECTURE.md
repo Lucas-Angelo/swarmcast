@@ -141,6 +141,7 @@ flowchart TB
 ## Access control
 
 - **Link**: `/join/<secret>`, where the secret is 256-bit, compared in constant time and generated anew on every Start or "Generate new link". The old link stops new joins; people already watching stay.
+- **Share**: the watch page's Share button gets the link from `GET /api/share` (session cookie, 10 a minute per session), which answers only while the streamer allows sharing (`allowViewerShare`) and only to a session whose `linkGeneration` is the current one; anyone else gets 404. People who stayed after "Generate new link" therefore never receive the new secret. The page learns whether to show the button from `hello.shareAllowed` and `{t:'share'}` on `/control`.
 - **Join**: opening the link sets a 10-min join-ticket cookie and redirects with 303 to `/join`, so the secret leaves the address bar. The viewer then chooses a nickname. Nicknames are **visible to everyone in the live** (they appear in the chat), so since v0.4.0 they follow stricter rules: 2–24 graphemes and at most 64 UTF-8 bytes; letters (from one alphabet) and digits, spaces, `_`, `-`, `.`; no emoji or invisible characters; not a reserved name such as "Streamer"; and not a look-alike of a name already in the live (confusable skeleton). Details: [CHAT.md](CHAT.md#nicknames-rules-v2).
 - **Session**: a JWT (HS256) signed with a per-live random key, valid 10 minutes and renewed while the viewer is active. The cookie is HttpOnly, Secure (except in plain-HTTP local testing), SameSite=Lax. All state lives in memory and is wiped on Stop.
 - **Browser check**: when the protection asks for it (on by default; stronger under attack), the join page solves an ALTCHA proof-of-work in a worker. A solve sets `sc_verified` (30 days, HttpOnly, SameSite=Lax; HMAC with `browserCheckKey` from `secrets.json`, bound to `sc_device`, records the solved level), and later joins skip the check while it covers the level required. Unlike the per-live session key, this key survives Stop and restarts: the cookie only says that this browser did the work, and says nothing about access.
@@ -276,13 +277,13 @@ flowchart TB
   - Unknown keys are fatal.
   - HLS reading requires a cookie-check redirect and an `hlsSession` cookie.
   - Sources: [mediamtx.yml v1.21.3](https://raw.githubusercontent.com/bluenviron/mediamtx/v1.21.3/mediamtx.yml), [authentication](https://mediamtx.org/docs/features/authentication), [read/hls](https://mediamtx.org/docs/read/hls).
-- **cloudflared 2026.10.4**.
+- **cloudflared 2026.10.7** (released 2026-10-30).
   - Quick tunnels need no account or domain. They are meant "for testing and development", have no uptime guarantee, accept up to 200 in-flight requests (429 beyond that), do not support SSE, and get a new hostname every time. **Open WebSockets count as in-flight requests** for as long as they are open: see [Quick tunnel limit](#quick-tunnel-limit-measured-2026-10-26).
   - WebSockets work: Cloudflare's Sandbox SDK tunnel docs say so, and our own test over a real quick tunnel confirmed it.
   - A `~/.cloudflared/config.yml` can override `--url`, so we pass an empty `--config` file owned by the app.
   - The URL is printed on stderr inside an ASCII box.
   - Releases have no checksum file, so we use the GitHub asset digests. For darwin, the checksums in the release notes refer to the binary inside the archive.
-  - Sources: [quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Sandbox SDK tunnels](https://developers.cloudflare.com/sandbox/sdk/api/tunnels/), [release 2026.10.4](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.4).
+  - Sources: [quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Sandbox SDK tunnels](https://developers.cloudflare.com/sandbox/sdk/api/tunnels/), [release 2026.10.7](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.7), [release notes](https://github.com/cloudflare/cloudflared/blob/2026.10.7/RELEASE_NOTES).
 - **Cloudflare terms**.
   - The Service-Specific Terms (Application Services, updated 2026-09-28), CDN section, say that unless you are on Enterprise, serving video and other large files through the CDN requires paid services (Stream etc.), and Cloudflare may limit or disable it.
   - The terms do not say whether this applies to Tunnel traffic. Quick tunnels fall under the [Website & Online Services Terms](https://www.cloudflare.com/website-terms/), and cloudflared's banner says Cloudflare may investigate use.

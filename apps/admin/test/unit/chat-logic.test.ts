@@ -15,6 +15,7 @@ import {
   presetOf,
   readableName,
   sameSettings,
+  systemText,
 } from '../../src/chat/logic.js';
 
 const eff = (o: Partial<ChatPublicSettings> = {}): ChatPublicSettings => ({
@@ -194,5 +195,17 @@ describe('draft length and settings equality', () => {
     const same = [sameSettings(a, defaultChatSettings()), sameSettings(a, { ...a, slowModeS: 5 })];
     // Assert
     expect(same).toEqual([true, false]);
+  });
+});
+
+describe('system lines', () => {
+  it('a known code is translated; one this panel does not know (a newer server) gives a neutral line', () => {
+    // Arrange
+    const known = { k: 'sys', s: 1, at: 1, code: 'chat.sys.muted', params: { nickname: 'Ana', minutes: 10 } } as const;
+    const future = { k: 'sys', s: 2, at: 1, code: 'chat.sys.pollStarted' } as unknown as Parameters<typeof systemText>[0];
+    // Act
+    const texts = [systemText(known), systemText(future)];
+    // Assert
+    expect(texts).toEqual(['Ana was muted for 10 min.', 'Something changed in the chat that this page cannot show. Reload the page to see it.']);
   });
 });

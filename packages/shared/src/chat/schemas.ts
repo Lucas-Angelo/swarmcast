@@ -94,6 +94,12 @@ export const chatClientSchemas = [chatSendSchema, chatColorSchema, chatResumeSch
 /** Raw-frame prefix of a chat message: the viewer always serialises `t` first (plan §4.1). */
 export const CHAT_FRAME_PREFIX = '{"t":"chat.';
 
+/**
+ * Raw-frame prefix of a reaction frame (`chat.react`, reserved for 0.5.0), closing quote included so
+ * `chat.reactX` does not match. These frames have their own budget (CHAT_REACT_FRAMES_PER_10S).
+ */
+export const CHAT_REACT_FRAME_PREFIX = '{"t":"chat.react"';
+
 // ---------------------------------------------------------------------------
 // Streamer settings (config.json `chat`, config version 4)
 // ---------------------------------------------------------------------------

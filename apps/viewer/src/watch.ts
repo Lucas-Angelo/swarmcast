@@ -32,6 +32,10 @@ import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 import { createChatRouter } from './chat/loader.js';
+import { createScreenAwake, type WakeLockLike } from './wake-lock.js';
+import { createMediaSession, imageAsDataUrl } from './media-session.js';
+import { createShareControl, fetchShareLink } from './share.js';
+import fallbackArtworkUrl from '../../../assets/brand/favicon/favicon-512.png?url';
 // ---- branding: watch ----
 import { createBrandRouter } from './branding/loader.js';
 // ---- end branding: watch ----
@@ -62,10 +66,68 @@ const chat = createChatRouter({
   debug: (msg) => debugLog(msg),
 });
 
+// Keep the screen on while the stream plays (wake-lock.ts), but not while only the sound plays
+// (audio-only.ts): no screen is needed then, and letting it sleep saves the battery.
+const awake = createScreenAwake({
+  wakeLock: 'wakeLock' in navigator ? (navigator.wakeLock as WakeLockLike) : undefined,
+  doc: document,
+  debug: (msg) => debugLog(msg),
+});
+audioOnlyState.subscribe((on) => awake.block('audio-only', on));
+
+// Lock-screen and notification controls (media-session.ts): play / pause, the streamer's name and picture.
+const media = createMediaSession({
+  mediaSession: 'mediaSession' in navigator ? navigator.mediaSession : undefined,
+  Metadata: typeof MediaMetadata === 'function' ? MediaMetadata : undefined,
+  player: {
+    play: () => void video.play().catch(() => {}),
+    pause: () => video.pause(),
+  },
+  labels: { title: t('watch.live'), artist: t('watch.media.artist') },
+  fallbackArtwork: { src: fallbackArtworkUrl, sizes: '512x512', type: 'image/png' },
+  toDataUrl: (url) => imageAsDataUrl(url),
+});
+
+/** The streamer's name from "Your page", once known (lock screen, share sheet). */
+let brandName: string | undefined;
+
+// The Share button (share.ts): shown once the server says this viewer may share and the link is in hand.
+const share = createShareControl({
+  button: $<HTMLButtonElement>('share'),
+  status: $<HTMLSpanElement>('share-status'),
+  fallback: $<HTMLDivElement>('share-fallback'),
+  field: $<HTMLInputElement>('share-field'),
+  nav: navigator,
+  fetchLink: () => fetchShareLink(),
+  title: () => (brandName ? t('brand.viewer.titleLive', { name: brandName }) : t('watch.pageTitle')),
+  labels: { copied: t('watch.share.copied') },
+});
+
 // ---- branding: watch ----
 // The streamer's page (name, picture, about, support): its own chunk, the player never waits for it.
-const brand = createBrandRouter('watch', (msg) => debugLog(msg));
+const brand = createBrandRouter(
+  'watch',
+  (msg) => debugLog(msg),
+  (b) => {
+    brandName = b?.name;
+    void media.setBrand(b ? { ...(b.name ? { name: b.name } : {}), ...(b.avatar ? { avatar: b.avatar.s256 } : {}) } : null);
+  },
+);
 // ---- end branding: watch ----
+
+// Playing or not, for the screen lock and the lock-screen controls. A short hold inside a stall
+// (adaptive delay) pauses the video but is not a viewer pause: the screen stays on.
+video.addEventListener('playing', () => {
+  awake.setPlaying(true);
+  media.setPlaying(true);
+});
+for (const ev of ['pause', 'ended'] as const) {
+  video.addEventListener(ev, () => {
+    const held = ev === 'pause' && (adaptive?.holding ?? false);
+    awake.setPlaying(held);
+    media.setPlaying(held);
+  });
+}
 
 let tipSeq = 0;
 /** An (i) tooltip like the static ones in watch.html (installTooltips() handles it). */
@@ -204,6 +266,10 @@ const stats = {
   get trackerChannels() {
     return trackerMux.openCount;
   },
+  /** Screen wake lock: 'held' while playing where the browser has the API (wake-lock.ts). */
+  get wakeLock() {
+    return awake.state;
+  },
 };
 
 let ended = false;
@@ -236,6 +302,9 @@ function endScreen(titleKey: MessageKey, textKey: MessageKey): void {
   $('ended-text').textContent = t(textKey);
   $('ended').hidden = false;
   brand.ended();
+  awake.block('ended', true);
+  media.setPlaying(false);
+  void share.setAllowed(false);
   goLive.hidden = true;
   viewerCountWrap.hidden = true;
   try {
@@ -634,6 +703,7 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
         case 'hello':
           chat.hello(msg.chat);
           brand.rev(msg.brandRev);
+          void share.setAllowed(msg.shareAllowed === true);
           showViewerCount(msg.viewerCount);
           peerGuard.block(msg.blockedPeers);
           handlers?.onP2P(msg.p2pAllowed, msg.p2pForAll, msg.p2pBlock);
@@ -643,6 +713,9 @@ function connectControl(cfg: ViewerConfig, handlers: { onP2P: (allowed: boolean,
           break;
         case 'viewers':
           showViewerCount(msg.count);
+          break;
+        case 'share':
+          void share.setAllowed(msg.allowed);
           break;
         case 'block-peers':
           peerGuard.block(msg.peerIds);

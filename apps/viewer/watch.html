@@ -57,6 +57,14 @@
           <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>LIVE</button>
           <button id="chat-show" type="button" class="secondary chat-show" data-testid="chat-show" hidden data-i18n="chat.viewer.show">Show chat</button>
           <button id="unmute" type="button" class="secondary sc-ico-volume" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">Unmute</button>
+          <span id="share-status" class="share-status" role="status" data-testid="share-status"></span>
+          <button id="share" type="button" class="secondary sc-ico-share" data-testid="share" hidden title="Send the link of this live to a friend. They open it and pick a nickname, like you did." data-i18n="watch.share" data-i18n-title="watch.share.tip">Share</button>
+        </div>
+        <div id="share-fallback" class="share-fallback" hidden>
+          <label
+            ><span data-i18n="watch.share.copyHint">Copy this link:</span>
+            <input id="share-field" type="text" readonly spellcheck="false" autocomplete="off" data-testid="share-field"
+          /></label>
         </div>
       </section>
       <aside id="chat" class="chat" data-testid="chat" hidden></aside>

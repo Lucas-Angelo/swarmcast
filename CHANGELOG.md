@@ -9,7 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A Share button for viewers.** On the watch page, **Share** sends the link of your live to a friend: on a phone it opens the share menu (WhatsApp, Messages…), on a computer it copies the link and says **Link copied**. It is on by default; turn off **Viewers can share the link** in the **Your internet** card if only you should hand out the link. After **Generate new link**, people who came in with the old link keep watching but lose the button, so whoever got a leaked link cannot pass the new one on.
+- **The screen stays on while people watch.** Phones and computers no longer dim or lock in the middle of your live while the video plays (pausing lets them sleep again). Browsers that cannot do this simply behave as before.
+- **Play and pause from the lock screen.** With the sound on, viewers' phones show your name and picture from **Your page** on the lock screen and in the notifications, with a play / pause button. Without a picture, SwarmCast's own icon shows.
 - **Viewers can listen to the sound only, to save data.** The quality menu on the watch page has a new choice, **Audio only (saves data)**: the live keeps playing with sound, without the picture, and uses much less data (about 85% less than 360p; roughly 50 to 70 MB per hour instead of over 400 MB). Handy on a phone with mobile data, or when the viewer only wants to listen. Instead of the video, the player shows your picture and name from "Your page" (when you set them) and "Audio only". Picking a video quality brings the picture back, still close to live. The browser remembers the choice for next time. It works with and without the quality options, and nothing changes for viewers who do not pick it.
+
+### Changed
+
+- **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
+
+### Security
+
+- The updated cloudflared includes security fixes in two of its libraries: go-jose (a key with a huge RSA size could make it work very hard; now refused) and chi. The quick tunnel SwarmCast opens does not use the affected parts, but your copy now has the fixes too.
 
 ## [0.4.2] - 2026-11-01
 

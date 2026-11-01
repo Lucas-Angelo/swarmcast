@@ -230,6 +230,9 @@ export const ptBR: Messages = {
   'admin.set.showCount.tip': 'Quem assiste vê quantas pessoas estão assistindo agora (só o número, nunca os nomes).',
   'admin.set.allowP2P': 'Permitir P2P para os espectadores',
   'admin.set.allowP2P.tip': 'Quem deixa "Ajudar a transmissão" ligado compartilha o vídeo com os outros, o que economiza o seu upload. Desligue se a reprodução tiver problemas: o P2P para na hora para todo mundo e todos continuam assistindo por HTTPS.',
+  'admin.set.allowShare': 'Quem assiste pode compartilhar o link',
+  'admin.set.allowShare.tip':
+    'Quem assiste ganha um botão Compartilhar que envia o seu link atual para um amigo. Depois de "Gerar novo link", quem entrou com o link antigo deixa de ver o botão, então não consegue repassar o link novo. Desligue se só você deve passar o link adiante.',
   'admin.set.save': 'Salvar',
   'admin.set.save.tip': 'Aplica as configurações na hora e lembra delas para a próxima vez.',
 
@@ -393,6 +396,11 @@ export const ptBR: Messages = {
   'watch.atLive.tip': 'Você está no ao vivo (uns {latency} atrás de quem transmite, o que é normal).',
   'watch.goLive.tip': 'Você está {behind} atrás do ao vivo. Clique para pular para o momento atual.',
   'watch.goLive.tipUnknown': 'Clique para pular para o momento atual.',
+  'watch.share': 'Compartilhar',
+  'watch.share.tip': 'Envie o link desta live para um amigo. Ele abre o link e escolhe um apelido, como você fez.',
+  'watch.share.copied': 'Link copiado',
+  'watch.share.copyHint': 'Copie este link:',
+  'watch.media.artist': 'Ao vivo no SwarmCast',
   'watch.p2p': 'Ajudar a transmissão (P2P)',
   'watch.p2p.tip':
     'Vem desligado por padrão. Ligue para compartilhar o vídeo com outros espectadores e todo mundo assistir mais liso. Quem também estiver com isso ativado pode ver seu endereço IP, que só mostra sua localização aproximada (cidade) e sua operadora — não seu nome, endereço ou nada do seu aparelho. É o mesmo que acontece em jogos online e chamadas de vídeo. Você pode desligar quando quiser e continuar assistindo normalmente via HTTPS. Cada pedaço do vídeo é conferido, então ninguém consegue te mandar vídeo alterado.',
@@ -643,6 +651,7 @@ export const ptBR: Messages = {
   'chat.sys.protectOff': 'O chat voltou ao normal.',
   'chat.sys.cleared': 'Quem transmite limpou o chat.',
   'chat.sys.stopped': 'O chat parou por causa de um problema. A transmissão continua.',
+  'chat.sys.unknown': 'Algo mudou no chat que esta página não consegue mostrar. Recarregue a página para ver.',
   'chat.protect.off': 'normal',
   'chat.protect.slow': 'acalmado (modo lento automático)',
   'chat.protect.lockdown': 'só quem já estava assistindo pode escrever',

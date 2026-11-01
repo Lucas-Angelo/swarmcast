@@ -82,6 +82,9 @@ export class AccessControl extends EventEmitter<AccessEvents> {
    */
   p2pChecking = false;
 
+  /** The streamer's switch "Viewers can share the link" (the watch page's Share button). */
+  shareForAll = true;
+
   constructor(private readonly now: () => number = Date.now) {
     super();
   }
@@ -89,6 +92,16 @@ export class AccessControl extends EventEmitter<AccessEvents> {
   /** May this viewer use P2P right now (global switch, per-viewer removal, the streamer's privacy)? */
   p2pAllowed(session: Pick<Session, 'p2pAllowed' | 'ownConnection'>): boolean {
     return this.p2pForAll && session.p2pAllowed && !session.ownConnection && !this.p2pChecking;
+  }
+
+  /**
+   * May this viewer get the current link to share it? Only while the streamer allows it and only
+   * for a session that joined with the current link: "Generate new link" keeps current viewers
+   * watching (rotateLink), so without the generation check everyone who came in with the old,
+   * maybe leaked, link would be handed the new one.
+   */
+  canShare(session: Pick<Session, 'linkGeneration'>): boolean {
+    return this.live && this.shareForAll && this.linkSecret !== '' && session.linkGeneration === this.linkGeneration;
   }
 
   /** Why P2P is off for this viewer although the streamer did not turn it off (shown on the watch page). */
