@@ -269,3 +269,31 @@ test('with the quality ladder on, audio only keeps playing when the PC drops its
   expect(after.maxStallMs, 'stall while the audio-only viewer moves to the original').toBeLessThan(4000);
   expect(await savedChoice(page)).toBe('on');
 });
+
+test('DIAG muted vs unmuted audio only', { tag: '@media' }, async ({ viewers }) => {
+  const { page } = await viewers.join(uid('diag'));
+  const received = hlsBytes(page);
+  await waitPlaying(page);
+  await page.evaluate(() => {
+    const w = window as unknown as { __hls: { on(e: string, f: (e: string, d: any) => void): void }; __d: string[] };
+    w.__d = [];
+    const t0 = performance.now();
+    const v = document.querySelector('video')!;
+    const log = (m: string): void => void w.__d.push(`${Math.round(performance.now() - t0)} ct=${v.currentTime.toFixed(2)} muted=${v.muted} vol=${v.volume} err=${v.error ? `${v.error.code}:${v.error.message}` : '-'} | ${m}`);
+    v.addEventListener('error', () => log('video error event'));
+    w.__hls.on('hlsError', (_e, d) => log(`hlsError ${d.details} ${d.error?.name ?? ''} ${d.error?.message ?? ''}`));
+    w.__hls.on('hlsMediaAttached', () => log('attached'));
+    setInterval(() => log('tick'), 2000);
+  });
+  const menu = page.locator('.quality-menu');
+  await menu.selectOption({ label: AUDIO_ONLY });
+  const muted = await bytesDuring(page, received, 10_000);
+  console.log(`DIAG muted audio-only bytes in 10 s: ${muted}`);
+  await page.evaluate(() => { const v = document.querySelector('video')!; v.muted = false; void v.play(); });
+  const unmuted = await bytesDuring(page, received, 10_000);
+  console.log(`DIAG unmuted audio-only bytes in 10 s: ${unmuted}`);
+  await page.evaluate(() => { const v = document.querySelector('video')!; v.muted = true; });
+  const remuted = await bytesDuring(page, received, 10_000);
+  console.log(`DIAG re-muted audio-only bytes in 10 s: ${remuted}`);
+  console.log((await page.evaluate(() => (window as unknown as { __d: string[] }).__d)).slice(0, 120).join('\n'));
+});
