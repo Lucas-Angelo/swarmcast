@@ -14,6 +14,13 @@ name: docker
 # tunnel check (run.sh part d) on its schedule. Each suite's PASS/FAIL lines go to the job summary
 # (.github/scripts/test-summary.mjs); `shell: bash` everywhere, so `| tee` keeps the exit status
 # (pipefail).
+#
+# The test images (the tools the suites need, installed with apt) come from ghcr.io
+# (scripts/test/docker/images.sh): the images job publishes the ones the registry lacks, and the
+# test jobs pull them, so a test run does not depend on the distributions' package mirrors. A
+# Dockerfile changed by a pull request has no published image yet: its jobs build it, with the
+# whole build log on failure. The caller grants `packages: write` (only the images job uses it,
+# and never on pull requests).
 on:
   workflow_call:
     inputs:
@@ -21,10 +28,15 @@ on:
         description: Also run the real Cloudflare quick tunnel check (run.sh part d) on ubuntu:24.04.
         type: boolean
         default: false
+      refresh-images:
+        description: Rebuild and republish every test image from fresh bases and packages (weekly).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
   actions: read # fetch-artifact's REST fallback reads this run's artifacts (.github/actions/fetch-artifact)
+  packages: read # pulls the test images from ghcr.io (scripts/test/docker/images.sh)
 
 env:
   FORCE_COLOR: '1'
@@ -94,10 +106,49 @@ jobs:
         timeout-minutes: 3
         if: ${{ !cancelled() && (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') }}
 
+  # The test images of each architecture (images.sh publish): the ones ghcr.io does not have yet
+  # (a changed Dockerfile), or all of them from fresh bases and packages on the weekly run. Pull
+  # requests publish nothing (their changed Dockerfiles are built in the test jobs). A failed
+  # publish is a warning, not a failure: the test jobs then build what is missing themselves.
+  images:
+    name: Test images ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name != 'pull_request'
+        with:
+          persist-credentials: false
+      # Time limit: a full refresh builds 10 images (OBS Studio's is the largest).
+      - name: Publish the missing test images (images.sh)
+        if: github.event_name != 'pull_request'
+        continue-on-error: true
+        timeout-minutes: 30
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REFRESH: ${{ inputs.refresh-images }}
+        run: |
+          docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
+          refresh=(); [ "$REFRESH" = true ] && refresh=(--refresh)
+          if ! scripts/test/docker/images.sh publish "${refresh[@]}"; then
+            echo "::warning title=test images::some test images were not published; the test jobs build those themselves"
+            exit 1
+          fi
+
   # One job per base image and architecture, all native (no QEMU).
   release:
     name: ${{ matrix.base }} ${{ matrix.arch }}
-    needs: build
+    needs: [build, images]
     strategy:
       fail-fast: false
       matrix:
@@ -120,6 +171,14 @@ jobs:
         with:
           name: linux-docker-${{ matrix.arch }}
           path: linux-release
+      # Reads the test images (images.sh) while the ghcr.io package is private; a failed login
+      # only means anonymous pulls, then building what cannot be pulled.
+      - name: Log in to ghcr.io
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
       # Time limits: far above the slowest runs (1.3 and 0.5 minutes), since image builds and
       # pulls vary. One that runs out fails, so the summary below still runs (a job that runs out
       # is cancelled).
@@ -146,7 +205,7 @@ jobs:
 
   obs:
     name: OBS Studio ${{ matrix.arch }}
-    needs: build
+    needs: [build, images]
     strategy:
       fail-fast: false
       matrix:
@@ -165,6 +224,14 @@ jobs:
         with:
           name: linux-docker-${{ matrix.arch }}
           path: linux-release
+      # Reads the test images (images.sh) while the ghcr.io package is private; a failed login
+      # only means anonymous pulls, then building what cannot be pulled.
+      - name: Log in to ghcr.io
+        continue-on-error: true
+        timeout-minutes: 2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin <<<"$GH_TOKEN"
       - name: OBS Studio streaming to the package (obs.sh)
         timeout-minutes: 12
         run: scripts/test/docker/obs.sh --release linux-release 2>&1 | tee "$RUNNER_TEMP/obs.log"

@@ -1,7 +1,9 @@
 name: Linux in Docker
 
 # The Docker suites (_docker.yml) outside the pipeline: weekly, with the real Cloudflare quick
-# tunnel check (run.sh part d), and by hand (`gh workflow run linux-docker.yml --ref <branch>`).
+# tunnel check (run.sh part d) and every test image rebuilt from fresh bases and packages
+# (scripts/test/docker/images.sh), and by hand (`gh workflow run linux-docker.yml --ref <branch>`,
+# `-f refresh-images=true` to rebuild the images too).
 # Pull requests and main run the same stage inside pipeline.yml, where ci-ok gates on it,
 # whenever they touch the Docker suites, the Linux start scripts, these workflows, or the e2e
 # specs and server.
@@ -9,6 +11,11 @@ on:
   schedule:
     - cron: '17 5 * * 0'
   workflow_dispatch:
+    inputs:
+      refresh-images:
+        description: Rebuild and republish every test image from fresh bases and packages.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,5 +30,10 @@ jobs:
   docker:
     name: docker
     uses: ./.github/workflows/_docker.yml
+    permissions:
+      contents: read
+      actions: read
+      packages: write # the images job publishes the test images
     with:
       tunnel-test: ${{ github.event_name == 'schedule' }}
+      refresh-images: ${{ github.event_name == 'schedule' || inputs.refresh-images == true }}
