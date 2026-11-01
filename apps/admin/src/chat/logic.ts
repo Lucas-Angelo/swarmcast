@@ -11,13 +11,23 @@ import {
   type ChatCounters,
   type ChatPublicSettings,
   type ChatSettings,
+  type ChatSystemItem,
   type ChatToken,
   type LivePhase,
   type MessageKey,
   type MessageParams,
 } from '@swarmcast/shared';
+import { translateWire } from '@swarmcast/shared/i18n';
 
 /** Pure helpers of the chat card (unit tested in apps/admin/test/unit/chat-logic.test.ts). */
+
+/**
+ * The text of a system line. A code this panel does not know (a newer server, or a panel tab left
+ * open across an update) shows a neutral line instead of breaking the feed.
+ */
+export function systemText(item: ChatSystemItem): string {
+  return translateWire(item.code, item.params, 'chat.sys.unknown');
+}
 
 export type ContentPreset = 'all' | 'text' | 'emotes' | 'gifs' | 'textEmotes';
 

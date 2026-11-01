@@ -1,3 +1,4 @@
+import fc from 'fast-check';
 import { describe, expect, it, vi } from 'vitest';
 import type { AdminChatMessage, AdminChatState, ChatAuthor, ChatCounters, ChatItem } from '@swarmcast/shared';
 import { ChatStore } from '../../src/chat/store.js';
@@ -58,6 +59,36 @@ describe('panel chat store', () => {
     st.apply(msg([{ k: 'd', s: [1, 2] }, { k: 'skip', n: 3 }, { k: 'zz' } as unknown as ChatItem]));
     // Assert
     expect(seqs(st)).toEqual([1]);
+  });
+
+  it('a malformed item (a newer or broken server) is skipped on its own; the items around it apply', () => {
+    // Arrange
+    const st = new ChatStore();
+    const bad = [null, 3, { k: 'u' }, { k: 'u', au: null }, { k: 'm', s: 'x', a: 'k1' }, { k: 'm', s: 2 }, { k: 'sys', s: null }, { k: 'd', s: 4 }, { k: 'clr', s: 'all' }] as unknown as ChatItem[];
+    // Act
+    st.apply(msg([{ k: 'u', au: ana }, m(1), ...bad, m(3)]));
+    // Assert
+    expect(seqs(st)).toEqual([1, 3]);
+    expect(st.view().roster.size).toBe(1);
+  });
+
+  it('fuzz: any items never throw and keep the feed in seq order', () => {
+    // Arrange
+    const item = fc.oneof(
+      fc.integer({ min: 1, max: 50 }).map((s) => m(s)),
+      fc.record({ k: fc.constantFrom('u', 'm', 'sys', 'd', 'clr', 'skip', 'pin', 'zz'), s: fc.oneof(fc.integer({ min: 0, max: 50 }), fc.jsonValue()), a: fc.jsonValue(), au: fc.jsonValue(), code: fc.string() }),
+      fc.jsonValue(),
+    ) as fc.Arbitrary<unknown> as fc.Arbitrary<ChatItem>;
+    const property = fc.property(fc.array(fc.array(item, { maxLength: 15 }), { maxLength: 5 }), (batches) => {
+      const st = new ChatStore();
+      for (const items of batches) st.apply(msg(items));
+      const s = seqs(st);
+      return s.every((x, i) => i === 0 || s[i - 1]! < x);
+    });
+    // Act
+    const run = () => fc.assert(property, { numRuns: 1000, seed: 5 });
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('a colour change (roster upsert) updates the author in place', () => {

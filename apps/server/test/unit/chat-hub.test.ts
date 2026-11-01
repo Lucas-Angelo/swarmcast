@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultChatSettings, type ChatItem, type ChatServerMessage, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl, type Session } from '../../src/access/access.js';
-import { ChatHub, type ChatHost } from '../../src/chat/hub.js';
+import { ChatHub, ringAuthors, type ChatHost } from '../../src/chat/hub.js';
 import { ActivityLog } from '../../src/core/activity.js';
 import { manualClock, silentLog } from './helpers.js';
 import { joinViewer } from './helpers-b.js';
@@ -604,6 +604,19 @@ describe('ChatHub: snapshots, resume, history', () => {
     expect(snap.items.map((i) => i.k === 'm' && i.x)).toEqual(['m3', 'm4', 'm5']);
     expect(snap.roster.map((r) => r.n).sort()).toEqual(['Ana', 'Bia']);
     expect(snap.you.a).toBe(snap.roster.find((r) => r.n === 'Bia')!.a);
+  });
+
+  it('roster keys: the author of each message, every author an item refers to, and the extras; nothing for other kinds', () => {
+    // Arrange
+    const entries = [
+      { item: { k: 'm', s: 1, at: 1, a: 'k1', x: 'oi' } as ChatItem },
+      { item: { k: 'm', s: 2, at: 2, a: 'k2', x: '@Ana oi' } as ChatItem, refs: ['k1', 'k3'] },
+      { item: { k: 'sys', s: 3, at: 3, code: 'chat.sys.protect' } as ChatItem },
+    ];
+    // Act
+    const keys = ringAuthors(entries, ['me']);
+    // Assert
+    expect([...keys].sort()).toEqual(['k1', 'k2', 'k3', 'me']);
   });
 
   it('chat.resume: missing items come back', () => {
