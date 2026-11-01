@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-11-01
+
 ### Changed
 
 - **The chat is right there while you are live.** The panel now shows the **Live chat** on its main screen: a column on the right of the window that stays in view while you scroll, or right under the status in a narrow window. Read, answer and moderate without scrolling down. It shows only while you are live with the chat on; turn the chat on or off and change its settings in the **Chat** card further down (the **Settings** button takes you there). The setup tutorial's panel tour points to it too.
@@ -221,7 +223,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.2.2...v0.3.0
