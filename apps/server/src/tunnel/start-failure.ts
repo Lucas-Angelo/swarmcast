@@ -101,3 +101,35 @@ export function retryDelayMs(attempt: number, failure: StartFailure, random: () 
   const asked = failure.retryAfterS !== undefined ? Math.min(failure.retryAfterS * 1000, START_RETRY_AFTER_MAX_MS) : 0;
   return Math.max(planned, asked);
 }
+
+/**
+ * cloudflared lines that say it could not reach Cloudflare's edge over QUIC (UDP port 7844), as
+ * cloudflared 2026.10.4 prints them (CI run 41283791976 on a macOS runner; a local stand-in edge
+ * that drops UDP, apps/server/test/integration/quick-tunnel.test.ts):
+ *
+ *   ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=0 …
+ *   ERR Serve tunnel error error="accept stream listener error: failed to accept QUIC stream: timeout: no recent network activity" connIndex=0 …
+ *   INF precheck component="UDP Connectivity" details="QUIC connection failed" … status=fail …
+ *
+ * cloudflared's own fallback to HTTP/2 (`--protocol auto`, supervisor/tunnel.go) waits for 8
+ * failed dials with growing pauses (well over a minute) and never happens once a QUIC connection
+ * worked; a quick tunnel has a single connection, so until then nobody can watch the live.
+ */
+const QUIC_FAILURE = [/failed to dial to edge with quic\b/i, /failed to accept QUIC stream\b/i, /\bprecheck component="UDP Connectivity".*\bstatus=fail\b/i];
+
+/** A cloudflared line saying it could not reach Cloudflare over QUIC (UDP). */
+export function isQuicFailureLine(line: string): boolean {
+  return QUIC_FAILURE.some((re) => re.test(line));
+}
+
+/** cloudflared's line once a connection to Cloudflare works (`INF Registered tunnel connection connIndex=0 … protocol=quic`). */
+export function isRegisteredLine(line: string): boolean {
+  return /\bRegistered tunnel connection\b/.test(line);
+}
+
+/**
+ * QUIC failures, before any connection worked, after which SwarmCast opens a new tunnel over TCP.
+ * One failure can be a lost packet burst (cloudflared then tries another edge address); a second
+ * one comes 5 to 10 s later and means UDP to Cloudflare is blocked or dropped here.
+ */
+export const QUIC_FAILURES_BEFORE_TCP = 2;

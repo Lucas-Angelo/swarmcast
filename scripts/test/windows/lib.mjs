@@ -18,7 +18,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bareEnv, loginFromOutput, waitLiveLink as waitLiveLinkOf } from '../lib/app.mjs';
+import { bareEnv, LIVE_LINK_WAIT_MS, loginFromOutput, waitLiveLink as waitLiveLinkOf } from '../lib/app.mjs';
 import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { writeJunit } from '../lib/junit.mjs';
@@ -605,7 +605,7 @@ export async function startApp(o) {
 }
 
 /** The state with the live link (lib/app.mjs): fails at once on a failed start or when the start script exits. */
-export const waitLiveLink = (app, timeoutMs = 120_000) => waitLiveLinkOf(app, timeoutMs, app.inst ? [app.inst.owner] : []);
+export const waitLiveLink = (app, timeoutMs = LIVE_LINK_WAIT_MS) => waitLiveLinkOf(app, timeoutMs, app.inst ? [app.inst.owner] : []);
 
 /** Quits through the panel API and checks: exit code, no process under home, ports closed. */
 export async function quitAndVerify(app, home, label, { via = 'api' } = {}) {

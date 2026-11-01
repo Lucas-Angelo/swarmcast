@@ -5,8 +5,18 @@ import { CodedError } from '../core/messages.js';
 import { sleep } from '../core/retry.js';
 import { ManagedChild, type Reaper } from '../process/children.js';
 import { parseQuickTunnelUrl } from './parse.js';
-import { TunnelProvider } from './provider.js';
-import { START_RETRY_DELAYS_MS, classifyStartFailure, isErrorLine, retryDelayMs, type StartFailure } from './start-failure.js';
+import { TunnelProvider, type TunnelStartOptions, type TunnelTransport } from './provider.js';
+import {
+  QUIC_FAILURES_BEFORE_TCP,
+  START_RETRY_DELAYS_MS,
+  classifyStartFailure,
+  cloudflaredReason,
+  isErrorLine,
+  isQuicFailureLine,
+  isRegisteredLine,
+  retryDelayMs,
+  type StartFailure,
+} from './start-failure.js';
 
 /** How long one cloudflared run may take to print its address. */
 const ATTEMPT_TIMEOUT_MS = 45_000;
@@ -45,6 +55,11 @@ export interface QuickTunnelOptions {
  * tries again a few times with growing delays (START_RETRY_DELAYS_MS, plus jitter), emitting
  * `retry` before each wait, and fails with Cloudflare's own words if it keeps refusing. Any
  * other failure (a broken binary, a bad flag) fails at once with cloudflared's message.
+ *
+ * Once it has its address, cloudflared connects to Cloudflare's edge, over QUIC (UDP) by default.
+ * When that keeps failing before the first connection works (a network that blocks or drops UDP),
+ * the tunnel emits `udp-blocked`: the live then opens a new one with `transport: 'tcp'`
+ * (`--protocol http2`), which the restarts during that live keep.
  */
 export class QuickTunnel extends TunnelProvider {
   readonly name = 'cloudflare-quick';
@@ -54,6 +69,7 @@ export class QuickTunnel extends TunnelProvider {
   private localPort = 0;
   private restarts = 0;
   private abort = new AbortController();
+  private transport: TunnelTransport = 'auto';
 
   constructor(
     private readonly binary: string,
@@ -73,13 +89,14 @@ export class QuickTunnel extends TunnelProvider {
     return this.child?.pid;
   }
 
-  async start(localPort: number): Promise<string> {
+  async start(localPort: number, opts: TunnelStartOptions = {}): Promise<string> {
     if (!fs.existsSync(this.binary)) {
       throw new Error(`cloudflared was not found at ${this.binary}. Run the start script again to repair the installation.`);
     }
     this.wanted = true;
     this.localPort = localPort;
     this.restarts = 0;
+    this.transport = opts.transport ?? 'auto';
     this.abort = new AbortController();
     const signal = this.abort.signal;
     const attempts = START_RETRY_DELAYS_MS.length + 1;
@@ -98,11 +115,13 @@ export class QuickTunnel extends TunnelProvider {
         throw failure.reason ? new CodedError('err.tunnelFailed', { reason }) : new CodedError('err.tunnelExited', { code: String(code) });
       }
       const causeKey = `tunnel.cause.${failure.transient}` as const;
-      if (attempt >= attempts || !this.wanted) {
-        this.log.warn({ panel: true, err: reason, attempt }, 'cloudflare kept refusing the quick tunnel, giving up');
-        throw new CodedError('err.tunnelBusy', { causeKey, attempts, reason });
-      }
       const delay = retryDelayMs(attempt, failure, this.opts.random ?? Math.random);
+      // Past the tunnel step's budget the live gives up anyway: say Cloudflare's words now.
+      const late = opts.deadline !== undefined && Date.now() + delay >= opts.deadline;
+      if (attempt >= attempts || !this.wanted || late) {
+        this.log.warn({ panel: true, err: reason, attempt }, 'cloudflare kept refusing the quick tunnel, giving up');
+        throw new CodedError('err.tunnelBusy', { causeKey, attempts: attempt, reason });
+      }
       // `panel: true`: the live adds it to the activity log, translated (step.tunnel.retry).
       this.log.warn({ panel: true, err: reason, attempt, delay }, 'cloudflare refused or failed the quick tunnel, trying again');
       this.emit('retry', { cause: failure.transient, reason, delayMs: delay, attempt: attempt + 1, attempts });
@@ -124,6 +143,8 @@ export class QuickTunnel extends TunnelProvider {
       cfg,
       '--url',
       `http://127.0.0.1:${this.localPort}`,
+      // TCP to Cloudflare's edge (HTTP/2, port 7844) instead of cloudflared's QUIC over UDP.
+      ...(this.transport === 'tcp' ? ['--protocol', 'http2'] : []),
       ...(this.opts.extraArgs ?? []),
       // Do not let a TUNNEL_* environment from elsewhere change behavior.
     ];
@@ -131,6 +152,8 @@ export class QuickTunnel extends TunnelProvider {
     this.child = child;
     const first: string[] = [];
     const last: string[] = [];
+    let quicFailures = 0;
+    let connected = false;
     return new Promise<string>((resolve, reject) => {
       let settled = false;
       const timer = setTimeout(() => {
@@ -156,6 +179,11 @@ export class QuickTunnel extends TunnelProvider {
           return;
         }
         const kept = line.slice(0, 300);
+        if (isRegisteredLine(line)) connected = true;
+        else if (!connected && this.transport === 'auto' && this.child === child && isQuicFailureLine(line) && ++quicFailures === QUIC_FAILURES_BEFORE_TCP) {
+          this.log.warn({ cloudflared: kept, failures: quicFailures }, 'cloudflared cannot reach Cloudflare over UDP (QUIC)');
+          this.emit('udp-blocked', cloudflaredReason([line]) ?? kept);
+        }
         if (first.length < KEPT_FIRST_LINES) first.push(kept);
         else {
           last.push(kept);
