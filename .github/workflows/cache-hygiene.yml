@@ -1,0 +1,101 @@
+name: Cache hygiene
+
+# Keeps the Actions caches under GitHub's 10 GB repository limit, over which GitHub evicts the
+# least recently used entries and jobs run cold (README.md, "Caches"):
+# - a pull request closes: its caches (refs/pull/<n>/merge and /head) go;
+# - after each Pipeline or CodeQL run on main (once their caches are saved), daily, and by hand:
+#   scripts/ci/cache-hygiene.mjs deletes the caches of closed pull requests and deleted branches,
+#   and on main every entry a newer one superseded (old lockfile hashes, old rust-cache and
+#   codeql-trap keys). Never an entry whose key holds a hash of main's current inputs, nor the
+#   newest or most recently used of its family. By hand it defaults to a dry run (prints the plan).
+on:
+  pull_request:
+    types: [closed]
+  workflow_run:
+    workflows: [Pipeline, CodeQL]
+    types: [completed]
+    branches: [main]
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Only print what would be deleted
+        type: boolean
+        default: true
+      grace-hours:
+        description: Keep an older entry on main still used after the newest was saved within this many hours
+        default: '24'
+
+permissions:
+  contents: read
+
+# One sweep at a time (a newer one waits); each pull request's cleanup on its own.
+concurrency:
+  group: cache-hygiene-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  pull-request:
+    name: caches of pull request #${{ github.event.pull_request.number }}
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: write
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # A pull request from a fork gets a read-only token: the deletion fails with a warning and
+      # the daily sweep deletes them.
+      - name: Delete the caches of refs/pull/${{ github.event.pull_request.number }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          for ref in "refs/pull/$PR/merge" "refs/pull/$PR/head"; do
+            gh cache list --ref "$ref" --limit 1000 --json id,key,sizeInBytes \
+              --jq '.[] | [.id, .key, .sizeInBytes] | @tsv' |
+              while IFS=$'\t' read -r id key size; do
+                if gh cache delete "$id"; then
+                  echo "deleted $key [$ref] $((size / 1000000)) MB"
+                else
+                  echo "::warning::could not delete $key [$ref] (id $id)"
+                fi
+              done
+          done
+
+  sweep:
+    name: sweep${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)) && ' (dry run)' || '' }}
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      # The script from this ref; main's files (the cache key inputs) from origin/main.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Fetch main
+        run: git fetch --no-tags --depth=1 origin "+refs/heads/main:refs/remotes/origin/main"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: Delete superseded caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Deletes only from main's own workflow; from any other ref it is always a dry run.
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry-run) }}
+          GRACE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.grace-hours || '24' }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY" --main-ref origin/main --grace-hours "$GRACE_HOURS")
+          [ "$DRY_RUN" = true ] && args+=(--dry-run)
+          node scripts/ci/cache-hygiene.mjs "${args[@]}"
