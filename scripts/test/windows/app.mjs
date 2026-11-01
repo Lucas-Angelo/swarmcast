@@ -91,9 +91,13 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
         await panel.page.click('[data-testid=onb-next]');
         n++;
       }
+      // Finish closes the tutorial at once and saves "done" right after (Onboarding.tsx close()):
+      // read the server only once that save has been answered.
+      const saved = panel.page.waitForResponse((r) => new URL(r.url()).pathname === '/api/onboarding' && r.request().method() === 'POST', { timeout: 10_000 });
       await panel.page.click('[data-testid=onb-finish]');
       const closed = await onb.waitFor({ state: 'hidden', timeout: 10_000 }).then(() => true, () => false);
-      const done = (await app.api('/api/onboarding')).done === true;
+      const savedOk = await saved.then((r) => r.ok(), () => false);
+      const done = savedOk && (await app.api('/api/onboarding')).done === true;
       check('setup tutorial can be walked to the end and is remembered', closed && done, `${n} steps`);
     }
   }
