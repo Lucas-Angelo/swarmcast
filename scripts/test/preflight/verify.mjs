@@ -126,7 +126,9 @@ async function runSession({ releaseUrl, tunnel, browser }) {
       const want = path.join(home, 'tools', 'ffmpeg', isWin ? 'ffmpeg.exe' : 'ffmpeg');
       step(`[${label}] installer installed ffmpeg and the app uses it`, q.ffmpeg?.available === true && q.ffmpeg.path === want, q.ffmpeg?.path ?? 'not available');
     }
-    const s0 = await waitLiveLink(app, 120_000, [inst.owner]);
+    // As long as the app's own tunnel step may take (LIVE_LINK_WAIT_MS), and it fails at once
+    // with the app's error when the start fails.
+    const s0 = await waitLiveLink(app, undefined, [inst.owner]);
     // Not a check: when Cloudflare refused or failed the first quick-tunnel request (many
     // runners open tunnels at once), the app tried again; its warnings say why and how often.
     const tunnelNotes = inst.output().split(/\r?\n/).filter((l) => l.includes('"level":"warn"') && /quick tunnel|quick Tunnel/.test(l));

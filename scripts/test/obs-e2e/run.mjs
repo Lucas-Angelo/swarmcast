@@ -10,6 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
+import { LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 import { setupObs, ensureMediaFile, OBS_DIR, SCENE } from './setup-obs.mjs';
@@ -491,7 +492,8 @@ async function main() {
         }
         return st.liveLink && /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\/\S+$/.test(st.liveLink) && st.phase === 'waiting-obs' ? st : null;
       },
-      { timeout: 180_000, interval: 1000, what: 'a trycloudflare live link and phase waiting-obs' },
+      // As long as the app's own tunnel step may take; a failed start ends the wait at once (above).
+      { timeout: LIVE_LINK_WAIT_MS, interval: 1000, what: 'a trycloudflare live link and phase waiting-obs' },
     );
     liveLink = s.liveLink;
     rtmpUrl = s.rtmpUrl;

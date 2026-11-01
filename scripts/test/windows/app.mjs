@@ -288,7 +288,7 @@ await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async ()
   const browsers = [await launchBrowser('chrome'), await launchBrowser('msedge'), await launchBrowser('firefox')];
   const app = await start(['-Yes', '-SkipSpeedtest'], 'tunnel');
   onCleanup(() => killUnder(home));
-  const s0 = await waitLiveLink(app, 180_000);
+  const s0 = await waitLiveLink(app);
   must('live link on trycloudflare.com', /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\//.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, ''));
   const feed = pushStream(s0.rtmpUrl, s0.streamKey);
   await waitPhase(app, 'live');
@@ -312,7 +312,7 @@ await section('4. taskkill /F on the app: the reaper removes MediaMTX, cloudflar
   resetConfig();
   const app = await start(['-Yes', '-SkipSpeedtest'], 'taskkill');
   onCleanup(() => killUnder(home));
-  const s0 = await waitLiveLink(app, 180_000).catch(() => null);
+  const s0 = await waitLiveLink(app).catch(() => null);
   if (s0) {
     const feed = pushStream(s0.rtmpUrl, s0.streamKey);
     await waitPhase(app, 'live').catch(() => {});
@@ -414,7 +414,7 @@ await section('6. uninstall-windows.cmd during a live (tunnel, viewer watching),
   const chrome = await launchBrowser('chrome');
   const app = await start(['-Yes', '-SkipSpeedtest'], 'before-uninstall');
   onCleanup(() => killUnder(home));
-  const s0 = await waitLiveLink(app, 180_000);
+  const s0 = await waitLiveLink(app);
   const feed = pushStream(s0.rtmpUrl, s0.streamKey);
   await waitPhase(app, 'live');
   const v = await joinAndPlay(chrome, s0.liveLink, 'watching-uninstall').catch((e) => e);
