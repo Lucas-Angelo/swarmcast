@@ -44,11 +44,11 @@ changes ─┬─ quick ──────────────────�
 | e2e | `_e2e.yml` | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced so each takes about 7 minutes on the slowest macOS runners; the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 1-2.5 minutes), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
-| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 14 (x64 and arm64: build, test images, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image; their test images come prebuilt from ghcr.io (`images.sh`: published by the test images job outside pull requests, rebuilt weekly) |
+| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
 That is 30 jobs for a change to the app (8 on macOS, 7 on Windows), 31 when it also touches the
-site, 14 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
+site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
 5 of them on macOS.
 
 ### What runs where
@@ -209,8 +209,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), Docker image pulls and pushes (`scripts/test/docker`:
-  `pull.sh`, `images.sh`), the pinned
+  then the REST fallback, each a warning), the pinned
   downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`) and the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`).
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
@@ -249,9 +248,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
   (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
-  publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch;
-  `_docker.yml`'s test images job: `packages: write`, used outside pull requests only, the other
-  Docker jobs `packages: read`).
+  publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
   (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).

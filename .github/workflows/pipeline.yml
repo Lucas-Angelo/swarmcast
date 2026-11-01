@@ -198,10 +198,6 @@ jobs:
     needs: changes
     if: needs.changes.outputs.docker == 'true'
     uses: ./.github/workflows/_docker.yml
-    permissions:
-      contents: read
-      actions: read
-      packages: write # _docker.yml's images job publishes the test images (never on pull requests)
 
   # ---------------------------------------------------------------- the required check
   # The verdict and nothing else: one shell step, no checkout, no action, no artifact. Anything

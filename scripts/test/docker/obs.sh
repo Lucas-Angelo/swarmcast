@@ -9,8 +9,8 @@
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
-# shellcheck source-path=SCRIPTDIR source=images.sh
-. "$DIR/images.sh"
+# shellcheck source-path=SCRIPTDIR source=pull.sh
+. "$DIR/pull.sh"
 RELEASE="${RELEASE_DIR:-}"
 BUILD=1
 PLATFORM=""
@@ -35,7 +35,8 @@ fi
 [ -f "$RELEASE/SHA256SUMS.txt" ] || { echo "Release folder not found. Use --release DIR." >&2; exit 2; }
 IMAGE="swarmcast-test-obs${PLATFORM:+-${PLATFORM##*/}}"
 if [ "$BUILD" = 1 ]; then
-  test_image obs "$IMAGE" ubuntu:24.04 "$PLATFORM" || exit 2
+  pull_image ubuntu:24.04 "$PLATFORM" || exit 2
+  docker build -q ${PLATFORM:+--platform "$PLATFORM"} -f "$DIR/Dockerfile.obs" -t "$IMAGE" "$DIR" >/dev/null || exit 2
 fi
 # --shm-size: OBS and Mesa use shared memory; the 64 MB default is tight.
 docker run --rm --init --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \

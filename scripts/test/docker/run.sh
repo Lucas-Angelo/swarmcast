@@ -32,8 +32,8 @@ set -u
 set -o pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source-path=SCRIPTDIR source=images.sh
-. "$DIR/images.sh"
+# shellcheck source-path=SCRIPTDIR source=pull.sh
+. "$DIR/pull.sh"
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$DIR/lib.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
@@ -138,9 +138,14 @@ tag_of() { # ubuntu:24.04@amd64 -> ubuntu-24.04-amd64
 }
 platform_of() { case "$1" in *@amd64) echo linux/amd64 ;; *) echo "linux/$HOST_ARCH" ;; esac; }
 
-build() { # build KIND IMAGE BASE PLATFORM: the published image, else built here (images.sh)
-  [ "$BUILD" = 1 ] || return 0
-  test_image "$1" "$2" "$3" "$4" || { echo "build of $2 failed"; return 1; }
+build() { # build DOCKERFILE IMAGE BASE PLATFORM [build-args...]
+  local df="$1" img="$2" base="$3" plat="$4"
+  shift 4
+  if [ "$BUILD" = 1 ]; then
+    pull_image "$base" "$plat" || { echo "pull of $base ($plat) failed"; return 1; }
+    docker build -q --platform "$plat" -f "$DIR/$df" --build-arg "BASE=$base" "$@" -t "$img" "$DIR" >/dev/null ||
+      { echo "build of $img failed"; return 1; }
+  fi
 }
 
 # run_target TARGET LOGFILE RESULTFILE
@@ -151,9 +156,9 @@ run_target() {
   tag="$(tag_of "$target")"
   exec >"$log" 2>&1
   echo "##### $target ($plat)"
-  build bare "swarmcast-test-bare:$tag" "$base" "$plat" || { echo "$target|build|FAIL" >>"$res"; return; }
-  build bare-sudo "swarmcast-test-bare:$tag-sudo" "$base" "$plat" || { echo "$target|build|FAIL" >>"$res"; return; }
-  build install "swarmcast-test-install:$tag" "$base" "$plat" || { echo "$target|build|FAIL" >>"$res"; return; }
+  build Dockerfile.bare "swarmcast-test-bare:$tag" "$base" "$plat" || { echo "$target|build|FAIL" >>"$res"; return; }
+  build Dockerfile.bare "swarmcast-test-bare:$tag-sudo" "$base" "$plat" --build-arg WITH_SUDO=1 || { echo "$target|build|FAIL" >>"$res"; return; }
+  build Dockerfile.install "swarmcast-test-install:$tag" "$base" "$plat" || { echo "$target|build|FAIL" >>"$res"; return; }
 
   local envs=(-e "SWARMCAST_RELEASE_URL=$RELEASE_URL" -e "SWARMCAST_HOME=/tmp/sc-home" -e NO_COLOR=1)
 
@@ -258,7 +263,7 @@ for t in "${TARGETS[@]}"; do
   logs+=("$log")
   : >"$log"
   if [ "$TUNNEL_ONLY" = 1 ]; then
-    build install "swarmcast-test-install:$(tag_of "$t")" "${t%@*}" "$(platform_of "$t")"
+    build Dockerfile.install "swarmcast-test-install:$(tag_of "$t")" "${t%@*}" "$(platform_of "$t")"
     continue
   fi
   if [ "$SERIAL" = 1 ]; then

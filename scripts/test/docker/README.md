@@ -22,46 +22,9 @@ and by hand (`gh workflow run linux-docker.yml --ref <branch>`). A build job mak
 AppImage of the commit for each architecture (on Ubuntu 22.04, like the release); then one job
 per base image and architecture runs `run.sh --serial <base>` and `appimage.sh`. The tunnel
 check (d) runs on the weekly schedule only (Ubuntu 24.04, the `tunnel-test` input), because Cloudflare rate-limits quick
-tunnels.
-
-## Test images (`images.sh`)
-
-The suites' images (`Dockerfile.install`, `.appimage`, `.obs` and `.bare` with sudo: the tools
-the tests need, installed with `apt-get`) are prebuilt and published to GitHub's container
-registry, `ghcr.io/lucas-angelo/swarmcast-test`, one tag per kind, base, architecture and hash of
-the Dockerfile and its build arguments (`install-ubuntu-24.04-amd64-<12 hex>`). The suites pull the
-tag of the Dockerfile they have; when it is not published (a Dockerfile changed by a pull request,
-or the registry does not answer) they build the image themselves and print the whole build log
-(apt's own errors included) if that fails. Each suite prints one line per image saying where it
-came from (`image …: published ghcr.io/…@sha256:…` or `image …: building here: <why>`, a warning
-annotation in CI). `SC_TEST_IMAGES=build` always builds here (Dockerfile work, offline).
-
-Why: the images used to be built in every job, so every run depended on the distributions'
-mirrors at that moment. One run of a 10-pipeline stability batch (run 41273197813, job
-`ubuntu:24.04 x64`, 2026-11-01 05:38 UTC) lost its job when `apt-get` exited with 100 while
-building `Dockerfile.install`, with apt's own message hidden by `docker build -q`. The whole step
-took 22 s, pulls and two earlier builds included, while apt's 5 retries of a network error take
-31 s by themselves: the error was one apt does not retry (a 404 Not Found, which fails in 2 s, a
-hash or size mismatch, an inconsistent index), which is a mirror serving a half-synchronised
-archive, not a slow or refused connection. No layer cache instead: a weekly job outlives GitHub's
-7-day cache eviction, and the repository's 10 GB cache is full.
-
-Publishing: `_docker.yml`'s images job runs `images.sh publish` on each architecture (natively)
-before the test jobs, outside pull requests: it pushes only the tags the registry lacks, so a
-merged Dockerfile change is published by the next `main` run. The weekly `linux-docker.yml` run
-(and `gh workflow run linux-docker.yml -f refresh-images=true`) rebuilds and republishes all of
-them from freshly pulled bases and packages, so the tested distributions stay current; when a
-refresh fails, the previous images stay. Only the test's scaffolding comes from the snapshot: the
-start script's own `sudo apt-get install curl` (run.sh b) still runs against the live mirrors, as
-it does for users. The package must stay **public** (package settings on GitHub, "Change
-visibility"): public packages are free and pull without a login (the test jobs also log in with
-`GITHUB_TOKEN`, which reads it either way; developers' machines and the desktop pipeline's AppImage
-check need it public).
-
-```sh
-scripts/test/docker/images.sh ref install ubuntu:24.04            # the tag this Dockerfile has
-scripts/test/docker/images.sh publish [--refresh] [BASE...]       # needs docker login ghcr.io
-```
+tunnels. The images are built in each job (no layer cache: a weekly job outlives GitHub's 7-day
+cache eviction, and the repository's cache is full); their `apt-get` uses retries and a 30 s
+time limit per connection.
 
 The release folder defaults to `<main checkout>/release` (override with `--release DIR` or
 `RELEASE_DIR`). Build it first (`npm run package` for each target, plus `SHA256SUMS.txt`).
