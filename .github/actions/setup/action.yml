@@ -1,10 +1,11 @@
 name: Set up SwarmCast build tools
 description: >-
   Node.js (with the npm cache), optionally Go for the tray helper and ffmpeg for the tests,
-  then `npm ci`. Run actions/checkout first. A cache is a speed-up, never a requirement: a cache
-  restore that fails is a warning (continue-on-error), and its download gives up after 2 minutes
-  (SEGMENT_DOWNLOAD_TIMEOUT_MINS) instead of eating the step's time limit; the job then
-  downloads or installs what it needs.
+  then `npm ci`. Run actions/checkout first. A cache is a speed-up, never a requirement: every
+  cache restore here goes through ./.github/actions/cache-restore, which cuts a try off after
+  90 s and tries once more (a stalled download hung actions/cache/restore for 12 minutes in a
+  simulation, and SEGMENT_DOWNLOAD_TIMEOUT_MINS does not bound that part), then goes on without
+  the cache; the job then downloads or installs what it needs.
 
 inputs:
   go:
@@ -68,8 +69,8 @@ runs:
       id: apt-debs-cache
       continue-on-error: true
       env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb
         key: ${{ steps.apt-debs.outputs.key }}
@@ -88,27 +89,18 @@ runs:
     # the npm caches on main held 677 B to 75 KB and every `npm ci` went to the registry. This
     # file is part of the key: that moves past those empty entries (they are never restored
     # again and expire), and a change here that changes what the cache holds starts a new one.
-    # setup-node saves its cache at the end of every job that missed it, so it runs with the
-    # cache on main only; elsewhere the next two steps restore main's entry without saving one
-    # (pull requests that changed a lockfile each saved ~380 MB, five OSes x 76 MB, toward the
-    # 10 GB limit: .github/workflows/README.md, "Caches").
+    # Same key and path as setup-node's own npm cache (node-cache-<RUNNER_OS>-<process.arch>-npm-
+    # <hashFiles of the three files>, `npm config get cache`), so its entries keep working. Not
+    # setup-node's built-in cache: its restore has no time limit and its process stays up after
+    # a failed download (run 41283774499: the download stalled at 0 of 79.7 MB, then setup-node
+    # took 109 s more to exit). Saved from main only (pull requests that changed a lockfile each
+    # saved ~380 MB, five OSes x 76 MB, toward the 10 GB limit: README.md, "Caches").
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-      env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       with:
         node-version: 24.x
-        cache: ${{ inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' && 'npm' || '' }}
-        package-manager-cache: ${{ inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' }}
-        cache-dependency-path: |
-          package-lock.json
-          site/package-lock.json
-          .github/actions/setup/action.yml
-    # Not main: setup-node's own key (node-cache-<RUNNER_OS>-<process.arch>-npm-<hashFiles of the
-    # same three files>) and path (`npm config get cache`, part of the cache version), so the
-    # exact entry main saved is found; after a lockfile change, main's latest entry for this OS
-    # (`npm ci --prefer-offline` takes what still matches and downloads the rest).
-    - name: npm cache key (restore only, not main)
-      if: inputs.npm-ci == 'true' && github.ref != 'refs/heads/main'
+        package-manager-cache: false
+    - name: npm cache key
+      if: inputs.npm-ci == 'true'
       id: npm-cache
       shell: bash
       env:
@@ -116,16 +108,30 @@ runs:
       run: |
         prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
         { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
-    - name: Restore main's npm cache (not main)
-      if: inputs.npm-ci == 'true' && github.ref != 'refs/heads/main'
+    # Saved from main only, at the end of the job when main has no entry for the key yet: this
+    # step only looks the key up (lookup-only), its post step saves. It is also the job's
+    # reference to actions/cache, which ./.github/actions/cache-restore needs downloaded.
+    - name: Save the npm cache at the end of the job (main)
+      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
       continue-on-error: true
-      env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ steps.npm-cache.outputs.path }}
         key: ${{ steps.npm-cache.outputs.key }}
-        restore-keys: ${{ steps.npm-cache.outputs.prefix }}
+        lookup-only: true
+    # Elsewhere also main's latest entry for this OS after a lockfile change (`npm ci
+    # --prefer-offline` takes what still matches and downloads the rest); not on main, whose
+    # saved entry would then carry the old lockfile's packages too.
+    - name: Restore the npm cache
+      if: inputs.npm-ci == 'true'
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
+      with:
+        path: ${{ steps.npm-cache.outputs.path }}
+        key: ${{ steps.npm-cache.outputs.key }}
+        restore-keys: ${{ github.ref != 'refs/heads/main' && steps.npm-cache.outputs.prefix || '' }}
 
     # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared:
     # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs) and pkg's Node.js base binaries
@@ -153,8 +159,8 @@ runs:
       id: dl-cache
       continue-on-error: true
       env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
       with:
         path: ${{ runner.temp }}/sc-cache/downloads
         key: ${{ steps.dl.outputs.dl-key }}
@@ -164,8 +170,8 @@ runs:
       id: pkg-cache
       continue-on-error: true
       env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
       with:
         path: ${{ runner.temp }}/sc-cache/pkg
         key: ${{ steps.dl.outputs.pkg-key }}
@@ -224,8 +230,32 @@ runs:
         encoders="$("$FFMPEG_BIN" -hide_banner -encoders)"
         grep -q libx264 <<<"$encoders" || { echo "::error::$FFMPEG_BIN has no libx264 encoder (the test feeds need it)"; exit 1; }
 
-    # --prefer-offline: packages in the restored cache are not re-checked with the registry.
-    # The audit runs in its own CI job.
-    - if: inputs.npm-ci == 'true'
+    # npm's own network limits for this job's npm commands (user config): a connection that goes
+    # silent is given up after 60 s instead of npm's 5 minutes (fetch-timeout is the socket's idle
+    # limit), and a failed request is tried up to 4 times (npm's own retry: network only). Run
+    # 41283774499's `npm ci` sat 352 s with no output after a failed cache restore and ran the
+    # setup step out of time; a full `npm ci` from the registry takes 4-47 s (measured on every
+    # runner image, soak/npm-cold-measure).
+    - name: npm network limits
+      if: inputs.npm-ci == 'true'
       shell: bash
-      run: npm ci --prefer-offline --no-audit --no-fund
+      run: |
+        npm config set fetch-timeout 60000 --location=user
+        npm config set fetch-retries 4 --location=user
+    # --prefer-offline: packages in the restored cache are not re-checked with the registry.
+    # The audit runs in its own CI job. A network error that npm's own retries did not get past
+    # (a download that broke off mid-transfer is not retried by npm) runs `npm ci` once more: an
+    # infrastructure retry, like apt-retry.sh; any other failure fails the step.
+    - name: npm ci
+      if: inputs.npm-ci == 'true'
+      shell: bash
+      run: |
+        log="$RUNNER_TEMP/npm-ci.log"
+        for try in 1 2; do
+          if npm ci --prefer-offline --no-audit --no-fund 2>&1 | tee "$log"; then exit 0; fi
+          if [ "$try" = 1 ] && grep -qE '^npm error (code (ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ERR_SOCKET_TIMEOUT|ENETUNREACH|EPIPE)$|network )' "$log"; then
+            echo "::warning::npm ci: network error after npm's own retries, running it once more"
+            continue
+          fi
+          exit 1
+        done
