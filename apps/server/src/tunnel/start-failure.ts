@@ -43,11 +43,17 @@ const UNAVAILABLE = [
 ];
 
 /**
+ * Go's standard log prefix (`2026/11/01 03:54:44 `): quic-go's notices, such as "failed to
+ * sufficiently increase receive buffer size", printed on every start on Linux runners. Not errors.
+ */
+const GO_LOG_PREFIX = /^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d /;
+
+/**
  * An error line of cloudflared: logged as ERR/FTL, or bare (its exit message has no prefix).
  * Indented lines are its help text (printed after "Incorrect Usage."), not errors.
  */
 export function isErrorLine(line: string): boolean {
-  if (line.trim() === '' || /^\s/.test(line)) return false;
+  if (line.trim() === '' || /^\s/.test(line) || GO_LOG_PREFIX.test(line)) return false;
   const m = LOG_PREFIX.exec(line);
   return !m || m[1] === 'ERR' || m[1] === 'FTL';
 }

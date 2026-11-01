@@ -247,9 +247,10 @@ describe("classifying cloudflared's start failure", () => {
 
   it('tells error lines from information lines', () => {
     // Act
-    const kinds = [S429, '2026-11-01T02:58:54Z ERR boom', REQUESTING, '2026-11-01T02:58:54Z DBG x', '', '   --help, -h  show help'].map(isErrorLine);
+    const quicGo = '2026/11/01 03:54:44 failed to sufficiently increase receive buffer size (was: 1024 kiB, wanted: 7168 kiB, got: 2048 kiB). See https://github.com/quic-go/quic-go/wiki/UDP-Buffer-Sizes for details.';
+    const kinds = [S429, '2026-11-01T02:58:54Z ERR boom', REQUESTING, '2026-11-01T02:58:54Z DBG x', '', '   --help, -h  show help', quicGo].map(isErrorLine);
     // Assert
-    expect(kinds).toEqual([true, true, false, false, false, false]);
+    expect(kinds).toEqual([true, true, false, false, false, false, false]);
   });
 });
 
