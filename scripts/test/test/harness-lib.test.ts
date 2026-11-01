@@ -429,8 +429,9 @@ describe('how long the harnesses wait for the live link', () => {
   it.skipIf(process.platform === 'win32')('docker/run.sh reads the same limit from the source', () => {
     // Arrange
     const root = path.resolve(import.meta.dirname, '../../..');
-    // Act: bash itself picks run.sh's line and runs it (the command string stays constant).
-    const out = execFileSync('bash', ['-c', 'ROOT="$1"; eval "$(grep "^TUNNEL_BUDGET_MS=" "$ROOT/scripts/test/docker/run.sh")"; echo "$TUNNEL_BUDGET_MS"', 'bash', root], { encoding: 'utf8' });
+    // Act: bash itself picks run.sh's line and runs it from the repository folder (the command
+    // is a constant string with no path in it).
+    const out = execFileSync('bash', ['-c', 'ROOT=.; eval "$(grep "^TUNNEL_BUDGET_MS=" scripts/test/docker/run.sh)"; echo "$TUNNEL_BUDGET_MS"'], { cwd: root, encoding: 'utf8' });
     // Assert
     expect(Number(out.trim())).toBe(TUNNEL_START_BUDGET_MS);
   });
