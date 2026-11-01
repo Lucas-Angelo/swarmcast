@@ -1,4 +1,4 @@
-import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_EPHEMERAL_PENDING_MAX, CHAT_SOCKET_BUFFER_MAX, type ChatAuthor, type ChatItem } from '@swarmcast/shared';
+import { CHAT_BATCH_LARGE_AUDIENCE, CHAT_BATCH_MS, CHAT_BATCH_MS_LARGE, CHAT_BATCH_MS_PRESSURE, CHAT_EPHEMERAL_PENDING_MAX, CHAT_SOCKET_BUFFER_MAX, CHAT_STATE_MISSED_MAX, type ChatAuthor, type ChatItem } from '@swarmcast/shared';
 import { TokenBucket } from './buckets.js';
 
 /** What the batcher needs of a viewer socket (a `ws` WebSocket). */
@@ -28,7 +28,12 @@ interface Pending {
   at: number;
   /** Other authors this item names (a reply's parent, a mention, a pin): every socket gets their roster entry first. */
   refs?: readonly string[];
+  /** A state item (`pushState`): the key of the state it changes. */
+  state?: string;
 }
+
+/** The current item of a state key (`pushState`), and the authors it names; null when there is nothing to send for it any more. */
+export type StateOf = (key: string) => { item: ChatItem; refs?: readonly string[] } | null;
 
 /** Any batch item with a kind; ephemeral kinds are defined by the features that send them. */
 export interface EphemeralItem {
@@ -38,8 +43,10 @@ export interface EphemeralItem {
 interface SocketDebt {
   /** Viewer messages this socket did not get (sent as one `skip` item when it catches up). */
   skipped: number;
-  /** It missed a durable item (delete, clear, roster change…): it gets a fresh snapshot instead. Never set by ephemeral items. */
+  /** It missed a durable item (delete, clear, roster change…): it gets a fresh snapshot instead. Never set by ephemeral or state items. */
   missedPrio: boolean;
+  /** Keys of the state items it missed: it gets their current state when it catches up (at most CHAT_STATE_MISSED_MAX, then a snapshot). */
+  missedState?: Set<string>;
 }
 
 export interface BatcherOptions {
@@ -52,6 +59,8 @@ export interface BatcherOptions {
   resync: (socket: ChatSocket) => void;
   /** Roster entry of an author key, for sockets that have not been told about that author yet. */
   authorOf?: (a: string) => ChatAuthor | undefined;
+  /** The current item of a state key, for a socket that missed state items while it was slow (`pushState`). */
+  stateOf?: StateOf;
   now?: () => number;
 }
 
@@ -65,6 +74,9 @@ export interface BatcherOptions {
  * - viewer messages (`m`, `prio` false): dropped oldest first under budget pressure, with a `skip`;
  * - durable items (`prio` true: streamer messages, roster, delete, clear, system lines): never
  *   dropped; a slow socket that missed one gets a fresh snapshot;
+ * - state items (`pushState`: the pin, a message's highlight): durable too, but each one only says
+ *   what a piece of state is now, so a slow socket that missed some gets the current state of each
+ *   (`stateOf`) when it catches up, not a snapshot;
  * - ephemeral items (`pushLatest`: latest-wins state such as vote or reaction counts): at most one
  *   pending per key, sent after the queue's items, dropped first under budget pressure, silently
  *   (no `skip`, which counts messages), and never a reason for a snapshot. They never take a seq.
@@ -113,6 +125,15 @@ export class ChatBatcher {
         this.mergeSkips();
       }
     }
+    this.schedule();
+  }
+
+  /**
+   * Queue a state item: a durable item (never dropped) that says what the state under `key` is now
+   * (`pin`, `hl:<seq>`). A socket too slow to get it is sent `stateOf(key)` when it catches up.
+   */
+  pushState(key: string, item: ChatItem, refs?: readonly string[]): void {
+    this.queue.push({ item, prio: true, at: this.now(), state: key, ...(refs?.length ? { refs } : {}) });
     this.schedule();
   }
 
@@ -265,8 +286,10 @@ export class ChatBatcher {
       payload = this.payload();
     }
     const messages = this.queue.filter((p) => p.item.k === 'm').length;
-    // Only the queue's durable items count: ephemeral ones are never a reason for a snapshot.
-    const hasPrio = this.queue.some((p) => p.item.k !== 'm' && p.item.k !== 'skip');
+    // Only the queue's durable items count: ephemeral ones are never a reason for a snapshot, and a
+    // state item is owed as its current state instead.
+    const hasPrio = this.queue.some((p) => p.state === undefined && p.item.k !== 'm' && p.item.k !== 'skip');
+    const states = [...new Set(this.queue.flatMap((p) => (p.state === undefined ? [] : [p.state])))];
     // Every socket must know every author an item names: the author of a message and the authors
     // it refers to (`refs`). The batch's own roster items cover first appearances; a socket that
     // joined later (and whose hello only listed the authors of its history) gets the missing
@@ -284,27 +307,46 @@ export class ChatBatcher {
     for (const s of sockets) {
       if (s.bufferedAmount > CHAT_SOCKET_BUFFER_MAX) {
         // Chat never queues behind a slow reader: video, kicks and P2P orders go first.
-        const d = this.debts.get(s) ?? { skipped: 0, missedPrio: false };
+        const d: SocketDebt = this.debts.get(s) ?? { skipped: 0, missedPrio: false };
         d.skipped += messages;
         d.missedPrio ||= hasPrio;
+        if (states.length && !d.missedPrio) {
+          const missed = (d.missedState ??= new Set());
+          for (const k of states) missed.add(k);
+          // Owing too many states (a stuck socket during a busy stretch): a snapshot is cheaper.
+          if (missed.size > CHAT_STATE_MISSED_MAX || !this.o.stateOf) d.missedPrio = true;
+        }
+        if (d.missedPrio) delete d.missedState;
         this.debts.set(s, d);
         this.skippedSlow += messages;
         continue;
       }
       const d = this.debts.get(s);
+      // The current state of every state item this socket missed: sent after the roster entries
+      // they name and before this batch (whose own state items can only be as new or newer).
+      const owed: ChatItem[] = [];
+      const owedRefs: string[] = [];
       if (d) {
         this.debts.delete(s);
         if (d.missedPrio) this.o.resync(s);
-        else if (d.skipped > 0) {
-          const skip = JSON.stringify({ t: 'chat.batch', items: [{ k: 'skip', n: d.skipped }] });
-          s.send(skip);
-          sent += skip.length;
+        else {
+          if (d.skipped > 0) {
+            const skip = JSON.stringify({ t: 'chat.batch', items: [{ k: 'skip', n: d.skipped }] });
+            s.send(skip);
+            sent += skip.length;
+          }
+          for (const key of d.missedState ?? []) {
+            const cur = this.o.stateOf?.(key);
+            if (!cur) continue;
+            owed.push(cur.item);
+            if (cur.refs) owedRefs.push(...cur.refs);
+          }
         }
       }
       let known = this.known.get(s);
       if (!known) this.known.set(s, (known = new Set()));
       const missing: ChatItem[] = [];
-      for (const a of authors) {
+      for (const a of owedRefs.length ? new Set([...owedRefs, ...authors]) : authors) {
         if (known.has(a) || announcedNow.has(a)) continue;
         const au = this.o.authorOf?.(a);
         if (au) missing.push({ k: 'u', au });
@@ -314,6 +356,11 @@ export class ChatBatcher {
         const roster = JSON.stringify({ t: 'chat.batch', items: missing });
         s.send(roster);
         sent += roster.length;
+      }
+      if (owed.length) {
+        const state = JSON.stringify({ t: 'chat.batch', items: owed });
+        s.send(state);
+        sent += state.length;
       }
       for (const a of announcedNow) known.add(a);
       s.send(payload);

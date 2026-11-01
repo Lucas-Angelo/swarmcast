@@ -5,7 +5,9 @@
 // unmute, a colour set and locked by the streamer (the viewer's colour chooser is gone and says
 // why; the server also ignores chat.color while locked: chat-hub.test.ts), content presets
 // (text only also refuses emoji), blocked words matched through look-alikes (fullwidth letters
-// and capitals: the comparison key folds them). The `chat` fixture puts the settings back.
+// and capitals: the comparison key folds them), and the streamer's highlight and pin (the pinned
+// bar above the list, for viewers who join later too; mute and the content modes leave it alone,
+// delete and clear take it down). The `chat` fixture puts the settings back.
 //
 // What a viewer must never see is proven with a marker the streamer posts after it (fixtures.ts
 // neverSees): the chat delivers in order, so once the marker shows, the refused text would too.
@@ -26,6 +28,11 @@ async function sessionOf(chat: ChatControl, nickname: string): Promise<string> {
     .toBeTruthy();
   return id!;
 }
+
+// A pin outlives a test that failed half way: take it down for the tests after it.
+test.afterEach(async () => {
+  await admin('/api/chat/unpin');
+});
 
 async function seqOf(chat: ChatControl, text: string): Promise<number> {
   let seq: number | undefined;
@@ -209,4 +216,55 @@ test('blocked words match look-alikes and never reach other viewers', { tag: '@u
   // Assert
   await expect(a.page.getByTestId('chat-status')).toHaveText('This message has a word the streamer blocked.', { timeout: 5_000 });
   await neverSees(b.page, marker, `sem abacaxi ${uid('m')}`);
+});
+
+test('highlight and pin reach every viewer page and later joiners; mute, slow mode and emotes only leave them; delete and clear take the pin down', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const a = await viewers.join(uid('pinA'));
+  const b = await viewers.join(uid('pinB'));
+  await chatReady(a.page, b.page);
+  const text = `regras do chat ${uid('r')}`;
+  await say(a.page, text);
+  await sees(b.page, text);
+  const seq = await seqOf(chat, text);
+
+  // Act
+  await admin('/api/chat/highlight', { s: seq, on: true });
+  await admin('/api/chat/pin', { s: seq, minutes: null });
+
+  // Assert
+  for (const p of [a.page, b.page]) {
+    await expect(p.getByTestId('chat-pinned')).toBeVisible();
+    await expect(p.getByTestId('chat-pinned').locator('.text')).toHaveText(text);
+    await expect(p.getByTestId('chat-pinned').locator('.pinned-label')).toHaveText(translate('en', 'chat.viewer.pinned'));
+    await expect(chatMessage(p, text)).toHaveClass(/highlighted/);
+  }
+
+  // Act: the author is muted, the chat goes to emotes only with a long slow mode, and someone joins.
+  await admin('/api/chat/mute', { sessionId: await sessionOf(chat, a.nickname), minutes: 10 });
+  await chat.change({ content: { text: false, emotes: true, gifs: false }, slowModeS: 120 });
+  const c = await viewers.join(uid('pinC'));
+  await chatReady(c.page);
+
+  // Assert
+  await expect(c.page.getByTestId('chat-pinned').locator('.text')).toHaveText(text);
+  await expect(chatMessage(c.page, text)).toHaveClass(/highlighted/);
+  await expect(b.page.getByTestId('chat-pinned')).toBeVisible();
+
+  // Act
+  await admin('/api/chat/delete', { seqs: [seq] });
+
+  // Assert
+  for (const p of [a.page, b.page, c.page]) await expect(p.getByTestId('chat-pinned')).toBeHidden();
+
+  // Act
+  const { s: mine } = await admin<{ s: number }>('/api/chat/send', { text: `aviso fixado ${uid('f')}` });
+  await admin('/api/chat/pin', { s: mine, minutes: 30 });
+  for (const p of [a.page, b.page, c.page]) await expect(p.getByTestId('chat-pinned').locator('.badge')).toHaveText(translate('en', 'chat.badge.streamer'));
+  await chat.clear();
+
+  // Assert
+  for (const p of [a.page, b.page, c.page]) await expect(p.getByTestId('chat-pinned')).toBeHidden();
+  await admin('/api/chat/unmute', { sessionId: await sessionOf(chat, a.nickname) });
 });

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Highlight and pin chat messages.** In the panel's **Live chat**, the **⋯** menu of a message now has **Highlight** and **Pin to top**. A highlighted message stands out for everyone, with a coloured bar, in light and dark themes (up to 20 at a time). A pinned message stays at the top of everyone's chat, also for people who join later, until you **Unpin** it or for 5, 15 or 60 minutes; pinning another message replaces it, and deleting the message or clearing the chat unpins it. Viewers see "Pinned by the streamer" above the messages, never over them or the message box, can open a long one with **Show more** and hide it on their device with **✕**. Only you can highlight or pin: nobody watching can fake it. Pages left open from an older version keep working and simply do not show it.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed

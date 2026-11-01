@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   CHAT_FRAME_PREFIX,
+  CHAT_PIN_MAX_MIN,
   CHAT_REJECT_CODES,
+  CHAT_SEQ_KINDS,
+  chatHighlightSchema,
+  chatPinSchema,
   chatSettingsSchema,
+  isChatSeqItem,
   clientMessageSchema,
   defaultChatSettings,
+  type ChatItem,
   type ChatServerMessage,
   type ServerMessage,
 } from '@swarmcast/shared';
@@ -153,5 +159,64 @@ describe('chat settings', () => {
     // Assert
     expect(valid).toEqual([false, false, false, false, false, true, false]);
     expect(consent).toBe('ask');
+  });
+});
+
+describe('highlight and pin: wire shapes', () => {
+  it('pin and highlight items are seq-less: they never count in the seq order, even though they carry an `s`', () => {
+    // Arrange
+    const items: ChatItem[] = [
+      { k: 'hl', s: 7, on: true },
+      { k: 'pin', p: { s: 7, a: 'k1', x: 'link na bio', at: 1, endsIn: 60_000 } },
+      { k: 'pin', p: null },
+    ];
+    const msg: ChatServerMessage = { t: 'chat.batch', items: [{ k: 'm', s: 7, at: 1, a: 'k1', x: 'oi', h: 1 }, ...items] };
+    // Act
+    const seqItems = items.filter(isChatSeqItem);
+    // Assert
+    expect(seqItems).toEqual([]);
+    expect(CHAT_SEQ_KINDS).toEqual(['m', 'sys']);
+    expect(JSON.parse(JSON.stringify(msg))).toEqual(msg);
+  });
+
+  it.each([
+    [{ s: 1, on: true }, true],
+    [{ s: Number.MAX_SAFE_INTEGER, on: false }, true],
+    [{ s: 0, on: true }, false],
+    [{ s: 1.5, on: true }, false],
+    [{ s: 1 }, false],
+    [{ s: 1, on: 1 }, false],
+    [{ s: '1', on: true }, false],
+    [{ s: 1, on: true, x: 'extra' }, false],
+  ])('highlight body %j accepted: %s', (body, ok) => {
+    // Act
+    const r = chatHighlightSchema.safeParse(body);
+    // Assert
+    expect(r.success).toBe(ok);
+  });
+
+  it.each([
+    [{ s: 1 }, true],
+    [{ s: 1, minutes: null }, true],
+    [{ s: 1, minutes: 1 }, true],
+    [{ s: 1, minutes: CHAT_PIN_MAX_MIN }, true],
+    [{ s: 1, minutes: CHAT_PIN_MAX_MIN + 1 }, false],
+    [{ s: 1, minutes: 0 }, false],
+    [{ s: 1, minutes: 2.5 }, false],
+    [{ s: -1 }, false],
+    [{ text: 'pin me' }, false],
+    [{ s: 1, text: 'pin me' }, false],
+  ])('pin body %j accepted: %s', (body, ok) => {
+    // Act
+    const r = chatPinSchema.safeParse(body);
+    // Assert
+    expect(r.success).toBe(ok);
+  });
+
+  it('no viewer frame can pin or highlight: such frames are not in the client schema', () => {
+    // Act
+    const frames = ['{"t":"chat.pin","s":1}', '{"t":"chat.hl","s":1,"on":true}', '{"t":"chat.highlight","s":1,"on":true}'].map((f) => clientMessageSchema.safeParse(JSON.parse(f)).success);
+    // Assert
+    expect(frames).toEqual([false, false, false]);
   });
 });

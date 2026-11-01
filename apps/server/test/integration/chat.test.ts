@@ -268,4 +268,37 @@ describe('chat over /control', () => {
     expect(b.hello.chat?.lastSeq).toBe(0);
     expect(ack).toMatchObject({ s: 1 });
   });
+
+  it('highlight and pin: viewers on the socket see them at once, a new joiner gets the pin in its hello, clear takes it down, Stop wipes it', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const a = await viewer(base, link, 'Ana');
+    const b = await viewer(base, link, 'Bia');
+    a.send(say(1, 'link da loja na bio'));
+    const { s } = await a.next('chat.ack');
+    await b.until(() => b.items().some((i) => i.k === 'm'), 'the message at B');
+    // Act
+    live.chat.highlight(s, true);
+    live.chat.pin(s, null);
+    await b.until(() => b.items().some((i) => i.k === 'pin'), 'the pin at B');
+    const late = await viewer(base, link, 'Cris');
+    live.chat.clear();
+    await b.until(() => b.items().filter((i) => i.k === 'pin').length === 2, 'the unpin at B');
+    const afterClear = await viewer(base, link, 'Duda');
+    live.chat.sendAsStreamer({ text: 'fixada' });
+    live.chat.pin(live.chat.lastSeq, 30);
+    await live.stop();
+    const next = await goLive(live);
+    const fresh = await viewer(next.base, next.link, 'Ana');
+    // Assert
+    expect(b.items().find((i) => i.k === 'hl')).toEqual({ k: 'hl', s, on: true });
+    const pinned = b.items().find((i) => i.k === 'pin');
+    expect(pinned).toMatchObject({ k: 'pin', p: { s, x: 'link da loja na bio' } });
+    expect(late.hello.chat?.pin).toMatchObject({ s, x: 'link da loja na bio' });
+    expect(late.hello.chat?.items.find((i) => i.k === 'm' && i.s === s)).toMatchObject({ h: 1 });
+    expect(late.hello.chat?.roster.find((r) => r.a === late.hello.chat?.pin?.a)?.n).toBe('Ana');
+    expect(b.items().filter((i) => i.k === 'pin').at(-1)).toEqual({ k: 'pin', p: null });
+    expect(afterClear.hello.chat?.pin).toBeUndefined();
+    expect(fresh.hello.chat?.pin).toBeUndefined();
+  });
 });

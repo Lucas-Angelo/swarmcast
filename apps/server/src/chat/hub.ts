@@ -9,6 +9,7 @@ import {
   CHAT_GIF_INTERVAL_S,
   CHAT_GLOBAL_MAX_PER_S,
   CHAT_GLOBAL_MIN_PER_S,
+  CHAT_HIGHLIGHTS_MAX,
   CHAT_PROTOCOL_VERSION,
   CHAT_REACT_FRAME_PREFIX,
   CHAT_RING_MAX_BYTES,
@@ -26,6 +27,9 @@ import {
   type ChatAuthor,
   type ChatCounters,
   type ChatItem,
+  type ChatMessageItem,
+  type ChatPin,
+  type ChatPinItem,
   type ChatProtect,
   type ChatRejectCode,
   type ChatRingItem,
@@ -81,6 +85,9 @@ export interface ChatHubDeps {
 }
 
 type Reject = { code: ChatRejectCode; params?: MessageParams; retryMs?: number };
+
+/** The answer to a streamer action on a message (highlight, pin). */
+export type MessageActionResult = { ok: true } | { ok: false; code: 'admin.chat.err.gone' | 'admin.chat.err.disabled' };
 
 interface RingEntry {
   item: ChatRingItem;
@@ -157,6 +164,8 @@ export class ChatHub {
   private ipCountsAt = 0;
   private tickTimer: NodeJS.Timeout | null = null;
   private ticks = 0;
+  /** The pinned message (a copy, so it outlives its place in the ring) and when a timed pin ends. */
+  private pinned: { p: ChatPin; endsAt: number | null } | null = null;
   private adminQueue: ChatItem[] = [];
   private adminTimer: NodeJS.Timeout | null = null;
   private readonly settingsPush: Coalescer;
@@ -182,6 +191,7 @@ export class ChatHub {
       slow: () => this.guard.state !== 'ok' || this.protect !== 'off',
       resync: (s) => this.resyncSocket(s),
       authorOf: (a) => this.moderation.authorOf(a),
+      stateOf: (key) => this.stateOf(key),
       now: this.now,
     });
     this.eff = this.computeEffective();
@@ -217,6 +227,7 @@ export class ChatHub {
     this.ringBytes = 0;
     this.seq = 0;
     this.modSeq = 0;
+    this.pinned = null;
     this.announced.clear();
     this.paces.clear();
     this.ipBuckets.clear();
@@ -275,6 +286,7 @@ export class ChatHub {
   /** Once a second: detector, adaptive slow mode (every 5 s), global limit. */
   private tick(): void {
     const now = this.now();
+    this.expirePin(now);
     const viewers = this.d.viewers();
     const changed = this.detector.tick(now, viewers);
     this.d.onTick?.(this.detector.level, this.egressBitsPerS(), this.budgetBps() * 8);
@@ -287,8 +299,9 @@ export class ChatHub {
     const shield = this.d.shieldLevel?.() ?? 0;
     if (refresh || protectState(this.detector.level, shield, this.manualProtect, this.d.settings().autoProtect) !== this.protect) this.refresh();
     if (this.ticks % 60 === 0) {
-      // Forget members whose session ended; keep authors still visible in the ring (or named by it).
-      const inRing = ringAuthors(this.ring);
+      // Forget members whose session ended; keep authors still visible in the ring (or named by it,
+      // or pinned).
+      const inRing = ringAuthors(this.ring, this.pinAuthors());
       for (const m of [...this.moderation.members()]) if (m.sessionId !== STREAMER_ID && !this.d.access.sessions.has(m.sessionId)) this.moderation.forget(m.sessionId, (a) => inRing.has(a));
       this.moderation.prune((m) => inRing.has(m.a));
     }
@@ -559,8 +572,10 @@ export class ChatHub {
     if (after + 1 < oldest || after > this.seq) return this.resyncSocket(socket, session);
     const entries = this.ring.filter((e) => e.item.s > after);
     const items = entries.map((e) => e.item);
-    const roster = this.rosterFor(entries);
-    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
+    const roster = this.rosterFor(entries, this.pinAuthors());
+    // The pin's current state goes with it: a page that asks after the chat was turned back on
+    // (it had no snapshot) learns what is pinned too. Older pages ignore the item.
+    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items, this.pinItem(now)] } satisfies ChatServerMessage));
     this.batcher.markKnown(socket, roster.map((r) => r.a));
   }
 
@@ -660,7 +675,7 @@ export class ChatHub {
   private sessionMap(items: readonly ChatItem[]): Record<string, string> {
     const out: Record<string, string> = {};
     for (const i of items) {
-      const a = i.k === 'm' ? i.a : i.k === 'u' ? i.au.a : undefined;
+      const a = i.k === 'm' ? i.a : i.k === 'u' ? i.au.a : i.k === 'pin' ? i.p?.a : undefined;
       const m = a ? this.moderation.byAuthor(a) : undefined;
       if (a && m) out[a] = m.sessionId;
     }
@@ -686,7 +701,11 @@ export class ChatHub {
       let n = this.eff.historyOnJoin;
       if (this.batcher.inDebt()) n = Math.min(n, SNAPSHOT_IN_DEBT);
       const you = this.you(session);
-      const base = { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, lastSeq: this.seq };
+      // The pin is the streamer's own choice: it goes in full snapshots and deltas alike, also
+      // under lockdown (no history), and costs at most ~1.2 KB per hello.
+      const pin = this.currentPin(this.now());
+      const base = { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, lastSeq: this.seq, ...(pin ? { pin } : {}) };
+      const extra = [you.a, ...this.pinAuthors()];
       // Reconnect: the viewer already has everything up to `after`. Send only what came since, when
       // the ring still holds it, nothing was deleted or cleared meanwhile, and it is not longer than
       // a fresh snapshot would be.
@@ -694,10 +713,10 @@ export class ChatHub {
       const oldest = this.ring[0]?.item.s ?? this.seq + 1;
       if (after !== undefined && after > 0 && after <= this.seq && after + 1 >= oldest && this.modSeq < after) {
         const entries = this.ring.filter((e) => e.item.s > after);
-        if (entries.length <= Math.max(n, SNAPSHOT_IN_DEBT)) return { ...base, roster: this.rosterFor(entries, [you.a]), items: entries.map((e): ChatItem => e.item), delta: true as const };
+        if (entries.length <= Math.max(n, SNAPSHOT_IN_DEBT)) return { ...base, roster: this.rosterFor(entries, extra), items: entries.map((e): ChatItem => e.item), delta: true as const };
       }
       const entries = n > 0 ? this.ring.slice(-n) : [];
-      return { ...base, roster: this.rosterFor(entries, [you.a]), items: entries.map((e): ChatItem => e.item) };
+      return { ...base, roster: this.rosterFor(entries, extra), items: entries.map((e): ChatItem => e.item) };
     });
   }
 
@@ -748,6 +767,8 @@ export class ChatHub {
 
   delete(seqs: number[]): number {
     const set = new Set(seqs);
+    // Deleting the pinned message unpins it (the pin is a copy, so it would outlive the delete).
+    if (this.pinned && set.has(this.pinned.p.s)) this.unpin();
     const before = this.ring.length;
     this.ring = this.ring.filter((e) => {
       if (e.item.k === 'm' && set.has(e.item.s)) {
@@ -766,6 +787,7 @@ export class ChatHub {
   }
 
   clear(): void {
+    this.unpin();
     this.modSeq = this.seq;
     this.ring = [];
     this.ringBytes = 0;
@@ -808,6 +830,119 @@ export class ChatHub {
     return true;
   }
 
+  /** The ring entry of message `s` (a `m` item still in the ring), or undefined. */
+  private messageEntry(s: number): (RingEntry & { item: ChatMessageItem }) | undefined {
+    for (let i = this.ring.length - 1; i >= 0; i--) {
+      const e = this.ring[i]!;
+      if (e.item.s === s) return e.item.k === 'm' ? (e as RingEntry & { item: ChatMessageItem }) : undefined;
+      if (e.item.s < s) break;
+    }
+    return undefined;
+  }
+
+  /**
+   * Highlight message `s` for everyone (`on`), or take the highlight off. The flag lives on the ring
+   * item, so snapshots and resume answers carry it; viewers already showing the message get an `hl`
+   * state item. At most CHAT_HIGHLIGHTS_MAX at once: one more takes it off the oldest.
+   */
+  highlight(s: number, on: boolean): MessageActionResult {
+    if (!this.eff.enabled) return { ok: false, code: 'admin.chat.err.disabled' };
+    const e = this.messageEntry(s);
+    if (!e) return { ok: false, code: 'admin.chat.err.gone' };
+    if ((e.item.h === 1) === on) return { ok: true };
+    if (on) {
+      const lit = this.ring.filter((x) => x.item.k === 'm' && x.item.h === 1);
+      for (let i = 0; i <= lit.length - CHAT_HIGHLIGHTS_MAX; i++) this.setHighlight(lit[i]!, false);
+    }
+    this.setHighlight(e, on);
+    // A reconnect delta from before this would miss it (it changes a message the viewer has).
+    this.modSeq = this.seq;
+    return { ok: true };
+  }
+
+  private setHighlight(e: RingEntry, on: boolean): void {
+    if (e.item.k !== 'm') return;
+    const { h: _h, ...rest } = e.item;
+    const item: ChatMessageItem = on ? { ...rest, h: 1 } : rest;
+    this.ringBytes -= e.bytes;
+    e.item = item;
+    e.bytes = JSON.stringify(item).length;
+    this.ringBytes += e.bytes;
+    const hl: ChatItem = { k: 'hl', s: item.s, on };
+    this.batcher.pushState(`hl:${item.s}`, hl);
+    this.toAdmin(hl);
+  }
+
+  /**
+   * Pin message `s` at the top of everyone's chat, replacing any other pin, until unpin() or for
+   * `minutes`. A copy of its text (or GIF) and author is kept, so the pin outlives the message's
+   * place in the ring; deleting the message, clearing the chat and Stop unpin it. Muting or kicking
+   * the author does not: the streamer decides.
+   */
+  pin(s: number, minutes: number | null): MessageActionResult {
+    if (!this.eff.enabled) return { ok: false, code: 'admin.chat.err.disabled' };
+    const e = this.messageEntry(s);
+    if (!e) return { ok: false, code: 'admin.chat.err.gone' };
+    const now = this.now();
+    const m = e.item;
+    const p: ChatPin = { s: m.s, a: m.a, ...(m.x !== undefined ? { x: m.x } : {}), ...(m.g ? { g: m.g } : {}), at: now };
+    this.pinned = { p, endsAt: minutes === null ? null : now + minutes * 60_000 };
+    this.pushPin(now);
+    this.d.activity.action('log.chat.pinned');
+    return { ok: true };
+  }
+
+  /** Take the pin down (panel, delete, clear, timer). False when nothing was pinned. */
+  unpin(): boolean {
+    if (!this.pinned) return false;
+    this.pinned = null;
+    this.pushPin(this.now());
+    this.d.activity.action('log.chat.unpinned');
+    return true;
+  }
+
+  /** A timed pin whose time is up comes down (checked every tick, and before the pin is read). */
+  private expirePin(now: number): void {
+    if (this.pinned?.endsAt != null && now >= this.pinned.endsAt) this.unpin();
+  }
+
+  /** The pin as viewers get it now (with the time left of a timed pin), or undefined. */
+  private currentPin(now: number): ChatPin | undefined {
+    this.expirePin(now);
+    if (!this.pinned) return undefined;
+    const { p, endsAt } = this.pinned;
+    return endsAt === null ? p : { ...p, endsIn: Math.max(0, endsAt - now) };
+  }
+
+  private pinItem(now: number): ChatPinItem {
+    return { k: 'pin', p: this.currentPin(now) ?? null };
+  }
+
+  /** The pinned message's author (snapshots, resume answers and the roster prune keep it). */
+  private pinAuthors(): string[] {
+    return this.pinned ? [this.pinned.p.a] : [];
+  }
+
+  private pushPin(now: number): void {
+    const item = this.pinItem(now);
+    this.batcher.pushState('pin', item, item.p ? [item.p.a] : undefined);
+    this.toAdmin(item);
+  }
+
+  /** The current item of a state key (batcher.ts `pushState`), for a socket that missed it while slow. */
+  private stateOf(key: string): { item: ChatItem; refs?: readonly string[] } | null {
+    if (key === 'pin') {
+      const item = this.pinItem(this.now());
+      return { item, ...(item.p ? { refs: [item.p.a] } : {}) };
+    }
+    if (key.startsWith('hl:')) {
+      const e = this.messageEntry(Number(key.slice(3)));
+      // A message no longer in the ring cannot change any more; its last state already went out.
+      return e ? { item: { k: 'hl', s: e.item.s, on: e.item.h === 1 } } : null;
+    }
+    return null;
+  }
+
   /** Manual protection from the panel; "off" also resets the detector ("Back to normal"). */
   setProtect(mode: ChatProtect): void {
     if (mode === 'off') {
@@ -840,16 +975,17 @@ export class ChatHub {
 
   adminState(): AdminChatState {
     const items = this.ring.map((e) => e.item);
+    const pin = this.currentPin(this.now());
     const sessions = [...this.d.access.sessions.values()].map((s) => {
       const m = this.moderation.member(s);
       return { sessionId: s.id, a: m.a, nickname: s.nickname, color: m.color, colorLocked: m.colorLocked, mutedUntil: this.moderation.mutedUntil(s), tag: m.tag };
     });
-    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(this.ring), items, lastSeq: this.seq, sessions, counters: this.counters() };
+    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(this.ring, this.pinAuthors()), items, lastSeq: this.seq, sessions, counters: this.counters(), ...(pin ? { pin } : {}) };
   }
 
-  /** Author key → session id of every author in the ring (the panel acts on sessions). */
+  /** Author key → session id of every author in the ring and of the pinned message (the panel acts on sessions). */
   adminSessions(): Record<string, string> {
-    return this.sessionMap(this.ring.map((e) => e.item));
+    return this.sessionMap([...this.ring.map((e) => e.item), this.pinItem(this.now())]);
   }
 
   get effective(): EffectiveChat {

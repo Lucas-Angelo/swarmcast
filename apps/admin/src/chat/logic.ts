@@ -1,6 +1,7 @@
 import {
   adjustNameColor,
   BUILTIN_EMOTE_CODES,
+  CHAT_PIN_PRESETS_MIN,
   CHAT_BG_DARK,
   CHAT_BG_LIGHT,
   CHAT_BLOCKED_WORD_MAX_GRAPHEMES,
@@ -92,6 +93,12 @@ export const MUTE_CHOICES: ReadonlyArray<{ minutes: number | null; key: MessageK
   { minutes: 10, key: 'admin.chat.mute.minutes', params: { count: 10 } },
   { minutes: 60, key: 'admin.chat.mute.hour' },
   { minutes: null, key: 'admin.chat.mute.live' },
+];
+
+/** Pin choices of the menu: null for "until I unpin it", then CHAT_PIN_PRESETS_MIN (minutes). */
+export const PIN_CHOICES: ReadonlyArray<{ minutes: number | null; key: MessageKey; params?: MessageParams }> = [
+  { minutes: null, key: 'admin.chat.pin.untilUnpin' },
+  ...CHAT_PIN_PRESETS_MIN.map((m) => (m === 60 ? { minutes: m, key: 'admin.chat.pin.hour' as const } : { minutes: m, key: 'admin.chat.pin.minutes' as const, params: { count: m } })),
 ];
 
 /**

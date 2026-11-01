@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Converse com quem assiste embaixo do vídeo e mantenha o chat tranquilo - apagar, silenciar, modo lento, cores e proteção automática contra flood.
+description: Converse com quem assiste embaixo do vídeo, destaque e fixe mensagens e mantenha o chat tranquilo - apagar, silenciar, modo lento, cores e proteção automática contra flood.
 ---
 
 A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e responde no **Chat ao vivo** do painel, e todo mundo vê as mensagens em menos de um segundo. Ele vem **ligado por padrão**: não precisa configurar nada.
@@ -11,7 +11,7 @@ Durante a live, o **Chat ao vivo** fica na tela principal do painel, sem precisa
 Todo mundo que está assistindo vê os apelidos no chat. A página de entrada avisa isso antes de a pessoa digitar o dela.
 :::
 
-![O Chat ao vivo à direita do painel: 1 as mensagens, com o selo Transmissão nas suas, 2 Enviar como …, para escrever como transmissão, 3 Proteção contra flood, 4 Limpar chat, 5 Configurações (a chave para ligar e desligar o chat e as configurações do chat).](../../../../assets/guides/live/pt-br/chat-panel.webp)
+![O Chat ao vivo à direita do painel: 1 as mensagens, com o selo Transmissão nas suas, uma pergunta destacada e a sua resposta fixada, que também aparece no topo com Desafixar, 2 Enviar como …, para escrever como transmissão, 3 Proteção contra flood, 4 Limpar chat, 5 Configurações (a chave para ligar e desligar o chat e as configurações do chat).](../../../../assets/guides/live/pt-br/chat-panel.webp)
 
 ## O que dá para mandar
 
@@ -26,10 +26,12 @@ As suas mensagens, enviadas pela caixa **Enviar como …** no fim do Chat ao viv
 Cada mensagem no Chat ao vivo tem um menu **Ações** (o botão **⋯**):
 
 - **Apagar:** some com a mensagem para todo mundo.
+- **Destacar:** faz a mensagem se destacar para todo mundo (veja [Destacar e fixar](#destacar-e-fixar)). **Tirar destaque** volta ao normal.
+- **Fixar no topo:** deixa a mensagem no topo do chat de todo mundo, **até eu desafixar** ou por 5 min, 15 min ou 1 hora. **Desafixar** tira do topo.
 - **Silenciar:** por 1 min, 10 min, 1 hora ou **até o fim da live**. A pessoa continua assistindo, mas não consegue escrever. **Tirar silêncio** libera na hora. Sair e entrar de novo não desfaz o silêncio.
 - **Mudar cor…:** muda a cor do nome da pessoa para todo mundo. Marque **Travar** para ela não conseguir trocar.
 
-![O menu da mensagem de um espectador: 1 Apagar, Silenciar por 1 min, 10 min, 1 hora ou até o fim da live, e Mudar cor… com Travar, Aplicar e Voltar à cor da pessoa.](../../../../assets/guides/live/pt-br/chat-moderation.webp)
+![O menu da mensagem destacada de um espectador: 1 Apagar, Tirar destaque, Fixar no topo até eu desafixar, por 5 min, 15 min ou 1 hora, Silenciar por 1 min, 10 min, 1 hora ou até o fim da live, e Mudar cor… com Travar, Aplicar e Voltar à cor da pessoa.](../../../../assets/guides/live/pt-br/chat-moderation.webp)
 
 Também dá para silenciar alguém pelo cartão **Espectadores**.
 
@@ -38,6 +40,15 @@ Não existem contas, então na sua próxima live o SwarmCast não reconhece essa
 :::
 
 **Limpar chat** apaga todas as mensagens para todo mundo (quem assiste vê "Quem transmite limpou o chat").
+
+## Destacar e fixar
+
+- **Destaque** uma boa pergunta ou uma mensagem importante: todo mundo vê com uma barra colorida, inclusive quem entra depois e vê entre as mensagens recentes. Dá para destacar até 20 mensagens de cada vez; destacar mais uma tira a marca da mais antiga.
+- **Fixe no topo** uma mensagem (sua ou de um espectador), por exemplo as regras, um link que você quer que todo mundo leia ou a resposta da pergunta que todo mundo faz. Ela fica acima das mensagens para todo mundo, inclusive para quem entra depois. Só uma mensagem fica fixada de cada vez: fixar outra substitui a anterior. Escolha **Até eu desafixar**, ou 5 min, 15 min ou 1 hora para ela sair sozinha.
+- A mensagem fixada também aparece no topo do seu Chat ao vivo, com **Desafixar** (e, numa fixação com tempo, a hora em que ela sai).
+- **Apagar** a mensagem fixada ou **Limpar chat** desafixa. Silenciar ou expulsar quem escreveu não. **Parar tudo** tira junto com o resto do chat.
+
+Só você destaca e fixa. Um espectador que escreve "📌 Fixada" numa mensagem só escreve texto na própria linha, com o próprio nome: a mensagem fixada de verdade tem um lugar só dela, acima do chat, com o aviso "Fixada por quem transmite".
 
 ## Proteção contra flood
 
@@ -75,9 +86,11 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat (1). A
 
 ## O que quem assiste vê
 
-![O chat na página de quem assiste: uma mensagem da transmissão com o selo, mensagens de dois espectadores com emotes e a caixa de mensagem. 1 Configurações do chat, 2 Ocultar chat, 3 emojis e emotes, 4 Enviar.](../../../../assets/guides/live/pt-br/chat-viewer.webp)
+![O chat na página de quem assiste: mensagens da transmissão com o selo, mensagens de espectadores com emotes e a caixa de mensagem. 1 Configurações do chat, 2 Ocultar chat, 3 emojis e emotes, 4 Enviar, 5 a mensagem fixada, 6 uma mensagem destacada.](../../../../assets/guides/live/pt-br/chat-viewer.webp)
 
 - O chat ao lado do vídeo no computador, embaixo dele no celular.
+- A **mensagem fixada** acima das mensagens, com o aviso "Fixada por quem transmite" (5). Uma longa abre com **Mostrar mais**; o **✕** esconde naquele aparelho até você fixar outra. Com o chat oculto, **Mostrar chat** avisa **Fixada** quando você fixa algo.
+- **Mensagens destacadas** com uma barra colorida (6), legíveis no tema claro e no escuro.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
 - **Configurações do chat** para a cor do próprio nome, horários e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
 

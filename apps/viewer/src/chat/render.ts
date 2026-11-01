@@ -12,10 +12,14 @@
 // One row never breaks the others: a system line whose code this page does not know (a newer
 // server) shows a neutral line, and a row that fails to build for any reason is shown as
 // "Message hidden" while the rest of the batch is drawn.
+//
+// The list also draws what the streamer marks (docs/CHAT.md, "Highlight and pin"): highlighted rows,
+// and the pinned bar (`pinned`, placed above the list by chat.ts so it never covers the input). The
+// pinned message is built by the same code as a row, so it follows the same rules.
 import { formatNumber, getLang, t, translateWire } from '@swarmcast/shared/i18n';
 import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, gifMediaUrl, isHexColor, tokenizeChat, type ChatAuthor, type GifProvider, type GifRef } from './core/index.js';
 import type { Emote } from './emotes.js';
-import type { ChatEntry } from './session.js';
+import type { ChatEntry, PinnedEntry } from './session.js';
 
 export const RENDER_PER_FRAME = 50;
 export const DOM_MAX = 150;
@@ -28,8 +32,11 @@ const ACKED_WAIT_MS = 10_000;
 export interface ListOptions {
   /** Emotes usable now (code → files). */
   emotes(): ReadonlyMap<string, Emote>;
-  /** The colour to paint a name in (already adjusted for contrast against the chat background). */
-  nickColor(color: string): string;
+  /**
+   * The colour to paint a name in, adjusted for contrast against the background it sits on: the
+   * chat's, or a highlighted row's (`highlighted`).
+   */
+  nickColor(color: string, highlighted?: boolean): string;
   showTimes(): boolean;
   /** Rendering is allowed (chat shown and tab visible). */
   visible(): boolean;
@@ -65,6 +72,8 @@ interface Pending {
   timer?: ReturnType<typeof setTimeout>;
 }
 
+type MessageEntry = Extract<ChatEntry, { kind: 'msg' }>;
+
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -97,6 +106,17 @@ export class ChatList {
   private readonly later: (cb: () => void, ms: number) => () => void;
   /** Called when the unread count changes (for the "Show chat (3 new)" button). */
   onUnread: (n: number) => void = () => {};
+  /** The pinned bar (chat.ts puts it above the list). */
+  readonly pinned: HTMLElement;
+  private readonly pinBody: HTMLDivElement;
+  private readonly pinMore: HTMLButtonElement;
+  private pin: PinnedEntry | null = null;
+  /** The pin this viewer hid ("seq:at"); a newer pin shows again. Memory only. */
+  private pinDismissed: string | null = null;
+  private pinExpanded = false;
+  private pinAllowed = true;
+  /** Called when a pin starts or ends (`fresh`: a pin this page has not shown before). */
+  onPin: (p: PinnedEntry | null, fresh: boolean) => void = () => {};
 
   constructor(
     readonly root: HTMLElement,
@@ -129,6 +149,113 @@ export class ChatList {
     });
     root.append(this.list, this.pill, this.live);
     this.showEmpty();
+    this.pinned = el('section', 'chat-pinned');
+    this.pinned.hidden = true;
+    this.pinned.setAttribute('aria-label', t('chat.viewer.pinned.region'));
+    this.pinned.dataset.testid = 'chat-pinned';
+    const head = el('div', 'pinned-head');
+    const icon = el('span', 'sc-ico-pin');
+    icon.setAttribute('aria-hidden', 'true');
+    const label = el('span', 'pinned-label');
+    label.textContent = t('chat.viewer.pinned');
+    const hide = el('button', 'chat-tool pinned-hide');
+    hide.type = 'button';
+    hide.textContent = '✕';
+    hide.setAttribute('aria-label', t('chat.viewer.pinned.hide'));
+    hide.title = t('chat.viewer.pinned.hide.tip');
+    hide.dataset.testid = 'chat-pinned-hide';
+    hide.addEventListener('click', () => {
+      this.pinDismissed = this.pin ? pinKey(this.pin) : null;
+      this.renderPin();
+      this.list.focus();
+    });
+    this.pinBody = el('div', 'pinned-body');
+    this.pinMore = el('button', 'pinned-more');
+    this.pinMore.type = 'button';
+    this.pinMore.hidden = true;
+    this.pinMore.dataset.testid = 'chat-pinned-more';
+    this.pinMore.addEventListener('click', () => {
+      this.pinExpanded = !this.pinExpanded;
+      this.layoutPin();
+    });
+    // One header row (label, "Show more", hide) over the folded text: the bar stays small, so the
+    // list keeps its room when the chat is only 40 % of a phone's screen.
+    head.append(icon, label, this.pinMore, hide);
+    this.pinned.append(head, this.pinBody);
+    // The "Show more" button appears only when the text does not fit: measure again whenever the
+    // bar changes size (a resize, the chat shown again after being hidden).
+    if (typeof ResizeObserver === 'function') new ResizeObserver(() => this.measurePin()).observe(this.pinBody);
+  }
+
+  /** The pinned message (null: none). A new pin shows even if this viewer hid the previous one. */
+  setPin(p: PinnedEntry | null): void {
+    const fresh = p !== null && (this.pin === null || pinKey(this.pin) !== pinKey(p));
+    this.pin = p;
+    if (fresh) {
+      this.pinExpanded = false;
+      if (this.opts.visible()) this.live.textContent = t('chat.viewer.pinned.announce');
+    }
+    this.renderPin();
+    this.onPin(p, fresh);
+  }
+
+  /** The pinned bar shows only while the chat is on (it is hidden with the rest of the chat otherwise). */
+  setPinAllowed(on: boolean): void {
+    if (on === this.pinAllowed) return;
+    this.pinAllowed = on;
+    this.renderPin();
+  }
+
+  private renderPin(): void {
+    const p = this.pin;
+    this.pinned.hidden = !p || !this.pinAllowed || this.pinDismissed === pinKey(p);
+    this.pinBody.replaceChildren();
+    if (!p) return;
+    const box = el('div', 'msg pinned-msg');
+    box.dataset.seq = String(p.s);
+    try {
+      this.fillMessage(box, { kind: 'msg', s: p.s, at: p.at, author: p.author, ...(p.text !== undefined ? { text: p.text } : {}), ...(p.gif ? { gif: p.gif } : {}) });
+    } catch {
+      box.replaceChildren(this.hiddenText());
+      box.classList.add('hidden-msg');
+    }
+    this.pinBody.append(box);
+    this.layoutPin();
+  }
+
+  private layoutPin(): void {
+    const box = this.pinBody.firstElementChild;
+    box?.classList.toggle('clamped', !this.pinExpanded);
+    this.pinMore.textContent = t(this.pinExpanded ? 'chat.viewer.pinned.less' : 'chat.viewer.pinned.more');
+    this.pinMore.setAttribute('aria-expanded', String(this.pinExpanded));
+    this.measurePin();
+  }
+
+  private measurePin(): void {
+    const box = this.pinBody.firstElementChild as HTMLElement | null;
+    // Expanded, the button stays to fold it again; folded, only when something is cut off.
+    this.pinMore.hidden = !box || (!this.pinExpanded && box.scrollHeight <= box.clientHeight + 1);
+  }
+
+  /** The streamer highlighted message `s` (`on`) or took the highlight off. */
+  highlight(s: number, on: boolean): void {
+    for (const e of this.queue) if (e.kind === 'msg' && e.s === s) e.highlighted = on;
+    const li = this.bySeq.get(s);
+    if (li && li.classList.contains('msg') && !li.classList.contains('sys') && !li.classList.contains('hidden-msg')) this.markHighlighted(li, on);
+  }
+
+  /** The highlight class, its spoken label (first in the row) and the name colour for its background. */
+  private markHighlighted(row: HTMLElement, on: boolean): void {
+    row.classList.toggle('highlighted', on);
+    const note = row.querySelector<HTMLElement>('.hl-note');
+    if (on && !note) {
+      const n = el('span', 'hl-note sr-only');
+      n.textContent = `${t('chat.viewer.highlighted')}: `;
+      const time = row.querySelector('.at');
+      row.insertBefore(n, time ? time.nextSibling : row.firstChild);
+    } else if (!on) note?.remove();
+    const nick = row.querySelector<HTMLElement>('.nick[data-c]');
+    if (nick) nick.style.setProperty('--nick', this.opts.nickColor(nick.dataset.c ?? '', on));
   }
 
   /** Forget everything and show `entries` (snapshot). */
@@ -173,15 +300,15 @@ export class ChatList {
     for (const li of [...this.list.querySelectorAll('li.skipped, li.empty')]) li.remove();
   }
 
-  /** Re-colour an author's names (roster change) or every name (theme change). */
+  /** Re-colour an author's names (roster change) or every name (theme change), in the list and the pinned bar. */
   recolor(author?: ChatAuthor): void {
-    for (const nick of this.list.querySelectorAll<HTMLElement>('.nick[data-c]')) {
+    for (const nick of [...this.list.querySelectorAll<HTMLElement>('.nick[data-c]'), ...this.pinBody.querySelectorAll<HTMLElement>('.nick[data-c]')]) {
       if (author && nick.dataset.a !== author.a) continue;
       if (author) {
         nick.dataset.c = author.c;
         nick.textContent = author.n;
       }
-      nick.style.setProperty('--nick', this.opts.nickColor(nick.dataset.c ?? ''));
+      nick.style.setProperty('--nick', this.opts.nickColor(nick.dataset.c ?? '', !!nick.closest('.highlighted')));
     }
   }
 
@@ -231,6 +358,7 @@ export class ChatList {
   /** Render now if allowed (called when the chat is shown again or the tab comes back). */
   resume(): void {
     this.schedule();
+    this.measurePin();
   }
 
   scrollToEnd(): void {
@@ -357,12 +485,16 @@ export class ChatList {
       this.stats.failed++;
       const li = el('li', 'msg hidden-msg');
       if (e.kind !== 'skip' && Number.isSafeInteger(e.s)) li.dataset.seq = String(e.s);
-      const text = el('span', 'text muted');
-      text.textContent = t('chat.viewer.hidden');
-      text.title = t('chat.viewer.hidden.tip');
-      li.append(text);
+      li.append(this.hiddenText());
       return li;
     }
+  }
+
+  private hiddenText(): HTMLSpanElement {
+    const text = el('span', 'text muted');
+    text.textContent = t('chat.viewer.hidden');
+    text.title = t('chat.viewer.hidden.tip');
+    return text;
   }
 
   /** One row. Exported for tests through buildEntry(). */
@@ -388,23 +520,29 @@ export class ChatList {
       this.stats.rendered++;
       return li;
     }
+    if (this.fillMessage(li, e)) this.stats.rendered++;
+    else this.stats.hidden++;
+    return li;
+  }
+
+  /**
+   * Badge, name and text (or GIF) of a message into `box` (a list row or the pinned bar); false
+   * when the message fails the shared invariants and "Message hidden" was put there instead.
+   */
+  private fillMessage(box: HTMLElement, e: MessageEntry): boolean {
     // The streamer's name may be "" (the translated default is shown instead).
     const nickOk = (e.author.r === 'streamer' && e.author.n === '') || checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
     const textOk = e.text === undefined || checkChatInvariants(e.text);
     if (!nickOk || !textOk) {
-      li.classList.add('hidden-msg');
-      const text = el('span', 'text muted');
-      text.textContent = t('chat.viewer.hidden');
-      text.title = t('chat.viewer.hidden.tip');
-      li.append(text);
-      this.stats.hidden++;
-      return li;
+      box.classList.add('hidden-msg');
+      box.append(this.hiddenText());
+      return false;
     }
     if (e.author.r === 'streamer') {
-      li.classList.add('from-streamer');
+      box.classList.add('from-streamer');
       const badge = el('span', 'badge');
       badge.textContent = t('chat.badge.streamer');
-      li.append(badge);
+      box.append(badge);
     }
     const nick = el('bdi', 'nick');
     nick.textContent = e.author.n || (e.author.r === 'streamer' ? t('chat.streamer') : '…');
@@ -420,14 +558,14 @@ export class ChatList {
     const text = el('bdi', 'text');
     text.setAttribute('dir', 'auto');
     if (e.gif) {
-      li.classList.add('has-gif');
+      box.classList.add('has-gif');
       text.append(this.gifNode(e.gif));
     } else {
       this.fillText(text, e.text ?? '');
     }
-    li.append(nick, sep, text);
-    this.stats.rendered++;
-    return li;
+    box.append(nick, sep, text);
+    if (e.highlighted) this.markHighlighted(box, true);
+    return true;
   }
 
   /** A GIF in a message: a consent placeholder, a play button or the image (never fetched before consent). */
@@ -491,10 +629,10 @@ export class ChatList {
     box.append(b);
   }
 
-  /** Consent or "animate" changed: redraw every GIF in the list. */
+  /** Consent or "animate" changed: redraw every GIF in the list and the pinned bar. */
   refreshGifs(): void {
     this.liveGifs = [];
-    for (const box of this.list.querySelectorAll<HTMLElement>('span.gif')) {
+    for (const box of [...this.list.querySelectorAll<HTMLElement>('span.gif'), ...this.pinBody.querySelectorAll<HTMLElement>('span.gif')]) {
       const ref = this.gifRefs.get(box);
       if (ref) this.fillGif(box, ref, false);
     }
@@ -526,6 +664,11 @@ export class ChatList {
       }
     }
   }
+}
+
+/** One pin of one message: pinning the same message again later is a new pin. */
+function pinKey(p: PinnedEntry): string {
+  return `${p.s}:${p.at}`;
 }
 
 /** "37/200" for the input counter. */

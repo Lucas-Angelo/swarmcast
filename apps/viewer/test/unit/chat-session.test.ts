@@ -38,6 +38,8 @@ function recordingView() {
     },
     remove: (s) => calls.push(`remove ${s.join(',')}`),
     clearUpTo: (s) => calls.push(`clr ${s}`),
+    highlight: (s, on) => calls.push(`hl ${s} ${on}`),
+    pin: (p) => calls.push(p ? `pin ${p.s} ${p.author.n} ${p.text ?? 'gif'}` : 'pin null'),
     author: (a) => calls.push(`author ${a.a} ${a.c}`),
     settings: (s) => calls.push(`settings ${s ? s.enabled : 'null'}`),
     you: () => calls.push('you'),
@@ -326,5 +328,156 @@ describe('ChatSession', () => {
 
     // Assert
     expect(ok).toBe(false);
+  });
+});
+
+describe('ChatSession: highlight and pin (seq-less state items)', () => {
+  const pin = (s: number, x = `m${s}`, a = 'k1', at = 9000) => ({ s, a, x, at });
+
+  it('a highlighted message in the snapshot comes highlighted; an hl item changes it on screen without touching the seq order', () => {
+    // Arrange
+    const { session, entries, calls, sent } = setup({ items: [msg(1), { k: 'm', s: 2, at: 1002, a: 'k1', x: 'm2', h: 1 }] });
+
+    // Act
+    session.frame(batch({ k: 'hl', s: 1, on: true }, { k: 'hl', s: 2, on: false }, msg(3)));
+
+    // Assert
+    expect(entries.find((e) => e.kind === 'msg' && e.s === 2)).toMatchObject({ highlighted: true });
+    expect(calls).toContain('hl 1 true');
+    expect(calls).toContain('hl 2 false');
+    expect(session.lastSeq).toBe(3);
+    expect(sent).toEqual([]);
+  });
+
+  it('an hl item for a message in the same batch marks the entry before it is shown', () => {
+    // Arrange
+    const { session, entries } = setup();
+
+    // Act
+    session.frame(batch(msg(3), { k: 'hl', s: 3, on: true }));
+
+    // Assert
+    expect(entries.find((e) => e.kind === 'msg' && e.s === 3)).toMatchObject({ highlighted: true });
+  });
+
+  it('an hl item that arrives while its message waits behind a gap still applies when the message is shown', () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const { session, entries, sent } = setup();
+
+    // Act: 4 comes before 3 (a gap), then its highlight, then the missing 3.
+    session.frame(batch(msg(4)));
+    session.frame(batch({ k: 'hl', s: 4, on: true }));
+    session.frame(batch(msg(3)));
+
+    // Assert
+    expect(sent).toEqual([{ t: 'chat.resume', after: 2 }]);
+    expect(entries.find((e) => e.kind === 'msg' && e.s === 4)).toMatchObject({ highlighted: true });
+  });
+
+  it('a pin in the hello is shown with its author from the roster; an unpin item takes it down', () => {
+    // Arrange
+    const { session, calls } = setup({ pin: pin(2) });
+
+    // Act
+    session.frame(batch({ k: 'pin', p: null }));
+
+    // Assert
+    expect(calls).toEqual(expect.arrayContaining(['pin 2 Ana m2', 'pin null']));
+    expect(calls.indexOf('pin 2 Ana m2')).toBeLessThan(calls.indexOf('pin null'));
+    expect(session.pinned).toBeNull();
+  });
+
+  it('a pin item replaces the pin; the author entry sent before it gives the name', () => {
+    // Arrange
+    const { session, calls, sent } = setup({ pin: pin(1) });
+
+    // Act
+    session.frame(batch({ k: 'u', au: bia }, msg(3, 'olá', 'k2'), { k: 'pin', p: pin(3, 'olá', 'k2') }));
+
+    // Assert
+    expect(calls.at(-1)).toBe('pin 3 Bia olá');
+    expect(session.lastSeq).toBe(3);
+    expect(sent).toEqual([]);
+  });
+
+  it('deleting or clearing the pinned message takes the pin down even before the server says so', () => {
+    // Arrange
+    const deleted = setup({ pin: pin(2) });
+    const cleared = setup({ pin: pin(2) });
+
+    // Act
+    deleted.session.frame(batch({ k: 'd', s: [2] }));
+    cleared.session.frame(batch({ k: 'clr', s: 2 }));
+
+    // Assert
+    expect(deleted.calls.at(-1)).toBe('pin null');
+    expect(cleared.calls.at(-1)).toBe('pin null');
+  });
+
+  it('deleting another message keeps the pin', () => {
+    // Arrange
+    const { session, calls } = setup({ pin: pin(2) });
+
+    // Act
+    session.frame(batch({ k: 'd', s: [1] }));
+
+    // Assert
+    expect(calls.filter((c) => c.startsWith('pin'))).toEqual(['pin 2 Ana m2']);
+    expect(session.pinned?.s).toBe(2);
+  });
+
+  it('a reconnect delta carries the pin as it is now: absent means it was unpinned meanwhile', () => {
+    // Arrange
+    const { session, calls } = setup({ pin: pin(2) });
+
+    // Act
+    session.hello({ v: 1, settings: settings(), you, roster: [], items: [msg(3)], lastSeq: 3, delta: true });
+
+    // Assert
+    expect(calls.at(-1)).toBe('pin null');
+  });
+
+  it('a full reset forgets earlier highlights (the snapshot says what is highlighted now)', () => {
+    // Arrange
+    const { session, entries } = setup();
+    session.frame(batch({ k: 'hl', s: 5, on: true }));
+
+    // Act
+    session.frame({ t: 'chat.reset', ...SNAPSHOT, items: [msg(5)], lastSeq: 5 });
+
+    // Assert
+    expect(entries.find((e) => e.kind === 'msg' && e.s === 5)).not.toHaveProperty('highlighted');
+  });
+
+  it.each([
+    ['no seq', { a: 'k1', x: 'oi', at: 1 }],
+    ['no author', { s: 1, x: 'oi', at: 1 }],
+    ['text and GIF', { s: 1, a: 'k1', x: 'oi', at: 1, g: { p: 'klipy', id: 'x', w: 20, h: 20, m: '/x' } }],
+    ['neither text nor GIF', { s: 1, a: 'k1', at: 1 }],
+    ['a string', 'pinned'],
+  ])('a malformed pin (%s) counts as no pin and never stops the batch', (_what, p) => {
+    // Arrange
+    const { session, calls, shown } = setup({ pin: pin(2) });
+
+    // Act
+    session.frame(batch({ k: 'pin', p } as unknown as ChatItem, msg(3)));
+
+    // Assert
+    expect(calls.at(-1)).toBe('pin null');
+    expect(shown).toEqual([1, 2, 3]);
+  });
+
+  it('malformed hl items are skipped on their own', () => {
+    // Arrange
+    const { session, calls, shown } = setup();
+
+    // Act
+    session.frame(batch({ k: 'hl', s: 'x', on: true } as unknown as ChatItem, { k: 'hl', s: 1, on: 'yes' } as unknown as ChatItem, msg(3)));
+
+    // Assert
+    expect(calls.some((c) => c.startsWith('hl'))).toBe(false);
+    expect(shown).toEqual([1, 2, 3]);
   });
 });

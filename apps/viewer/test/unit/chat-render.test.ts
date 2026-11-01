@@ -16,8 +16,8 @@ const m = (s: number, text: string, author: ChatAuthor = ana): ChatEntry => ({ k
 const many = (count: number, from = 1, text = (s: number) => `m${s}`): ChatEntry[] => Array.from({ length: count }, (_, i) => m(from + i, text(from + i)));
 const HOSTILE = '<img src=x onerror=alert(1)><script>x</script> javascript:alert(1) https://evil.example/a.png';
 
-/** A list in an empty page, painting names for `bg`; `visible` says whether the page is shown. */
-function setup(o: { visible?: boolean; bg?: string } = {}) {
+/** A list in an empty page, painting names for `bg` (`hlBg` on highlighted rows); `visible` says whether the page is shown. */
+function setup(o: { visible?: boolean; bg?: string; hlBg?: string } = {}) {
   document.body.replaceChildren();
   const root = document.createElement('div');
   document.body.append(root);
@@ -26,7 +26,7 @@ function setup(o: { visible?: boolean; bg?: string } = {}) {
   const emotes = new Map<string, Emote>([['hi', { code: 'hi', url: '/assets/hi.webp', url2x: '/assets/hi@2x.webp', w: 56, h: 56 }]]);
   const list = new ChatList(root, {
     emotes: () => emotes,
-    nickColor: (c) => adjustNameColor(c, o.bg ?? CHAT_BG_LIGHT),
+    nickColor: (c, highlighted) => adjustNameColor(c, (highlighted ? o.hlBg : undefined) ?? o.bg ?? CHAT_BG_LIGHT),
     showTimes: () => false,
     visible: () => visible,
     raf: (cb) => frames.push(cb),
@@ -324,5 +324,195 @@ describe('ChatList render rules', () => {
     expect(list.list.getAttribute('role')).toBe('log');
     expect(list.list.getAttribute('aria-live')).toBe('off');
     expect(list.live.getAttribute('aria-live')).toBe('polite');
+  });
+});
+
+describe('ChatList: highlighted messages and the pinned bar', () => {
+  /** --sc-accent-soft of Forest & Cream, light theme (assets/brand/tokens.css): the highlighted row's background. */
+  const HL_BG = '#e2eae4';
+  const pinOf = (s: number, text: string | undefined, author: ChatAuthor = ana, at = 5000) => ({ s, at, author, ...(text !== undefined ? { text } : {}) });
+  function pinSetup() {
+    // Names on a highlighted row are painted for its background, the others for the chat's.
+    const env = setup({ hlBg: HL_BG });
+    env.root.before(env.list.pinned);
+    return env;
+  }
+
+  it('a highlighted entry is drawn highlighted, says so to screen readers first, and its name stays readable on its background', () => {
+    // Arrange
+    const { list, show } = pinSetup();
+
+    // Act
+    show([{ ...m(1, 'olha isso'), highlighted: true } as ChatEntry, m(2, 'normal')]);
+
+    // Assert
+    const [hl, plain] = rows(list);
+    expect(hl!.classList.contains('highlighted')).toBe(true);
+    expect(plain!.classList.contains('highlighted')).toBe(false);
+    expect(hl!.firstElementChild!.classList.contains('hl-note')).toBe(true);
+    expect(hl!.querySelector('.hl-note')!.textContent).toBe('Highlighted by the streamer: ');
+    const nick = hl!.querySelector<HTMLElement>('.nick')!.style.getPropertyValue('--nick');
+    expect(contrastRatio(nick, HL_BG)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('highlight() marks a row on screen and one still waiting for a frame, and takes the mark off again', () => {
+    // Arrange
+    const { list, show, flush } = pinSetup();
+    show([m(1, 'a')]);
+    list.append([m(2, 'b')]);
+
+    // Act
+    list.highlight(1, true);
+    list.highlight(2, true);
+    flush();
+    list.highlight(1, false);
+
+    // Assert
+    const [one, two] = rows(list);
+    expect(one!.classList.contains('highlighted')).toBe(false);
+    expect(one!.querySelector('.hl-note')).toBeNull();
+    expect(two!.classList.contains('highlighted')).toBe(true);
+  });
+
+  it('highlight() never marks a hidden message or a system line', () => {
+    // Arrange
+    const { list, show } = pinSetup();
+    show([m(1, 'bad \u{202E} text'), { kind: 'sys', s: 2, at: 1, code: 'chat.sys.cleared' }]);
+
+    // Act
+    list.highlight(1, true);
+    list.highlight(2, true);
+
+    // Assert
+    expect(list.list.querySelectorAll('.highlighted').length).toBe(0);
+  });
+
+  it('the pinned bar shows the pin with the same text-node rules: markup stays text, the label is UI chrome', () => {
+    // Arrange
+    const { list } = pinSetup();
+
+    // Act
+    list.setPin(pinOf(7, HOSTILE));
+
+    // Assert
+    expect(list.pinned.hidden).toBe(false);
+    expect(list.pinned.getAttribute('aria-label')).toBe('Pinned message');
+    expect(list.pinned.querySelector('.pinned-label')!.textContent).toBe('Pinned by the streamer');
+    const body = list.pinned.querySelector('.pinned-msg')!;
+    expect(body.querySelector('bdi.text')!.textContent).toBe(HOSTILE);
+    expect(body.querySelector('bdi.nick')!.textContent).toBe('Ana');
+    expect(body.querySelectorAll('img, script, a').length).toBe(0);
+    expect(list.list.querySelectorAll('li.msg').length).toBe(0);
+  });
+
+  it('a pin from the streamer carries the badge from the role; an unsafe pinned text is hidden', () => {
+    // Arrange
+    const { list } = pinSetup();
+
+    // Act
+    list.setPin(pinOf(1, 'bem-vindos', lucas));
+    const streamer = list.pinned.querySelector('.badge')?.textContent;
+    list.setPin(pinOf(2, 'bad \u{202E} text', ana, 6000));
+
+    // Assert
+    expect(streamer).toBe('Streamer');
+    expect(list.pinned.querySelector('.pinned-msg')!.classList.contains('hidden-msg')).toBe(true);
+    expect(list.pinned.textContent).toContain('Message hidden');
+  });
+
+  it('a new pin is announced politely and replaces the old one; null hides the bar', () => {
+    // Arrange
+    const { list } = pinSetup();
+    const seen: Array<[number | null, boolean]> = [];
+    list.onPin = (p, fresh) => seen.push([p?.s ?? null, fresh]);
+
+    // Act
+    list.setPin(pinOf(1, 'um'));
+    const announced = list.live.textContent;
+    list.setPin(pinOf(1, 'um'));
+    list.setPin(pinOf(2, 'dois', ana, 6000));
+    const text = list.pinned.querySelector('.pinned-msg .text')!.textContent;
+    list.setPin(null);
+
+    // Assert
+    expect(announced).toBe('The streamer pinned a message.');
+    expect(text).toBe('dois');
+    expect(seen).toEqual([
+      [1, true],
+      [1, false],
+      [2, true],
+      [null, false],
+    ]);
+    expect(list.pinned.hidden).toBe(true);
+  });
+
+  it('"hide" hides this pin on this device only; the next pin shows again', () => {
+    // Arrange
+    const { list } = pinSetup();
+    list.setPin(pinOf(1, 'um'));
+
+    // Act
+    list.pinned.querySelector<HTMLButtonElement>('.pinned-hide')!.click();
+    const hiddenAfterClick = list.pinned.hidden;
+    list.setPin(pinOf(1, 'um'));
+    const hiddenSamePin = list.pinned.hidden;
+    list.setPin(pinOf(1, 'um', ana, 7000));
+
+    // Assert
+    expect(hiddenAfterClick).toBe(true);
+    expect(hiddenSamePin).toBe(true);
+    expect(list.pinned.hidden).toBe(false);
+    expect(document.activeElement).toBe(list.list);
+  });
+
+  it('with the chat off the bar is hidden, and comes back when the chat is on again', () => {
+    // Arrange
+    const { list } = pinSetup();
+    list.setPin(pinOf(1, 'um'));
+
+    // Act
+    list.setPinAllowed(false);
+    const off = list.pinned.hidden;
+    list.setPinAllowed(true);
+
+    // Assert
+    expect(off).toBe(true);
+    expect(list.pinned.hidden).toBe(false);
+  });
+
+  it('the pinned text starts folded; "Show more" unfolds it and says so', () => {
+    // Arrange
+    const { list } = pinSetup();
+    list.setPin(pinOf(1, 'x '.repeat(150)));
+    const box = list.pinned.querySelector<HTMLElement>('.pinned-msg')!;
+    const more = list.pinned.querySelector<HTMLButtonElement>('.pinned-more')!;
+    // happy-dom has no layout: make the text taller than its box, as a real browser would.
+    Object.defineProperty(box, 'scrollHeight', { configurable: true, value: 120 });
+    Object.defineProperty(box, 'clientHeight', { configurable: true, value: 40 });
+    list.resume();
+
+    // Act
+    const folded = { clamped: box.classList.contains('clamped'), shown: !more.hidden, label: more.textContent, expanded: more.getAttribute('aria-expanded') };
+    more.click();
+
+    // Assert
+    expect(folded).toEqual({ clamped: true, shown: true, label: 'Show more', expanded: 'false' });
+    expect(box.classList.contains('clamped')).toBe(false);
+    expect(more.textContent).toBe('Show less');
+    expect(more.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('a roster change re-colours the pinned name too', () => {
+    // Arrange
+    const { list } = pinSetup();
+    list.setPin(pinOf(1, 'um'));
+
+    // Act
+    list.recolor({ ...ana, c: '#0090ff', n: 'Ana B' });
+
+    // Assert
+    const nick = list.pinned.querySelector<HTMLElement>('.nick')!;
+    expect(nick.textContent).toBe('Ana B');
+    expect(nick.dataset.c).toBe('#0090ff');
   });
 });

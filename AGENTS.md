@@ -234,7 +234,7 @@ flake": find its cause in the product or the test, with evidence, and fix it at 
 
 ## 9. Security
 
-- Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) (chat threats T1–T15, branding B1–B16, accepted risks)
+- Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) (chat threats T1–T16, branding B1–B16, accepted risks)
   and [docs/SECURITY_RESEARCH.md](docs/SECURITY_RESEARCH.md) before changing access control, sessions,
   `/control`, the tracker, chat, branding, Direct mode, the CSP or the updater. Vulnerabilities are reported
   privately ([SECURITY.md](SECURITY.md)), never in a public issue.

@@ -160,5 +160,16 @@ export const chatApi = {
   protect(mode: ChatProtect): Promise<{ ok: true; protect: ChatProtect }> {
     return post('/api/chat/protect', { mode });
   },
+  /** Highlight a message for everyone (`on`), or take the highlight off. */
+  highlight(s: number, on: boolean): Promise<unknown> {
+    return post('/api/chat/highlight', { s, on });
+  },
+  /** Pin a message at the top of everyone's chat, until unpinned (null) or for `minutes`. */
+  pin(s: number, minutes: number | null): Promise<unknown> {
+    return post('/api/chat/pin', { s, minutes });
+  },
+  unpin(): Promise<unknown> {
+    return post('/api/chat/unpin');
+  },
 };
 // ---- end ----

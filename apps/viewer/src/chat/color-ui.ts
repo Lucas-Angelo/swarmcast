@@ -26,15 +26,24 @@ export function onThemeChange(cb: () => void): void {
   new MutationObserver(cb).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-palette'] });
 }
 
+/** The colour of the brand token `name` (e.g. `--sc-accent-soft`) as seen at `el`, or null. */
+export function tokenColorAt(el: Element | null, name: string): string | null {
+  return el ? cssColorToHex(getComputedStyle(el).getPropertyValue(name)) : null;
+}
+
 /** Reads the chat background lazily and adjusts colours against it. */
 export class NameColors {
   private bg: string | null = null;
-  constructor(private readonly surface: () => Element | null) {}
+  /** `read`: the background to check against (by default the first opaque one of `surface` or its ancestors). */
+  constructor(
+    private readonly surface: () => Element | null,
+    private readonly read: (el: Element | null) => string = backgroundOf,
+  ) {}
   invalidate(): void {
     this.bg = null;
   }
   background(): string {
-    return (this.bg ??= backgroundOf(this.surface()));
+    return (this.bg ??= this.read(this.surface()));
   }
   paint(color: string): string {
     return adjustNameColor(color, this.background());

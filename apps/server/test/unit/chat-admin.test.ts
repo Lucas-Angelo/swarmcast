@@ -82,6 +82,46 @@ describe('chat admin API', () => {
     expect(state.items.every((i) => i.k === 'sys')).toBe(true);
   });
 
+  it('highlight, pin and unpin: only through the panel, with validated bodies and coded errors', async () => {
+    // Arrange
+    const { headers, call } = await chatPanel();
+    await call('POST', '/api/chat/send', { text: 'Bem-vindos!' });
+    await call('POST', '/api/chat/send', { text: 'Link da loja na bio' });
+    // Act
+    const noCookie = await call('POST', '/api/chat/pin', { s: 1 }, { host: headers.host, origin: headers.origin });
+    const foreign = await call('POST', '/api/chat/highlight', { s: 1, on: true }, { host: headers.host, origin: 'http://evil.example', cookie: headers.cookie });
+    const lit = await call('POST', '/api/chat/highlight', { s: 1, on: true });
+    const pinned = await call('POST', '/api/chat/pin', { s: 2, minutes: 15 });
+    const state = (await call('GET', '/api/chat')).json() as AdminChatState;
+    const gone = await call('POST', '/api/chat/pin', { s: 99 });
+    const bad = await Promise.all([
+      call('POST', '/api/chat/pin', { s: 0 }),
+      call('POST', '/api/chat/pin', { s: 1, minutes: 121 }),
+      call('POST', '/api/chat/pin', { s: 1, minutes: 0 }),
+      call('POST', '/api/chat/pin', { s: 1.5 }),
+      call('POST', '/api/chat/pin', { s: 1, extra: true }),
+      call('POST', '/api/chat/highlight', { s: 1 }),
+      call('POST', '/api/chat/highlight', { s: 1, on: 'yes' }),
+    ]);
+    const unpinned = await call('POST', '/api/chat/unpin', {});
+    const after = (await call('GET', '/api/chat')).json() as AdminChatState;
+    // Assert
+    expect(noCookie.statusCode).toBe(401);
+    expect(foreign.statusCode).toBe(403);
+    expect(lit.json()).toEqual({ ok: true });
+    expect(pinned.json()).toEqual({ ok: true });
+    expect(state.items.find((i) => i.k === 'm' && i.s === 1)).toMatchObject({ h: 1 });
+    // The panel's live runs on the real clock: the time left is 15 min minus the request's own time.
+    expect(state.pin).toMatchObject({ s: 2, x: 'Link da loja na bio' });
+    expect(state.pin?.endsIn).toBeGreaterThan(14 * 60_000);
+    expect(state.pin?.endsIn).toBeLessThanOrEqual(15 * 60_000);
+    expect(gone.statusCode).toBe(400);
+    expect(gone.json()).toMatchObject({ code: 'admin.chat.err.gone' });
+    for (const r of bad) expect(r.statusCode).toBe(400);
+    expect(unpinned.json()).toEqual({ ok: true });
+    expect(after.pin).toBeUndefined();
+  });
+
   it('protection goes to lockdown and back off; the state shows the counters', async () => {
     // Arrange
     const { call } = await chatPanel();

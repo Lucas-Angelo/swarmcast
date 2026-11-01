@@ -93,6 +93,52 @@
 .chat-msg-streamer {
   background: var(--sc-accent-soft);
 }
+/* Highlight and pin (docs/CHAT.md): a highlighted row keeps its background (names are checked
+ * against the feed's) and gets a bar in the accent colour and a "Highlighted" mark; the pinned
+ * message sits above the feed, as it does on viewers' pages. */
+.chat-msg-highlighted {
+  border-left: 3px solid var(--sc-accent);
+  padding-left: calc(var(--sp-1) + 1px);
+}
+.chat-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-right: 4px;
+  padding: 0 6px;
+  border: 1px solid var(--sc-accent);
+  border-radius: var(--sc-radius-pill);
+  color: var(--sc-accent-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  vertical-align: 1px;
+}
+.chat-pinned {
+  flex: none;
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  border: 1px solid var(--sc-border);
+  border-top: 3px solid var(--sc-accent);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface);
+  contain: content;
+  overflow: clip;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+.chat-pinned-head .sc-ico-pin,
+.chat-mark .sc-ico-pin {
+  color: var(--sc-accent-strong);
+}
+.chat-pinned .chat-line {
+  max-height: 4.5em;
+}
+/* Scoped, so it wins over brand.css's `mask` shorthand whatever order the two files load in. */
+.chat-pinned-head .sc-ico-pin::before,
+.chat-mark .sc-ico-pin::before {
+  -webkit-mask-image: url('../../../../packages/shared/web/icons/pin.svg');
+  mask-image: url('../../../../packages/shared/web/icons/pin.svg');
+}
 .chat-row {
   display: flex;
   align-items: flex-start;
