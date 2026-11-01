@@ -1,21 +1,76 @@
 name: cache stall simulation (temporary)
-# Temporary, on soak/cache-stall-sim only. A cache download that stalls: TLS to the cache's blob
-# storage (*.blob.core.windows.net) dropped after the ClientHello (iptables SNI match), so the
-# cache service hands out the download URL and then nothing arrives, as in run 41283774499.
+# Temporary, on soak/cache-stall-sim only: the setup action (fix/stalled-cache-restore) when the
+# cache's storage or the npm registry stalls. Blob storage: TLS to *.blob.core.windows.net dropped
+# after the ClientHello (iptables SNI match). Registry: one in five new TLS connections to
+# registry.npmjs.org black-holed for good (CONNMARK), like a request that never gets an answer.
 on:
   push:
     branches: [soak/cache-stall-sim]
 permissions:
   contents: read
 jobs:
-  stall:
-    name: stalled restore (${{ matrix.try }})
+  sim:
+    name: ${{ matrix.case }}
     strategy:
       fail-fast: false
       matrix:
-        try: [a, b]
+        case: [normal, blob-stall-once, blob-stall-always, blob-stall-always+registry-blackhole, bogus-key]
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: break the network
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          blob() { for t in iptables ip6tables; do sudo "$t" "$1" OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP; done; }
+          case "$CASE" in
+            blob-stall-once) blob -I; (sleep 100; blob -D; echo "unblocked blob storage at $(date -u +%T)") >/dev/null 2>&1 & ;;
+            blob-stall-always*) blob -I ;;
+          esac
+          if [[ "$CASE" == *registry-blackhole ]]; then
+            for t in iptables ip6tables; do
+              sudo "$t" -t mangle -A OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
+              sudo "$t" -A OUTPUT -p tcp --dport 443 -m connmark --mark 7 -j DROP
+            done
+          fi
+          echo "SIM_START=$SECONDS" >> "$GITHUB_ENV"; date -u +%T
+      - uses: ./.github/actions/setup
+        if: matrix.case != 'bogus-key'
+        timeout-minutes: 8
+      - name: bogus key (plain miss, one try)
+        if: matrix.case == 'bogus-key'
+        id: bogus
+        uses: ./.github/actions/cache-restore
+        with:
+          path: ${{ runner.temp }}/nothing
+          key: sim-no-such-key-${{ github.run_id }}
+      - name: bogus key reference to actions/cache (never runs)
+        if: matrix.case == 'never'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: x
+          key: x
+      - name: result
+        env:
+          HIT: ${{ steps.bogus.outputs.cache-hit }}
+        run: |
+          date -u +%T; echo "SETUP_SECONDS=$((SECONDS - SIM_START))"; [ -z "$HIT" ] || echo "bogus cache-hit=$HIT"
+          du -sh "$(npm config get cache)" 2>/dev/null || true
+          npm config get fetch-timeout; npm config get fetch-retries
+          sudo iptables -L OUTPUT -n -v | grep -E "DROP" || true
+
+  # The same registry black hole with npm's defaults (fetch-timeout 5 minutes), no cache: what the
+  # setup step's `npm ci` met in run 41283774499.
+  npm-defaults:
+    name: registry-blackhole, npm defaults
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     defaults:
       run:
         shell: bash
@@ -27,55 +82,12 @@ jobs:
         with:
           node-version: 24.x
           package-manager-cache: false
-      - name: key
-        id: k
-        env:
-          HASH: ${{ hashFiles('package-lock.json', 'site/package-lock.json', '.github/actions/setup/action.yml') }}
-        run: |
-          prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
-          { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
-      - name: block blob storage (stall)
-        run: |
+      - run: |
           for t in iptables ip6tables; do
-            sudo "$t" -I OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP
+            sudo "$t" -t mangle -A OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
+            sudo "$t" -A OUTPUT -p tcp --dport 443 -m connmark --mark 7 -j DROP
           done
-          sudo iptables -L OUTPUT -n -v | head
-          date -u +%T
-      - name: restore while stalled
-        id: r1
-        continue-on-error: true
-        env:
-          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.k.outputs.path }}
-          key: ${{ steps.k.outputs.key }}
-          restore-keys: ${{ steps.k.outputs.prefix }}
-      - name: after the stalled restore
-        env:
-          M: ${{ steps.r1.outputs.cache-matched-key }}
-          H: ${{ steps.r1.outputs.cache-hit }}
-        run: |
-          date -u +%T; echo "matched=[$M] hit=[$H]"; du -sh "$(npm config get cache)" 2>/dev/null || echo "no npm cache dir"
-          for t in iptables ip6tables; do sudo "$t" -D OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP; done
-      - name: restore again (second try, network fine)
-        id: r2
-        continue-on-error: true
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ${{ steps.k.outputs.path }}
-          key: ${{ steps.k.outputs.key }}
-          restore-keys: ${{ steps.k.outputs.prefix }}
-      - name: result
-        env:
-          M: ${{ steps.r2.outputs.cache-matched-key }}
-        run: date -u +%T; echo "second try matched=[$M]"; du -sh "$(npm config get cache)"
-
-  composite-timeout:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: ./.github/actions/zz-tt
+          start=$SECONDS
+          npm ci --prefer-offline --no-audit --no-fund
+          echo "NPM_CI_SECONDS=$((SECONDS - start))"
+          sudo iptables -L OUTPUT -n -v | grep DROP
