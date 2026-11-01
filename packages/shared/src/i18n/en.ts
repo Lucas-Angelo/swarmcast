@@ -652,6 +652,7 @@ export const en = {
   'chat.sys.protectOff': 'The chat is back to normal.',
   'chat.sys.cleared': 'The streamer cleared the chat.',
   'chat.sys.stopped': 'The chat stopped because of a problem. The stream goes on.',
+  'chat.sys.unknown': 'Something changed in the chat that this page cannot show. Reload the page to see it.',
   'chat.protect.off': 'normal',
   'chat.protect.slow': 'calm (automatic slow mode)',
   'chat.protect.lockdown': 'only people already watching can write',

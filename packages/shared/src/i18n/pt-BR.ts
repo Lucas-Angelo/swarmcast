@@ -648,6 +648,7 @@ export const ptBR: Messages = {
   'chat.sys.protectOff': 'O chat voltou ao normal.',
   'chat.sys.cleared': 'Quem transmite limpou o chat.',
   'chat.sys.stopped': 'O chat parou por causa de um problema. A transmissão continua.',
+  'chat.sys.unknown': 'Algo mudou no chat que esta página não consegue mostrar. Recarregue a página para ver.',
   'chat.protect.off': 'normal',
   'chat.protect.slow': 'acalmado (modo lento automático)',
   'chat.protect.lockdown': 'só quem já estava assistindo pode escrever',

@@ -2,6 +2,7 @@
 // The chat list's render rules (chat/render.ts): text through text nodes only, emotes as images,
 // unsafe text hidden, readable name colours, and the frame and DOM budgets. Frames are injected
 // (`raf`): `flush` runs the ones the list asked for, so rendering happens exactly when a test says.
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { contrastRatio, adjustNameColor, CHAT_BG_DARK, CHAT_BG_LIGHT, type ChatAuthor } from '@swarmcast/shared/chat';
 import { ChatList, DOM_MAX, RENDER_PER_FRAME } from '../../src/chat/render.js';
@@ -90,6 +91,58 @@ describe('ChatList render rules', () => {
     expect(r[0]!.textContent).not.toContain('fdp');
     expect(r[4]!.querySelector('.text')!.textContent).toBe('fine 😀');
     expect(list.stats.hidden).toBe(4);
+  });
+
+  it('a system line whose code this page does not know (a newer server) shows a neutral line, and the rest of the batch still shows', () => {
+    // Arrange
+    const { list, show } = setup();
+    const future = { kind: 'sys', s: 2, at: 1, code: 'chat.sys.pollStarted', params: { question: 'x' } } as unknown as ChatEntry;
+
+    // Act
+    show([m(1, 'before'), future, { kind: 'sys', s: 3, at: 1, code: 'chat.sys.protect' }, m(4, 'after')]);
+
+    // Assert
+    const r = rows(list);
+    expect(r.map((li) => li.dataset.seq)).toEqual(['1', '2', '3', '4']);
+    expect(r[1]!.textContent).toBe('Something changed in the chat that this page cannot show. Reload the page to see it.');
+    expect(r[2]!.textContent).toBe('The chat is protected right now.');
+    expect(r[3]!.querySelector('.text')!.textContent).toBe('after');
+  });
+
+  it('an entry that cannot be built is shown as "Message hidden"; the others in its batch are drawn', () => {
+    // Arrange
+    const { list, show } = setup();
+    const broken = { kind: 'msg', s: 2, at: 1, author: null, text: 'x' } as unknown as ChatEntry;
+
+    // Act
+    show([m(1, 'before'), broken, m(3, 'after')]);
+
+    // Assert
+    const r = rows(list);
+    expect(r.map((li) => li.dataset.seq)).toEqual(['1', '2', '3']);
+    expect(r[1]!.textContent).toBe('Message hidden');
+    expect(r[2]!.querySelector('.text')!.textContent).toBe('after');
+    expect(list.stats.failed).toBe(1);
+  });
+
+  it('fuzz: whatever the entries, one flush draws one row per entry and never throws', () => {
+    // Arrange
+    const { list, show } = setup();
+    const entry = fc.oneof(
+      fc.record({ kind: fc.constant('msg'), s: fc.integer({ min: 1 }), at: fc.integer(), author: fc.oneof(fc.constant(ana), fc.constant(lucas), fc.jsonValue()), text: fc.oneof(fc.string(), fc.jsonValue()) }),
+      fc.record({ kind: fc.constant('sys'), s: fc.integer({ min: 1 }), at: fc.integer(), code: fc.oneof(fc.string(), fc.constantFrom('chat.sys.muted', 'toString', 'chat.viewer.skipped')), params: fc.jsonValue() }),
+      fc.record({ kind: fc.constant('msg'), s: fc.integer({ min: 1 }), at: fc.integer(), author: fc.constant(ana), gif: fc.jsonValue() }),
+    ) as fc.Arbitrary<unknown> as fc.Arbitrary<ChatEntry>;
+    const property = fc.property(fc.uniqueArray(entry, { maxLength: 20, selector: (e) => (e as { s: number }).s }), (entries) => {
+      list.reset([]);
+      show(entries);
+      return rows(list).filter((li) => !li.classList.contains('empty')).length === entries.length;
+    });
+    // Act
+    const run = () => fc.assert(property, { numRuns: 300, seed: 11 });
+
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('an empty streamer name shows the translated default', () => {

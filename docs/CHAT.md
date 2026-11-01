@@ -104,6 +104,10 @@ server recognises it before decoding it.
 | `chat.color` | `color` `#rrggbb` | Choose my name colour (rate limited, ignored while locked) |
 | `chat.resume` | `after` (a seq) | I missed items after `after` (gap or reconnect) |
 
+Reaction frames (`{"t":"chat.react"…`, reserved for 0.5.0, no handler yet) have a frame budget of
+their own, so a viewer who taps reactions while chatting can never reach the chat budget that
+terminates the socket (and its P2P channel); see "Item classes and frame budgets" below.
+
 A GIF is never a URL: `gif = {p: provider, id: [A-Za-z0-9_-]{1,64}, w, h}` with `w`, `h` between 16
 and 498. Clients build the image URL from a fixed template for that provider.
 
@@ -146,6 +150,53 @@ missing items, or with `chat.reset` when they have already left the ring.
 
 **Compatibility.** Clients ignore unknown `t` and unknown `k`; new fields are optional. A breaking
 change bumps `CHAT_PROTOCOL_VERSION`, and an old page then asks the viewer to reload.
+
+### Item classes and frame budgets
+
+The rules every new chat feature builds on (protocol v1, all additive). A page that was already
+open when a newer server answers (a stale tab, a page restored from the back/forward cache, a panel
+tab left open across an update) keeps working: `chat-compat.test.ts` feeds the frames this server
+sends to the chat session v0.4.2 shipped and to the current one, and both show the same messages
+without a resume.
+
+- **Only `m` and `sys` take a `seq`** (`CHAT_SEQ_KINDS`, `isChatSeqItem()` in
+  [`protocol.ts`](../packages/shared/src/chat/protocol.ts)). A client reads a jump in `seq` as
+  missed items and asks to resume, so a new kind that took a `seq` would stall every older page for
+  3 s each time. Every other kind is seq-less, and clients treat an unknown kind as seq-less even if
+  it carries an `s`.
+- **Durable seq-less items** (`u`, `d`, `clr`, and later pins and polls): never dropped; a socket
+  too slow to get one receives a fresh snapshot when it catches up.
+- **Ephemeral items** (`ChatBatcher.pushLatest(key, item, merge?)`, for vote and reaction counts):
+  latest-wins state, at most one pending per key (a newer one replaces the pending one, or `merge`
+  folds the two), at most `CHAT_EPHEMERAL_PENDING_MAX` (32) keys, sent after the batch's other
+  items. Under upload pressure they are the first to go, silently (no `skip`, which counts
+  messages). A slow socket that misses one gets neither a snapshot nor a `skip`: the next count
+  replaces it. Never in the ring, snapshots or resume answers.
+- **Referred authors.** An item can name authors other than its own (a reply's parent, a mention,
+  a pin): `push(item, prio, refs)` and the ring keep those keys, every socket gets the roster entry
+  of each one before the batch that names it, and snapshots, resume answers and the panel's state
+  include them (`ringAuthors()` in [`hub.ts`](../apps/server/src/chat/hub.ts)).
+- **New `sys` codes.** A client that does not know a code shows a neutral line ("Something changed
+  in the chat that this page cannot show. Reload the page to see it."); one entry that fails to
+  render never stops the others. Pages older than 0.5.0 lack this guard, so a feature whose line
+  must reach them should prefer a new seq-less kind (which they ignore) over a new `sys` code.
+
+| Frame budget per socket, per 10 s | Limit | Past it |
+|---|---|---|
+| Any frame (control, tracker, chat) | 200 | terminated |
+| Chat frames (`{"t":"chat.`, reactions excepted) | 20 (`CHAT_MAX_FRAMES_PER_10S`) | terminated |
+| Reaction frames (`{"t":"chat.react"`) | 10 handed on (`CHAT_REACT_FRAMES_PER_10S`) | ignored up to 20 (`CHAT_REACT_FRAMES_MAX_PER_10S`), then terminated |
+
+Reaction frames are told apart by their first bytes (closing quote included, so `chat.reactX` is an
+ordinary chat frame) and never count as chat frames; one over 2 KB is dropped before decoding,
+without a reply. A new page sends them only to a server that announces reactions in its settings,
+so an older server never sees them.
+
+**Per-network limits** (votes in 0.5.0) group addresses with `networkKey()`
+([`network.ts`](../apps/server/src/access/network.ts)): an IPv4 address is its own network, an
+IPv6 address counts by its /64 (`CHAT_IPV6_NETWORK_PREFIX`; one home or phone usually holds a whole
+/64), and an IPv4-mapped IPv6 address is the IPv4 address. The existing per-IP message bucket still
+keys on the full address.
 
 ### Reject codes
 
@@ -301,6 +352,9 @@ viewer draws a translated "Streamer" badge from that role. A viewer can never ge
   themes (`adjustNameColor()` in [`color.ts`](../packages/shared/src/chat/color.ts), OKLCH lightness
   only, hue kept). The default palette has no violet or indigo.
 - Links are plain text: never clickable, never previewed. No `<img>` from a user-supplied URL.
+- One entry never breaks the others: a `sys` code the client does not know shows a neutral line
+  (`translateWire()`), and a row that fails to build shows "Message hidden" while the rest of the
+  batch is drawn. The viewer's session and the panel's store skip a malformed item on its own.
 - The chat is a separate, lazily loaded chunk, so the player never depends on it.
 
 ## Moderation (panel)
@@ -335,8 +389,9 @@ the audience grows. The guard halves G while it degrades.
 (500 ms above 40 viewers, 1 s under budget or CPU pressure). Then one `JSON.stringify`, and the same
 string goes to every socket whose send buffer is under 64 KB. A slower socket is skipped and later
 gets one `skip` item (or a fresh snapshot if it missed a delete, clear or roster change). When a batch
-does not fit the byte budget, it waits up to 1 s and then drops the oldest viewer messages with a
-`skip`; streamer messages and moderation items are never dropped. The queue holds at most 500 items.
+does not fit the byte budget, it waits up to 1 s and then drops ephemeral items first, then the
+oldest viewer messages with a `skip`; streamer messages and moderation items are never dropped. The
+queue holds at most 500 items (see "Item classes and frame budgets").
 
 **Automatic slow mode** ([`detector.ts`](../apps/server/src/chat/detector.ts)). When the chat is
 busy at G, the effective slow mode rises at once and halves again after 60 calm seconds; the viewer
@@ -461,9 +516,12 @@ the chat stopped itself.
 | Grapheme clusters vs GraphemeBreakTest.txt and `Intl.Segmenter` | [`grapheme.test.ts`](../packages/shared/test/chat/grapheme.test.ts) |
 | No ReDoS in `chat/` | [`redos.test.ts`](../packages/shared/test/chat/redos.test.ts) |
 | Protocol shapes, reject codes translated, settings defaults | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
+| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
+| Network keys (IPv4, IPv6 /64, IPv4-mapped) against Node's `BlockList` on random addresses in every spelling | [`network.test.ts`](../apps/server/test/unit/network.test.ts) |
+| Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed) | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
 | Hub: pipeline, slow mode, burst, duplicates, modes, blocked words, mutes, colours, roles, snapshot, resume, ring, reset, G, lockdown, failure isolation | [`apps/server/test/unit/chat-hub.test.ts`](../apps/server/test/unit/chat-hub.test.ts) |
-| `/control`: frame budget, raw size, fuzzed hostile frames; nickname uniqueness and reserved names | [`chat-control.test.ts`](../apps/server/test/unit/chat-control.test.ts) |
-| Buckets, detector, adaptive slow mode, guard, batcher | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
+| `/control`: frame budgets (chat and reactions), raw size, fuzzed hostile frames and frame kinds; nickname uniqueness and reserved names | [`chat-control.test.ts`](../apps/server/test/unit/chat-control.test.ts) |
+| Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
 | Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
