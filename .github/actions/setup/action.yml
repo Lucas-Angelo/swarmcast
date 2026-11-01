@@ -93,7 +93,8 @@ runs:
     # <hashFiles of the three files>, `npm config get cache`), so its entries keep working. Not
     # setup-node's built-in cache: its restore has no time limit and its process stays up after
     # a failed download (run 41283774499: the download stalled at 0 of 79.7 MB, then setup-node
-    # took 109 s more to exit).
+    # took 109 s more to exit). Saved from main only (pull requests that changed a lockfile each
+    # saved ~380 MB, five OSes x 76 MB, toward the 10 GB limit: README.md, "Caches").
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       with:
         node-version: 24.x
