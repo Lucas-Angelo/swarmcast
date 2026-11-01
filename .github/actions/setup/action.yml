@@ -230,11 +230,12 @@ runs:
         encoders="$("$FFMPEG_BIN" -hide_banner -encoders)"
         grep -q libx264 <<<"$encoders" || { echo "::error::$FFMPEG_BIN has no libx264 encoder (the test feeds need it)"; exit 1; }
 
-    # npm's own network limits for this job's npm commands (user config): a request that gets no
-    # answer is given up after 60 s instead of npm's 5 minutes and tried again, up to 4 times
-    # (npm's own retry: network only). Run 41283774499's `npm ci` sat 352 s with nothing after a
-    # failed cache restore and ran the setup step out of time; a full `npm ci` from the registry
-    # takes 4-47 s (measured on every runner image, soak/npm-cold-measure).
+    # npm's own network limits for this job's npm commands (user config): a connection that goes
+    # silent is given up after 60 s instead of npm's 5 minutes (fetch-timeout is the socket's idle
+    # limit), and a failed request is tried up to 4 times (npm's own retry: network only). Run
+    # 41283774499's `npm ci` sat 352 s with no output after a failed cache restore and ran the
+    # setup step out of time; a full `npm ci` from the registry takes 4-47 s (measured on every
+    # runner image, soak/npm-cold-measure).
     - name: npm network limits
       if: inputs.npm-ci == 'true'
       shell: bash
@@ -242,7 +243,19 @@ runs:
         npm config set fetch-timeout 60000 --location=user
         npm config set fetch-retries 4 --location=user
     # --prefer-offline: packages in the restored cache are not re-checked with the registry.
-    # The audit runs in its own CI job.
-    - if: inputs.npm-ci == 'true'
+    # The audit runs in its own CI job. A network error that npm's own retries did not get past
+    # (a download that broke off mid-transfer is not retried by npm) runs `npm ci` once more: an
+    # infrastructure retry, like apt-retry.sh; any other failure fails the step.
+    - name: npm ci
+      if: inputs.npm-ci == 'true'
       shell: bash
-      run: npm ci --prefer-offline --no-audit --no-fund
+      run: |
+        log="$RUNNER_TEMP/npm-ci.log"
+        for try in 1 2; do
+          if npm ci --prefer-offline --no-audit --no-fund 2>&1 | tee "$log"; then exit 0; fi
+          if [ "$try" = 1 ] && grep -qE '^npm error (code (ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ERR_SOCKET_TIMEOUT|ENETUNREACH|EPIPE)$|network )' "$log"; then
+            echo "::warning::npm ci: network error after npm's own retries, running it once more"
+            continue
+          fi
+          exit 1
+        done
