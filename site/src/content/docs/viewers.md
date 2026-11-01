@@ -24,11 +24,35 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 - **Help the stream (P2P):** off by default; you can turn it on (see below).
 - **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.
 
+- **Theater mode** (on a computer): makes the video as big as the window allows. The chat stays next to it on a wide screen and moves under it on a smaller one. Click it again to go back; your browser remembers the choice.
+
 While the live plays, your phone or computer **keeps the screen on**, so it does not dim or lock in the middle of the stream (pause and it can sleep again). With the sound on, your phone's **lock screen** and notifications show the streamer's name and picture with a play / pause button.
 
 On a phone the same controls sit under the video:
 
 ![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
+
+### Keyboard shortcuts
+
+On a computer you can control the live from the keyboard:
+
+| Key | What it does |
+| --- | --- |
+| Space or K | Play or pause |
+| M | Sound on or off |
+| F | Full screen (Esc leaves it) |
+| T | Theater mode |
+| G | Go live |
+| I | Picture-in-picture (the video in a small window), where your browser has it |
+| C | Go to the chat box |
+| S | Stats for nerds |
+| ? | The list of shortcuts |
+
+They do nothing while you type, so writing in the chat is safe. **Keyboard shortcuts**, under the video, shows the list and a switch to turn them off (for example if you use voice control); your browser remembers it.
+
+### Stats for nerds
+
+Curious about what the player is doing? **Stats for nerds**, under the video, opens a small panel on top of the video: the resolution and quality, the internet speed the player measures, how many seconds of video are loaded ahead, how far behind live you are, dropped frames, how much video came from other viewers (P2P) and what you sent them, and your connection type when the browser tells it. The numbers update every second. Press Esc or × to close it; **Copy** copies the lines, for example to send them to the streamer when something goes wrong. It never shows your address or anyone else's.
 
 ## The chat
 

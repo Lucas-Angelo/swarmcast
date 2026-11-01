@@ -32,6 +32,7 @@ import { createChatRouter } from './chat/loader.js';
 import { createScreenAwake, type WakeLockLike } from './wake-lock.js';
 import { createMediaSession, imageAsDataUrl } from './media-session.js';
 import { createShareControl, fetchShareLink } from './share.js';
+import { installPlayerExtras } from './player-extras.js';
 import fallbackArtworkUrl from '../../../assets/brand/favicon/favicon-512.png?url';
 // ---- branding: watch ----
 import { createBrandRouter } from './branding/loader.js';
@@ -270,6 +271,35 @@ const stats = {
 let ended = false;
 let control: WebSocket | null = null;
 let adaptive: AdaptiveDelay | null = null;
+
+// Theater mode, keyboard shortcuts and "stats for nerds" (player-extras.ts; the stats panel is a
+// chunk of its own, loaded only when opened). hls.js is there once main() has made it.
+let playerHls: InstanceType<typeof Hls> | null = null;
+installPlayerExtras({
+  doc: document,
+  video,
+  goLive,
+  unmute,
+  chatRoot: $<HTMLElement>('chat'),
+  storage: (() => {
+    try {
+      return localStorage;
+    } catch {
+      return undefined;
+    }
+  })(),
+  stats: {
+    video,
+    hls: () => playerHls,
+    counters: () => ({ httpBytes: stats.httpBytes, p2pDownBytes: stats.p2pDownBytes, p2pUpBytes: stats.p2pUpBytes, peers: stats.peers.size, p2pEnabled: stats.p2pEnabled }),
+    delay: () => (adaptive ? { delay: adaptive.delay, target: adaptive.target } : null),
+    profile: () => loadProfile(),
+    engine: () => (!playerHls ? 'native' : 'ManagedMediaSource' in window && playerHls.config.preferManagedMediaSource !== false ? 'mms' : 'mse'),
+    connection: () => (navigator as Navigator & { connection?: { effectiveType?: string; type?: string; downlink?: number } }).connection,
+  },
+  clipboard: navigator.clipboard,
+  debug: (msg) => debugLog(msg),
+});
 
 /** "~14 s behind live" next to the status while playing (the delay adapts to the connection). */
 function showDelay(): void {
@@ -637,6 +667,7 @@ async function main(): Promise<void> {
   hls.loadSource(cfg.playlistUrl);
   hls.attachMedia(video);
   (window as unknown as { __hls: unknown }).__hls = hls;
+  playerHls = hls;
 
   // If playback stays stuck anyway, restart loading where every track has data (stall-recovery.ts).
   installStallRecovery({
