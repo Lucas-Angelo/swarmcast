@@ -192,7 +192,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 
 | Cache | Saved by | Entries | Size |
 |---|---|---|---|
-| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 3.25 GB |
+| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
 | `sc-downloads-*` | `setup/save`: the pinned downloads, per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
 | `node-cache-*-npm-*` | setup-node, per OS | 5 | 0.40 GB |
