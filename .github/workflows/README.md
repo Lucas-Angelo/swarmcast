@@ -277,12 +277,21 @@ process group, so its `tar` too, and clears what the try may have half-extracted
 once more after a try that timed out or failed; a plain miss is not retried. The npm cache is no
 longer setup-node's: `setup` restores it with the same key and path (so existing entries keep
 working) and saves it from `main` with `actions/cache` in `lookup-only` mode (its post step saves
-when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` to 60 s and
-`fetch-retries` to 4 for the job, so a request that gets no answer is retried after a minute.
+when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` (the idle limit of
+its connections) to 60 s and `fetch-retries` to 4 for the job, and runs `npm ci` once more after a
+network error npm's own retries did not get past (npm does not retry a download that broke off
+mid-transfer); any other `npm ci` failure fails the step.
 Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
 measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
 the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
 (`setup-rust`), which cannot be wrapped; `setup-rust`'s step limit applies to them.
+
+Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage blocked for the first
+100 s, setup took 114 s (try 1 cut off at 90 s, try 2 restored in 12 s; 12 s without a block, run
+41294776882); blocked for good, 191 s (both tries cut off, then a cold `npm ci`); and with a 60 s
+disruption of the registry during `npm ci` (one in five connections stops after 100 kB), a plain
+`npm ci` failed with `ETIMEDOUT` after 110 s while `setup` took 201 s and passed (both restores cut
+off, `npm ci` failed on `ETIMEDOUT`, the second run took 5 s; run 41295992201).
 
 ## Coverage
 
@@ -312,7 +321,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the pinned
   downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
-  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`, set by `setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
+  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error (`setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
   60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
