@@ -98,15 +98,35 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     expect(manifest.segments[`/hls/${segName}`]).toBe(hash);
   });
 
+  it('serves the audio-only playlist: MediaMTX audio rendition alone, the one video viewers get too', async () => {
+    // Arrange
+    const jar = await joinAs(live.base, live.app.live.snapshot().liveLink!, 'AudioOnly');
+    // Act
+    const multi = await (await jar.fetch('/hls/index.m3u8')).text();
+    const res = await jar.fetch('/hls/audio-only.m3u8');
+    const audioOnly = await res.text();
+    const uri = audioOnly.split('\n').find((x) => x && !x.startsWith('#'))!;
+    const media = await (await jar.fetch(`/hls/${uri}`)).text();
+    // Assert
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/vnd.apple.mpegurl');
+    expect(audioOnly.match(/#EXT-X-STREAM-INF:[^\n]*/g)).toEqual([expect.stringMatching(/^#EXT-X-STREAM-INF:BANDWIDTH=\d+,CODECS="mp4a\.40\.\d+"$/)]);
+    expect(multi).toContain(`TYPE=AUDIO`);
+    expect(multi).toContain(`URI="${uri}"`);
+    expect(multi).not.toContain('audio-only');
+    expect(media).toContain('#EXT-X-MAP');
+    expect(segmentsOf(media).length).toBeGreaterThan(0);
+  });
+
   it('rejects every protected resource without a session', async () => {
     // Arrange
     const ws = live.base.replace('http', 'ws');
     // Act
-    const http401 = await Promise.all(['/hls/index.m3u8', '/hls/video1_stream.m3u8', '/hls/manifest.json', '/api/config'].map(async (p) => [p, (await fetch(live.base + p)).status] as const));
+    const http401 = await Promise.all(['/hls/index.m3u8', '/hls/audio-only.m3u8', '/hls/video1_stream.m3u8', '/hls/manifest.json', '/api/config'].map(async (p) => [p, (await fetch(live.base + p)).status] as const));
     const watch = (await fetch(`${live.base}/watch`)).status;
     const sockets = await Promise.all(['/tracker', '/control'].map(async (p) => [p, await upgradeStatus(ws + p, { origin: live.base })] as const));
     // Assert
-    expect(Object.fromEntries(http401)).toEqual({ '/hls/index.m3u8': 401, '/hls/video1_stream.m3u8': 401, '/hls/manifest.json': 401, '/api/config': 401 });
+    expect(Object.fromEntries(http401)).toEqual({ '/hls/index.m3u8': 401, '/hls/audio-only.m3u8': 401, '/hls/video1_stream.m3u8': 401, '/hls/manifest.json': 401, '/api/config': 401 });
     expect(watch).toBe(404);
     expect(Object.fromEntries(sockets)).toEqual({ '/tracker': 401, '/control': 401 });
   });

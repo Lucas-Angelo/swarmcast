@@ -46,6 +46,16 @@ export function playlistEntries(segmentDurationS: number): number {
   return Math.ceil(PLAYLIST_WINDOW_S / segmentDurationS);
 }
 
+/**
+ * The audio-only multivariant playlist (docs/QUALITY.md "Audio only"): the server writes it
+ * next to index.m3u8 from the stream's audio rendition, under the same session cookie, and the
+ * viewer loads it instead of index.m3u8 when "Audio only" is picked. Never listed in index.m3u8.
+ */
+export const AUDIO_ONLY_PLAYLIST = 'audio-only.m3u8';
+
+/** BANDWIDTH the audio-only playlist advertises until the audio bitrate is measured (OBS's default AAC, bps). */
+export const AUDIO_ONLY_DEFAULT_BPS = 160_000;
+
 /** Lifetime of a viewer session JWT. Renewed while the stream is live. */
 export const SESSION_TTL_S = 10 * 60;
 
