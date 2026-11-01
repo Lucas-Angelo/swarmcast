@@ -20,6 +20,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 - **● LIVE / Go live:** you are 10 to 30 seconds behind the streamer, which is normal. Next to it, "~14 s behind live" shows your delay: it adjusts itself to your connection (closer to live on steady internet, further back when it wobbles, so the video does not pause). If you fell behind, click **Go live**.
 - **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
+- **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.
 - **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P):** off by default; you can turn it on (see below).
 - **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.
@@ -77,7 +78,8 @@ You can turn it off at any time and keep watching normally. Your choice is remem
 - **"This stream is full":** the streamer limited how many people can watch at once. Try again later.
 - **"The stream has ended":** the live is over. Thanks for watching!
 - **"You were removed":** the streamer removed you from this live.
-- **It keeps pausing:** choose a smaller quality, or **Stable** playback.
+- **It keeps pausing:** choose a smaller quality, or **Stable** playback. On a very slow connection, **Audio only** keeps the sound going.
+- **No "Audio only" in the menu:** the streamer's stream does not have its sound separate from the picture, so it cannot be played alone.
 - **"Browser not supported":** update your browser, or open the link in Chrome, Edge, Firefox or Safari.
 
 ![The page you see with an old or wrong link: Link not valid.](../../assets/guides/viewers/en/invalid.webp)

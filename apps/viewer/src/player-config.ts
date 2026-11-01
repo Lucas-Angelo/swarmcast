@@ -79,6 +79,7 @@ export const RETRY_POLICY = {
 const PROFILE_KEY = 'sc.playback-profile';
 const ESTIMATE_KEY = 'sc.bandwidth-estimate';
 const LEVEL_KEY = 'sc.quality-height';
+const AUDIO_ONLY_KEY = 'sc.audio-only';
 
 function storageGet(key: string): string | null {
   try {
@@ -125,6 +126,15 @@ export function loadPreferredHeight(): number | null {
 
 export function savePreferredHeight(height: number | null): void {
   storageSet(LEVEL_KEY, height === null ? null : String(height));
+}
+
+/** The viewer picked "Audio only" (audio-only.ts): this browser starts on it next time too. */
+export function loadAudioOnly(): boolean {
+  return storageGet(AUDIO_ONLY_KEY) === 'on';
+}
+
+export function saveAudioOnly(on: boolean): void {
+  storageSet(AUDIO_ONLY_KEY, on ? 'on' : null);
 }
 
 export interface PlayerConfigOptions {
@@ -253,19 +263,34 @@ export function streamSwarmIdBuilder(ctx: StreamSwarmIdBuilderContext): string {
 }
 
 /**
+ * streamSwarmIdBuilder, aware of "Audio only" (audio-only.ts). The audio-only playlist has one
+ * variant, the stream's own audio rendition, which hls.js plays as its main level; its segments
+ * are the very ones video viewers get as their alternate audio (same playlist, same names, same
+ * media sequence numbers, the same hashes in the signed manifest). So that stream joins the
+ * video viewers' audio swarm ("secondary", already on the tracker's allowlist) instead of
+ * `main-0`, the swarm of a video variant without RESOLUTION: there a peer would answer a request
+ * for audio segment N with video segment N, which fails the hash check and gets an honest peer
+ * reported. `audioOnly` is read when the stream registers (after each hls.loadSource).
+ */
+export function swarmIdBuilderFor(audioOnly: () => boolean): (ctx: StreamSwarmIdBuilderContext) => string {
+  return (ctx) => (ctx.streamType === 'main' && audioOnly() ? variantStreamSwarmId(ctx.swarmId, 'secondary') : streamSwarmIdBuilder(ctx));
+}
+
+/**
  * When OBS reconnects, the set of renditions can change (quality options turned on or off,
  * ffmpeg fell back to the original quality), so a media playlist the player knows may be
  * gone for good. Feed every hls.js ERROR to the returned function: after `threshold` 404s
  * on media playlists in a row it calls `reload` (hls.loadSource(playlistUrl)) to re-read the
- * multivariant playlist. Call `reset()` on LEVEL_LOADED.
+ * multivariant playlist. Call `reset()` on LEVEL_LOADED. `threshold` may be a function, read at
+ * each miss (watch.ts: 1 while audio only plays, AUDIO_ONLY_GONE_AFTER).
  */
-export function createManifestReloader(reload: () => void, threshold = 3): { onError(details: string, httpCode?: number): void; reset(): void } {
+export function createManifestReloader(reload: () => void, threshold: number | (() => number) = 3): { onError(details: string, httpCode?: number): void; reset(): void } {
   let misses = 0;
   return {
     onError(details, httpCode) {
       if (httpCode !== 404 || !/^(levelLoad|audioTrackLoad)(Error|TimeOut)$/.test(details)) return;
       misses += 1;
-      if (misses >= threshold) {
+      if (misses >= (typeof threshold === 'function' ? threshold() : threshold)) {
         misses = 0;
         reload();
       }

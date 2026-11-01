@@ -1,8 +1,8 @@
 // The quality ladder as a viewer sees it (checked on Chromium): with 480p + 360p on (manual,
 // x264 forced: `auto` keeps only the original on a PC without a GPU encoder and with fewer than
 // 6 CPU threads, like the CI runners) and OBS reconnected at 720p (a pre-encoded clip: the
-// runner's CPU goes to the ladder, not to the fake OBS), the viewer menu lists the renditions
-// and an Auto entry, with its tooltip. Picking 360p switches at the next segment and playback
+// runner's CPU goes to the ladder, not to the fake OBS), the viewer menu lists the renditions,
+// an Auto entry and "Audio only" (audio-only.spec.ts), with its tooltip. Picking 360p switches at the next segment and playback
 // goes on. B9: the stall watchdog's last resort (and the player's answer to vanished playlists)
 // loads the source again, and hls.js starts that on automatic quality; the viewer's pick
 // survives, because the menu puts it back when the playlists are parsed (from the remembered
@@ -82,7 +82,7 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   // Assert
   const menu = page.locator('.quality-menu');
   await expect(menu).toBeVisible();
-  await expect.poll(async () => (await menu.locator('option').allTextContents()).slice(1)).toEqual(['720p', '480p', '360p']);
+  await expect.poll(async () => (await menu.locator('option').allTextContents()).slice(1)).toEqual(['720p', '480p', '360p', 'Audio only (saves data)']);
   await expect(menu.locator('option').first()).toContainText('Auto');
   await expect(page.locator('.quality-group .tip-btn')).toHaveCount(1);
 

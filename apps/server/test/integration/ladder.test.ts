@@ -201,6 +201,25 @@ describe.skipIf(!hasFfmpeg)('quality ladder: ffmpeg renditions behind one multiv
     expect(state.plan.rungs.map((r) => r.height)).toEqual([1080, 720, 480]);
   });
 
+  it('serves the audio-only playlist: the ladder audio rendition alone, signed like the rest, to members only', async () => {
+    // Arrange
+    await l.waitUntil(async () => mediaSegments(await l.playlist('audio')).length >= 2, 30_000, 'audio segments');
+    // Act
+    const audioOnly = await l.text('/hls/audio-only.m3u8');
+    const uri = audioOnly.split('\n').find((x) => x && !x.startsWith('#'));
+    const seg = mediaSegments(await l.playlist(uri!)).pop()!;
+    const body = Buffer.from(await (await l.jar.fetch(`/hls/${seg}`)).arrayBuffer());
+    const signed = await l.signedHash(seg, await l.manifestHashes());
+    const stranger = await fetch(`http://127.0.0.1:${l.app.live.publicPort}/hls/audio-only.m3u8`);
+    // Assert
+    expect(audioOnly.match(/#EXT-X-STREAM-INF:[^\n]*/g)).toEqual([expect.stringMatching(/^#EXT-X-STREAM-INF:BANDWIDTH=\d+,CODECS="mp4a\.40\.\d+"$/)]);
+    expect(uri).toBe('audio.m3u8');
+    expect(audioOnly).not.toMatch(/RESOLUTION|avc1/);
+    expect(signed).toBe(crypto.createHash('sha256').update(body).digest('hex'));
+    expect(stranger.status).toBe(401);
+    expect(await l.text('/hls/index.m3u8')).not.toContain('audio-only');
+  });
+
   it('hashes the segments of every variant in the signed manifest', async () => {
     // Arrange
     await l.waitUntil(async () => mediaSegments(await l.playlist('v480')).length >= 2, 30_000, 'v480 segments');
