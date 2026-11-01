@@ -34,6 +34,8 @@ set -o pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=pull.sh
 . "$DIR/pull.sh"
+# shellcheck source-path=SCRIPTDIR source=build.sh
+. "$DIR/build.sh"
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$DIR/lib.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
@@ -143,7 +145,7 @@ build() { # build DOCKERFILE IMAGE BASE PLATFORM [build-args...]
   shift 4
   if [ "$BUILD" = 1 ]; then
     pull_image "$base" "$plat" || { echo "pull of $base ($plat) failed"; return 1; }
-    docker build -q --platform "$plat" -f "$DIR/$df" --build-arg "BASE=$base" "$@" -t "$img" "$DIR" >/dev/null ||
+    build_image "$img" "$df" --platform "$plat" --build-arg "BASE=$base" "$@" ||
       { echo "build of $img failed"; return 1; }
   fi
 }
