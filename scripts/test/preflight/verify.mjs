@@ -127,6 +127,10 @@ async function runSession({ releaseUrl, tunnel, browser }) {
       step(`[${label}] installer installed ffmpeg and the app uses it`, q.ffmpeg?.available === true && q.ffmpeg.path === want, q.ffmpeg?.path ?? 'not available');
     }
     const s0 = await waitLiveLink(app, 120_000, [inst.owner]);
+    // Not a check: when Cloudflare refused or failed the first quick-tunnel request (many
+    // runners open tunnels at once), the app tried again; its warnings say why and how often.
+    const tunnelNotes = inst.output().split(/\r?\n/).filter((l) => l.includes('"level":"warn"') && /quick tunnel|quick Tunnel/.test(l));
+    if (tunnelNotes.length) console.log(`[${label}] the app tried the tunnel again:\n  ${tunnelNotes.join('\n  ')}`);
     const pattern = tunnel ? /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\// : /^http:\/\/127\.0\.0\.1:\d+\/join\//;
     step(`[${label}] live link`, pattern.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, '/join/…'));
 

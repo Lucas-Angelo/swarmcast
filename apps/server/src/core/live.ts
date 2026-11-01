@@ -39,7 +39,7 @@ import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
 import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
 import { TrackerService } from '../tracker/tracker.js';
-import { probeHealth, waitForReachable, type TunnelProvider } from '../tunnel/provider.js';
+import { probeHealth, waitForReachable, type TunnelProvider, type TunnelRetry } from '../tunnel/provider.js';
 import { ActivityLog } from './activity.js';
 import type { AppConfig } from './config.js';
 import type { Logger } from './logger.js';
@@ -324,6 +324,21 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.tunnelDrops += 1;
       this.warn('warn.tunnelDropped', { reason });
     });
+    d.tunnel.on('retry', (r) => this.onTunnelRetry(r));
+  }
+
+  /** Cloudflare refused or failed a new tunnel while starting: say so on the step and in the activity log. */
+  private onTunnelRetry(r: TunnelRetry): void {
+    const params = { causeKey: `tunnel.cause.${r.cause}`, seconds: Math.ceil(r.delayMs / 1000), attempt: r.attempt, attempts: r.attempts };
+    const s = this.steps.find((x) => x.id === 'tunnel' && x.status === 'running');
+    if (s) {
+      s.note = translate('en', 'step.tunnel.retry', params);
+      s.noteCode = 'step.tunnel.retry';
+      s.noteParams = params;
+    }
+    // Cloudflare's own words are already there: the provider logs cloudflared's error line.
+    this.activity.add({ level: 'warn', kind: 'system', code: 'step.tunnel.retry', params });
+    this.changed();
   }
 
   private changed(): void {
@@ -448,11 +463,13 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.changed();
     try {
       const r = await fn();
+      clearNote(s);
       s.status = 'ok';
       this.activity.action('log.stepOk', { stepKey: s.labelKey });
       this.changed();
       return r;
     } catch (err) {
+      clearNote(s);
       s.status = 'error';
       s.error = (err as Error).message;
       const c = codeOf(err);
@@ -1129,4 +1146,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.tracker.close();
     this.limiter.close();
   }
+}
+
+/** A finished step says what happened (ok, or its error), not what it was doing. */
+function clearNote(s: Step): void {
+  delete s.note;
+  delete s.noteCode;
+  delete s.noteParams;
 }

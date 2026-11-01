@@ -15,6 +15,7 @@ export class ManagedChild extends EventEmitter<{ line: [line: string, stream: 's
   readonly proc: ChildProcess;
   private exited = false;
   private exitPromise: Promise<void>;
+  private closePromise: Promise<void>;
 
   constructor(
     readonly name: string,
@@ -44,6 +45,12 @@ export class ManagedChild extends EventEmitter<{ line: [line: string, stream: 's
         this.emit('exit', -1, null);
         resolve();
       });
+    });
+    // 'exit' can come before the last output lines (Node: "stdio streams might still be open");
+    // 'close' comes once both pipes ended, so every line has been emitted by then.
+    this.closePromise = new Promise((resolve) => {
+      this.proc.once('close', () => resolve());
+      this.proc.once('error', () => resolve());
     });
     if (this.proc.pid) this.reaper?.register(this.proc.pid);
     for (const [stream, s] of [
@@ -79,6 +86,17 @@ export class ManagedChild extends EventEmitter<{ line: [line: string, stream: 's
 
   waitForExit(): Promise<void> {
     return this.exitPromise;
+  }
+
+  /**
+   * Resolves once the process exited and its output ended (every 'line' was emitted), or `capMs`
+   * after the exit at the latest: a grandchild that inherited the pipes could keep them open.
+   */
+  async waitForOutputEnd(capMs = 2000): Promise<void> {
+    await this.exitPromise;
+    let cap: NodeJS.Timeout | undefined;
+    await Promise.race([this.closePromise, new Promise<void>((r) => (cap = setTimeout(r, capMs)))]);
+    clearTimeout(cap);
   }
 }
 

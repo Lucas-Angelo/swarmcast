@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Start no longer fails at once when Cloudflare is busy.** Cloudflare's free tunnel service sometimes refuses a new tunnel for a moment ("too many requests") or does not answer properly. SwarmCast used to stop with "cloudflared exited during startup (code 1)" and no reason. It now tries again a few times (after about 5, 10 and 20 seconds), shows "Cloudflare refused to open a new tunnel right now… SwarmCast tries again in N s" on the tunnel step, and if Cloudflare keeps refusing it tells you what Cloudflare said and to try again in a few minutes. Any other tunnel problem is shown at once with its message.
 - **The emoji picker in the viewer chat opens instantly,** also on slow phones and computers. It used to draw all of its almost 2,000 emoji the moment it opened, which could freeze the watch page for a second or two; it now draws the ones you can see and adds the rest as you scroll. Search, categories, skin tones, recent picks and keyboard navigation work as before.
 - **No console window flashes on Windows** when you turn Direct mode on: SwarmCast looks up your router without opening a PowerShell window.
 - **The ⋯ menu button of a chat message in the panel is always fully visible and clickable,** also next to long names and messages.

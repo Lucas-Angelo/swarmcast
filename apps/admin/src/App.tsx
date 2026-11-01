@@ -203,6 +203,7 @@ export function App() {
                 <li key={st.id}>
                   {st.status === 'ok' ? '✓' : st.status === 'error' ? '✗' : st.status === 'running' ? '…' : '○'} {tc({ code: st.labelKey }, st.label)}
                   {st.error && <span class="error">{tc({ code: st.errorCode, params: st.errorParams }, st.error)}</span>}
+                  {st.note && st.status === 'running' && <span class="note" data-testid="step-note">{tc({ code: st.noteCode, params: st.noteParams }, st.note)}</span>}
                 </li>
               ))}
             </ul>
