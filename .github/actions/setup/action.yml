@@ -30,22 +30,6 @@ inputs:
 runs:
   using: composite
   steps:
-    # One macOS VM reached neither github.com (UND_ERR_CONNECT_TIMEOUT) nor the cache service
-    # (ENOTFOUND) for its first minute and lost a release run. Wait up to 2 minutes for
-    # github.com, and say so when it had to wait (the downloads retry too).
-    - name: Wait for github.com (macOS)
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        start=$SECONDS
-        for i in $(seq 1 12); do
-          if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
-            [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
-            exit 0
-          fi
-          sleep 5
-        done
-        echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
     # apt settings for every apt call of the job (apt-retry.sh adds a time limit per try). The
     # file must sort after the image's own /etc/apt/apt.conf.d/zz-retries (Retries 1, Timeout 15),
     # which overrode our earlier 99-ci-retries: apt reads the folder in order, the last value wins.

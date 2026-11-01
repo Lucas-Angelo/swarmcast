@@ -275,7 +275,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the pinned
-  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`), the macOS `.dmg`
+  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
   60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
