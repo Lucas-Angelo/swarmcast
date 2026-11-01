@@ -438,6 +438,12 @@ code.value {
   color: var(--sc-danger);
   font-size: var(--fs-sm);
 }
+.steps .note {
+  display: block;
+  margin-left: 1.4rem;
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+}
 
 /* Number tiles. */
 .stats {

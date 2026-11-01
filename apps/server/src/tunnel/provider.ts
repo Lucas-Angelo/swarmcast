@@ -3,11 +3,25 @@ import { EventEmitter } from 'node:events';
 import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
 import { abortable, sleep } from '../core/retry.js';
+import type { TransientCause } from './start-failure.js';
+
+/** Cloudflare refused or failed a new tunnel; the provider tries again after `delayMs`. */
+export interface TunnelRetry {
+  cause: TransientCause;
+  /** cloudflared's own words. */
+  reason: string;
+  delayMs: number;
+  /** The attempt that comes after the wait (2 for the first retry), of `attempts` in total. */
+  attempt: number;
+  attempts: number;
+}
 
 export type TunnelEvents = {
   /** Emitted when the public URL becomes reachable (also after a reconnect that changed it). */
   url: [url: string];
   down: [reason: string];
+  /** Starting: Cloudflare refused or failed, a new attempt follows (see TunnelRetry). */
+  retry: [info: TunnelRetry];
 };
 
 /**
