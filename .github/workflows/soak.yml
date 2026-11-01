@@ -58,6 +58,23 @@ jobs:
       apt: ${{ steps.plan.outputs.apt }}
       desktop_run: ${{ steps.desktop.outputs.run }}
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -111,6 +128,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -178,6 +212,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -229,6 +280,23 @@ jobs:
           $c = "dism.exe /English /Online /Enable-Feature /FeatureName:ServerMediaFoundation /All /NoRestart /LogPath:`"$d\media-foundation-dism.log`" >`"$d\media-foundation.log`" 2>&1 & (echo !errorlevel!)>`"$d\media-foundation.tmp`" & move /y `"$d\media-foundation.tmp`" `"$d\media-foundation.done`" >nul"
           $p = Start-Process cmd.exe -PassThru -WindowStyle Hidden -ArgumentList "/d /v:on /c $c"
           "Media Foundation: dism.exe started (cmd PID $($p.Id)), $([int]([Environment]::TickCount64 / 1000)) s after boot; TiWorker running: $([bool](Get-Process TiWorker -ErrorAction SilentlyContinue))"
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -277,6 +345,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -318,6 +403,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -348,6 +450,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -404,6 +523,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -447,6 +583,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -466,6 +619,23 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
