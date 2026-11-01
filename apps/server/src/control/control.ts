@@ -138,6 +138,7 @@ export class ControlChannel implements ChatHost {
       viewerCount: this.viewerCount(),
       ...(chat ? { chat } : {}),
       ...(this.brandRev() !== undefined ? { brandRev: this.brandRev() } : {}),
+      shareAllowed: this.access.canShare(session),
     } satisfies ServerMessage);
     if (s.readyState === s.OPEN) s.send(hello);
     // The history in hello counts against the chat's upload budget.

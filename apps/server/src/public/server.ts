@@ -21,6 +21,7 @@ import {
   type ApiErrorBody,
   type JoinChallengeResponse,
   type MessageKey,
+  type ShareLinkResponse,
   type ViewerConfig,
 } from '@swarmcast/shared';
 import { translate } from '@swarmcast/shared/i18n';
@@ -94,6 +95,8 @@ export interface PublicDeps {
   reservedNames?: () => string[];
   /** The GIF provider while chat GIFs are on (the CSP then lists its hosts), else undefined. */
   gifProvider?: () => GifProvider | undefined;
+  /** The current live link (`<base>/join/<secret>`) for GET /api/share, undefined while there is none. */
+  shareLink?: () => string | undefined;
   // ---- branding: deps ----
   /** "Your page" (docs/BRANDING.md); its routes are registered only when present. */
   branding?: BrandingStore;
@@ -137,6 +140,12 @@ const INVALID_STATUS = 404;
 const JOIN_LINK_PER_IP_PER_MIN = 120;
 const JOIN_CHALLENGE_PER_IP_PER_MIN = 120;
 const JOIN_PER_IP_PER_MIN = 60;
+/**
+ * GET /api/share per session (or client IP without one) and minute. A page asks once when it
+ * learns it may share (hello, or the streamer switching sharing back on), so this only bounds a
+ * script that keeps asking.
+ */
+export const SHARE_PER_SESSION_PER_MIN = 10;
 
 /** Viewer API error body: English `error` plus a stable `code` the page translates. */
 function apiError(code: MessageKey): ApiErrorBody {
@@ -400,6 +409,20 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   });
 
   app.post('/api/session/refresh', { preHandler: requireSession }, async () => ({ ok: true }));
+
+  // The watch page's Share button. The answer holds the link secret, so it goes only to a viewer
+  // who joined with the current link while the streamer allows sharing (access.canShare): after
+  // "Generate new link" the people who came in with the old link keep watching but never get the
+  // new one. Everyone else gets the same 404 as an unknown path. Never logged (the secret).
+  app.get(
+    '/api/share',
+    { preHandler: requireSession, config: { rateLimit: { max: SHARE_PER_SESSION_PER_MIN, timeWindow: '1 minute', keyGenerator: (req) => req.cookies?.[SESSION_COOKIE]?.slice(-24) ?? ip(req) } } },
+    async (req, reply) => {
+      const link = deps.shareLink?.();
+      if (!link || !access.canShare(req.viewer!)) return reply.code(404).send(apiError('viewer.err.notFound'));
+      return { url: link } satisfies ShareLinkResponse;
+    },
+  );
 
   app.post('/api/leave', { preHandler: requireSession }, async (req, reply) => {
     access.sessions.delete(req.viewer!.id);

@@ -270,6 +270,10 @@ button.tip-btn:hover {
   -webkit-mask-image: url('./icons/eye.svg');
   mask-image: url('./icons/eye.svg');
 }
+.sc-ico-share::before {
+  -webkit-mask-image: url('./icons/share.svg');
+  mask-image: url('./icons/share.svg');
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

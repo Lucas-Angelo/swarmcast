@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A Share button for viewers.** On the watch page, **Share** sends the link of your live to a friend: on a phone it opens the share menu (WhatsApp, Messages…), on a computer it copies the link and says **Link copied**. It is on by default; turn off **Viewers can share the link** in the **Your internet** card if only you should hand out the link. After **Generate new link**, people who came in with the old link keep watching but lose the button, so whoever got a leaked link cannot pass the new one on.
+- **The screen stays on while people watch.** Phones and computers no longer dim or lock in the middle of your live while the video plays (pausing lets them sleep again). Browsers that cannot do this simply behave as before.
+- **Play and pause from the lock screen.** With the sound on, viewers' phones show your name and picture from **Your page** on the lock screen and in the notifications, with a play / pause button. Without a picture, SwarmCast's own icon shows.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed

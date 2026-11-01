@@ -663,10 +663,10 @@ async function capturePanelCards(browser, lang) {
   // Copy (server), Copy (stream key), "OBS is sending video".
   const obs = cardWith(panel, 'rtmp-url');
   await shoot(obs, 'live', 'obs-card', [buttons(obs).nth(0), buttons(obs).nth(2), obs.locator('.ok-dot')]);
-  // Max upload, turn off after, allow P2P, max viewers.
+  // Max upload, turn off after, viewers can share the link, allow P2P, max viewers.
   const net = cardWith(panel, 'max-viewers');
   const fields = net.locator('form .field label');
-  await shoot(net, 'live', 'limits', [fields.nth(0), fields.nth(1), labelOf(net, 'allow-viewer-p2p'), labelOf(net, 'max-viewers')]);
+  await shoot(net, 'live', 'limits', [fields.nth(0), fields.nth(1), labelOf(net, 'allow-viewer-share'), labelOf(net, 'allow-viewer-p2p'), labelOf(net, 'max-viewers')]);
   const security = panel.getByTestId('security');
   await shoot(security, 'live', 'protection-card', [panel.getByTestId('threat'), labelOf(security, 'sec-requireBrowserCheck'), labelOf(security, 'sec-blockKnownBadIps')]);
   // Multiple qualities, "Viewers get", "Upload used by SwarmCast".
@@ -844,7 +844,7 @@ async function captureLocale(browser, lang) {
   }
 
   // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,
-  // 3 Help the stream (P2P). On the phone the chat (40 % of the screen) is hidden, as a viewer
+  // 3 Help the stream (P2P), 4 Share. On the phone the chat (40 % of the screen) is hidden, as a viewer
   // can, so the page fits.
   if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
     await phone.page.getByTestId('chat-hide').click();
@@ -859,7 +859,7 @@ async function captureLocale(browser, lang) {
     await fitViewport(page);
     await guideShot(page, page.locator('body'), 'viewers', lang, name, {
       pad: 0,
-      callouts: [page.locator('#unmute'), page.locator('.quality-menu'), page.locator('label.toggle', { has: page.locator('#p2p') })],
+      callouts: [page.locator('#unmute'), page.locator('.quality-menu'), page.locator('label.toggle', { has: page.locator('#p2p') }), page.locator('#share')],
     });
   }
 

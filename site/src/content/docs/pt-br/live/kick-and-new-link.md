@@ -23,6 +23,7 @@ Clique em **Tirar do P2P**. A pessoa continua assistindo, direto do seu computad
 
 1. Clique em **Gerar novo link**, depois em **Copiar link**, e mande o link novo para os seus membros.
 2. O link antigo para de funcionar na hora para quem é **novo**. Quem já está assistindo continua, a não ser que você também clique em **Desconectar todo mundo**: aí todo mundo precisa do link novo.
+3. Quem já está assistindo perde o botão **Compartilhar**: quem recebeu o link vazado não consegue repassar o novo. Só quem entra com o link novo pode compartilhar.
 
 Quem abre um link antigo vê isto:
 
@@ -34,9 +35,10 @@ Toda live ganha um link novo sozinha. Um link que você mandou ontem não funcio
 
 ## Limites contra espectadores falsos
 
-![O cartão Sua internet: 1 Upload máximo para espectadores, 2 Desligar após … minutos sem vídeo, 3 Permitir P2P para os espectadores, 4 Máximo de espectadores ao mesmo tempo, depois Sessões por navegador e Salvar.](../../../../assets/guides/live/pt-br/limits.webp)
+![O cartão Sua internet: 1 Upload máximo para espectadores, 2 Desligar após … minutos sem vídeo, 3 Quem assiste pode compartilhar o link, 4 Permitir P2P para os espectadores, 5 Máximo de espectadores ao mesmo tempo, depois Sessões por navegador e Salvar.](../../../../assets/guides/live/pt-br/limits.webp)
 
 - **Máximo de espectadores ao mesmo tempo:** quando a live lota, quem chega vê "A live está lotada agora". Ninguém que já está assistindo cai. Começa em 120, mais ou menos o que o túnel grátis aguenta.
 - **Sessões por navegador:** quantas abas um mesmo navegador pode deixar abertas (a mais antiga é trocada).
+- **Quem assiste pode compartilhar o link** (ligado por padrão): quem assiste ganha um botão **Compartilhar** que envia o seu link atual para um amigo. Desligue se só você deve passar o link adiante; o botão some na hora para todo mundo.
 
 Clique em **Salvar** depois de mudar. Mais em [Segurança e proteção](/swarmcast/pt-br/live/protection/).

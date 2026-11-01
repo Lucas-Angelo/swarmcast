@@ -164,6 +164,8 @@ export interface BrandOptions {
    * (startJoinBranding: true until the page shows). The tab title and icon change regardless.
    */
   canChangeLayout?: () => boolean;
+  /** Called with the page's data each time it is applied (null: no page, or it is off). */
+  onData?: (data: PublicBranding | null) => void;
 }
 
 export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandController {
@@ -319,6 +321,7 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
       applyWatch();
       endedScreen();
     } else applyJoin();
+    o.onData?.(data);
   };
 
   const api: BrandController = {

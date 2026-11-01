@@ -167,6 +167,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.origin = new HlsOrigin(`http://127.0.0.1:${ports.mediamtxHls}/${streamPath(d.streamKey)}/`, d.log);
     this.limiter = BandwidthLimiter.fromMbps(d.config.uploadLimitMbps);
     this.access.p2pForAll = d.config.allowViewerP2P;
+    this.access.shareForAll = d.config.allowViewerShare;
     this.tracker = new TrackerService(this.access, d.log);
     this.control = new ControlChannel(this.access, d.log);
     // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
@@ -269,6 +270,9 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.control.blockPeers([...s.peerIds]);
       this.changed();
     });
+    // "Generate new link" (by the streamer, the attack shield or a mode switch): everyone watching
+    // joined with an older link now, so their Share button goes away (access.canShare).
+    this.access.on('link-rotated', () => this.pushShare());
     this.access.on('p2p-changed', (s) => {
       if (s.p2pAllowed) this.activity.action('log.p2pAllowed', { nickname: s.nickname });
       else if (!s.autoRemovedFromP2P) this.activity.action('log.p2pRemoved', { nickname: s.nickname });
@@ -647,6 +651,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       clientSeen: (s, ip) => this.clientSeen(s, ip),
       reservedNames: () => [this.d.config.chat.streamerName],
       gifProvider: () => this.chat.effective.public.gif?.provider,
+      shareLink: () => this.liveLink,
       branding: this.branding,
       brandingLite: () => this.shield.detector.state !== 'normal' || this.limiter.throttledWithin(10_000),
     };
@@ -886,6 +891,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     }
   }
 
+  /** Tells every viewer whether their Share button may show now (access.canShare). */
+  private pushShare(): void {
+    for (const s of this.access.sessions.values()) this.control.send(s.id, { t: 'share', allowed: this.access.canShare(s) });
+  }
+
   clearBans(): void {
     this.access.clearBans();
     this.activity.action('log.bansCleared');
@@ -903,6 +913,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     if (s.maxSessionsPerDevice !== undefined) this.d.config.maxSessionsPerDevice = s.maxSessionsPerDevice;
     if (countChanged) this.viewerCountChanged();
     if (s.allowViewerP2P !== this.access.p2pForAll) this.setP2PForAll(s.allowViewerP2P);
+    if (s.allowViewerShare !== this.access.shareForAll) {
+      this.d.config.allowViewerShare = s.allowViewerShare;
+      this.access.shareForAll = s.allowViewerShare;
+      this.pushShare();
+    }
     // In automatic upload mode the adaptive controller owns the limiter.
     this.quality.applyManualLimit();
     this.d.saveConfig(this.d.config);
@@ -1161,6 +1176,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         alsoStreamingElsewhere: this.d.config.alsoStreamingElsewhere,
         showViewerCount: this.d.config.showViewerCount,
         allowViewerP2P: this.d.config.allowViewerP2P,
+        allowViewerShare: this.d.config.allowViewerShare,
         maxViewers: this.d.config.maxViewers,
         maxSessionsPerDevice: this.d.config.maxSessionsPerDevice,
       },

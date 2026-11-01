@@ -91,6 +91,7 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `security.extraBlocklistUrls` | `[]` | Extra `https://` lists (one IP/CIDR per line), e.g. blocklist.de or Tor exit lists. Not recommended: aggressive lists block innocent viewers |
 | `showViewerCount` | true | Show viewers how many people are watching (panel) |
 | `allowViewerP2P` | true | Viewers may share video with each other (panel "Allow P2P for viewers"; off = P2P stops for everyone live, playback goes on over HTTPS) |
+| `allowViewerShare` | true | The watch page's Share button (panel "Viewers can share the link"): `GET /api/share` gives the current link only to viewers who joined with it; off = no button, 404 |
 | `diagnostics.logRetentionDays` | 14 | Days of logs and log exports kept in `<data>/logs` and `<data>/exports` (3 to 90; the folders are also kept under 100 MB) (panel: Problem report → Advanced) |
 | `autoStopMinutes` | 10 | Stop everything after this long without video from OBS |
 | `alsoStreamingElsewhere` | true | Reserve upload for another platform you stream to at the same time (e.g. Twitch, YouTube, Kick) in the capacity estimate |
