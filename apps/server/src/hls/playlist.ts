@@ -192,6 +192,57 @@ export function cleanMultivariant(text: string): string {
   return [...head, ...variants.flatMap((v) => [v.inf, v.uri])].join('\n') + '\n';
 }
 
+/** An alternate audio rendition (EXT-X-MEDIA TYPE=AUDIO) and the audio codec its variants declare. */
+export interface AudioRendition {
+  /** Media playlist file name. */
+  name: string;
+  codecs: string;
+}
+
+const AUDIO_CODEC = /\b(mp4a\.[0-9A-Fa-f.]+|opus|ac-3|ec-3|fLaC)\b/;
+
+/**
+ * The audio rendition an audio-only viewer gets: the DEFAULT=YES one (else the first) of the
+ * audio group the variants use, the same playlist video viewers get as their audio track. Both
+ * sources write one: MediaMTX (`audio2_stream.m3u8`) and the ladder (`audio.m3u8`, copied once by
+ * ffmpeg). Null when the audio is muxed into the video playlists, or there is none: audio cannot
+ * be had without the video then.
+ */
+export function audioRendition(text: string): AudioRendition | null {
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const media = lines
+    .filter((l) => l.startsWith('#EXT-X-MEDIA:') && attr(l, 'TYPE') === 'AUDIO' && attr(l, 'URI'))
+    .map((l) => ({ group: attr(l, 'GROUP-ID'), uri: attr(l, 'URI')!, isDefault: attr(l, 'DEFAULT') === 'YES' }));
+  const { variants } = parseMultivariant(text);
+  const groups = new Set(variants.map((v) => v.audioGroup).filter((g) => g !== undefined));
+  const inUse = media.filter((m) => groups.size === 0 || (m.group !== undefined && groups.has(m.group)));
+  const pick = inUse.find((m) => m.isDefault) ?? inUse[0];
+  if (!pick) return null;
+  const name = fileName(pick.uri);
+  if (!SAFE_NAME.test(name)) return null;
+  // The codec of the group, as its variants declare it ("avc1.64001f,mp4a.40.2"); AAC-LC when
+  // none says (OBS sends AAC; hls.js reads the real one from the init segment anyway).
+  const declared = variants.filter((v) => v.audioGroup === pick.group).map((v) => AUDIO_CODEC.exec(v.codecs ?? '')?.[1]).find((c) => c !== undefined);
+  return { name, codecs: declared ?? 'mp4a.40.2' };
+}
+
+/**
+ * The audio-only multivariant playlist (AUDIO_ONLY_PLAYLIST): one STREAM-INF, no video codec,
+ * pointing at the audio rendition video viewers get too, so hls.js (and Safari's own HLS) plays
+ * it as an audio-only stream with the same segments, hashes and live window. Null when the
+ * stream has no separate audio rendition (audioRendition).
+ */
+export function renderAudioOnlyMultivariant(text: string, bandwidthBps: number): string | null {
+  const audio = audioRendition(text);
+  if (!audio) return null;
+  const lines = text.split(/\r?\n/).map((l) => l.trim());
+  const version = lines.find((l) => l.startsWith('#EXT-X-VERSION:')) ?? '#EXT-X-VERSION:7';
+  const out = ['#EXTM3U', version];
+  if (lines.includes('#EXT-X-INDEPENDENT-SEGMENTS')) out.push('#EXT-X-INDEPENDENT-SEGMENTS');
+  out.push(`#EXT-X-STREAM-INF:BANDWIDTH=${Math.max(1, Math.round(bandwidthBps))},CODECS="${audio.codecs}"`, audio.name);
+  return out.join('\n') + '\n';
+}
+
 // ---------------------------------------------------------------------------
 // Stitching: one continuous live playlist across upstream restarts
 // ---------------------------------------------------------------------------

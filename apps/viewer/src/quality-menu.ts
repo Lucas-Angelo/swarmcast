@@ -1,25 +1,34 @@
 /**
- * Viewer quality menu: "Auto (720p)" / 1080p / 720p / 480p, built from hls.levels.
- * Manual picks switch at the next segment (no buffer flush, so no stall); "Auto" hands
- * control back to hls.js ABR. The pick is remembered by height for the next visit.
+ * Viewer quality menu: "Auto (720p)" / 1080p / 720p / 480p / "Audio only (saves data)", built
+ * from hls.levels. Manual picks switch at the next segment (no buffer flush, so no stall); "Auto"
+ * hands control back to hls.js ABR. The pick is remembered by height for the next visit.
+ * "Audio only" (audio-only.ts) loads the audio-only playlist instead; while it plays, the menu
+ * offers the video qualities of the last normal playlists, and picking one loads them again.
  * Wired into watch.ts as described in INTEGRATION.md.
  */
 import type Hls from 'hls.js';
 import './quality.css';
 import { loadPreferredHeight, savePreferredHeight } from './player-config.js';
+import type { AudioOnlySwitch } from './audio-only.js';
 
 export interface QualityMenuLabels {
   auto: string;
   /** Shown next to "Auto" with the level currently playing, e.g. "Auto (720p)". */
   autoWith: (label: string) => string;
   title: string;
+  /** The audio-only entry, e.g. "Audio only (saves data)". */
+  audioOnly: string;
 }
 
 export const DEFAULT_QUALITY_LABELS: QualityMenuLabels = {
   auto: 'Auto',
   autoWith: (l) => `Auto (${l})`,
   title: 'Video quality',
+  audioOnly: 'Audio only (saves data)',
 };
+
+/** Option value of the audio-only entry (the others are level indexes, or `h<height>` while audio only is on). */
+export const AUDIO_ONLY_OPTION = 'audio';
 
 type HlsLike = Pick<Hls, 'levels' | 'currentLevel' | 'loadLevel' | 'nextLevel' | 'autoLevelEnabled' | 'on' | 'off'>;
 
@@ -61,6 +70,7 @@ export function createQualityMenu(
   container: HTMLElement,
   events: { MANIFEST_PARSED: string; LEVEL_SWITCHED: string },
   labels: QualityMenuLabels = DEFAULT_QUALITY_LABELS,
+  audio?: Pick<AudioOnlySwitch, 'active' | 'available' | 'heights' | 'set' | 'subscribe'>,
 ): QualityMenu {
   const select = document.createElement('select');
   select.className = 'quality-menu';
@@ -68,21 +78,41 @@ export function createQualityMenu(
   select.setAttribute('aria-label', labels.title);
   container.appendChild(select);
 
+  const audioOption = (): HTMLOptionElement => new Option(labels.audioOnly, AUDIO_ONLY_OPTION);
+
+  /** While audio only plays, hls.levels is its one audio level: the menu lists the video qualities known from before. */
+  const renderAudioOnly = (heights: readonly number[]): void => {
+    select.add(new Option(heights.length === 1 ? `${heights[0]}p` : labels.auto, '-1'));
+    if (heights.length > 1) for (const h of heights) select.add(new Option(`${h}p`, `h${h}`));
+    select.add(audioOption());
+    select.value = AUDIO_ONLY_OPTION;
+    select.hidden = false;
+  };
+
   const render = (): void => {
     const levels = hls.levels;
     select.replaceChildren();
+    if (audio?.active) return renderAudioOnly(audio.heights);
     const playing = levels[hls.currentLevel];
-    const auto = new Option(playing && hls.autoLevelEnabled ? labels.autoWith(levelLabel(playing)) : labels.auto, '-1');
-    select.add(auto);
-    levels
-      .map((l, i) => ({ l, i }))
-      .sort((a, b) => (b.l.height ?? 0) - (a.l.height ?? 0) || (b.l.bitrate ?? 0) - (a.l.bitrate ?? 0))
-      .forEach(({ l, i }) => select.add(new Option(levelLabel(l), String(i))));
-    select.value = hls.autoLevelEnabled ? '-1' : String(hls.loadLevel);
-    select.hidden = levels.length < 2;
+    if (levels.length === 1) {
+      // One quality: nothing to choose but audio only, so no "Auto" next to it.
+      select.add(new Option(levelLabel(levels[0]!), '-1'));
+    } else {
+      const auto = new Option(playing && hls.autoLevelEnabled ? labels.autoWith(levelLabel(playing)) : labels.auto, '-1');
+      select.add(auto);
+      levels
+        .map((l, i) => ({ l, i }))
+        .sort((a, b) => (b.l.height ?? 0) - (a.l.height ?? 0) || (b.l.bitrate ?? 0) - (a.l.bitrate ?? 0))
+        .forEach(({ l, i }) => select.add(new Option(levelLabel(l), String(i))));
+    }
+    const offerAudio = !!audio?.available && levels.length > 0;
+    if (offerAudio) select.add(audioOption());
+    select.value = hls.autoLevelEnabled || levels.length === 1 ? '-1' : String(hls.loadLevel);
+    select.hidden = levels.length < 2 && !offerAudio;
   };
 
   const onParsed = (): void => {
+    if (audio?.active) return render();
     const wanted = loadPreferredHeight();
     if (wanted !== null && hls.levels.length > 1) {
       const idx = levelForHeight(hls.levels, wanted);
@@ -93,6 +123,16 @@ export function createQualityMenu(
   const onSwitched = (): void => render();
 
   select.addEventListener('change', () => {
+    if (select.value === AUDIO_ONLY_OPTION) {
+      audio?.set(true);
+      return render();
+    }
+    if (audio?.active) {
+      // Back to video: at the height picked (the menu applies it once the playlists are parsed), or Auto.
+      savePreferredHeight(select.value.startsWith('h') ? Number(select.value.slice(1)) : null);
+      audio.set(false);
+      return render();
+    }
     const idx = Number(select.value);
     if (idx < 0) {
       hls.loadLevel = -1;
@@ -107,13 +147,16 @@ export function createQualityMenu(
 
   hls.on(events.MANIFEST_PARSED as never, onParsed as never);
   hls.on(events.LEVEL_SWITCHED as never, onSwitched as never);
+  const unsubscribe = audio?.subscribe(render);
   if (hls.levels.length) onParsed();
+  else render();
   return {
     element: select,
     refresh: render,
     destroy: () => {
       hls.off(events.MANIFEST_PARSED as never, onParsed as never);
       hls.off(events.LEVEL_SWITCHED as never, onSwitched as never);
+      unsubscribe?.();
       select.remove();
     },
   };

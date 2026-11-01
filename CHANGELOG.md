@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Viewers can listen to the sound only, to save data.** The quality menu on the watch page has a new choice, **Audio only (saves data)**: the live keeps playing with sound, without the picture, and uses much less data (about 85% less than 360p; roughly 50 to 70 MB per hour instead of over 400 MB). Handy on a phone with mobile data, or when the viewer only wants to listen. Instead of the video, the player shows your picture and name from "Your page" (when you set them) and "Audio only". Picking a video quality brings the picture back, still close to live. The browser remembers the choice for next time. It works with and without the quality options, and nothing changes for viewers who do not pick it.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed

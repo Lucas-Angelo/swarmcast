@@ -14,6 +14,7 @@ import {
   createManifestReloader,
   hlsConfigFor,
   latencyFor,
+  loadAudioOnly,
   mismatchWindow,
   playlistsKnown,
   type applyProfile,
@@ -21,10 +22,12 @@ import {
   p2pCoreConfigFor,
   type PlaybackProfileId,
   type PlaylistWindow,
+  saveAudioOnly,
   saveEstimate,
-  streamSwarmIdBuilder,
+  swarmIdBuilderFor,
   urgentSecondsFor,
 } from './player-config.js';
+import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
@@ -85,8 +88,8 @@ function tip(text: string): HTMLSpanElement {
   return wrap;
 }
 
-/** Quality menu (Auto/1080p/720p/480p/360p) and the Stable / Lower-delay switch, with tooltips. */
-function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void): void {
+/** Quality menu (Auto/1080p/720p/480p/360p/Audio only) and the Stable / Lower-delay switch, with tooltips. */
+function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void, source: AudioOnlySwitch): void {
   const qualityGroup = document.createElement('div');
   qualityGroup.className = 'control-group quality-group';
   playerControls.appendChild(qualityGroup);
@@ -94,7 +97,8 @@ function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<t
     auto: t('watch.quality.auto'),
     autoWith: (label) => t('watch.quality.autoWith', { label }),
     title: t('watch.quality.title'),
-  });
+    audioOnly: t('watch.quality.audioOnly'),
+  }, source);
   qualityGroup.appendChild(tip(t('watch.quality.tip')));
 
   const latencyGroup = document.createElement('div');
@@ -296,8 +300,9 @@ async function main(): Promise<void> {
       core: {
         swarmId: cfg.swarmId,
         // One swarm per quality (height), predictable so the server can allowlist exactly
-        // these infohashes. Must match apps/server/src/tracker/tracker.ts.
-        streamSwarmIdBuilder,
+        // these infohashes. Must match apps/server/src/tracker/tracker.ts. Audio only shares
+        // the video viewers' audio swarm (player-config.ts swarmIdBuilderFor).
+        streamSwarmIdBuilder: swarmIdBuilderFor(() => audioOnlyState.on),
         announceTrackers: [cfg.trackerUrl],
         rtcConfig: { iceServers: cfg.stunServers.map((urls) => ({ urls })) },
         isP2PDisabled: !stats.p2pEnabled,
@@ -427,7 +432,10 @@ async function main(): Promise<void> {
   // Each viewer's delay adapts to their connection (latency-controller.ts, docs/QUALITY.md).
   adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, ...delayTestFlags(location.search, cfg.testHooks === true) });
   fitLatency();
-  mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id));
+  // "Audio only" (audio-only.ts): every load of the source below asks it which playlist to load.
+  const source = createAudioOnlySwitch({ hls, events: Hls.Events, videoUrl: cfg.playlistUrl, saved: loadAudioOnly(), save: saveAudioOnly, load: (_url, why) => reloadSource(why) });
+  mountAudioOnlyPoster(video.parentElement!, { labels: { title: t('watch.audioOnly.title'), hint: t('watch.audioOnly.hint') }, brand: () => fetchPosterBrand() });
+  mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id), source);
   setInterval(showDelay, 1000);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
@@ -436,18 +444,19 @@ async function main(): Promise<void> {
     stats.reloads += 1;
     stats.lastReload = why;
     debugLog(`reloading the source (${why})`);
-    hls.loadSource(cfg.playlistUrl);
+    hls.loadSource(source.url());
   };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
   // or ffmpeg fell back to the original quality): a media playlist the player knows may be
   // gone for good. Repeated 404s on media playlists re-read the multivariant playlist.
-  const reloader = createManifestReloader(() => reloadSource('media playlists gone'));
+  const reloader = createManifestReloader(() => reloadSource('media playlists gone'), () => (source.active ? AUDIO_ONLY_GONE_AFTER : 3));
   hls.on(Hls.Events.LEVEL_LOADED, () => reloader.reset());
 
   let networkErrors = 0;
   hls.on(Hls.Events.ERROR, (_ev, data: ErrorData) => {
     const code = (data.response as { code?: number } | undefined)?.code;
     reloader.onError(data.details, code);
+    source.onError(data.details, code);
     if (code === 429) stats.http429 += 1;
     if (code === 401 || code === 403) {
       void loadConfig().then((c) => {
@@ -566,7 +575,7 @@ async function main(): Promise<void> {
 
   showOverlay('watch.waiting');
   setStatus('watch.connecting');
-  hls.loadSource(cfg.playlistUrl);
+  hls.loadSource(source.url());
   hls.attachMedia(video);
   (window as unknown as { __hls: unknown }).__hls = hls;
 

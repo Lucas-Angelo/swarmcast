@@ -2,11 +2,12 @@ import crypto from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { PLAYLIST_WINDOW_S, type SourceInfo } from '@swarmcast/shared';
+import { AUDIO_ONLY_DEFAULT_BPS, AUDIO_ONLY_PLAYLIST, PLAYLIST_WINDOW_S, type SourceInfo } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
 import {
   SAFE_NAME,
   DiscontinuityClock,
+  audioRendition,
   PlaylistStitcher,
   cleanMultivariant,
   fileName,
@@ -14,6 +15,7 @@ import {
   mediaPlaylistUris,
   parseMediaPlaylist,
   parseMultivariant,
+  renderAudioOnlyMultivariant,
   type MediaEntry,
   type MultivariantInfo,
 } from './playlist.js';
@@ -266,7 +268,23 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
 
   getPlaylist(name: string): string | undefined {
     if (name === 'index.m3u8') return this.multivariant ?? undefined;
+    if (name === AUDIO_ONLY_PLAYLIST) return this.audioOnlyMultivariant() ?? undefined;
     return this.playlists.get(name);
+  }
+
+  /**
+   * The audio-only multivariant (AUDIO_ONLY_PLAYLIST, docs/QUALITY.md "Audio only"), built from
+   * the multivariant of the source being served, so it follows MediaMTX's and the ladder's audio
+   * playlist names (and a switch between them) by itself. Advertised at the measured bitrate of
+   * that audio playlist (OBS's default until measured). Null until the stream is served, and when
+   * it has no separate audio rendition.
+   */
+  private audioOnlyMultivariant(): string | null {
+    if (this.multivariant === null) return null;
+    const audio = audioRendition(this.multivariantRaw);
+    if (!audio) return null;
+    const kbps = this.kbpsByPlaylist.get(audio.name) ?? 0;
+    return renderAudioOnlyMultivariant(this.multivariantRaw, kbps > 0 ? kbps * 1000 : AUDIO_ONLY_DEFAULT_BPS);
   }
 
   /**
@@ -278,6 +296,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
    */
   isGone(name: string): boolean {
     if (!this.available || name === 'index.m3u8') return false;
+    // The stream being served has no separate audio: no audio-only playlist until OBS reconnects.
+    if (name === AUDIO_ONLY_PLAYLIST) return audioRendition(this.multivariantRaw) === null;
     return !mediaPlaylistUris(this.multivariantRaw).some((uri) => fileName(uri) === name);
   }
 

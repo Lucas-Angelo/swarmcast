@@ -20,6 +20,7 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 - **● AO VIVO / Ir para o ao vivo:** você fica de 10 a 30 segundos atrás de quem transmite, o que é normal. Ao lado, "~14 s atrás do ao vivo" mostra o seu atraso: ele se ajusta sozinho à sua conexão (mais perto do ao vivo com internet firme, mais para trás quando ela oscila, para o vídeo não travar). Se ficou mais para trás, clique em **Ir para o ao vivo**.
 - **Qualidade:** **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
+- **Só o áudio (economiza dados):** a última opção do menu de qualidade. Você ouve a live sem a imagem, e ela gasta muito menos dados: cerca de 85% menos que 360p (mais ou menos 50 a 70 MB por hora). Bom no plano de dados do celular, ou quando você só quer ouvir. No lugar do vídeo aparecem a foto e o nome de quem transmite, ou "Só o áudio". Escolha uma qualidade (ou **Auto**) para ver a imagem de novo. O navegador lembra a escolha na próxima vez.
 - **Reprodução: Estável ou Menos atraso.** **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P):** vem desligada por padrão; você pode ligar (veja abaixo).
 
@@ -50,7 +51,8 @@ Você pode desligar quando quiser e continuar assistindo normalmente. A sua esco
 - **A live está lotada:** quem transmite limitou quantas pessoas podem assistir ao mesmo tempo. Tente de novo daqui a pouco.
 - **"A live acabou":** a live terminou. Valeu por assistir!
 - **"Você foi removido":** quem transmite tirou você desta live.
-- **Fica travando:** escolha uma qualidade menor ou a reprodução **Estável**.
+- **Fica travando:** escolha uma qualidade menor ou a reprodução **Estável**. Com a internet muito lenta, **Só o áudio** mantém o som tocando.
+- **Não aparece "Só o áudio" no menu:** a transmissão não tem o som separado da imagem, então ele não pode tocar sozinho.
 - **"Navegador não suportado":** atualize o navegador ou abra o link no Chrome, Edge, Firefox ou Safari.
 
 ![A página que aparece com um link antigo ou errado: Link inválido.](../../../assets/guides/viewers/pt-br/invalid.webp)
