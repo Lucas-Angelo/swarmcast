@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import { firefoxEnv } from '../lib/firefox.mjs';
+import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 import { setupObs, ensureMediaFile, OBS_DIR, SCENE } from './setup-obs.mjs';
 
@@ -352,8 +352,8 @@ async function getBrowser(kind) {
         headless: true,
         // Its startup cache stays in memory: writing it can freeze the browser (lib/firefox.mjs).
         env: firefoxEnv(),
-        // Let Firefox autoplay muted media and use WebRTC without prompts.
-        firefoxUserPrefs: { 'media.autoplay.default': 0, 'media.navigator.permission.disabled': true },
+        // Let Firefox autoplay muted media and use WebRTC without prompts; form history off (lib/firefox.mjs).
+        firefoxUserPrefs: firefoxPrefs({ 'media.autoplay.default': 0, 'media.navigator.permission.disabled': true }),
       }),
     webkit: () => webkit.launch({ headless: true }),
   }[kind];

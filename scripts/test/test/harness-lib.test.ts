@@ -10,7 +10,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
-import { firefoxEnv } from '../lib/firefox.mjs';
+import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { serveDir } from '../lib/release-server.mjs';
@@ -391,5 +391,23 @@ describe('waitForTunnelName', () => {
     // Assert
     expect(resolve4).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe('firefoxPrefs', () => {
+  it('turns form history off, so one test never finds the names another typed under a field', () => {
+    // Act
+    const prefs = firefoxPrefs();
+
+    // Assert
+    expect(prefs['browser.formfill.enable']).toBe(false);
+  });
+
+  it("adds the harness's own preferences", () => {
+    // Act
+    const prefs = firefoxPrefs({ 'media.autoplay.default': 0 });
+
+    // Assert
+    expect(prefs).toEqual({ 'browser.formfill.enable': false, 'media.autoplay.default': 0 });
   });
 });

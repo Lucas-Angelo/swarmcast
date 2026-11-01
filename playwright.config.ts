@@ -1,5 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
-import { firefoxEnv } from './scripts/test/lib/firefox.mjs';
+import { firefoxEnv, firefoxPrefs } from './scripts/test/lib/firefox.mjs';
 import { e2ePorts } from './scripts/test/lib/ports.mjs';
 
 // The e2e server's public port (scripts/test/lib/ports.mjs, moved by SWARMCAST_E2E_PORT_OFFSET).
@@ -72,11 +72,12 @@ export default defineConfig({
         launchOptions: {
           // Its startup cache stays in memory: writing it can freeze the browser (firefox.mjs).
           env: firefoxEnv(),
-          firefoxUserPrefs: {
+          // Form history off: one test would find the names another typed (firefox.mjs).
+          firefoxUserPrefs: firefoxPrefs({
             'media.autoplay.default': 0,
             'media.peerconnection.ice.obfuscate_host_addresses': false,
             'media.peerconnection.ice.loopback': true,
-          },
+          }),
         },
       },
     },

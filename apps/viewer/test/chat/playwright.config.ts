@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
-import { firefoxEnv } from '../../../../scripts/test/lib/firefox.mjs';
+import { firefoxEnv, firefoxPrefs } from '../../../../scripts/test/lib/firefox.mjs';
 
 // The viewer chat UI against a mock hub (mock-hub.ts): the built watch page (npm run build -w
 // @swarmcast/viewer) is served by page.route from apps/viewer/dist and /control is a
@@ -32,7 +32,7 @@ export default defineConfig({
     // Chromium, like the main suite's `chromium` project.
     // @bundle (a check of the built files, no browser) runs once, in the chromium project.
     { name: 'chromium', use: { ...devices['Desktop Chrome'], ...(process.env.CI ? { channel: 'chrome' } : {}) }, grepInvert: /@mobile/ },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'], launchOptions: { env: firefoxEnv() } }, grepInvert: /@mobile|@bundle/ },
+    { name: 'firefox', use: { ...devices['Desktop Firefox'], launchOptions: { env: firefoxEnv(), firefoxUserPrefs: firefoxPrefs() } }, grepInvert: /@mobile|@bundle/ },
     { name: 'webkit', use: { ...devices['Desktop Safari'] }, grepInvert: /@mobile|@bundle/ },
     { name: 'mobile-webkit', use: { ...devices['iPhone 14'] }, grep: /@mobile|@render|screenshots/ },
     { name: 'mobile-chromium', use: { ...devices['Pixel 7'], ...(process.env.CI ? { channel: 'chrome' } : {}) }, grep: /@mobile|@render/ },
