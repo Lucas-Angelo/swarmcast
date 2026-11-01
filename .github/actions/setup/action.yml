@@ -30,22 +30,6 @@ inputs:
 runs:
   using: composite
   steps:
-    # One macOS VM reached neither github.com (UND_ERR_CONNECT_TIMEOUT) nor the cache service
-    # (ENOTFOUND) for its first minute and lost a release run. Wait up to 2 minutes for
-    # github.com, and say so when it had to wait (the downloads retry too).
-    - name: Wait for github.com (macOS)
-      if: runner.os == 'macOS'
-      shell: bash
-      run: |
-        start=$SECONDS
-        for i in $(seq 1 12); do
-          if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
-            [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
-            exit 0
-          fi
-          sleep 5
-        done
-        echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
     # apt settings for every apt call of the job (apt-retry.sh adds a time limit per try). The
     # file must sort after the image's own /etc/apt/apt.conf.d/zz-retries (Retries 1, Timeout 15),
     # which overrode our earlier 99-ci-retries: apt reads the folder in order, the last value wins.
@@ -104,17 +88,44 @@ runs:
     # the npm caches on main held 677 B to 75 KB and every `npm ci` went to the registry. This
     # file is part of the key: that moves past those empty entries (they are never restored
     # again and expire), and a change here that changes what the cache holds starts a new one.
+    # setup-node saves its cache at the end of every job that missed it, so it runs with the
+    # cache on main only; elsewhere the next two steps restore main's entry without saving one
+    # (pull requests that changed a lockfile each saved ~380 MB, five OSes x 76 MB, toward the
+    # 10 GB limit: .github/workflows/README.md, "Caches").
     - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       with:
         node-version: 24.x
-        cache: ${{ inputs.npm-ci == 'true' && 'npm' || '' }}
-        package-manager-cache: ${{ inputs.npm-ci == 'true' }}
+        cache: ${{ inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' && 'npm' || '' }}
+        package-manager-cache: ${{ inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' }}
         cache-dependency-path: |
           package-lock.json
           site/package-lock.json
           .github/actions/setup/action.yml
+    # Not main: setup-node's own key (node-cache-<RUNNER_OS>-<process.arch>-npm-<hashFiles of the
+    # same three files>) and path (`npm config get cache`, part of the cache version), so the
+    # exact entry main saved is found; after a lockfile change, main's latest entry for this OS
+    # (`npm ci --prefer-offline` takes what still matches and downloads the rest).
+    - name: npm cache key (restore only, not main)
+      if: inputs.npm-ci == 'true' && github.ref != 'refs/heads/main'
+      id: npm-cache
+      shell: bash
+      env:
+        HASH: ${{ hashFiles('package-lock.json', 'site/package-lock.json', '.github/actions/setup/action.yml') }}
+      run: |
+        prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
+        { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
+    - name: Restore main's npm cache (not main)
+      if: inputs.npm-ci == 'true' && github.ref != 'refs/heads/main'
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.npm-cache.outputs.path }}
+        key: ${{ steps.npm-cache.outputs.key }}
+        restore-keys: ${{ steps.npm-cache.outputs.prefix }}
 
     # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared:
     # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs) and pkg's Node.js base binaries
