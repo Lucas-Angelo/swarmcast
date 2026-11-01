@@ -14,7 +14,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, 3 the Help the stream (P2P) switch, turned on here, and the chat on the right.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, 3 the Help the stream (P2P) switch, turned on here, 4 Share, and the chat on the right.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
@@ -22,10 +22,13 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 - **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P):** off by default; you can turn it on (see below).
+- **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.
+
+While the live plays, your phone or computer **keeps the screen on**, so it does not dim or lock in the middle of the stream (pause and it can sleep again). With the sound on, your phone's **lock screen** and notifications show the streamer's name and picture with a play / pause button.
 
 On a phone the same controls sit under the video:
 
-![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ## The chat
 

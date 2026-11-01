@@ -16,8 +16,9 @@ export type TunnelProviderName = z.infer<typeof tunnelProviderSchema>;
  *    free quick tunnel really holds (docs/ARCHITECTURE.md). A 500 saved before version 3 is the
  *    old default and becomes 120 once; other values are the streamer's choice and stay.
  * 4: `chat` (v0.4.0): only adds the defaults (chat on, GIFs off, slow mode 2 s).
+ * 5: `allowViewerShare` (v0.5.0): only adds the default (the watch page's Share button is on).
  */
-export const CONFIG_VERSION = 4;
+export const CONFIG_VERSION = 5;
 
 /** `maxViewers` default before config version 3. */
 const OLD_DEFAULT_MAX_VIEWERS = 500;
@@ -40,6 +41,8 @@ export const configSchema = z.object({
   showViewerCount: z.boolean().default(true),
   /** Viewers may share video with each other (P2P); the panel's emergency switch for everyone. */
   allowViewerP2P: z.boolean().default(true),
+  /** The watch page's Share button sends the current link (only to viewers who joined with it). */
+  allowViewerShare: z.boolean().default(true),
   /** Hard cap on simultaneous viewer sessions; new joins get "full" beyond it (app-level DoS guard). */
   maxViewers: z.number().int().min(1).max(100_000).default(QUICK_TUNNEL_MAX_VIEWERS),
   /** Sessions one browser (device cookie) may hold; the oldest is replaced beyond it. */

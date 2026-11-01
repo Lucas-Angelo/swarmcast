@@ -5,6 +5,7 @@
 // gate) and every fixture restores what its test changed, so no test depends on another's order.
 import fs from 'node:fs';
 import path from 'node:path';
+import zlib from 'node:zlib';
 import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type TestInfo } from '@playwright/test';
 import WebSocket from 'ws';
 import type { AdminChatState, AdminState, ChatItem, ChatSettings, ChatYou, QualitySettingsUpdate, QualityState, ServerMessage } from '@swarmcast/shared';
@@ -812,6 +813,36 @@ export class ChatControl {
     if (this.protectChanged || (await this.state()).effective.protect !== 'off') await admin('/api/chat/protect', { mode: 'off' });
     this.protectChanged = false;
   }
+}
+
+/**
+ * A w × h RGB PNG drawn here (a soft gradient), so the upload carries bytes the test made itself,
+ * not a file from disk.
+ */
+export function makePng(w: number, h: number): Buffer {
+  const chunk = (type: string, data: Buffer): Buffer => {
+    const head = Buffer.alloc(8);
+    head.writeUInt32BE(data.length, 0);
+    head.write(type, 4, 'latin1');
+    const crc = Buffer.alloc(4);
+    crc.writeUInt32BE(zlib.crc32(Buffer.concat([head.subarray(4), data])) >>> 0, 0);
+    return Buffer.concat([head, data, crc]);
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(w, 0);
+  ihdr.writeUInt32BE(h, 4);
+  ihdr[8] = 8; // bit depth
+  ihdr[9] = 2; // RGB
+  const rows = Buffer.alloc(h * (1 + w * 3));
+  for (let y = 0; y < h; y++) {
+    const o = y * (1 + w * 3);
+    for (let x = 0; x < w; x++) {
+      rows[o + 1 + x * 3] = 20 + ((x * 120) / w) | 0;
+      rows[o + 2 + x * 3] = 110 + ((y * 100) / h) | 0;
+      rows[o + 3 + x * 3] = 120;
+    }
+  }
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', ihdr), chunk('IDAT', zlib.deflateSync(rows)), chunk('IEND', Buffer.alloc(0))]);
 }
 
 /** The `branding` fixture: the streamer's page ("Your page") through the panel API, reset after the test. */

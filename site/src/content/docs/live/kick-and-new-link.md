@@ -23,6 +23,7 @@ Click **Remove from P2P**. The person keeps watching, straight from your compute
 
 1. Click **Generate new link**, then **Copy link** and send the new link to your members.
 2. The old link stops working at once for anyone **new**. People already watching stay, unless you also click **Disconnect everyone**: then everybody needs the new link.
+3. People already watching lose their **Share** button: whoever got the leaked link cannot pass the new one on. Only people who join with the new link can share it.
 
 Anyone who opens an old link sees this:
 
@@ -34,9 +35,10 @@ Every live gets a new link automatically. A link you shared yesterday does not w
 
 ## Limits against fake viewers
 
-![The Your internet card: 1 Max upload for viewers, 2 Turn off after … minutes without video, 3 Allow P2P for viewers, 4 Max viewers at once, then Sessions per browser and Save.](../../../assets/guides/live/en/limits.webp)
+![The Your internet card: 1 Max upload for viewers, 2 Turn off after … minutes without video, 3 Viewers can share the link, 4 Allow P2P for viewers, 5 Max viewers at once, then Sessions per browser and Save.](../../../assets/guides/live/en/limits.webp)
 
 - **Max viewers at once:** when the live is full, new people see "This stream is full". Nobody already watching is dropped. It starts at 120, about what the free tunnel holds.
 - **Sessions per browser:** how many tabs one browser may keep open (the oldest is replaced).
+- **Viewers can share the link** (on by default): viewers get a **Share** button that sends your current link to a friend. Turn it off if only you should hand out the link; the button then disappears for everyone at once.
 
 Click **Save** after a change. More in [Security and protection](/swarmcast/live/protection/).

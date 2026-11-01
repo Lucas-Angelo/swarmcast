@@ -110,10 +110,25 @@ export type ServerMessage =
   /** `viewerCount`: people watching now, or null when the streamer hides the count. */
   /** `p2pAllowed`: this viewer may use P2P now; `p2pForAll`: the streamer's switch for everyone; `p2pBlock`: see P2PBlockReason. */
   /** `chat`: the chat snapshot (absent while the chat is off). */
-  | { t: 'hello'; sessionId: string; nickname: string; p2pAllowed: boolean; p2pForAll?: boolean; p2pBlock?: P2PBlockReason; blockedPeers: string[]; viewerCount: number | null; chat?: ChatSnapshot; brandRev?: number }
+  /** `shareAllowed`: this viewer may get the link to share (GET /api/share answers): the streamer allows it and the viewer joined with the current link. */
+  | {
+      t: 'hello';
+      sessionId: string;
+      nickname: string;
+      p2pAllowed: boolean;
+      p2pForAll?: boolean;
+      p2pBlock?: P2PBlockReason;
+      blockedPeers: string[];
+      viewerCount: number | null;
+      chat?: ChatSnapshot;
+      brandRev?: number;
+      shareAllowed?: boolean;
+    }
   /** Viewer count changed (sent at most every few seconds); null = hidden by the streamer. */
   | { t: 'viewers'; count: number | null }
   | { t: 'p2p'; allowed: boolean; forAll?: boolean; reason?: P2PBlockReason }
+  /** May this viewer share the link now (see hello.shareAllowed)? Sent when the streamer's switch changes or after "Generate new link". */
+  | { t: 'share'; allowed: boolean }
   | { t: 'block-peers'; peerIds: string[] }
   | { t: 'unblock-peers'; peerIds: string[] }
   | { t: 'kicked' }
@@ -152,6 +167,15 @@ export interface ViewerConfig {
   testHooks?: true;
 }
 
+/**
+ * GET /api/share: the current live link, for the watch page's Share button. Only for a viewer who
+ * joined with the current link while the streamer allows sharing (else 404): after "Generate new
+ * link", people who came in with the old link never get the new one.
+ */
+export interface ShareLinkResponse {
+  url: string;
+}
+
 /** Payload of the signed integrity manifest. */
 export interface IntegrityManifest {
   /** Random id of the current live; changes on every Start. */
@@ -175,6 +199,8 @@ export const settingsSchema = z.object({
   showViewerCount: z.boolean().default(true),
   /** Viewers may share video with each other (P2P). Off = emergency switch: everyone on HTTPS. */
   allowViewerP2P: z.boolean().default(true),
+  /** The watch page has a Share button with the current link (only for viewers who joined with it). */
+  allowViewerShare: z.boolean().default(true),
   /** Cap on simultaneous viewer sessions (omitted = keep the current value). */
   maxViewers: z.number().int().min(1).max(100_000).optional(),
   /** Sessions one browser may hold (omitted = keep the current value). */

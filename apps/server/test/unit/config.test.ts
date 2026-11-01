@@ -12,7 +12,7 @@ import { tempDir } from './helpers.js';
 //
 // Migration history: version 2 turned the browser check on (v0.1.0 saved its old default, off,
 // in every file), version 3 lowered the default maxViewers from 500 to what a quick tunnel holds,
-// version 4 added the chat.
+// version 4 added the chat, version 5 the watch page's Share switch.
 
 /** A config.json path in a fresh folder. */
 const configFile = (): string => path.join(tempDir('sc-cfg-'), 'config.json');
@@ -101,10 +101,10 @@ describe('config', () => {
   });
 
   it.each([
-    ['a file without a version and the old "off"', { security: { requireBrowserCheck: false } }, { config: { configVersion: 4, security: { requireBrowserCheck: true } }, changed: true }],
-    ['a file without the switch: only the version is added', { uploadLimitMbps: 5 }, { config: { uploadLimitMbps: 5, configVersion: 4 }, changed: true }],
-    ['a version 2 file (its "off" is the streamer\'s choice)', { configVersion: 2, security: { requireBrowserCheck: false } }, { config: { configVersion: 4, security: { requireBrowserCheck: false } }, changed: true }],
-    ['a version 3 file', { configVersion: 3, security: { requireBrowserCheck: false } }, { config: { configVersion: 4, security: { requireBrowserCheck: false } }, changed: true }],
+    ['a file without a version and the old "off"', { security: { requireBrowserCheck: false } }, { config: { configVersion: CONFIG_VERSION, security: { requireBrowserCheck: true } }, changed: true }],
+    ['a file without the switch: only the version is added', { uploadLimitMbps: 5 }, { config: { uploadLimitMbps: 5, configVersion: CONFIG_VERSION }, changed: true }],
+    ['a version 2 file (its "off" is the streamer\'s choice)', { configVersion: 2, security: { requireBrowserCheck: false } }, { config: { configVersion: CONFIG_VERSION, security: { requireBrowserCheck: false } }, changed: true }],
+    ['a version 3 file', { configVersion: 3, security: { requireBrowserCheck: false } }, { config: { configVersion: CONFIG_VERSION, security: { requireBrowserCheck: false } }, changed: true }],
   ])('migration: %s', (_what, input, result) => {
     // Act
     const m = migrateConfig(input);
@@ -119,7 +119,7 @@ describe('config', () => {
     expect(m.config).toMatchObject({ security: { requireBrowserCheck: true } });
   });
 
-  it.each([4, 5])('migration: a version %i file is left alone', (configVersion) => {
+  it.each([5, 6])('migration: a version %i file is left alone', (configVersion) => {
     // Act
     const m = migrateConfig({ configVersion, security: { requireBrowserCheck: false } });
     // Assert
@@ -151,9 +151,33 @@ describe('config', () => {
     // Act
     const c = loadConfig(f);
     // Assert
-    expect(c.configVersion).toBe(4);
+    expect(c.configVersion).toBe(CONFIG_VERSION);
     expect(c.chat).toMatchObject({ enabled: true, slowModeS: 2, maxGraphemes: 200, content: { text: true, emotes: true, gifs: false }, gif: { key: '' } });
-    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: 4, chat: { enabled: true } });
+    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: CONFIG_VERSION, chat: { enabled: true } });
+  });
+
+  it("version 5 adds the watch page's Share switch, on, written back", () => {
+    // Arrange
+    const f = configFile();
+    const v4 = { ...defaultConfig(), configVersion: 4 } as Record<string, unknown>;
+    delete v4.allowViewerShare;
+    fs.writeFileSync(f, JSON.stringify(v4));
+    // Act
+    const c = loadConfig(f);
+    // Assert
+    expect(c.configVersion).toBe(5);
+    expect(c.allowViewerShare).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: 5, allowViewerShare: true });
+  });
+
+  it('a saved "off" for sharing is kept', () => {
+    // Arrange
+    const f = configFile();
+    saveConfig(f, { ...loadConfig(f), allowViewerShare: false });
+    // Act
+    const c = loadConfig(f);
+    // Assert
+    expect(c.allowViewerShare).toBe(false);
   });
 
   it('saved chat choices are kept', () => {
@@ -174,7 +198,7 @@ describe('config', () => {
   });
 
   it.each([
-    ['without a version', { maxViewers: 500 }, { maxViewers: QUICK_TUNNEL_MAX_VIEWERS, configVersion: 4 }],
+    ['without a version', { maxViewers: 500 }, { maxViewers: QUICK_TUNNEL_MAX_VIEWERS, configVersion: CONFIG_VERSION }],
     ['at version 2', { configVersion: 2, maxViewers: 500 }, { maxViewers: QUICK_TUNNEL_MAX_VIEWERS }],
   ])('migrates the old default 500 saved %s', (_what, input, config) => {
     // Act
@@ -189,7 +213,7 @@ describe('config', () => {
     const chosen = migrateConfig({ configVersion: 3, maxViewers: 500 });
     // Assert
     expect(other.config).toMatchObject({ maxViewers: 300 });
-    expect(chosen).toEqual({ config: { configVersion: 4, maxViewers: 500 }, changed: true });
+    expect(chosen).toEqual({ config: { configVersion: CONFIG_VERSION, maxViewers: 500 }, changed: true });
   });
 
   it('a file with the old 500 loads as the new default; a 500 saved after that stays', () => {

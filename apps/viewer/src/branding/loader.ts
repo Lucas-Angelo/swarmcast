@@ -1,5 +1,6 @@
 // The only branding code in the pages' main bundles: it loads the branding chunk (brand.ts) and
 // passes it the page's events. If the chunk fails, the stock SwarmCast page stays.
+import type { PublicBranding } from '@swarmcast/shared/branding';
 import type { BrandController, BrandPage } from './brand.js';
 
 /** brand.ts startBrand, which the join page loads with the branding chunk. */
@@ -55,7 +56,11 @@ export interface BrandRouter {
   ended(): void;
 }
 
-export function createBrandRouter(page: BrandPage, debug?: (msg: string) => void): BrandRouter {
+/**
+ * The watch page's branding chunk. `onData` gets the streamer's page each time it is applied
+ * (null without one): the lock-screen title and picture (media-session.ts) and the share title.
+ */
+export function createBrandRouter(page: BrandPage, debug?: (msg: string) => void, onData?: (data: PublicBranding | null) => void): BrandRouter {
   let ctl: BrandController | null = null;
   const queue: Array<(c: BrandController) => void> = [];
   const run = (fn: (c: BrandController) => void): void => {
@@ -64,7 +69,7 @@ export function createBrandRouter(page: BrandPage, debug?: (msg: string) => void
   };
   import('./brand.js')
     .then(async (m) => {
-      const c = m.startBrand(page);
+      const c = m.startBrand(page, onData ? { onData } : {});
       await c.refresh();
       ctl = c;
       for (const fn of queue.splice(0)) fn(c);

@@ -305,6 +305,7 @@ form button[type='submit'] {
 }
 .bar-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--sp-2);
 }
@@ -344,10 +345,38 @@ button.golive .behind {
   font-weight: var(--sc-weight-medium);
   color: var(--sc-muted);
 }
-button#unmute {
+button#unmute,
+button#share {
   min-height: 32px;
   padding: 0 var(--sp-3);
   font-size: var(--fs-sm);
+}
+/* "Link copied" next to Share (a polite live region; empty the rest of the time). */
+.share-status {
+  font-size: var(--fs-sm);
+  color: var(--sc-muted);
+  white-space: nowrap;
+}
+.share-status:empty {
+  display: none;
+}
+/* The link to copy by hand when the browser refused the clipboard: a full row under the bar. */
+.share-fallback {
+  flex-basis: 100%;
+}
+.share-fallback label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--fs-sm);
+  color: var(--sc-muted);
+}
+.share-fallback input {
+  flex: 1 1 16rem;
+  height: 36px;
+  font-size: var(--fs-sm);
+  color: var(--sc-ink);
 }
 
 /* Settings card under the player. */
@@ -544,7 +573,8 @@ button#unmute {
     margin: 0 var(--sp-4) var(--sp-4);
   }
   button.golive,
-  button#unmute {
+  button#unmute,
+  button#share {
     min-height: 36px;
   }
 }
