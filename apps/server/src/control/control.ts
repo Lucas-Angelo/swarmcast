@@ -5,6 +5,9 @@ import {
   CHAT_FRAME_MAX_BYTES,
   CHAT_FRAME_PREFIX,
   CHAT_MAX_FRAMES_PER_10S,
+  CHAT_REACT_FRAME_PREFIX,
+  CHAT_REACT_FRAMES_MAX_PER_10S,
+  CHAT_REACT_FRAMES_PER_10S,
   CONTROL_CLOSE,
   CONTROL_MAX_MESSAGE,
   HASH_FAILURE_THRESHOLD,
@@ -31,6 +34,8 @@ type ControlSocket = WebSocket & {
   opens: { n: number; at: number };
   /** Chat frames in the current 10 s window (their own budget: chat never costs the control one). */
   chatFrames: { n: number; at: number };
+  /** Reaction frames in the current 10 s window (their own budget: reactions never cost the chat one). */
+  reactFrames: { n: number; at: number };
   upgradeReq: IncomingMessage;
   channels: Map<number, TrackerChannel>;
 };
@@ -46,6 +51,18 @@ const MAX_FRAMES_PER_10S = 200;
 const MAX_CHANNEL_OPENS_PER_MIN = 12;
 /** Raw bytes that start every chat frame (the viewer serialises `t` first). */
 const CHAT_PREFIX = Buffer.from(CHAT_FRAME_PREFIX);
+const REACT_PREFIX = Buffer.from(CHAT_REACT_FRAME_PREFIX);
+
+const startsWith = (data: Buffer, prefix: Buffer): boolean => data.length >= prefix.length && data.subarray(0, prefix.length).equals(prefix);
+
+/**
+ * What a raw viewer frame is, from its first bytes only (nothing is decoded): a reaction frame
+ * (`{"t":"chat.react"`), another chat frame (`{"t":"chat.`), or neither (null).
+ */
+export function chatFrameKind(data: Buffer): 'react' | 'chat' | null {
+  if (!startsWith(data, CHAT_PREFIX)) return null;
+  return startsWith(data, REACT_PREFIX) ? 'react' : 'chat';
+}
 
 /**
  * Control channel: server → viewer orders (kick, P2P revoke, block peers, end) and
@@ -106,6 +123,7 @@ export class ControlChannel implements ChatHost {
     s.frames = { n: 0, at };
     s.opens = { n: 0, at };
     s.chatFrames = { n: 0, at };
+    s.reactFrames = { n: 0, at };
     s.upgradeReq = req;
     s.channels = new Map();
     let set = this.conns.get(session.id);
@@ -153,7 +171,12 @@ export class ControlChannel implements ChatHost {
       return;
     }
     // Chat frames: their own budget, the raw size checked before the bytes are even decoded.
-    if (data.length >= CHAT_PREFIX.length && data.subarray(0, CHAT_PREFIX.length).equals(CHAT_PREFIX)) {
+    const chatKind = chatFrameKind(data);
+    if (chatKind === 'react') {
+      this.onReactFrame(s, data, now);
+      return;
+    }
+    if (chatKind === 'chat') {
       this.onChatFrame(s, data, now);
       return;
     }
@@ -231,6 +254,32 @@ export class ControlChannel implements ChatHost {
       chat.tooBig(s);
       return;
     }
+    const session = this.access.sessions.get(s.sessionId);
+    if (!session) {
+      s.close(CONTROL_CLOSE.sessionEnded, 'session ended');
+      return;
+    }
+    session.lastSeenAt = now;
+    chat.frame(session, s, data.toString());
+  }
+
+  /**
+   * Reaction frames (reserved for 0.5.0): a budget of their own, so a viewer who taps reactions
+   * while chatting never reaches the chat budget that terminates the socket (and its P2P channel).
+   * Past CHAT_REACT_FRAMES_PER_10S they are ignored; past CHAT_REACT_FRAMES_MAX_PER_10S (scripts
+   * only) the socket is terminated. Oversized ones are ignored before decoding (no reply: a
+   * reaction is fire-and-forget).
+   */
+  private onReactFrame(s: ControlSocket, data: Buffer, now: number): void {
+    if (!s.reactFrames || now - s.reactFrames.at > 10_000) s.reactFrames = { n: 0, at: now };
+    const n = ++s.reactFrames.n;
+    if (n > CHAT_REACT_FRAMES_MAX_PER_10S) {
+      this.chat?.terminated();
+      s.terminate();
+      return;
+    }
+    const chat = this.chat;
+    if (!chat || n > CHAT_REACT_FRAMES_PER_10S || data.length > CHAT_FRAME_MAX_BYTES) return;
     const session = this.access.sessions.get(s.sessionId);
     if (!session) {
       s.close(CONTROL_CLOSE.sessionEnded, 'session ended');

@@ -92,28 +92,36 @@ export class ChatStore {
     }
   }
 
+  /** Items in order; a malformed one (missing or mistyped fields) is skipped on its own, like an unknown kind. */
   private applyItems(items: readonly ChatItem[]): void {
+    if (!Array.isArray(items)) return;
     for (const it of items) {
+      if (it === null || typeof it !== 'object') continue;
       switch (it.k) {
         case 'u':
+          if (typeof it.au?.a !== 'string') break;
           this.roster.set(it.au.a, it.au);
           this.unknown.delete(it.au.a);
           break;
         case 'm':
+          if (typeof it.a !== 'string' || !Number.isSafeInteger(it.s)) break;
           if (!this.roster.has(it.a)) this.unknown.add(it.a);
         // falls through
         case 'sys':
+          if (!Number.isSafeInteger(it.s)) break;
           if (it.s <= this.lastSeq && this.items.some((x) => x.s === it.s)) break;
           this.items.push(it);
           if (it.s > this.lastSeq) this.lastSeq = it.s;
           else this.items.sort((x, y) => x.s - y.s);
           break;
         case 'd': {
+          if (!Array.isArray(it.s)) break;
           const gone = new Set(it.s);
           this.items = this.items.filter((x) => !(x.k === 'm' && gone.has(x.s)));
           break;
         }
         case 'clr':
+          if (!Number.isSafeInteger(it.s)) break;
           this.items = this.items.filter((x) => x.s > it.s);
           break;
         case 'skip':

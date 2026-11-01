@@ -9,6 +9,12 @@ import type { ChatContentKind, ChatProtect, ChatSettings, GifProvider, GifRef, c
  *
  * Compatibility (plan §4.7): clients ignore unknown `t` and unknown `k`; new fields are
  * optional; a breaking change bumps CHAT_PROTOCOL_VERSION and old pages show "reload".
+ *
+ * Only `m` and `sys` ever take a `seq` (CHAT_SEQ_KINDS): a client sees a gap in seq as missed items
+ * and asks to resume, so a new kind that took one would stall every older page. New kinds are
+ * seq-less, like `d` and `clr`: durable ones (never dropped; a slow socket that missed one gets a
+ * fresh snapshot) or ephemeral ones (latest-wins state such as vote or reaction counts: at most one
+ * pending per key, dropped first under upload pressure, never a reason for a snapshot).
  */
 
 export type ChatRole = 'viewer' | 'streamer';
@@ -76,6 +82,16 @@ export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatC
 
 /** Ring items (they carry a `seq`). */
 export type ChatRingItem = ChatMessageItem | ChatSystemItem;
+
+/** The only item kinds that take a `seq` (see the compatibility note above). */
+export const CHAT_SEQ_KINDS: readonly ChatRingItem['k'][] = ['m', 'sys'];
+
+/** A ring item: one of CHAT_SEQ_KINDS. Any other kind, known or not, never counts in the seq order. */
+export function isChatSeqItem(item: unknown): item is ChatRingItem {
+  if (item === null || typeof item !== 'object') return false;
+  const k = (item as { k?: unknown }).k;
+  return k === 'm' || k === 'sys';
+}
 
 /** Settings every viewer gets (the effective values: manual + automatic protection). */
 export interface ChatPublicSettings {

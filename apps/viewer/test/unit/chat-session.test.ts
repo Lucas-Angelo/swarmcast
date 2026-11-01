@@ -1,6 +1,7 @@
 // The viewer's chat state without DOM (chat/session.ts): server frames become calls on a ChatView,
 // in seq order and without repeats, with a resume request on a gap. Each test starts from a hello
 // whose snapshot holds messages 1 and 2 from Ana, unless it says otherwise.
+import fc from 'fast-check';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, ChatPublicSettings, ChatServerMessage, ChatSnapshot } from '@swarmcast/shared/chat';
 import { ChatSession, RESUME_WAIT_MS, type ChatEntry, type ChatView, type ClientFrame } from '../../src/chat/session.js';
@@ -230,6 +231,59 @@ describe('ChatSession', () => {
     // Assert
     expect(calls).toEqual(before);
     expect(session.lastSeq).toBe(3);
+  });
+
+  it('items of new kinds are seq-less, even when they carry an `s`: never a gap, never a resume', () => {
+    // Arrange
+    const { session, shown, sent } = setup();
+    const future = [{ k: 'pin', s: 9, at: 1, a: 'k1' }, { k: 'tally', c: [3, 1] }, { k: 'rx', c: [1, 0, 2] }] as unknown as ChatItem[];
+
+    // Act
+    session.frame(batch(future[0]!, msg(3), future[1]!, msg(4), future[2]!));
+
+    // Assert
+    expect(shown).toEqual([1, 2, 3, 4]);
+    expect(sent).toEqual([]);
+    expect(session.lastSeq).toBe(4);
+  });
+
+  it('a malformed item is skipped on its own; the items around it still show', () => {
+    // Arrange
+    const { session, shown, sent } = setup();
+    const bad = [null, 7, { k: 'm', s: '3', a: 'k1', x: 'string seq' }, { k: 'u' }, { k: 'u', au: null }, { k: 'd', s: 'all' }, { k: 'm', s: 3.5, a: 'k1' }] as unknown as ChatItem[];
+
+    // Act
+    session.frame(batch(...bad.slice(0, 4), msg(3), ...bad.slice(4), msg(4)));
+
+    // Assert
+    expect(shown).toEqual([1, 2, 3, 4]);
+    expect(sent).toEqual([]);
+  });
+
+  it('fuzz: any batch of known, unknown and malformed items never throws, and lastSeq never goes back', () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const item = fc.oneof(
+      fc.integer({ min: 1, max: 40 }).map((s) => msg(s)),
+      fc.record({ k: fc.constantFrom('sys', 'd', 'clr', 'skip', 'u', 'pin', 'tally', 'zz'), s: fc.oneof(fc.integer({ min: -2, max: 40 }), fc.jsonValue()), n: fc.jsonValue(), au: fc.jsonValue(), code: fc.string() }),
+      fc.jsonValue(),
+    ) as fc.Arbitrary<unknown> as fc.Arbitrary<ChatItem>;
+    const property = fc.property(fc.array(fc.array(item, { maxLength: 12 }), { maxLength: 6 }), (batches) => {
+      const { session } = setup();
+      let last = session.lastSeq;
+      for (const items of batches) {
+        session.frame(batch(...items));
+        if (session.lastSeq < last) return false;
+        last = session.lastSeq;
+      }
+      return true;
+    });
+    // Act
+    const run = () => fc.assert(property, { numRuns: 1000, seed: 3 });
+
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('a snapshot of another protocol version asks for a reload', () => {
