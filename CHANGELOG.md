@@ -11,6 +11,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Highlight and pin chat messages.** In the panel's **Live chat**, the **⋯** menu of a message now has **Highlight** and **Pin to top**. A highlighted message stands out for everyone, with a coloured bar, in light and dark themes (up to 20 at a time). A pinned message stays at the top of everyone's chat, also for people who join later, until you **Unpin** it or for 5, 15 or 60 minutes; pinning another message replaces it, and deleting the message or clearing the chat unpins it. Viewers see "Pinned by the streamer" above the messages, never over them or the message box, can open a long one with **Show more** and hide it on their device with **✕**. Only you can highlight or pin: nobody watching can fake it. Pages left open from an older version keep working and simply do not show it.
 
+### Changed
+
+- **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
+
+### Security
+
+- The updated cloudflared includes security fixes in two of its libraries: go-jose (a key with a huge RSA size could make it work very hard; now refused) and chi. The quick tunnel SwarmCast opens does not use the affected parts, but your copy now has the fixes too.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed
