@@ -29,6 +29,8 @@
       <div class="player">
         <video id="video" controls playsinline muted autoplay></video>
         <div id="overlay" class="overlay" data-i18n="watch.connecting">Connecting…</div>
+        <!-- "Stats for nerds" (stats-toggle.ts): empty until the viewer opens it -->
+        <div id="stats" class="stats-overlay" data-testid="stats" hidden></div>
       </div>
       <section class="bar">
         <div class="status">
@@ -55,6 +57,7 @@
         </div>
         <div class="bar-actions">
           <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>LIVE</button>
+          <button id="theater" type="button" class="secondary theater-btn" data-testid="theater" hidden aria-pressed="false" title="A bigger video that uses the whole width of the window. Click again (or press T) to go back." data-i18n="watch.theater" data-i18n-title="watch.theater.tip">Theater mode</button>
           <button id="chat-show" type="button" class="secondary chat-show" data-testid="chat-show" hidden data-i18n="chat.viewer.show">Show chat</button>
           <button id="unmute" type="button" class="secondary sc-ico-volume" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">Unmute</button>
           <span id="share-status" class="share-status" role="status" data-testid="share-status"></span>
@@ -101,6 +104,10 @@
             ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Everyone in the live sees it in the chat.</span></span
           >
         </div>
+        <div class="extras-row">
+          <button id="keys-open" type="button" class="link-btn" data-testid="keys-open" aria-haspopup="dialog" data-i18n="watch.keys.open">Keyboard shortcuts</button>
+          <button id="stats-open" type="button" class="link-btn" data-testid="stats-open" aria-expanded="false" aria-controls="stats" data-i18n="watch.stats.open">Stats for nerds</button>
+        </div>
       </section>
     </main>
     <!-- branding: credit -->
@@ -115,6 +122,29 @@
         <p id="ended-text" class="muted" data-i18n="watch.ended.text">Thanks for watching!</p>
       </div>
     </div>
+    <!-- The keyboard shortcuts and their on / off switch (player-extras.ts) -->
+    <dialog id="keys-help" class="keys-help" aria-labelledby="keys-title" data-testid="keys-help">
+      <div class="keys-head">
+        <h2 id="keys-title" data-i18n="watch.keys.title">Keyboard shortcuts</h2>
+        <button id="keys-close" type="button" class="keys-close" aria-label="Close" data-i18n-aria-label="watch.keys.close">×</button>
+      </div>
+      <label class="toggle">
+        <input id="keys-on" type="checkbox" checked data-testid="keys-on" />
+        <span data-i18n="watch.keys.enable">Use keyboard shortcuts</span>
+      </label>
+      <p class="muted small" data-i18n="watch.keys.hint">They do nothing while you type (in the chat box, for example). Turn them off if they get in your way, for example with voice control.</p>
+      <dl class="keys-list">
+        <div><dt><kbd data-i18n="watch.keys.space">Space</kbd> <kbd>K</kbd></dt><dd data-i18n="watch.keys.playPause">Play or pause</dd></div>
+        <div><dt><kbd>M</kbd></dt><dd data-i18n="watch.keys.mute">Sound on or off</dd></div>
+        <div><dt><kbd>F</kbd></dt><dd data-i18n="watch.keys.fullscreen">Full screen (Esc leaves it)</dd></div>
+        <div><dt><kbd>T</kbd></dt><dd data-i18n="watch.keys.theater">Theater mode (a bigger video)</dd></div>
+        <div><dt><kbd>G</kbd></dt><dd data-i18n="watch.keys.goLive">Go live</dd></div>
+        <div data-key="pip"><dt><kbd>I</kbd></dt><dd data-i18n="watch.keys.pip">Picture-in-picture (the video in a small window)</dd></div>
+        <div><dt><kbd>C</kbd></dt><dd data-i18n="watch.keys.chat">Go to the chat box</dd></div>
+        <div><dt><kbd>S</kbd></dt><dd data-i18n="watch.keys.stats">Stats for nerds</dd></div>
+        <div><dt><kbd>?</kbd></dt><dd data-i18n="watch.keys.help">This list</dd></div>
+      </dl>
+    </dialog>
     <script type="module" src="/src/watch.ts"></script>
   </body>
 </html>
