@@ -3,12 +3,15 @@
 // results, the cookie jar of the fetch-based browsers and the environment of a launched Firefox. Servers listen on 127.0.0.1 port 0 (no
 // collision, no firewall prompt) and every folder and server a test makes is removed by
 // onTestFinished, servers before their folder.
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.js';
+import { LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
 import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
@@ -409,5 +412,27 @@ describe('firefoxPrefs', () => {
 
     // Assert
     expect(prefs).toEqual({ 'browser.formfill.enable': false, 'media.autoplay.default': 0 });
+  });
+});
+
+// The harnesses wait for the live link as long as the app's own tunnel step may take, plus a
+// minute: never less (they failed while the app was still recovering by design, run 41283791976),
+// and the app fails the step itself at its limit with its own error.
+describe('how long the harnesses wait for the live link', () => {
+  it("is the app's tunnel step limit plus a minute", () => {
+    // Act
+    const wait = LIVE_LINK_WAIT_MS;
+    // Assert
+    expect(wait).toBe(TUNNEL_START_BUDGET_MS + 60_000);
+  });
+
+  it.skipIf(process.platform === 'win32')('docker/run.sh reads the same limit from the source', () => {
+    // Arrange
+    const root = path.resolve(import.meta.dirname, '../../..');
+    const line = fs.readFileSync(path.join(root, 'scripts/test/docker/run.sh'), 'utf8').split('\n').find((l) => l.startsWith('TUNNEL_BUDGET_MS='));
+    // Act
+    const out = execFileSync('bash', ['-c', `ROOT="$1"; ${line}; echo "$TUNNEL_BUDGET_MS"`, 'bash', root], { encoding: 'utf8' });
+    // Assert
+    expect(Number(out.trim())).toBe(TUNNEL_START_BUDGET_MS);
   });
 });

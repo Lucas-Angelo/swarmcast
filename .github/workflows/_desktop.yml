@@ -272,9 +272,12 @@ jobs:
       # runner images ship. Time limits on this and the checks below: 2 to 4 times their slowest
       # run; one that runs out fails, so the logs are still uploaded (a job that runs out is
       # cancelled and uploads nothing).
+      # Its tunnel session waits for the live link as long as the app's own tunnel step may take
+      # (apps/server/src/tunnel/start-budget.ts, 4 min, plus 1 min): 11 minutes leaves the rest of
+      # the run (about 3 minutes) its margin even when the app needs all of it.
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
         if: ${{ !cancelled() && matrix.preflight }}
-        timeout-minutes: 8
+        timeout-minutes: 11
         run: |
           # pkg-windows-x64 also holds the installer suite's "newer" package: only this version here.
           find release -maxdepth 1 -name 'SwarmCast-v*' ! -name "SwarmCast-v$VERSION-*" -print -delete

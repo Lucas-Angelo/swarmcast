@@ -2,9 +2,11 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import { CodedError } from '../../src/core/messages.js';
 import { sleep } from '../../src/core/retry.js';
 import { ManagedChild } from '../../src/process/children.js';
-import { TunnelProvider, type TunnelRetry } from '../../src/tunnel/provider.js';
+import { translate } from '@swarmcast/shared/i18n';
+import { TunnelProvider, type ReachabilityIo, type TunnelRetry } from '../../src/tunnel/provider.js';
 import { QuickTunnel } from '../../src/tunnel/quick.js';
-import { START_RETRY_DELAYS_MS, classifyStartFailure, isErrorLine } from '../../src/tunnel/start-failure.js';
+import { REACHABLE_TIMEOUT_MS } from '../../src/tunnel/start-budget.js';
+import { START_RETRY_DELAYS_MS, classifyStartFailure, isErrorLine, isQuicFailureLine } from '../../src/tunnel/start-failure.js';
 import { captureLog, silentLog, tempDir } from './helpers.js';
 import { makeController } from './live-helpers.js';
 
@@ -27,15 +29,23 @@ const S429_JSON = 'quick tunnel provisioning failed with status 429: [1015] You 
 const S503 = 'quick tunnel provisioning failed with status 503';
 const URL_ = 'https://quiet-river-mango-tree.trycloudflare.com';
 
-/** `noise`: that many debug lines first (made by the fake: an environment variable holds at most 128 KiB on Linux). */
-type Attempt = { lines: string[]; exit: number; noise?: number } | { url: string };
+/**
+ * `noise`: that many debug lines first (made by the fake: an environment variable holds at most 128 KiB on Linux).
+ * With `url`: `after` is printed with the address (one write), then it exits with `exit` (stays up without it).
+ * `hang`: prints nothing and stays up.
+ */
+type Attempt = { lines: string[]; exit: number; noise?: number } | { url: string; after?: string[]; exit?: number } | { hang: true };
 
 /** Prints its attempt's lines on stderr, then exits with its code, or prints the address and stays up. */
 const FAKE_CLOUDFLARED = [
   'const a = JSON.parse(process.env.SC_FAKE_CLOUDFLARED);',
   "for (let i = 0; i < (a.noise ?? 0); i++) process.stderr.write('2026-11-01T02:58:54Z DBG line ' + i + ' ' + 'x'.repeat(80) + '\\n');",
   "for (const l of a.lines ?? []) process.stderr.write(l + '\\n');",
-  "if (a.url) { process.stderr.write('2026-11-01T02:58:55Z INF |  ' + a.url + '  |\\n'); setInterval(() => {}, 1000); }",
+  'if (a.url) {',
+  // One write: the address and what follows reach SwarmCast together, as cloudflared's output can.
+  "  process.stderr.write(['2026-11-01T02:58:55Z INF |  ' + a.url + '  |', ...(a.after ?? [])].map((l) => l + '\\n').join(''));",
+  '  if (a.exit === undefined) setInterval(() => {}, 1000); else process.exitCode = a.exit;',
+  '} else if (a.hang) setInterval(() => {}, 1000);',
   'else process.exitCode = a.exit;',
 ].join('\n');
 
@@ -49,6 +59,7 @@ function tunnelWith(attempts: Attempt[], opts: { sleep?: (ms: number, signal: Ab
   const launches: string[][] = [];
   const waits: number[] = [];
   const retries: TunnelRetry[] = [];
+  const udpBlocked: string[] = [];
   const tunnel = new QuickTunnel(process.execPath, tempDir('sc-quick-'), null, opts.log ?? silentLog, {
     launch: (args) => {
       const attempt = attempts[launches.length];
@@ -64,8 +75,9 @@ function tunnelWith(attempts: Attempt[], opts: { sleep?: (ms: number, signal: Ab
     random: () => 0,
   });
   tunnel.on('retry', (r) => retries.push(r));
+  tunnel.on('udp-blocked', (reason) => udpBlocked.push(reason));
   onTestFinished(() => tunnel.stop());
-  return { tunnel, launches, waits, retries };
+  return { tunnel, launches, waits, retries, udpBlocked };
 }
 
 /** The CodedError `p` rejects with. */
@@ -291,5 +303,210 @@ describe('the streamer sees Cloudflare refusing', () => {
     expect(tunnel.seen).toMatchObject({ status: 'running', note, noteCode: 'step.tunnel.retry', noteParams: params });
     expect(live.snapshot().steps.find((s) => s.id === 'tunnel')).toEqual(expect.not.objectContaining({ note: expect.anything() }));
     expect(live.activity.list()).toContainEqual(expect.objectContaining({ level: 'warn', code: 'step.tunnel.retry', params, text: note }));
+  });
+});
+
+// A network that blocks or drops UDP: cloudflared gets its address (an HTTPS request) but then
+// cannot reach Cloudflare's edge over QUIC, its default, and the address never answers.
+// cloudflared's own fallback to HTTP/2 needs 8 failed dials with growing pauses, longer than
+// SwarmCast waits for an address. These are the lines cloudflared 2026.10.4 printed in CI run
+// 41283791976 (macOS runner) and against a local edge that drops UDP (integration test).
+const QUIC_SERVE = '2026-11-01T08:45:37Z ERR Serve tunnel error error="accept stream listener error: failed to accept QUIC stream: timeout: no recent network activity" connIndex=0 event=0 ip=198.41.192.167';
+const QUIC_DIAL = '2026-11-01T08:45:44Z ERR Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=0 event=0 ip=198.41.192.227';
+const PRECHECK_UDP = '2026-11-01T09:06:29Z INF precheck component="UDP Connectivity" details="QUIC connection failed" run_id=768f8978-6d13-4bf6-ab0c-f3d5a3487124 status=fail target=198.41.192.227:7844';
+const REGISTERED = '2026-11-01T08:45:30Z INF Registered tunnel connection connIndex=0 connection=0f0e0d0c-0b0a-4908-8706-050403020100 event=0 ip=198.41.200.13 location=gru05 protocol=quic';
+const TCP_URL = 'https://calm-lake-over-tcp.trycloudflare.com';
+
+/** Resolves on the tunnel's next `down` (its cloudflared exited after printing everything). */
+const nextDown = (tunnel: TunnelProvider): Promise<void> => new Promise((resolve) => tunnel.once('down', () => resolve()));
+
+describe('quick tunnel: a network that blocks UDP', () => {
+  it('reports UDP blocked after two QUIC failures before any connection, once, in its own words', async () => {
+    // Arrange
+    const { tunnel, udpBlocked } = tunnelWith([{ url: URL_, after: [QUIC_SERVE, QUIC_DIAL, QUIC_DIAL], exit: 1 }]);
+    // Act
+    const url = await tunnel.start(18080);
+    await nextDown(tunnel);
+    // Assert
+    expect(url).toBe(URL_);
+    expect(udpBlocked).toEqual(['Failed to dial a quic connection error="failed to dial to edge with quic: timeout: no recent network activity" connIndex=0 event=0 ip=198.41.192.227']);
+  });
+
+  it.each([
+    ['one QUIC failure (a lost burst: cloudflared tries another address)', [QUIC_DIAL]],
+    ['QUIC failures after a connection worked', [REGISTERED, QUIC_SERVE, QUIC_DIAL]],
+    ['unrelated errors', ['2026-11-01T08:45:37Z ERR Unable to reach the origin service. The service may be down error="dial tcp 127.0.0.1:18080: connect: connection refused"', '2026-11-01T08:45:38Z ERR boom']],
+  ])('does not report UDP blocked for %s', async (_what, after) => {
+    // Arrange
+    const { tunnel, udpBlocked } = tunnelWith([{ url: URL_, after, exit: 1 }]);
+    // Act
+    await tunnel.start(18080);
+    await nextDown(tunnel);
+    // Assert
+    expect(udpBlocked).toEqual([]);
+  });
+
+  it("counts cloudflared's own UDP pre-check failure", async () => {
+    // Arrange
+    const { tunnel, udpBlocked } = tunnelWith([{ url: URL_, after: [QUIC_DIAL, PRECHECK_UDP], exit: 1 }]);
+    // Act
+    await tunnel.start(18080);
+    await nextDown(tunnel);
+    // Assert
+    expect(udpBlocked).toHaveLength(1);
+  });
+
+  it('opens over TCP (--protocol http2) when asked, and never reports UDP blocked then', async () => {
+    // Arrange
+    const { tunnel, launches, udpBlocked } = tunnelWith([{ url: URL_ }, { url: TCP_URL, after: [QUIC_DIAL, QUIC_DIAL], exit: 1 }]);
+    // Act
+    await tunnel.start(18080);
+    await tunnel.stop();
+    await tunnel.start(18080, { transport: 'tcp' });
+    await nextDown(tunnel);
+    // Assert
+    expect(launches[0]).not.toContain('--protocol');
+    expect(launches[1]).toEqual(expect.arrayContaining(['--url', 'http://127.0.0.1:18080']));
+    expect(launches[1]!.slice(launches[1]!.indexOf('--protocol'), launches[1]!.indexOf('--protocol') + 2)).toEqual(['--protocol', 'http2']);
+    expect(udpBlocked).toEqual([]);
+  });
+
+  it('keeps TCP when cloudflared restarts during the live', async () => {
+    // Arrange
+    const { tunnel, launches } = tunnelWith([{ url: URL_, exit: 1 }, { url: TCP_URL }]);
+    const changed = new Promise<string>((resolve) => tunnel.once('url', resolve));
+    // Act
+    await tunnel.start(18080, { transport: 'tcp' });
+    const url = await changed;
+    // Assert
+    expect(url).toBe(TCP_URL);
+    expect(launches.map((a) => a.includes('http2'))).toEqual([true, true]);
+  });
+
+  it("does not start a retry that would end after the tunnel step's deadline: Cloudflare's words at once", async () => {
+    // Arrange
+    const { tunnel, launches, waits } = tunnelWith([failed(S429), { url: URL_ }]);
+    // Act
+    const err = await codedRejection(tunnel.start(18080, { deadline: Date.now() + START_RETRY_DELAYS_MS[0] - 1 }));
+    // Assert
+    expect(launches).toHaveLength(1);
+    expect(waits).toEqual([]);
+    expect(err.code).toBe('err.tunnelBusy');
+    expect(err.params).toEqual({ causeKey: 'tunnel.cause.busy', attempts: 1, reason: S429 });
+  });
+
+  it.each([
+    [QUIC_SERVE, true],
+    [QUIC_DIAL, true],
+    [PRECHECK_UDP, true],
+    ['2026-11-01T09:06:29Z INF precheck component="UDP Connectivity" details="QUIC connection succeeded" status=pass target=198.41.192.227:7844', false],
+    ['2026-11-01T09:06:29Z INF |  UDP Connectivity  198.41.192.227:7844  FAIL  QUIC connection failed  |', false],
+    [REGISTERED, false],
+  ])('%s is a QUIC failure: %s', (line, expected) => {
+    // Act
+    const is = isQuicFailureLine(line);
+    // Assert
+    expect(is).toBe(expected);
+  });
+});
+
+/** A network where only `reachableHost` answers (the tunnel over TCP); its checks go to the live's local public server. */
+function networkWhereOnly(reachableHost: string, publicPort: () => number | null): ReachabilityIo {
+  return {
+    cloudflare: async () => ({ ip: '192.0.2.10' }),
+    system: async () => true,
+    health: async (url, _ip, headers) => {
+      if (url.hostname !== reachableHost) return null;
+      const res = await fetch(`http://127.0.0.1:${publicPort()}/healthz`, { headers });
+      await res.body?.cancel();
+      return res.ok ? res.headers.get('x-swarmcast') : null;
+    },
+  };
+}
+
+/** A live whose tunnel is a QuickTunnel running the fake cloudflared `attempts`, on a network where only `reachableHost` answers. */
+function liveWith(attempts: Attempt[], reachableHost: string, check: { reachableMs?: number; budgetMs?: number } = {}) {
+  const t = tunnelWith(attempts);
+  let port: () => number | null = () => null;
+  const { live } = makeController(undefined, {
+    tunnel: t.tunnel,
+    egress: { lookup: async () => ({}) },
+    tunnelCheck: { io: networkWhereOnly(reachableHost, () => port()), ...check },
+  });
+  port = () => live.publicPort;
+  onTestFinished(async () => void (await live.stop()));
+  return { ...t, live };
+}
+
+const tunnelStep = (live: ReturnType<typeof makeController>['live']) => live.snapshot().steps.find((s) => s.id === 'tunnel');
+
+describe('the live opens a new tunnel over TCP when UDP is blocked', () => {
+  it('as soon as cloudflared reports QUIC failures, and goes live over TCP (CI run 41283791976)', async () => {
+    // Arrange
+    const { live, launches } = liveWith([{ url: URL_, after: [QUIC_SERVE, QUIC_DIAL] }, { url: TCP_URL }], new URL(TCP_URL).hostname);
+    const t0 = Date.now();
+    // Act
+    await live.start();
+    // Assert
+    expect(live.snapshot().liveLink).toMatch(/^https:\/\/calm-lake-over-tcp\.trycloudflare\.com\/join\//);
+    expect(Date.now() - t0).toBeLessThan(REACHABLE_TIMEOUT_MS / 4);
+    expect(launches).toHaveLength(2);
+    expect(launches[0]).not.toContain('--protocol');
+    expect(launches[1]).toEqual(expect.arrayContaining(['--protocol', 'http2']));
+    const text = 'Your network blocks or drops the faster route to Cloudflare (UDP). SwarmCast is opening a new tunnel over a regular TCP connection instead.';
+    expect(live.activity.list()).toContainEqual(expect.objectContaining({ level: 'warn', code: 'step.tunnel.tcp', params: { causeKey: 'tunnel.cause.udpBlocked' }, text }));
+    expect(translate('pt-BR', 'step.tunnel.tcp', { causeKey: 'tunnel.cause.udpBlocked' })).toBe('Sua rede bloqueia ou perde o caminho mais rápido até a Cloudflare (UDP). O SwarmCast está abrindo um túnel novo por uma conexão TCP comum.');
+  });
+
+  it('when the address does not answer in time, even without QUIC errors', async () => {
+    // Arrange
+    const { live, launches } = liveWith([{ url: URL_ }, { url: TCP_URL }], new URL(TCP_URL).hostname, { reachableMs: 1500 });
+    // Act
+    await live.start();
+    // Assert
+    expect(live.snapshot().liveLink).toContain('calm-lake-over-tcp');
+    expect(launches[1]).toEqual(expect.arrayContaining(['--protocol', 'http2']));
+    expect(live.activity.list()).toContainEqual(expect.objectContaining({ code: 'step.tunnel.tcp', params: { causeKey: 'tunnel.cause.noAnswer' }, text: 'The tunnel address did not answer in time. SwarmCast is opening a new tunnel over a regular TCP connection instead.' }));
+  });
+
+  it('shows the switch on the tunnel step while the new tunnel opens', async () => {
+    // Arrange
+    const { live, tunnel } = liveWith([{ url: URL_, after: [QUIC_DIAL, QUIC_DIAL] }, { url: TCP_URL }], new URL(TCP_URL).hostname);
+    let seen: unknown;
+    const start = tunnel.start.bind(tunnel);
+    tunnel.start = (port, opts) => {
+      if (opts?.transport === 'tcp') seen = structuredClone(tunnelStep(live));
+      return start(port, opts);
+    };
+    // Act
+    await live.start();
+    // Assert
+    expect(seen).toMatchObject({ status: 'running', noteCode: 'step.tunnel.tcp', noteParams: { causeKey: 'tunnel.cause.udpBlocked' } });
+  });
+
+  it('fails with "does not answer" when the TCP tunnel does not answer either (one switch only)', async () => {
+    // Arrange
+    const { live, launches } = liveWith([{ url: URL_ }, { url: TCP_URL }], 'nothing-answers.example', { reachableMs: 500 });
+    // Act
+    const err = await codedRejection(live.start());
+    // Assert
+    expect(err.code).toBe('err.tunnelNoAnswer');
+    expect(launches).toHaveLength(2);
+    expect(live.snapshot().phase).toBe('off');
+  });
+
+  it("gives up at the tunnel step's limit with its own error, and stops cloudflared", async () => {
+    // Arrange
+    const { live, tunnel } = liveWith([{ hang: true }], 'nothing-answers.example', { budgetMs: 1200 });
+    const t0 = Date.now();
+    // Act
+    const err = await codedRejection(live.start());
+    // Assert
+    expect(Date.now() - t0).toBeLessThan(10_000);
+    expect(err.code).toBe('err.tunnelTimeout');
+    expect(err.params).toEqual({ minutes: 1 });
+    expect(err.message).toBe("The secure tunnel did not open within 1 min. Check your internet connection (a firewall may block Cloudflare's tunnel, port 7844) and turn SwarmCast on again.");
+    expect(tunnel.pid).toBeUndefined();
+    expect(tunnelStep(live)).toMatchObject({ status: 'error' });
   });
 });

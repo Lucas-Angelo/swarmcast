@@ -1,6 +1,8 @@
 // An installed SwarmCast started by its real start script, for the system harnesses
 // (scripts/test/windows, scripts/test/preflight): the bare-OS environment it runs with, the
 // panel it prints, the live link it makes.
+// Node loads this TypeScript file itself (type stripping): it has no imports, on purpose.
+import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.ts';
 import { poll, WaitError } from './wait.mjs';
 
 const win = process.platform === 'win32';
@@ -57,10 +59,21 @@ export async function loginFromOutput(text, { timeoutMs = 300_000, abortOn = [] 
 }
 
 /**
- * The state once the live link exists and the app waits for OBS (or is live). A start that
- * failed (phase off with a step in error) fails the wait at once, with the steps.
+ * How long a harness waits for the live link: the app's own limit for its tunnel step
+ * (TUNNEL_START_BUDGET_MS: Cloudflare refusals tried again, a new tunnel over TCP when UDP is
+ * blocked, a slow new name), plus a minute for the server and MediaMTX steps and the polling.
+ * Waiting less failed tests while the app was still recovering by design (run 41283791976 gave up
+ * at 120 s, between two of the app's tries); the app fails the step itself at its limit, with its
+ * own error, which waitLiveLink reports at once. Waiting much longer would only hide a hung step.
  */
-export function waitLiveLink(app, timeoutMs = 120_000, abortOn = []) {
+export const LIVE_LINK_WAIT_MS = TUNNEL_START_BUDGET_MS + 60_000;
+
+/**
+ * The state once the live link exists and the app waits for OBS (or is live). A start that
+ * failed (phase off with a step in error) fails the wait at once, with the steps: the app's own
+ * final error, so a genuine failure of the tunnel step shows its reason, not a harness timeout.
+ */
+export function waitLiveLink(app, timeoutMs = LIVE_LINK_WAIT_MS, abortOn = []) {
   return poll(
     async () => {
       const s = await app.state();
