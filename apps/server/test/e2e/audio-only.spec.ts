@@ -134,14 +134,46 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   const menu = page.locator('.quality-menu');
   await expect(menu.locator('option').last()).toHaveText(AUDIO_ONLY);
   const videoBytes = await bytesDuring(page, received, MEASURE_MS);
+  // DIAG
+  await page.evaluate(() => {
+    type H = { on(e: string, f: (e: string, d: any) => void): void; levels: any[] };
+    const w = window as unknown as { __hls: H; __diag: string[] };
+    w.__diag = [];
+    const t0 = performance.now();
+    const v = document.querySelector('video')!;
+    const rng = (b: TimeRanges | undefined | null): string => { if (!b) return '-'; const o = []; for (let i = 0; i < b.length; i++) o.push(`${b.start(i).toFixed(3)}-${b.end(i).toFixed(3)}`); return o.join(','); };
+    const log = (m: string): void => void w.__diag.push(`${Math.round(performance.now() - t0)} ct=${v.currentTime.toFixed(2)} rs=${v.readyState} buf=${rng(v.buffered)} | ${m}`);
+    const h = w.__hls;
+    h.on('hlsManifestLoading', () => log('manifestLoading'));
+    h.on('hlsManifestParsed', (_e, d) => log(`manifestParsed levels=${d.levels.length} audioCodec=${d.levels[0]?.audioCodec} videoCodec=${d.levels[0]?.videoCodec}`));
+    h.on('hlsMediaAttached', () => log('mediaAttached'));
+    h.on('hlsBufferCodecs', (_e, d) => log(`bufferCodecs ${JSON.stringify(Object.fromEntries(Object.entries(d).map(([k, x]: [string, any]) => [k, x?.codec ?? x?.container])))}`));
+    h.on('hlsBufferCreated', (_e, d) => log(`bufferCreated ${Object.keys(d.tracks).join(',')}`));
+    h.on('hlsLevelLoaded', (_e, d) => log(`levelLoaded ${d.details.startSN}-${d.details.endSN} start=${d.details.fragments[0]?.start.toFixed(3)} edge=${d.details.edge?.toFixed(3)}`));
+    h.on('hlsFragLoading', (_e, d) => log(`fragLoading ${d.frag.type} sn=${d.frag.sn} ${d.frag.start.toFixed(3)}-${d.frag.end.toFixed(3)}`));
+    h.on('hlsFragParsingInitSegment', (_e, d) => log(`initSegment ${JSON.stringify(Object.keys(d.tracks ?? {}))}`));
+    h.on('hlsFragBuffered', (_e, d) => log(`fragBuffered sn=${d.frag.sn} es=${JSON.stringify(d.frag.elementaryStreams)}`));
+    h.on('hlsBufferAppended', (_e, d) => log(`appended ${d.type} sn=${d.frag?.sn} ranges=${JSON.stringify(Object.fromEntries(Object.entries(d.timeRanges ?? {}).map(([k, r]: [string, any]) => [k, rng(r)])))}`));
+    h.on('hlsBufferFlushing', (_e, d) => log(`flushing ${d.type} ${d.startOffset}-${d.endOffset}`));
+    h.on('hlsError', (_e, d) => log(`error ${d.type} ${d.details} fatal=${d.fatal} ${d.reason ?? ''} ${d.error?.message ?? ''}`));
+    h.on('hlsFragChanged', (_e, d) => log(`fragChanged sn=${d.frag.sn}`));
+    for (const e of ['waiting', 'playing', 'seeking', 'seeked', 'emptied', 'loadedmetadata', 'stalled']) v.addEventListener(e, () => log(`video ${e}`));
+    setInterval(() => log('tick'), 1000);
+  });
+  page.on('console', (m) => { const t = m.text(); if (/stream-controller|buffer-controller|fragment-tracker|gap|stall|evict|Not enough|appended|Loading|loaded/i.test(t)) console.log(`CONSOLE ${t.slice(0, 300)}`); });
 
   // Act
   await menu.selectOption({ label: AUDIO_ONLY });
 
   // Assert
-  await playingAudioOnly(page);
-  await playsOn(page, 3);
-  await atLive(page);
+  try {
+    await playingAudioOnly(page);
+    await playsOn(page, 3);
+    await atLive(page);
+    await measuredWindow(page, 8000);
+  } finally {
+    console.log((await page.evaluate(() => (window as unknown as { __diag: string[] }).__diag)).slice(0, 400).join('\n'));
+  }
   expect(await savedChoice(page)).toBe('on');
   const audioBytes = await bytesDuring(page, received, MEASURE_MS);
   console.log(`bytes in ${MEASURE_MS / 1000} s: video ${videoBytes}, audio only ${audioBytes} (${Math.round((audioBytes / videoBytes) * 100)} %)`);
