@@ -1,0 +1,354 @@
+/* The player's own controls (player-controls.ts) and the quality menu (quality-menu.ts).
+ * Light on the video in both themes: --on-video over --scrim / --video-bg (packages/shared/web/brand.css),
+ * the live red from --sc-live. Touch targets 44 px. Every fade is a transition, which brand.css
+ * turns off under prefers-reduced-motion (and the controls then never fade at all). */
+
+/* The layer over the video: lets clicks through to the video except on its own controls. Its
+ * bottom row is the bar; the quality menu and the big Play button are placed against it. */
+.pc {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  pointer-events: none;
+  color: var(--on-video);
+}
+.pc-bar,
+.pc-big-play,
+.quality-pop {
+  pointer-events: auto;
+}
+.pc-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  min-height: 52px;
+  padding: var(--sp-1) var(--sp-2);
+  background: var(--scrim);
+  transition: opacity 0.2s ease;
+}
+.pc-left,
+.pc-right,
+.pc-sound {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+.pc-right {
+  flex: none;
+}
+
+/* Faded while the video plays and nobody moves: still in the page for screen readers and the Tab
+ * key (opacity, not visibility), and the pointer hides with it. */
+.player.pc-idle .pc-bar {
+  opacity: 0;
+}
+.player.pc-idle {
+  cursor: none;
+}
+.player.pc-idle .pc-volume {
+  pointer-events: none;
+}
+
+/* Visually hidden, read by screen readers: each control's name. */
+.pc-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* One look for every button of the bar (style.css gives buttons a filled accent look). */
+.pc button.pc-btn,
+.pc-bar button#theater.pc-btn {
+  position: relative;
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 0 10px;
+  gap: var(--sp-1);
+  border: 0;
+  border-radius: var(--sc-radius-md);
+  background: transparent;
+  color: var(--on-video);
+  font-size: var(--fs-sm);
+}
+.pc button.pc-btn:hover,
+.pc-bar button#theater.pc-btn:hover {
+  background: color-mix(in srgb, var(--on-video) 16%, transparent);
+}
+.pc button.pc-btn:focus-visible,
+.pc-bar button:focus-visible,
+.pc-volume:focus-visible,
+.quality-item:focus-visible {
+  outline: 2px solid var(--on-video);
+  outline-offset: -3px;
+}
+.pc-bar button#theater[aria-pressed='true'],
+.pc button.pc-pip.active {
+  background: color-mix(in srgb, var(--on-video) 22%, transparent);
+}
+
+/* Icons (white masks, like brand.css sc-ico-*): 24 px in the bar. */
+[class*='pc-ico-']::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: center / contain no-repeat;
+  mask: center / contain no-repeat;
+}
+.pc-ico-play::before {
+  -webkit-mask-image: url('./icons/play.svg');
+  mask-image: url('./icons/play.svg');
+}
+.pc-ico-pause::before {
+  -webkit-mask-image: url('./icons/pause.svg');
+  mask-image: url('./icons/pause.svg');
+}
+.pc-ico-volume::before {
+  -webkit-mask-image: url('../../../packages/shared/web/icons/volume.svg');
+  mask-image: url('../../../packages/shared/web/icons/volume.svg');
+}
+.pc-ico-volume-off::before {
+  -webkit-mask-image: url('./icons/volume-off.svg');
+  mask-image: url('./icons/volume-off.svg');
+}
+.pc-ico-fullscreen::before {
+  -webkit-mask-image: url('./icons/fullscreen.svg');
+  mask-image: url('./icons/fullscreen.svg');
+}
+.pc-ico-fullscreen-exit::before {
+  -webkit-mask-image: url('./icons/fullscreen-exit.svg');
+  mask-image: url('./icons/fullscreen-exit.svg');
+}
+.pc-ico-pip::before {
+  -webkit-mask-image: url('./icons/pip.svg');
+  mask-image: url('./icons/pip.svg');
+}
+.pc-ico-theater::before {
+  -webkit-mask-image: url('./icons/theater.svg');
+  mask-image: url('./icons/theater.svg');
+}
+.quality-btn::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: url('./icons/quality.svg') center / contain no-repeat;
+  mask: url('./icons/quality.svg') center / contain no-repeat;
+}
+
+/* The big Play button in the middle, while the video is paused. */
+.pc button.pc-big-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 72px;
+  height: 72px;
+  margin: -36px 0 0 -36px;
+  border-radius: 50%;
+  background: var(--scrim);
+}
+.pc button.pc-big-play:hover {
+  background: color-mix(in srgb, var(--video-bg) 70%, transparent);
+}
+.pc-big-play::before {
+  width: 36px;
+  height: 36px;
+  margin-left: 4px;
+}
+
+/* Volume: a plain range input in the video's light colour. */
+.pc-volume {
+  width: 84px;
+  height: 44px;
+  margin: 0 var(--sp-1);
+  accent-color: var(--on-video);
+  background: transparent;
+  cursor: pointer;
+}
+
+/* LIVE / Go live in the bar: the pill drawn inside a 44 px target (transparent border). */
+.pc-bar button.golive {
+  min-height: 44px;
+  padding: 0 var(--sp-3);
+  border: 5px solid transparent;
+  background-clip: padding-box;
+  background-color: transparent;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--on-video) 55%, transparent);
+  color: var(--on-video);
+  white-space: nowrap;
+}
+.pc-bar button.golive:hover {
+  background-color: color-mix(in srgb, var(--on-video) 16%, transparent);
+}
+.pc-bar button.golive::before {
+  background: color-mix(in srgb, var(--on-video) 60%, transparent);
+}
+.pc-bar button.golive.at-live {
+  background-color: var(--sc-live);
+  border-color: transparent;
+  box-shadow: none;
+  color: var(--sc-on-live);
+}
+.pc-bar button.golive.at-live::before {
+  background: currentColor;
+}
+.pc-bar button.golive .behind {
+  color: color-mix(in srgb, var(--on-video) 80%, transparent);
+}
+/* The delay behind live, in the bar only while full screen (the status line is out of sight then). */
+.pc-delay {
+  display: none;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.player.is-fullscreen .pc-delay:not([hidden]) {
+  display: inline;
+}
+
+/* ---- Full screen: the whole container ---------------------------------------------------- */
+.player.is-fullscreen {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+.player.is-fullscreen .pc-bar {
+  padding: var(--sp-2) var(--sp-4) max(var(--sp-2), env(safe-area-inset-bottom));
+}
+
+/* ---- Quality menu (quality-menu.ts): a button and a menu over the video ----------------- */
+.pc-quality:empty,
+.quality[hidden] {
+  display: none;
+}
+.quality-current {
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--sc-weight-semibold);
+}
+.quality-pop {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: calc(52px + var(--sp-1));
+  z-index: 2;
+  width: min(300px, calc(100% - 2 * var(--sp-2)));
+  max-height: calc(100% - 52px - 2 * var(--sp-2));
+  overflow-y: auto;
+  padding: var(--sp-2);
+  border-radius: var(--sc-radius-md);
+  background: color-mix(in srgb, var(--video-bg) 88%, transparent);
+  color: var(--on-video);
+  text-align: left;
+}
+.quality-title {
+  margin: 0 0 var(--sp-1);
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  color: color-mix(in srgb, var(--on-video) 80%, transparent);
+}
+.quality-menu {
+  display: flex;
+  flex-direction: column;
+}
+.pc button.quality-item {
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 40px;
+  padding: 0 var(--sp-2);
+  border: 0;
+  border-radius: var(--sc-radius-sm);
+  background: transparent;
+  color: var(--on-video);
+  font-size: var(--fs-md);
+  font-weight: var(--sc-weight-medium);
+  text-align: left;
+}
+.pc button.quality-item:hover {
+  background: color-mix(in srgb, var(--on-video) 16%, transparent);
+}
+/* The entry in use: a check mark before it (the others keep the same indent). */
+.quality-item::before {
+  content: '';
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+.quality-item[aria-checked='true']::before {
+  background: currentColor;
+  -webkit-mask: url('./icons/check.svg') center / contain no-repeat;
+  mask: url('./icons/check.svg') center / contain no-repeat;
+}
+.quality-item[aria-checked='true'] {
+  font-weight: var(--sc-weight-semibold);
+}
+.quality-hint {
+  margin: var(--sp-2) 0 0;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  color: color-mix(in srgb, var(--on-video) 80%, transparent);
+}
+@media (pointer: coarse) {
+  .pc button.quality-item {
+    min-height: 44px;
+  }
+}
+
+/* ---- Small players: phones ---------------------------------------------------------------- */
+@media (max-width: 640px) {
+  .pc-bar {
+    padding: 0 var(--sp-1);
+    gap: 0;
+  }
+  .pc-left,
+  .pc-right,
+  .pc-sound {
+    gap: 0;
+  }
+  /* Icon only: the quality is in the button's name and tooltip. */
+  .quality-current {
+    display: none;
+  }
+  .pc button.pc-btn {
+    padding: 0;
+  }
+  .pc-bar button.golive {
+    padding: 0 var(--sp-2);
+  }
+}
+/* Phones in portrait: the volume buttons of the phone do it, and the bar has no room. */
+@media (max-width: 480px) {
+  .pc-volume {
+    display: none;
+  }
+  .quality-hint,
+  .quality-title {
+    display: none;
+  }
+}

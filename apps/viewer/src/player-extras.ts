@@ -3,72 +3,22 @@
  * wired to the page (watch.html) and the player. watch.ts calls installPlayerExtras() once, with
  * what only it knows: the player's counters, the adaptive delay, hls.js once it exists.
  *
- * Full screen is the video's own (the browser's full-screen player, with its controls); on iPhone
- * that is the only kind there is (webkitEnterFullscreen).
+ * Full screen (F) is the player container's, with our own controls in it, wherever the browser
+ * lets an element go full screen; on iPhone only the video can, in iOS's own player
+ * (player-caps.ts). The shortcuts work the same with or without the player's own controls
+ * (player-controls.ts): a page whose controls failed to mount keeps them.
  */
 import { createTheater, type Theater } from './theater.js';
 import { installShortcuts, type PrefStorage, type ShortcutAction, type Shortcuts } from './shortcuts.js';
 import { createStatsToggle, type StatsToggle } from './stats-toggle.js';
 import type { StatsSource } from './stats-overlay.js';
-
-/** Vendor-prefixed full-screen and picture-in-picture calls (Safari, iOS). */
-interface WebkitVideo extends HTMLVideoElement {
-  webkitEnterFullscreen?: () => void;
-  webkitRequestFullscreen?: () => void;
-  webkitSupportsPresentationMode?: (mode: string) => boolean;
-  webkitSetPresentationMode?: (mode: string) => void;
-  webkitPresentationMode?: string;
-  webkitDisplayingFullscreen?: boolean;
-}
-interface WebkitDocument extends Document {
-  webkitFullscreenElement?: Element | null;
-  webkitExitFullscreen?: () => void;
-}
-
-const quiet = (p: unknown): void => {
-  if (p && typeof (p as Promise<unknown>).catch === 'function') (p as Promise<unknown>).catch(() => {});
-};
-
-/** The video in the browser's full screen, or back out of it. */
-export function toggleFullscreen(video: HTMLVideoElement, doc: Document = document): boolean {
-  const v = video as WebkitVideo;
-  const d = doc as WebkitDocument;
-  if (doc.fullscreenElement ?? d.webkitFullscreenElement) {
-    if (typeof doc.exitFullscreen === 'function') quiet(doc.exitFullscreen());
-    else d.webkitExitFullscreen?.();
-    return true;
-  }
-  if (typeof v.requestFullscreen === 'function') quiet(v.requestFullscreen());
-  else if (typeof v.webkitRequestFullscreen === 'function') v.webkitRequestFullscreen();
-  else if (typeof v.webkitEnterFullscreen === 'function') v.webkitEnterFullscreen();
-  else return false;
-  return true;
-}
-
-/** The browser can put the video in a small floating window (Chrome, Edge, Safari; not Firefox's API-less button). */
-export function pipSupported(video: HTMLVideoElement, doc: Document = document): boolean {
-  const v = video as WebkitVideo;
-  if (doc.pictureInPictureEnabled === true && typeof v.requestPictureInPicture === 'function' && !v.disablePictureInPicture) return true;
-  return typeof v.webkitSetPresentationMode === 'function' && v.webkitSupportsPresentationMode?.('picture-in-picture') === true;
-}
-
-export function togglePip(video: HTMLVideoElement, doc: Document = document): boolean {
-  const v = video as WebkitVideo;
-  if (doc.pictureInPictureEnabled === true && typeof v.requestPictureInPicture === 'function') {
-    if (doc.pictureInPictureElement) quiet(doc.exitPictureInPicture());
-    else quiet(v.requestPictureInPicture());
-    return true;
-  }
-  if (typeof v.webkitSetPresentationMode === 'function') {
-    v.webkitSetPresentationMode(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');
-    return true;
-  }
-  return false;
-}
+import { pipSupported, toggleFullscreen, togglePip } from './player-caps.js';
 
 export interface PlayerExtrasDeps {
   doc: Document;
   video: HTMLVideoElement;
+  /** The player container (`.player`): what F puts in full screen. */
+  player: HTMLElement;
   /** "LIVE / Go live" and "Unmute" (watch.html), driven by G and M like a click. */
   goLive: HTMLButtonElement;
   unmute: HTMLButtonElement;
@@ -78,6 +28,8 @@ export interface PlayerExtrasDeps {
   stats: StatsSource;
   clipboard?: { writeText(text: string): Promise<void> };
   debug?: (msg: string) => void;
+  /** A shortcut ran (player-controls.ts shows its bar for a moment, so the viewer sees what changed). */
+  onAction?: (action: ShortcutAction) => void;
 }
 
 export interface PlayerExtras {
@@ -139,7 +91,7 @@ export function installPlayerExtras(d: PlayerExtrasDeps): PlayerExtras {
         d.unmute.hidden = !video.muted;
         return true;
       case 'fullscreen':
-        return toggleFullscreen(video, doc);
+        return toggleFullscreen(d.player, video, doc);
       case 'theater':
         theater.toggle();
         return true;
@@ -164,7 +116,15 @@ export function installPlayerExtras(d: PlayerExtrasDeps): PlayerExtras {
     }
   };
 
-  const shortcuts = installShortcuts({ target: doc, storage: d.storage, run });
+  const shortcuts = installShortcuts({
+    target: doc,
+    storage: d.storage,
+    run: (action) => {
+      const done = run(action);
+      if (done) d.onAction?.(action);
+      return done;
+    },
+  });
   helpSwitch.checked = shortcuts.enabled;
   helpSwitch.addEventListener('change', () => {
     shortcuts.enabled = helpSwitch.checked;

@@ -36,6 +36,8 @@ import { createScreenAwake, type WakeLockLike } from './wake-lock.js';
 import { createMediaSession, imageAsDataUrl } from './media-session.js';
 import { createShareControl, fetchShareLink } from './share.js';
 import { installPlayerExtras } from './player-extras.js';
+import { mountPlayerControls, type PlayerControls } from './player-controls.js';
+import { exitFullscreen } from './player-caps.js';
 import fallbackArtworkUrl from '../../../assets/brand/favicon/favicon-512.png?url';
 // ---- branding: watch ----
 import { createBrandRouter } from './branding/loader.js';
@@ -57,6 +59,58 @@ const viewerCountEl = $<HTMLSpanElement>('viewer-count');
 const playerControls = $<HTMLDivElement>('player-controls');
 const delayWrap = $<HTMLSpanElement>('delay-wrap');
 const delayEl = $<HTMLSpanElement>('delay');
+
+let ended = false;
+let adaptive: AdaptiveDelay | null = null;
+/** The stream's first picture is there (set on loadeddata; "Go live" and the big Play button wait for it). */
+let started = false;
+
+// The player's own controls over the video (player-controls.ts): built first, so "LIVE / Go
+// live" and "Theater mode" move into the bar before anything else uses them. Should building
+// them fail, the video keeps the browser's own controls (the attribute stays in watch.html until
+// they are built) and everything else works as before.
+const controls = ((): PlayerControls | null => {
+  try {
+    return mountPlayerControls({
+      player: video.parentElement!,
+      video,
+      doc: document,
+      win: window,
+      goLive,
+      theater: $<HTMLButtonElement>('theater'),
+      labels: {
+        group: t('watch.controls'),
+        play: t('watch.play'),
+        pause: t('watch.pause'),
+        mute: t('watch.mute'),
+        unmute: t('watch.unmute'),
+        volume: t('watch.volume'),
+        volumeValue: (percent) => t('watch.volume.value', { percent }),
+        fullscreen: t('watch.fullscreen'),
+        exitFullscreen: t('watch.fullscreen.exit'),
+        pip: t('watch.pip'),
+        exitPip: t('watch.pip.exit'),
+        withKey: (label, key) => t('watch.withKey', { label, key }),
+      },
+      isHeld: () => adaptive?.holding ?? false,
+      started: () => started,
+      ended: () => ended,
+      onPlayRefused: () => {
+        unmute.hidden = false;
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return null;
+  }
+})();
+// After the bar's own listener, so it reads the new value (the native-HLS path of main() too).
+for (const ev of ['loadeddata', 'playing'] as const) {
+  video.addEventListener(ev, () => {
+    started = true;
+    controls?.sync();
+  });
+}
 
 // Chat: a separate, lazily loaded chunk (chat/loader.ts); the player never depends on it.
 const chat = createChatRouter({
@@ -151,18 +205,27 @@ function tip(text: string): HTMLSpanElement {
   return wrap;
 }
 
-/** Quality menu (Auto/1080p/720p/480p/360p/Audio only) and the Stable / Lower-delay switch, with tooltips. */
-function mountPlayerControls(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void, source: AudioOnlySwitch): void {
-  const qualityGroup = document.createElement('div');
-  qualityGroup.className = 'control-group quality-group';
-  playerControls.appendChild(qualityGroup);
-  createQualityMenu(hls, qualityGroup, Hls.Events, {
-    auto: t('watch.quality.auto'),
-    autoWith: (label) => t('watch.quality.autoWith', { label }),
-    title: t('watch.quality.title'),
-    audioOnly: t('watch.quality.audioOnly'),
-  }, source);
-  qualityGroup.appendChild(tip(t('watch.quality.tip')));
+/**
+ * The quality menu (Auto/1080p/720p/480p/360p/Audio only) in the player's control bar, and the
+ * Stable / Lower-delay switch under the player, with its tooltip.
+ */
+function mountSettings(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void, source: AudioOnlySwitch): void {
+  // Without the bar (it failed to build), the menu sits in the settings card as before.
+  const qualityHost = controls?.qualitySlot ?? playerControls.appendChild(Object.assign(document.createElement('div'), { className: 'control-group quality-group' }));
+  createQualityMenu(
+    hls,
+    qualityHost,
+    Hls.Events,
+    {
+      auto: t('watch.quality.auto'),
+      autoWith: (label) => t('watch.quality.autoWith', { label }),
+      title: t('watch.quality.title'),
+      audioOnly: t('watch.quality.audioOnly'),
+      hint: t('watch.quality.tip'),
+    },
+    source,
+    { onOpenChange: (open) => controls?.menuOpen(open) },
+  );
 
   const latencyGroup = document.createElement('div');
   latencyGroup.className = 'control-group latency-group';
@@ -273,9 +336,7 @@ const stats = {
   },
 };
 
-let ended = false;
 let control: WebSocket | null = null;
-let adaptive: AdaptiveDelay | null = null;
 
 // Theater mode, keyboard shortcuts and "stats for nerds" (player-extras.ts; the stats panel is a
 // chunk of its own, loaded only when opened). hls.js is there once main() has made it.
@@ -283,6 +344,7 @@ let playerHls: InstanceType<typeof Hls> | null = null;
 installPlayerExtras({
   doc: document,
   video,
+  player: video.parentElement!,
   goLive,
   unmute,
   chatRoot: $<HTMLElement>('chat'),
@@ -304,6 +366,13 @@ installPlayerExtras({
   },
   clipboard: navigator.clipboard,
   debug: (msg) => debugLog(msg),
+  onAction: () => controls?.reveal(),
+});
+
+// The "Unmute" button goes once the sound is on, whichever control turned it on, and comes back
+// when the viewer mutes again (as after the muted autoplay).
+video.addEventListener('volumechange', () => {
+  if (started && !ended) unmute.hidden = !video.muted;
 });
 
 /** "~14 s behind live" next to the status while playing (the delay adapts to the connection). */
@@ -312,6 +381,7 @@ function showDelay(): void {
   const show = d !== null && stats.playing && !ended;
   delayWrap.hidden = !show;
   if (show) delayEl.textContent = t('watch.delay', { count: Math.max(1, Math.round(d)) });
+  controls?.setDelay(show ? delayEl.textContent : null);
 }
 
 function setStatus(key: MessageKey, live = false): void {
@@ -337,11 +407,14 @@ function endScreen(titleKey: MessageKey, textKey: MessageKey): void {
   void share.setAllowed(false);
   goLive.hidden = true;
   viewerCountWrap.hidden = true;
+  // The end card is outside the player: a full-screen player would hide it.
+  exitFullscreen(video, document);
   try {
     video.pause();
   } catch {
     /* ignore */
   }
+  controls?.sync();
 }
 
 async function loadConfig(): Promise<ViewerConfig | null> {
@@ -542,7 +615,7 @@ async function main(): Promise<void> {
     onBroken: () => showPlayerNotice(video.parentElement!, t('watch.audioOnly.failed')),
   });
   mountAudioOnlyPoster(video.parentElement!, { labels: { title: t('watch.audioOnly.title'), hint: t('watch.audioOnly.hint') }, brand: () => fetchPosterBrand() });
-  mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id), source);
+  mountSettings(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id), source);
   setInterval(showDelay, 1000);
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
