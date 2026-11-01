@@ -17,6 +17,10 @@ on:
     branches: [main]
   schedule:
     - cron: '23 4 * * *'
+  # TEMPORARY (removed before merge): registers the workflow from this branch so it can be
+  # dispatched here before it exists on main. Always a dry run off main (see the sweep step).
+  push:
+    branches: [ci/cache-hygiene]
   workflow_dispatch:
     inputs:
       dry-run:
@@ -68,9 +72,9 @@ jobs:
           done
 
   sweep:
-    name: sweep${{ (github.event_name == 'workflow_dispatch' && inputs.dry-run) && ' (dry run)' || '' }}
+    name: sweep${{ (github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry-run)) && ' (dry run)' || '' }}
     if: >-
-      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'push' ||
       (github.event_name == 'workflow_run' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -92,7 +96,8 @@ jobs:
       - name: Delete superseded caches
         env:
           GH_TOKEN: ${{ github.token }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run }}
+          # Deletes only from main's own workflow; from any other ref it is always a dry run.
+          DRY_RUN: ${{ github.ref != 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.dry-run) }}
           GRACE_HOURS: ${{ github.event_name == 'workflow_dispatch' && inputs.grace-hours || '24' }}
         run: |
           args=(--repo "$GITHUB_REPOSITORY" --main-ref origin/main --grace-hours "$GRACE_HOURS")
