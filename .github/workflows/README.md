@@ -18,6 +18,7 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
+| `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
 
 Files starting with `_` are reusable workflows (`workflow_call`), the stages of the pipeline.
 They have no trigger of their own. There is no `merge_group` trigger: GitHub offers the merge queue to
@@ -119,7 +120,7 @@ schedules and releases are never cancelled.
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (setup-node saves it on `main`; elsewhere a restore-only step finds `main`'s entry); optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
@@ -182,6 +183,69 @@ runtime, and the fallback does not depend on that client.
 
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
+
+## Caches
+
+GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
+entries, so a job can find `main`'s npm or Rust cache gone and do the whole download or compile
+again (a cold run). What is saved, all from `main` unless noted:
+
+| Cache | Saved by | Entries | Size |
+|---|---|---|---|
+| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 3.25 GB |
+| `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
+| `sc-downloads-*` | `setup/save`: the pinned downloads, per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
+| `node-cache-*-npm-*` | setup-node, per OS | 5 | 0.40 GB |
+| `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
+| `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
+| `sc-pkg-*` | `setup/save`: pkg's Node.js binaries | 3 | 0.13 GB |
+| `setup-go-*` | setup-go, per OS (also on other branches) | 4 | 0.08 GB |
+| `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
+
+That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
+them as 6.7 GiB), about 6.4 GB once the Rust checks' caches are saved without debug info (a third
+smaller: 1.77 GB to 1.19 GB for their target folder, measured on macOS). Every Rust entry is
+needed: each pipeline restores all eight (one per job and target); none is saved outside `main`.
+
+**`cache-hygiene.yml`** (`scripts/ci/cache-hygiene.mjs`, tested in `scripts/ci/test`) deletes what
+nobody restores again, and prints each deletion with its reason and the size before and after:
+
+- when a pull request closes, its caches (`refs/pull/<n>/merge`, `/head`); the sweep also catches
+  any left behind (a fork's pull request, whose token cannot delete);
+- the caches of a branch that no longer exists;
+- on `main`, superseded entries. A family is the key with its hashes and versions taken out
+  (`node-cache-Linux-x64-npm-*`, `v0-rust-checks-node-Linux-x64-*-*`, `codeql-trap-1-*-javascript-*`).
+  It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
+  the workflows and setup-node compute: the npm cache's three files, `package-lock.json`,
+  `scripts/build/versions.json`, `apps/tray/go.sum`, and `main`'s commit for CodeQL), the newest
+  or the most recently used entry of a family, nor an older entry still used after the newest was
+  saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
+  image version still being rolled out). An older entry last used before the newest was saved is
+  superseded: a Rust or CodeQL cache rolls over that way (the run that saves the new entry
+  restored the old one by prefix, then nothing does).
+
+The sweep runs after every Pipeline and CodeQL run on `main` (once their caches are saved),
+daily, and by hand: run `cache-hygiene.yml` from the Actions tab, with `dry-run` (the default) to
+see the plan in the job's log and summary without deleting anything.
+
+Known limit: a `Cargo.lock` or toolchain change saves new entries for all eight Rust jobs in one
+pipeline run (4-5 GB) while the old ones still exist; until the sweep after that run deletes the
+old ones, the total can pass 10 GB and GitHub evicts the least recently used entries, which the
+next run on `main` saves again.
+
+**Incident (2026-11-01).** The caches had reached 10.94 GB in 95 entries: nine Rust entries on
+`main` (one a superseded duplicate for macos-x64), npm and pkg entries for two old lockfiles next
+to the current one, the `.deb` cache for three old lockfiles, 17 CodeQL TRAP caches (one per
+commit on `main`), the npm caches of closed pull requests (#45, #46, #47, #53: 0.9 GB; setup-node
+saved them because a pull request that changes a lockfile misses `main`'s key) and the Go caches
+of deleted branches. In 10x stability run 41283774499, `desktop macos-x64 / clean-machine
+(macos-15-intel)` found `main`'s npm entry but its download from the cache service stalled at 0 bytes
+and was aborted ("npm cache is not found", setup-node took 126 s); `npm ci --prefer-offline` then
+went to the registry on the slow Intel VM and the setup step ran out of time after 352 s in
+`npm ci` (in 20 other runs that step took 24-61 s). The first sweep deletes 50 entries (3.3 GB):
+the closed pull requests' and deleted branches' caches and every superseded entry on `main`.
+Since then pull requests restore `main`'s npm cache without saving one (`setup`), and the Rust
+checks build without debug info (`_node.yml`).
 
 ## Coverage
 
@@ -254,7 +318,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
-  (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
+  (`codeql.yml`: `security-events: write`; `cache-hygiene.yml`: `actions: write` to delete caches; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
@@ -262,7 +326,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
-  instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
+  instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
   (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because
   some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
   request pays one slow download, its later runs restore it. A pull request cannot poison it:
