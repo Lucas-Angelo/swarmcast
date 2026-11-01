@@ -234,6 +234,9 @@ export const en = {
   'admin.set.showCount.tip': 'Viewers see how many people are watching right now (only the number, never names).',
   'admin.set.allowP2P': 'Allow P2P for viewers',
   'admin.set.allowP2P.tip': 'Viewers who leave "Help the stream" on share video with each other, which saves your upload. Turn this off if playback has trouble: P2P stops for everyone right away and they keep watching over HTTPS.',
+  'admin.set.allowShare': 'Viewers can share the link',
+  'admin.set.allowShare.tip':
+    'Viewers get a Share button that sends your current link to a friend. After "Generate new link", people who came in with the old link no longer see it, so they cannot pass the new link on. Turn it off if only you should hand out the link.',
   'admin.set.save': 'Save',
   'admin.set.save.tip': 'Applies the settings right away and remembers them for next time.',
 
@@ -397,6 +400,11 @@ export const en = {
   'watch.atLive.tip': 'You are watching live (about {latency} behind the streamer, which is normal).',
   'watch.goLive.tip': 'You are {behind} behind live. Click to jump to the live moment.',
   'watch.goLive.tipUnknown': 'Click to jump to the live moment.',
+  'watch.share': 'Share',
+  'watch.share.tip': 'Send the link of this live to a friend. They open it and pick a nickname, like you did.',
+  'watch.share.copied': 'Link copied',
+  'watch.share.copyHint': 'Copy this link:',
+  'watch.media.artist': 'Live on SwarmCast',
   'watch.p2p': 'Help the stream (P2P)',
   'watch.p2p.tip':
     'Off by default. Turn it on to share video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.',
