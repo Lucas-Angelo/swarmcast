@@ -346,7 +346,8 @@ button.golive .behind {
   color: var(--sc-muted);
 }
 button#unmute,
-button#share {
+button#share,
+button#theater {
   min-height: 32px;
   padding: 0 var(--sp-3);
   font-size: var(--fs-sm);
@@ -529,6 +530,149 @@ button#share {
   }
 }
 
+/* ---- Theater mode (theater.ts): a wider player on a computer ------------------------------- */
+/* The stage takes the window's width; the video as much height as leaves the header and the
+   status bar in view (black bands at the sides when the window is wider than 16:9). The chat
+   stays beside the player on a wide screen (from 1600 px) and goes under it below that, where
+   beside it would leave the video no wider than without theater mode. Phones: no change. */
+button#theater[aria-pressed='true'] {
+  border-color: var(--sc-accent);
+  color: var(--sc-accent-strong);
+  background: color-mix(in srgb, var(--sc-accent) 10%, var(--sc-surface));
+}
+@media (min-width: 641px) and (min-height: 501px) {
+  .watch.theater {
+    --stage-w: calc(100% - 48px);
+  }
+  .watch.theater .stage > .player {
+    max-height: max(320px, calc(100dvh - 140px));
+  }
+}
+@media (min-width: 1100px) and (max-width: 1599px) and (min-height: 501px) {
+  .watch.theater.has-chat:not(.chat-hidden) {
+    --stage-w: calc(100% - 48px);
+  }
+  .watch.theater.has-chat:not(.chat-hidden) .stage {
+    display: block;
+  }
+  .watch.theater.has-chat .stage > .chat {
+    height: 40vh;
+    height: 40dvh;
+    min-height: 260px;
+    margin: 0 0 var(--sp-4);
+  }
+}
+@media (min-width: 1600px) and (min-height: 501px) {
+  .watch.theater.has-chat:not(.chat-hidden) {
+    --stage-w: calc(100% - 48px);
+  }
+}
+
+/* ---- Keyboard shortcuts and "Stats for nerds" links (settings card) ------------------------- */
+.extras-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-2) var(--sp-5);
+}
+button.link-btn {
+  min-height: 32px;
+  padding: 0;
+  background: none;
+  border: 0;
+  color: var(--sc-accent-strong);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-medium);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+button.link-btn:hover {
+  background: none;
+  color: var(--sc-ink);
+}
+button.link-btn:focus-visible,
+.keys-close:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: 2px;
+}
+
+/* The list of keyboard shortcuts: a modal sheet (native <dialog>). */
+.keys-help {
+  width: min(440px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: var(--sp-5) var(--sp-6) var(--sp-6);
+  color: var(--sc-ink);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-lg);
+  box-shadow: var(--sc-shadow-float);
+}
+.keys-help::backdrop {
+  background: var(--scrim);
+}
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.keys-head h2 {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--sc-weight-semibold);
+}
+button.keys-close {
+  min-height: 36px;
+  width: 36px;
+  padding: 0;
+  font-size: 1.25rem;
+  background: none;
+  color: var(--sc-muted);
+  border-color: transparent;
+}
+button.keys-close:hover {
+  background: var(--hover);
+  color: var(--sc-ink);
+}
+.keys-help .toggle {
+  margin-bottom: var(--sp-2);
+}
+.keys-help p {
+  margin: 0 0 var(--sp-4);
+}
+.keys-list {
+  display: grid;
+  gap: var(--sp-2);
+  margin: 0;
+}
+.keys-list > div {
+  display: grid;
+  grid-template-columns: 7.5rem 1fr;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+.keys-list dt,
+.keys-list dd {
+  margin: 0;
+  font-size: var(--fs-md);
+}
+.keys-help kbd {
+  display: inline-block;
+  min-width: 1.75em;
+  padding: 1px 6px;
+  font: inherit;
+  font-weight: var(--sc-weight-semibold);
+  font-size: var(--fs-sm);
+  text-align: center;
+  background: var(--sc-surface-2);
+  border: 1px solid var(--sc-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--sc-radius-sm);
+}
+.keys-help:has(#keys-on:not(:checked)) .keys-list {
+  opacity: 0.55;
+}
+
 /* ---- branding: header with the streamer's name and support button ---- */
 .watch .site-head {
   gap: var(--sp-3);
@@ -576,6 +720,15 @@ button#share {
   button#unmute,
   button#share {
     min-height: 36px;
+  }
+  /* Phones already show the video across the whole width: no theater mode there. */
+  button#theater {
+    display: none;
+  }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  button#theater {
+    display: none;
   }
 }
 /* Phone held sideways: the video takes the whole height. */

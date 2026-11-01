@@ -25,11 +25,35 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 - **Ajudar a transmissão (P2P):** vem desligada por padrão; você pode ligar (veja abaixo).
 - **Compartilhar:** envia o link desta live para um amigo. No celular, abre o seu menu de compartilhar (WhatsApp, Mensagens…); no computador, copia o link e mostra **Link copiado**, para você colar numa mensagem. O seu amigo abre o link e escolhe um apelido, como você fez. O botão só aparece se quem transmite permitir, e some quando quem transmite gera um link novo.
 
+- **Modo cinema** (no computador): deixa o vídeo do maior tamanho que a janela permite. O chat fica ao lado numa tela larga e vai para baixo do vídeo numa menor. Clique de novo para voltar; o navegador lembra a escolha.
+
 Enquanto a live toca, o celular ou o computador **mantém a tela ligada**, para ela não apagar nem bloquear no meio da transmissão (se você pausar, ela pode apagar de novo). Com o som ligado, a **tela de bloqueio** e as notificações do celular mostram o nome e a foto de quem transmite, com um botão de tocar / pausar.
 
 No celular, os mesmos controles ficam embaixo do vídeo:
 
 ![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui, 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+
+### Atalhos de teclado
+
+No computador, dá para controlar a live pelo teclado:
+
+| Tecla | O que faz |
+| --- | --- |
+| Espaço ou K | Reproduzir ou pausar |
+| M | Ligar ou desligar o som |
+| F | Tela cheia (Esc sai) |
+| T | Modo cinema |
+| G | Ir para o ao vivo |
+| I | Picture-in-picture (o vídeo numa janela pequena), se o seu navegador tiver |
+| C | Ir para a caixa do chat |
+| S | Estatísticas para nerds |
+| ? | A lista de atalhos |
+
+Eles não fazem nada enquanto você digita, então escrever no chat é seguro. **Atalhos de teclado**, embaixo do vídeo, mostra a lista e uma chave para desligar os atalhos (por exemplo, se você usa controle por voz); o navegador lembra a escolha.
+
+### Estatísticas para nerds
+
+Curioso para saber o que o player está fazendo? **Estatísticas para nerds**, embaixo do vídeo, abre um painel pequeno em cima do vídeo: a resolução e a qualidade, a velocidade de internet que o player mede, quantos segundos de vídeo já estão carregados, quanto você está atrás do ao vivo, quadros perdidos, quanto vídeo veio de outros espectadores (P2P) e quanto você mandou para eles, e o tipo da sua conexão quando o navegador informa. Os números se atualizam a cada segundo. Aperte Esc ou × para fechar; **Copiar** copia as linhas, por exemplo para mandar para quem transmite quando algo der errado. Ele nunca mostra o seu endereço nem o de ninguém.
 
 ## O chat
 
