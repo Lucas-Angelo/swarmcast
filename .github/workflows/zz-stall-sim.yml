@@ -1,0 +1,81 @@
+name: cache stall simulation (temporary)
+# Temporary, on soak/cache-stall-sim only. A cache download that stalls: TLS to the cache's blob
+# storage (*.blob.core.windows.net) dropped after the ClientHello (iptables SNI match), so the
+# cache service hands out the download URL and then nothing arrives, as in run 41283774499.
+on:
+  push:
+    branches: [soak/cache-stall-sim]
+permissions:
+  contents: read
+jobs:
+  stall:
+    name: stalled restore (${{ matrix.try }})
+    strategy:
+      fail-fast: false
+      matrix:
+        try: [a, b]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24.x
+          package-manager-cache: false
+      - name: key
+        id: k
+        env:
+          HASH: ${{ hashFiles('package-lock.json', 'site/package-lock.json', '.github/actions/setup/action.yml') }}
+        run: |
+          prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
+          { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
+      - name: block blob storage (stall)
+        run: |
+          for t in iptables ip6tables; do
+            sudo "$t" -I OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP
+          done
+          sudo iptables -L OUTPUT -n -v | head
+          date -u +%T
+      - name: restore while stalled
+        id: r1
+        continue-on-error: true
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.k.outputs.path }}
+          key: ${{ steps.k.outputs.key }}
+          restore-keys: ${{ steps.k.outputs.prefix }}
+      - name: after the stalled restore
+        env:
+          M: ${{ steps.r1.outputs.cache-matched-key }}
+          H: ${{ steps.r1.outputs.cache-hit }}
+        run: |
+          date -u +%T; echo "matched=[$M] hit=[$H]"; du -sh "$(npm config get cache)" 2>/dev/null || echo "no npm cache dir"
+          for t in iptables ip6tables; do sudo "$t" -D OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP; done
+      - name: restore again (second try, network fine)
+        id: r2
+        continue-on-error: true
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.k.outputs.path }}
+          key: ${{ steps.k.outputs.key }}
+          restore-keys: ${{ steps.k.outputs.prefix }}
+      - name: result
+        env:
+          M: ${{ steps.r2.outputs.cache-matched-key }}
+        run: date -u +%T; echo "second try matched=[$M]"; du -sh "$(npm config get cache)"
+
+  composite-timeout:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/zz-tt

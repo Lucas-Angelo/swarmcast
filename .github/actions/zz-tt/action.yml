@@ -1,0 +1,14 @@
+name: composite step timeout probe (temporary)
+description: Does timeout-minutes work on a composite step?
+runs:
+  using: composite
+  steps:
+    - name: sleep 150 s with timeout-minutes 1
+      shell: bash
+      timeout-minutes: 1
+      continue-on-error: true
+      run: |
+        echo "start $(date -u +%T)"; sleep 150; echo "NOT KILLED $(date -u +%T)"
+    - name: after
+      shell: bash
+      run: echo "after $(date -u +%T)"
