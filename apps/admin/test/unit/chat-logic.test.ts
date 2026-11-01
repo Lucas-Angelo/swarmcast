@@ -1,6 +1,7 @@
 import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
-import { CHAT_BG_DARK, CHAT_BG_LIGHT, contrastRatio, defaultChatSettings, type ChatCounters, type ChatPublicSettings } from '@swarmcast/shared';
+import { CHAT_BG_DARK, CHAT_BG_LIGHT, CHAT_PIN_MAX_MIN, chatPinSchema, contrastRatio, defaultChatSettings, type ChatCounters, type ChatPublicSettings } from '@swarmcast/shared';
+import { setLang, t } from '@swarmcast/shared/i18n';
 import {
   CONTENT_PRESETS,
   chatColumnShown,
@@ -11,6 +12,7 @@ import {
   messageTokens,
   mutedText,
   parseBlockedWords,
+  PIN_CHOICES,
   presetNeedsGifs,
   presetOf,
   readableName,
@@ -207,5 +209,25 @@ describe('system lines', () => {
     const texts = [systemText(known), systemText(future)];
     // Assert
     expect(texts).toEqual(['Ana was muted for 10 min.', 'Something changed in the chat that this page cannot show. Reload the page to see it.']);
+  });
+});
+
+describe('pin choices', () => {
+  it('"until I unpin it" first, then lengths the server accepts, each with its own words in both languages', () => {
+    // Arrange
+    const labels = (lang: 'en' | 'pt-BR') => {
+      setLang(lang);
+      return PIN_CHOICES.map((c) => t(c.key, c.params));
+    };
+    // Act
+    const en = labels('en');
+    const pt = labels('pt-BR');
+    setLang('en');
+    // Assert
+    expect(PIN_CHOICES[0]!.minutes).toBeNull();
+    for (const c of PIN_CHOICES) expect(chatPinSchema.safeParse({ s: 1, minutes: c.minutes }).success).toBe(true);
+    expect(PIN_CHOICES.every((c) => c.minutes === null || (c.minutes >= 1 && c.minutes <= CHAT_PIN_MAX_MIN))).toBe(true);
+    expect(en).toEqual(['Until I unpin it', 'For 5 min', 'For 15 min', 'For 1 hour']);
+    expect(pt).toEqual(['Até eu desafixar', 'Por 5 min', 'Por 15 min', 'Por 1 hora']);
   });
 });

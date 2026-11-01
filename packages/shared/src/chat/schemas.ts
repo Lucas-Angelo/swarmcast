@@ -18,6 +18,7 @@ import {
   CHAT_MAX_GRAPHEMES_MIN,
   CHAT_MUTE_MAX_MIN,
   CHAT_NEW_VIEWER_WAIT_MAX_S,
+  CHAT_PIN_MAX_MIN,
   CHAT_SLOW_MODE_DEFAULT_S,
   CHAT_SLOW_MODE_MAX_S,
   CHAT_TEXT_MAX_UNITS,
@@ -193,3 +194,12 @@ export const chatSetColorSchema = z.object({
 });
 
 export const chatProtectRequestSchema = z.object({ mode: chatProtectSchema });
+
+/** A message of the ring, by its seq. */
+const chatSeqSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+
+/** Highlight a message (`on`) or take the highlight off. */
+export const chatHighlightSchema = z.strictObject({ s: chatSeqSchema, on: z.boolean() });
+
+/** Pin a message at the top of everyone's chat, until unpinned (`minutes` absent or null) or for 1…120 minutes. */
+export const chatPinSchema = z.strictObject({ s: chatSeqSchema, minutes: z.number().int().min(1).max(CHAT_PIN_MAX_MIN).nullable().optional() });

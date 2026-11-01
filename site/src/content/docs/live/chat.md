@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Talk with your viewers under the video, and keep the chat friendly - delete, mute, slow mode, colours and automatic flood protection.
+description: Talk with your viewers under the video, highlight and pin messages, and keep the chat friendly - delete, mute, slow mode, colours and automatic flood protection.
 ---
 
 Your live has a chat. Viewers write under the video, you read and answer in the panel's **Live chat**, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
@@ -11,7 +11,7 @@ While you are live, the **Live chat** is right on the panel's main screen, no sc
 Everyone watching sees the nicknames in the chat. The join page says so before people type theirs.
 :::
 
-![The Live chat on the right of the panel: 1 the messages, with the Streamer badge on yours, 2 Send as …, to write as the streamer, 3 Flood protection, 4 Clear chat, 5 Settings (the chat on/off switch and the chat settings).](../../../assets/guides/live/en/chat-panel.webp)
+![The Live chat on the right of the panel: 1 the messages, with the Streamer badge on yours, a highlighted question and your pinned answer, which also shows on top with Unpin, 2 Send as …, to write as the streamer, 3 Flood protection, 4 Clear chat, 5 Settings (the chat on/off switch and the chat settings).](../../../assets/guides/live/en/chat-panel.webp)
 
 ## What viewers can send
 
@@ -26,10 +26,12 @@ Your own messages, sent from the box **Send as …** at the bottom of the Live c
 Each message in the Live chat has an **Actions** menu (the **⋯** button):
 
 - **Delete:** removes that message for everyone.
+- **Highlight:** makes the message stand out for everyone (see [Highlight and pin](#highlight-and-pin)). **Remove highlight** takes it off.
+- **Pin to top:** keeps the message at the top of everyone's chat, **until I unpin it** or for 5 min, 15 min or 1 hour. **Unpin** takes it down.
 - **Mute:** for 1 min, 10 min, 1 hour, or **until the stream ends**. The person keeps watching but cannot write. **Unmute** lets them write again right away. Leaving and coming back does not undo a mute.
 - **Change colour…:** sets the colour of their name for everyone. Tick **Lock** so they cannot change it back.
 
-![The menu of a viewer's message: 1 Delete, Mute for 1 min, 10 min, 1 hour or until the stream ends, and Change colour… with Lock, Apply and Back to their own colour.](../../../assets/guides/live/en/chat-moderation.webp)
+![The menu of a highlighted viewer's message: 1 Delete, Remove highlight, Pin to top until I unpin it, for 5 min, 15 min or 1 hour, Mute for 1 min, 10 min, 1 hour or until the stream ends, and Change colour… with Lock, Apply and Back to their own colour.](../../../assets/guides/live/en/chat-moderation.webp)
 
 You can also mute someone from the **Viewers** card.
 
@@ -38,6 +40,15 @@ There are no accounts, so on your next live SwarmCast cannot recognise this pers
 :::
 
 **Clear chat** removes every message for everyone (viewers see "The streamer cleared the chat").
+
+## Highlight and pin
+
+- **Highlight** a good question or an important message: everyone sees it with a coloured bar, also people who join later and see it among the recent messages. Up to 20 messages can be highlighted at a time; highlighting one more takes the mark off the oldest.
+- **Pin to top** one message (yours or a viewer's), for example the rules, a link you want everyone to read or the answer to the question everyone asks. It stays above the messages for everyone, also for people who join later. Only one message is pinned at a time: pinning another one replaces it. Choose **Until I unpin it**, or 5 min, 15 min or 1 hour to have it come down by itself.
+- The pinned message also shows at the top of your Live chat, with **Unpin** (and, for a timed pin, when it comes down).
+- **Deleting** the pinned message or **Clear chat** unpins it. Muting or kicking the person who wrote it does not. **Stop everything** removes it with the rest of the chat.
+
+Only you can highlight or pin. A viewer who types "📌 Pinned" in a message only writes text in their own row, under their own name: the real pinned message has its own place, above the chat, labelled "Pinned by the streamer".
 
 ## Flood protection
 
@@ -75,9 +86,11 @@ To turn the chat off for everyone, use the switch at the top of the Chat card (1
 
 ## What viewers see
 
-![The chat on the viewer page: a Streamer message with its badge, two viewers' messages with emotes, and the message box. 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send.](../../../assets/guides/live/en/chat-viewer.webp)
+![The chat on the viewer page: Streamer messages with their badge, viewers' messages with emotes, and the message box. 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send, 5 the pinned message, 6 a highlighted message.](../../../assets/guides/live/en/chat-viewer.webp)
 
 - The chat next to the video on a computer, under it on a phone.
+- The **pinned message** above the messages, labelled "Pinned by the streamer" (5). A long one opens with **Show more**; **✕** hides it on that device until you pin another one. While the chat is hidden, **Show chat** says **Pinned** when you pin something.
+- **Highlighted messages** with a coloured bar (6), readable in light and dark themes.
 - **Hide chat** hides it on that device (remembered); **Show chat** brings it back.
 - **Chat settings** for their own name colour, times and text size. SwarmCast keeps every colour readable on light and dark screens.
 

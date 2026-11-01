@@ -35,6 +35,12 @@ test.beforeEach(async ({ chat }) => {
   await chat.clear();
 });
 
+// A pin outlives a test that failed half way (clear in beforeEach takes it down for this file;
+// this keeps it from reaching the specs after it on the shared server).
+test.afterEach(async () => {
+  await admin('/api/chat/unpin');
+});
+
 /**
  * The panel (English or `lang`) while live: `live` is the live chat at the top (feed, protection,
  * "Send as …"), `card` the Chat card further down (switch, settings), loaded.
@@ -98,6 +104,123 @@ test('the streamer posts with a badge from the role; links are never clickable; 
   // Assert
   await expect(row(live, 'hello from ana')).toHaveCount(0);
   await expect.poll(() => ana.items().some((i) => i.k === 'd' && i.s.includes(sent.s!))).toBe(true);
+});
+
+test('from the ⋯ menu: highlight and pin reach viewers and joiners, the pin shows on top of the live chat; unpin, and the pin goes with its message', { tag: '@ui' }, async ({ page, bots }) => {
+  // Arrange
+  const { live } = await openChat(page);
+  const ana = await bots.join(uid('ana'));
+  await panelShows(page, ana.nickname);
+  const { s } = await ana.answer(ana.send('the shop link is in the description'));
+  const anaRow = row(live, 'the shop link is in the description');
+  const bar = live.getByTestId('chat-pinned');
+  const lastPin = () => ana.items().filter((i) => i.k === 'pin').at(-1);
+
+  // Act
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-highlight').click();
+
+  // Assert
+  await expect(anaRow.getByTestId('chat-highlighted')).toHaveText(translate('en', 'admin.chat.highlighted'));
+  await expect(anaRow).toHaveClass(/chat-msg-highlighted/);
+  await expect.poll(() => ana.items().some((i) => i.k === 'hl' && i.s === s && i.on)).toBe(true);
+
+  // Act
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-pin-until').click();
+
+  // Assert
+  await expect(bar).toContainText('the shop link is in the description');
+  await expect(bar).toContainText(ana.nickname);
+  await expect(anaRow.getByTestId('chat-pinned-mark')).toBeVisible();
+  await expect.poll(lastPin).toMatchObject({ k: 'pin', p: { s, x: 'the shop link is in the description' } });
+  const late = await bots.join(uid('late'));
+  const hello = late.messages.find((m) => m.t === 'hello');
+  expect(hello?.t === 'hello' && hello.chat?.pin).toMatchObject({ s, x: 'the shop link is in the description' });
+  expect(hello?.t === 'hello' && hello.chat?.items.find((i) => i.k === 'm' && i.s === s)).toMatchObject({ h: 1 });
+
+  // Act: the menu of the pinned, highlighted message offers Unpin and Remove highlight.
+  await anaRow.getByTestId('chat-more').click();
+
+  // Assert
+  await expect(anaRow.getByTestId('chat-pin-until')).toHaveCount(0);
+  await expect(anaRow.getByTestId('chat-unpin')).toBeVisible();
+
+  // Act
+  await anaRow.getByTestId('chat-unhighlight').click();
+  await bar.getByTestId('chat-pinned-unpin').click();
+
+  // Assert
+  await expect(bar).toHaveCount(0);
+  await expect(anaRow).not.toHaveClass(/chat-msg-highlighted/);
+  await expect.poll(lastPin).toEqual({ k: 'pin', p: null });
+  await expect.poll(() => ana.items().some((i) => i.k === 'hl' && i.s === s && !i.on)).toBe(true);
+
+  // Act: pinned for 5 minutes, then the message is deleted.
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-pin-5').click();
+  await expect(bar).toContainText(translate('en', 'admin.chat.pinned.until', { clock: '' }).trim());
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-delete').click();
+
+  // Assert
+  await expect(bar).toHaveCount(0);
+  await expect.poll(lastPin).toEqual({ k: 'pin', p: null });
+  expect((await adminApi<AdminChatState>('GET', '/api/chat')).pin).toBeUndefined();
+});
+
+test('an open ⋯ menu holds still while new messages arrive, so a click lands on the button it aimed at', { tag: '@ui' }, async ({ page, bots }) => {
+  // Arrange: a feed that scrolls, following the newest message, with the menu of the last row open.
+  const { live } = await openChat(page);
+  const ana = await bots.join(uid('ana'));
+  const bia = await bots.join(uid('bia'));
+  await panelShows(page, ana.nickname);
+  await panelShows(page, bia.nickname);
+  for (let i = 1; i <= 3; i++) await bia.answer(bia.send(`earlier line ${i}`));
+  await ana.answer(ana.send('this menu stays put'));
+  const r = row(live, 'this menu stays put');
+  await expect(r).toBeVisible();
+  await r.getByTestId('chat-more').click();
+  const button = r.getByTestId('chat-highlight');
+  await expect(button).toBeInViewport();
+  const before = await button.boundingBox();
+
+  // Act: a new message reaches the panel while the menu is open.
+  await bia.answer(bia.send('a new line while the menu is open'));
+  await expect(row(live, 'a new line while the menu is open')).toHaveCount(1);
+
+  // Assert: nothing moved under the pointer; the panel says there is more below instead.
+  expect(await button.boundingBox()).toEqual(before);
+  await expect(live.getByRole('button', { name: translate('en', 'admin.chat.feed.newBelow') })).toBeVisible();
+  await button.click();
+  await expect(r).toHaveClass(/chat-msg-highlighted/);
+});
+
+test('a narrow window in Portuguese: the pinned message on top, the box and Send still on screen without scrolling', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  await page.setViewportSize(NARROW_WINDOW);
+  const { live } = await openChat(page, 'pt-BR');
+  const { s } = await admin<{ s: number }>('/api/chat/send', { text: 'Sorteio às 21h: fiquem até o fim! '.repeat(4) });
+
+  // Act
+  await admin('/api/chat/pin', { s, minutes: null });
+
+  // Assert
+  const bar = live.getByTestId('chat-pinned');
+  await expect(bar).toContainText(translate('pt-BR', 'admin.chat.pinned'));
+  await expect(bar.getByTestId('chat-pinned-unpin')).toHaveText(translate('pt-BR', 'admin.chat.unpin'));
+  await expect(bar).toBeInViewport();
+  await expect(live.getByTestId('chat-input')).toBeInViewport();
+  await expect(live.getByTestId('chat-send')).toBeInViewport();
+  expect(await page.evaluate(() => scrollY)).toBe(0);
+
+  // Act
+  const r = row(live, 'Sorteio às 21h');
+  await r.getByTestId('chat-more').click();
+
+  // Assert
+  await expect(r.getByTestId('chat-highlight')).toHaveText(translate('pt-BR', 'admin.chat.highlight'));
+  await expect(r.getByTestId('chat-unpin')).toHaveText(translate('pt-BR', 'admin.chat.unpin'));
 });
 
 for (const [name, size] of [

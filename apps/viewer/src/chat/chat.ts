@@ -6,7 +6,7 @@ import { t } from '@swarmcast/shared/i18n';
 import { GIF_KEY_RE, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { GifConfig } from './gif-api.js';
 import { createGifPicker } from './gif-picker.js';
-import { onThemeChange, NameColors } from './color-ui.js';
+import { backgroundOf, onThemeChange, NameColors, tokenColorAt } from './color-ui.js';
 import { emoteTable, type Emote } from './emotes.js';
 import { loadEmojiData } from './emoji-load.js';
 import { ChatInput } from './input.js';
@@ -79,10 +79,15 @@ export function mountChat(opts: MountOptions): ChatController {
   let prefs: ChatPrefs = loadPrefs();
   let emotes: Map<string, Emote> = emoteTable(true);
   const colors: NameColors = new NameColors(() => list.list);
+  // A highlighted row sits on --sc-accent-soft (chat.css): its names are checked against that.
+  const highlightColors: NameColors = new NameColors(
+    () => list.list,
+    (el) => tokenColorAt(el, '--sc-accent-soft') ?? backgroundOf(el),
+  );
   const visible = (): boolean => !prefs.hidden && document.visibilityState !== 'hidden';
   const list: ChatList = new ChatList(body, {
     emotes: () => emotes,
-    nickColor: (c): string => colors.paint(c),
+    nickColor: (c, highlighted): string => (highlighted ? highlightColors : colors).paint(c),
     showTimes: () => prefs.times,
     visible,
     gifs: () => ({ consented: prefs.gifs, animate: animateGifs(prefs) }),
@@ -167,7 +172,8 @@ export function mountChat(opts: MountOptions): ChatController {
     },
   });
 
-  root.append(head, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
+  // The pinned bar sits between the header and the list, never over the list or the input.
+  root.append(head, list.pinned, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
 
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
@@ -182,6 +188,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   const applySettings = (s: ChatPublicSettings | null): void => {
     emotes = emoteTable(s?.builtinEmotes !== false);
+    list.setPinAllowed(s?.enabled === true);
     pickerButton.hidden = !s?.content.includes('emotes');
     if (pickerButton.hidden) picker.popover.close();
     applyGifs();
@@ -208,6 +215,8 @@ export function mountChat(opts: MountOptions): ChatController {
       append: (entries) => list.append(entries),
       remove: (seqs) => list.remove(seqs),
       clearUpTo: (s) => list.clearUpTo(s),
+      highlight: (s, on) => list.highlight(s, on),
+      pin: (p) => list.setPin(p),
       author: (a) => {
         list.recolor(a);
         if (a.a === chatSession.you?.a) applyYou(chatSession.you);
@@ -253,6 +262,7 @@ export function mountChat(opts: MountOptions): ChatController {
   showButton.addEventListener('click', () => {
     prefs = savePrefs({ hidden: false });
     unseen = 0;
+    pinUnseen = false;
     updateShowLabel();
     applyPrefs();
     list.scrollToEnd();
@@ -260,8 +270,22 @@ export function mountChat(opts: MountOptions): ChatController {
   });
   list.onUnread = () => updateShowLabel();
   let unseen = 0;
+  /** A new pin came while the chat was hidden: "Show chat" says so until the chat is shown. */
+  let pinUnseen = false;
+  list.onPin = (p, fresh) => {
+    if (fresh && prefs.hidden) pinUnseen = true;
+    if (!p) pinUnseen = false;
+    updateShowLabel();
+  };
   const updateShowLabel = (): void => {
     showButton.textContent = t('chat.viewer.show');
+    if (prefs.hidden && pinUnseen) {
+      const badge = document.createElement('span');
+      badge.className = 'chat-unread';
+      badge.dataset.testid = 'chat-show-pinned';
+      badge.textContent = t('chat.viewer.pinned.badge');
+      showButton.append(' ', badge);
+    }
     if (prefs.hidden && unseen > 0) {
       const badge = document.createElement('span');
       badge.className = 'chat-unread';
@@ -273,6 +297,7 @@ export function mountChat(opts: MountOptions): ChatController {
   document.addEventListener('visibilitychange', () => list.resume());
   onThemeChange(() => {
     colors.invalidate();
+    highlightColors.invalidate();
     list.recolor();
   });
 
