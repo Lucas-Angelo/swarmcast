@@ -1,76 +1,21 @@
 name: cache stall simulation (temporary)
-# Temporary, on soak/cache-stall-sim only: the setup action (fix/stalled-cache-restore) when the
-# cache's storage or the npm registry stalls. Blob storage: TLS to *.blob.core.windows.net dropped
-# after the ClientHello (iptables SNI match). Registry: one in five new TLS connections to
-# registry.npmjs.org black-holed for good (CONNMARK), like a request that never gets an answer.
+# Temporary, on soak/cache-stall-sim only: `npm ci` from the registry (no npm cache) when some
+# connections to registry.npmjs.org stop delivering data mid-transfer (one in five connections,
+# after 100 kB of reply), with npm's defaults and with the limits the setup action sets.
 on:
   push:
     branches: [soak/cache-stall-sim]
 permissions:
   contents: read
 jobs:
-  sim:
-    name: ${{ matrix.case }}
+  npm:
+    name: registry stalls mid-transfer, ${{ matrix.config }}
     strategy:
       fail-fast: false
       matrix:
-        case: [normal, blob-stall-once, blob-stall-always, blob-stall-always+registry-blackhole, bogus-key]
+        config: [npm defaults, setup limits]
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: break the network
-        env:
-          CASE: ${{ matrix.case }}
-        run: |
-          blob() { for t in iptables ip6tables; do sudo "$t" "$1" OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP; done; }
-          case "$CASE" in
-            blob-stall-once) blob -I; (sleep 100; blob -D; echo "unblocked blob storage at $(date -u +%T)") >/dev/null 2>&1 & ;;
-            blob-stall-always*) blob -I ;;
-          esac
-          if [[ "$CASE" == *registry-blackhole ]]; then
-            for t in iptables ip6tables; do
-              sudo "$t" -t mangle -A OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
-              sudo "$t" -A OUTPUT -p tcp --dport 443 -m connmark --mark 7 -j DROP
-            done
-          fi
-          echo "SIM_START=$SECONDS" >> "$GITHUB_ENV"; date -u +%T
-      - uses: ./.github/actions/setup
-        if: matrix.case != 'bogus-key'
-        timeout-minutes: 8
-      - name: bogus key (plain miss, one try)
-        if: matrix.case == 'bogus-key'
-        id: bogus
-        uses: ./.github/actions/cache-restore
-        with:
-          path: ${{ runner.temp }}/nothing
-          key: sim-no-such-key-${{ github.run_id }}
-      - name: bogus key reference to actions/cache (never runs)
-        if: matrix.case == 'never'
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: x
-          key: x
-      - name: result
-        env:
-          HIT: ${{ steps.bogus.outputs.cache-hit }}
-        run: |
-          date -u +%T; echo "SETUP_SECONDS=$((SECONDS - SIM_START))"; [ -z "$HIT" ] || echo "bogus cache-hit=$HIT"
-          du -sh "$(npm config get cache)" 2>/dev/null || true
-          npm config get fetch-timeout; npm config get fetch-retries
-          sudo iptables -L OUTPUT -n -v | grep -E "DROP" || true
-
-  # The same registry black hole with npm's defaults (fetch-timeout 5 minutes), no cache: what the
-  # setup step's `npm ci` met in run 41283774499.
-  npm-defaults:
-    name: registry-blackhole, npm defaults
-    runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -82,12 +27,20 @@ jobs:
         with:
           node-version: 24.x
           package-manager-cache: false
-      - run: |
+      - name: npm ci with stalled connections
+        env:
+          CONFIG: ${{ matrix.config }}
+        run: |
+          if [ "$CONFIG" = "setup limits" ]; then
+            npm config set fetch-timeout 60000 --location=user
+            npm config set fetch-retries 4 --location=user
+          fi
+          echo "fetch-timeout=$(npm config get fetch-timeout) fetch-retries=$(npm config get fetch-retries)"
           for t in iptables ip6tables; do
             sudo "$t" -t mangle -A OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
-            sudo "$t" -A OUTPUT -p tcp --dport 443 -m connmark --mark 7 -j DROP
+            sudo "$t" -A INPUT -p tcp --sport 443 -m connmark --mark 7 -m connbytes --connbytes 100000: --connbytes-dir reply --connbytes-mode bytes -j DROP
           done
           start=$SECONDS
           npm ci --prefer-offline --no-audit --no-fund
           echo "NPM_CI_SECONDS=$((SECONDS - start))"
-          sudo iptables -L OUTPUT -n -v | grep DROP
+          sudo iptables -L INPUT -n -v | grep DROP
