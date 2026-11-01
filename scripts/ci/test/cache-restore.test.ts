@@ -73,23 +73,43 @@ describe('restore', () => {
     expect(result).toEqual({ hit: false, matchedKey: '', tries: [{ timedOut: false, failed: false, seconds: expect.any(Number) }] });
   });
 
+  /**
+   * The fake's try number comes from the parent, not from the try itself: the test's `log` sees the
+   * parent's "try 1 of 2 cut off" warning before try 2 starts and leaves a marker. A counter the
+   * try writes itself is never written when the try is cut off before its script runs: on a loaded
+   * macOS runner (soak, vitest workers in parallel) a new node took over the 1.5 s limit to start,
+   * so try 2 counted itself as try 1, hung too, and the restore missed (3.2 s: two time limits).
+   */
+  function secondTryMarker(lines: string[]): { marker: string; log: (l: string) => void } {
+    const marker = path.join(dir, 'second-try');
+    return {
+      marker,
+      log: (l: string) => {
+        lines.push(l);
+        if (l.startsWith('::warning::') && l.includes('try 1 of 2')) fs.writeFileSync(marker, '');
+      },
+    };
+  }
+
   it('cuts off a try that hangs (and what it started), clears the half-restored path, and tries once more', async () => {
-    // Arrange: the first try leaves a file behind and hangs, with a child of its own (like tar);
-    // the second restores.
+    // Arrange: the path holds a half-restored file; the first try adds one and hangs, with a child of
+    // its own (like tar); the second restores.
     fs.mkdirSync(path.join(dir, 'npm'));
-    const script = fake(`if (tries() === 1) {
+    fs.writeFileSync(path.join(dir, 'npm', 'before'), 'x');
+    const lines: string[] = [];
+    const { marker, log } = secondTryMarker(lines);
+    const script = fake(`if (!fs.existsSync(${JSON.stringify(marker)})) {
         fs.writeFileSync(${JSON.stringify(path.join(dir, 'npm', 'half'))}, 'x');
         require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
         setInterval(() => {}, 1000);
       } else {
-        console.log('second try: ' + fs.existsSync(${JSON.stringify(path.join(dir, 'npm', 'half'))}));
+        console.log('second try: ' + fs.readdirSync(${JSON.stringify(path.join(dir))}).includes('npm'));
         out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
       }`);
-    const lines: string[] = [];
     const start = Date.now();
 
     // Act
-    const result = await restore({ ...base(), script, timeoutMs: 1500, log: (l: string) => lines.push(l) });
+    const result = await restore({ ...base(), script, timeoutMs: 1500, log });
 
     // Assert
     expect(Date.now() - start).toBeLessThan(10_000);
@@ -97,6 +117,27 @@ describe('restore', () => {
     expect(result.tries.map((t: { timedOut: boolean }) => t.timedOut)).toEqual([true, false]);
     expect(lines).toContain('second try: false');
     expect(lines.some((l) => l.startsWith('::warning::') && l.includes('try 1 of 2 cut off after 2 s, trying again'))).toBe(true);
+  });
+
+  it('a try cut off before it did anything (a slow start) is tried once more', async () => {
+    // Arrange: the first try takes longer to start than the time limit (busy, as node on a loaded
+    // runner) and never gets to do anything; the second restores.
+    const lines: string[] = [];
+    const { marker, log } = secondTryMarker(lines);
+    const script = fake(`if (!fs.existsSync(${JSON.stringify(marker)})) {
+        const t = Date.now();
+        while (Date.now() - t < 5000) {}
+        out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
+      } else {
+        out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
+      }`);
+
+    // Act
+    const result = await restore({ ...base(), script, timeoutMs: 800, log });
+
+    // Assert
+    expect(result.hit).toBe(true);
+    expect(result.tries.map((t: { timedOut: boolean }) => t.timedOut)).toEqual([true, false]);
   });
 
   it('tries once more after "Failed to restore" (a failed download reports a miss)', async () => {
