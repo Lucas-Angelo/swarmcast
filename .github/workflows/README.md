@@ -226,7 +226,8 @@ nobody restores again, and prints each deletion with its reason and the size bef
 
 The sweep runs after every Pipeline and CodeQL run on `main` (once their caches are saved),
 daily, and by hand: run `cache-hygiene.yml` from the Actions tab, with `dry-run` (the default) to
-see the plan in the job's log and summary without deleting anything.
+see the plan in the job's log and summary without deleting anything. It deletes only when it runs
+from `main`'s own workflow file; from any other ref it is always a dry run.
 
 Known limit: a `Cargo.lock` or toolchain change saves new entries for all eight Rust jobs in one
 pipeline run (4-5 GB) while the old ones still exist; until the sweep after that run deletes the
