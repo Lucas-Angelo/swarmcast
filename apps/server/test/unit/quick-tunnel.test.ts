@@ -27,11 +27,13 @@ const S429_JSON = 'quick tunnel provisioning failed with status 429: [1015] You 
 const S503 = 'quick tunnel provisioning failed with status 503';
 const URL_ = 'https://quiet-river-mango-tree.trycloudflare.com';
 
-type Attempt = { lines: string[]; exit: number } | { url: string };
+/** `noise`: that many debug lines first (made by the fake: an environment variable holds at most 128 KiB on Linux). */
+type Attempt = { lines: string[]; exit: number; noise?: number } | { url: string };
 
 /** Prints its attempt's lines on stderr, then exits with its code, or prints the address and stays up. */
 const FAKE_CLOUDFLARED = [
   'const a = JSON.parse(process.env.SC_FAKE_CLOUDFLARED);',
+  "for (let i = 0; i < (a.noise ?? 0); i++) process.stderr.write('2026-11-01T02:58:54Z DBG line ' + i + ' ' + 'x'.repeat(80) + '\\n');",
   "for (const l of a.lines ?? []) process.stderr.write(l + '\\n');",
   "if (a.url) { process.stderr.write('2026-11-01T02:58:55Z INF |  ' + a.url + '  |\\n'); setInterval(() => {}, 1000); }",
   'else process.exitCode = a.exit;',
@@ -147,8 +149,7 @@ describe('quick tunnel start: Cloudflare refuses or fails', () => {
 
   it('keeps the reason when cloudflared prints a lot and exits at once (its last lines can come after the exit)', async () => {
     // Arrange
-    const noise = Array.from({ length: 3000 }, (_, i) => `2026-11-01T02:58:54Z DBG line ${i} ${'x'.repeat(80)}`);
-    const { tunnel } = tunnelWith([{ lines: [...noise, S429], exit: 1 }, { url: URL_ }]);
+    const { tunnel } = tunnelWith([{ noise: 3000, lines: [S429], exit: 1 }, { url: URL_ }]);
     const retries: TunnelRetry[] = [];
     tunnel.on('retry', (r) => retries.push(r));
     // Act
