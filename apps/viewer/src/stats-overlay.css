@@ -1,0 +1,83 @@
+/*
+ * "Stats for nerds" (stats-overlay.ts): a small dark panel over the top left of the video, in
+ * the player's own colours (--on-video on a scrim, like the "Connecting…" overlay). It never
+ * reaches the bottom of the video, where the player's controls are; when the video is small (a
+ * phone) it scrolls instead.
+ */
+.stats-overlay {
+  position: absolute;
+  top: var(--sp-2);
+  left: var(--sp-2);
+  z-index: 2;
+  width: min(380px, calc(100% - 16px));
+  max-height: calc(100% - 64px);
+  overflow-y: auto;
+  padding: var(--sp-2) var(--sp-3) var(--sp-3);
+  color: var(--on-video);
+  background: rgb(0 0 0 / 0.78);
+  border-radius: var(--sc-radius-md);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+.stats-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  margin-bottom: var(--sp-1);
+}
+.stats-head h2 {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+}
+.stats-status {
+  font-size: var(--fs-xs);
+  opacity: 0.85;
+}
+.stats-overlay button.stats-btn {
+  min-height: 28px;
+  padding: 0 var(--sp-2);
+  font-size: var(--fs-xs);
+  color: var(--on-video);
+  background: rgb(255 255 255 / 0.12);
+  border: 1px solid rgb(255 255 255 / 0.35);
+  border-radius: var(--sc-radius-sm);
+}
+.stats-overlay button.stats-btn:hover {
+  background: rgb(255 255 255 / 0.22);
+}
+.stats-overlay button.stats-close {
+  width: 28px;
+  padding: 0;
+  font-size: 1rem;
+}
+.stats-overlay button:focus-visible {
+  outline: 2px solid var(--on-video);
+  outline-offset: 1px;
+}
+.stats-list {
+  margin: 0;
+}
+.stats-list > div {
+  display: grid;
+  grid-template-columns: minmax(8.5rem, 45%) 1fr;
+  gap: var(--sp-2);
+}
+.stats-list dt {
+  opacity: 0.8;
+}
+.stats-list dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .stats-overlay {
+    top: var(--sp-1);
+    left: var(--sp-1);
+    width: calc(100% - 8px);
+    max-height: calc(100% - 48px);
+    font-size: var(--fs-xs);
+  }
+}
