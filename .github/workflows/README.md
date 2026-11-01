@@ -210,8 +210,15 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the pinned
-  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`) and the macOS `.dmg`
-  bundling step (hdiutil "Resource busy", `desktop.mjs`).
+  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`), the macOS `.dmg`
+  bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
+  (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
+  60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
+  images are the test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's
+  mirror), and a mirror serving a half-synchronised archive is outside our control: pipeline run
+  41273197813 lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds
+  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there: the start script's own
+  `apt-get install curl` (`run.sh` part b) runs once.
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
   at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
   artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long

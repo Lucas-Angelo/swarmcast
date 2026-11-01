@@ -11,6 +11,8 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
 # shellcheck source-path=SCRIPTDIR source=pull.sh
 . "$DIR/pull.sh"
+# shellcheck source-path=SCRIPTDIR source=build.sh
+. "$DIR/build.sh"
 RELEASE="${RELEASE_DIR:-}"
 BUILD=1
 PLATFORM=""
@@ -36,7 +38,7 @@ fi
 IMAGE="swarmcast-test-obs${PLATFORM:+-${PLATFORM##*/}}"
 if [ "$BUILD" = 1 ]; then
   pull_image ubuntu:24.04 "$PLATFORM" || exit 2
-  docker build -q ${PLATFORM:+--platform "$PLATFORM"} -f "$DIR/Dockerfile.obs" -t "$IMAGE" "$DIR" >/dev/null || exit 2
+  build_image "$IMAGE" Dockerfile.obs ${PLATFORM:+--platform "$PLATFORM"} || exit 2
 fi
 # --shm-size: OBS and Mesa use shared memory; the 64 MB default is tight.
 docker run --rm --init --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \
