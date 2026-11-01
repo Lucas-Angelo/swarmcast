@@ -1,7 +1,8 @@
 name: cache stall simulation (temporary)
-# Temporary, on soak/cache-stall-sim only: `npm ci` from the registry (no npm cache) when some
-# connections to registry.npmjs.org stop delivering data mid-transfer (one in five connections,
-# after 100 kB of reply), with npm's defaults and with the limits the setup action sets.
+# Temporary, on soak/cache-stall-sim only. While `npm ci` downloads from the registry (no npm
+# cache), for its first 60 s one in five new connections to registry.npmjs.org stops delivering
+# data after 100 kB. "npm defaults": a plain `npm ci`. "setup action": the setup action with the
+# cache's blob storage blocked for good (both restore tries cut off, so `npm ci` runs cold).
 on:
   push:
     branches: [soak/cache-stall-sim]
@@ -9,11 +10,11 @@ permissions:
   contents: read
 jobs:
   npm:
-    name: registry stalls mid-transfer, ${{ matrix.config }}
+    name: ${{ matrix.case }}
     strategy:
       fail-fast: false
       matrix:
-        config: [npm defaults, setup limits]
+        case: [npm defaults, setup action]
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     defaults:
@@ -23,24 +24,36 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: break the network
+        env:
+          CASE: ${{ matrix.case }}
+        run: |
+          reg() {
+            for t in iptables ip6tables; do
+              sudo "$t" -t mangle "$1" OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
+              sudo "$t" "$1" INPUT -p tcp --sport 443 -m connmark --mark 7 -m connbytes --connbytes 100000: --connbytes-dir reply --connbytes-mode bytes -j DROP
+            done
+          }
+          export -f reg
+          # shellcheck disable=SC2016
+          nohup bash -c 'until [ -e "$RUNNER_TEMP/npm-ci.log" ]; do sleep 1; done; reg -A; echo "registry trouble from $(date -u +%T)"; sleep 60; reg -D; echo "registry fine from $(date -u +%T)"' > "$RUNNER_TEMP/trouble.log" 2>&1 &
+          if [ "$CASE" = "setup action" ]; then
+            for t in iptables ip6tables; do sudo "$t" -I OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP; done
+          fi
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: matrix.case == 'npm defaults'
         with:
           node-version: 24.x
           package-manager-cache: false
-      - name: npm ci with stalled connections
-        env:
-          CONFIG: ${{ matrix.config }}
+      - name: plain npm ci
+        if: matrix.case == 'npm defaults'
+        run: npm ci --prefer-offline --no-audit --no-fund 2>&1 | tee "$RUNNER_TEMP/npm-ci.log"
+      - uses: ./.github/actions/setup
+        if: matrix.case == 'setup action'
+        timeout-minutes: 8
+      - name: result
+        if: always()
         run: |
-          if [ "$CONFIG" = "setup limits" ]; then
-            npm config set fetch-timeout 60000 --location=user
-            npm config set fetch-retries 4 --location=user
-          fi
-          echo "fetch-timeout=$(npm config get fetch-timeout) fetch-retries=$(npm config get fetch-retries)"
-          for t in iptables ip6tables; do
-            sudo "$t" -t mangle -A OUTPUT -p tcp --dport 443 -m string --string "registry.npmjs.org" --algo bm -m statistic --mode random --probability 0.2 -j CONNMARK --set-mark 7
-            sudo "$t" -A INPUT -p tcp --sport 443 -m connmark --mark 7 -m connbytes --connbytes 100000: --connbytes-dir reply --connbytes-mode bytes -j DROP
-          done
-          start=$SECONDS
-          npm ci --prefer-offline --no-audit --no-fund
-          echo "NPM_CI_SECONDS=$((SECONDS - start))"
-          sudo iptables -L INPUT -n -v | grep DROP
+          cat "$RUNNER_TEMP/trouble.log"
+          sudo iptables -L INPUT -n -v | grep DROP || true
+          for t in iptables ip6tables; do sudo "$t" -D OUTPUT -p tcp --dport 443 -m string --string "blob.core.windows.net" --algo bm -j DROP 2>/dev/null || true; done
