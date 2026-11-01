@@ -3,6 +3,7 @@
 // test makes to the shared e2e server with the teardown that puts it back. The e2e server
 // (server.ts) is one process for the whole run: every test starts from its starting state (the
 // gate) and every fixture restores what its test changed, so no test depends on another's order.
+import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -893,7 +894,19 @@ export const test = base.extend<E2EFixtures>({
     // eslint-disable-next-line no-empty-pattern -- Playwright reads the fixtures a function uses from its first argument
     async ({}, use, testInfo) => {
       await streamGate(testInfo);
+      // DIAG: a test still running after 70 s on Linux CI: every WebKit process's threads (gdb) into RUN_DIR.
+      const dumpTimer = process.env.RUN_DIR && process.platform === 'linux' && testInfo.project.name === 'webkit'
+        ? setTimeout(() => {
+            const out = path.join(process.env.RUN_DIR!, `hang-${Date.now()}.txt`);
+            try {
+              execSync(`bash scripts/ci/diag-dumpall.sh '${out}' '${testInfo.title.replace(/'/g, '')}'`, { stdio: 'inherit', timeout: 240_000 });
+            } catch (e) {
+              console.log(`DIAG dump failed: ${String(e)}`);
+            }
+          }, 70_000)
+        : undefined;
       await use();
+      clearTimeout(dumpTimer);
     },
     { auto: true },
   ],
