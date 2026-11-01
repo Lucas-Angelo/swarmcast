@@ -4,6 +4,7 @@
 // message when a test wants to see "sending…": nothing here waits on a timer.
 import path from 'node:path';
 import { expect, test, type Page } from './fixtures.js';
+import { emojiData } from '../../scripts/emoji-data.mjs';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild, reviewScreenshot } from './watch-page.js';
 
@@ -24,6 +25,39 @@ const ZALGO = 'Z' + '́̂̃̄' + 'À́̂̃ L G O '.repeat(40);
 const ROW_MAX_LINES = 6;
 /** Emoji chunk of the picker, per language (Vite names it after the language). */
 const EMOJI_CHUNK = /\/assets\/(en|pt-BR)-[\w-]+\.js$/;
+
+/** The picker's emoji (English), in its order: what the picker must offer, all of it. */
+const EMOJI_EN = emojiData('en').groups.flatMap(([, rows]) => rows);
+/** The emoji buttons of the picker (in the emoji categories, not the recent picks or the emotes). */
+const EMOJI_BUTTONS = 'section[data-group]:not([data-group="recent"]):not([data-group="emotes"]) button.pick';
+/** The smallest emoji cell of the picker grid (chat.css: minmax(36px, 1fr), min-height 36px). */
+const CELL_MIN_PX = 36;
+
+/**
+ * Notes, in the page, the emoji buttons the picker has built at the moment its emoji categories
+ * first appear (a MutationObserver runs before any later task of the page, idle work included),
+ * and how many cells fit in its visible list. Call before opening the picker.
+ */
+async function emojiBuiltAtOpen(page: Page): Promise<() => Promise<{ built: number; fit: number }>> {
+  await page.evaluate(
+    ({ selector, cell }) => {
+      const panel = document.querySelector('[data-testid="chat-picker"]')!;
+      const w = window as unknown as { __atOpen?: { built: number; fit: number } };
+      const mo = new MutationObserver(() => {
+        if (!panel.querySelector('section[data-group="0"]')) return;
+        const body = panel.querySelector<HTMLElement>('.picker-body')!;
+        w.__atOpen = { built: panel.querySelectorAll(selector).length, fit: Math.ceil(body.clientHeight / cell + 1) * Math.floor(body.clientWidth / cell) };
+        mo.disconnect();
+      });
+      mo.observe(panel, { childList: true, subtree: true });
+    },
+    { selector: EMOJI_BUTTONS, cell: CELL_MIN_PX },
+  );
+  return async () => {
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __atOpen?: unknown }).__atOpen ?? null)).not.toBeNull();
+    return page.evaluate(() => (window as unknown as { __atOpen: { built: number; fit: number } }).__atOpen);
+  };
+}
 
 /** WCAG 2.2 contrast of two CSS colours "rgb(r, g, b)". */
 function contrast(a: string, b: string): number {
@@ -299,6 +333,59 @@ test.describe('viewer chat (mock hub)', () => {
 
     // Assert
     await expect(picker.locator('section[data-group="recent"] button.pick')).toHaveCount(2);
+  });
+
+  test('emoji picker: opens with only the emoji in view; scrolling, search and the arrow keys still reach every emoji', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    await openWatch(page, hub);
+    const picker = page.getByTestId('chat-picker');
+    const builtAtOpen = await emojiBuiltAtOpen(page);
+    const last = EMOJI_EN.at(-1)!;
+
+    // Act
+    await page.getByTestId('chat-picker-button').click();
+
+    // Assert
+    await expect(picker.locator('section[data-group="0"] button.pick').first()).toBeInViewport();
+    const atOpen = await builtAtOpen();
+    expect(atOpen.built).toBeGreaterThan(0);
+    expect(atOpen.built).toBeLessThanOrEqual(atOpen.fit);
+    expect(atOpen.fit).toBeLessThan(EMOJI_EN.length / 4);
+
+    // Act
+    await picker.locator('button.pick').first().press('End');
+
+    // Assert
+    await expect(picker.locator(`button.pick[aria-label="${last[1]}"]`)).toBeInViewport();
+    await expect(picker.locator(EMOJI_BUTTONS)).toHaveCount(EMOJI_EN.length);
+    expect(await picker.locator(EMOJI_BUTTONS).evaluateAll((bs) => bs.map((b) => b.textContent))).toEqual(EMOJI_EN.map(([ch]) => ch));
+
+    // Act
+    await page.getByTestId('chat-picker-search').fill(last[2]);
+
+    // Assert
+    await expect(picker.locator(`button.pick[aria-label="${last[1]}"]`)).toBeInViewport();
+
+    // Act
+    await page.getByTestId('chat-picker-search').fill('');
+    const first = picker.locator('button.pick').first();
+    await first.press('ArrowRight');
+
+    // Assert
+    await expect(picker.locator('button.pick').nth(1)).toBeFocused();
+
+    // Act
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowDown');
+
+    // Assert
+    const below = await picker.evaluate((el) => {
+      const [a] = el.querySelectorAll<HTMLElement>('button.pick');
+      const b = document.activeElement as HTMLElement;
+      return { sameColumn: a!.offsetLeft === b.offsetLeft, lower: b.offsetTop > a!.offsetTop, pick: b.matches('button.pick') };
+    });
+    expect(below).toEqual({ sameColumn: true, lower: true, pick: true });
   });
 
   test('emotes off: no picker', async ({ page }) => {

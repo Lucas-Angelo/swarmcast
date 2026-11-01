@@ -1,6 +1,14 @@
 // Emoji and emote picker (plan §5.7). The SwarmCast emotes are there at once; the Unicode emoji
 // (RGI, from emojibase-data, filtered at build time: scripts/emoji-data.mjs) come in a lazy
 // chunk loaded the first time the picker opens. Emoji render in the system font.
+//
+// About 1,900 emoji buttons at once took the page's main thread for seconds on slow machines (and
+// the first lay-out of the emoji font with them), so the picker builds only what is in view when it
+// opens: each emoji category gets its heading and an empty grid of its final height (marked
+// data-pending until it is complete), the rows in view are added at once, the rows a screen ahead
+// as the list scrolls, and the rest in small steps when the page is idle (requestIdleCallback, a
+// timer in Safari). An arrow key in the grid first adds whatever is still missing, so the arrows
+// walk every emoji as before. Search is not affected: it shows at most SEARCH_MAX results.
 import { isMessageKey, t, type MessageKey } from '@swarmcast/shared/i18n';
 import type { Emote } from './emotes.js';
 import { createPopover, type Popover } from './popover.js';
@@ -26,6 +34,12 @@ export interface PickerDeps {
 }
 
 const SEARCH_MAX = 200;
+/** Emoji buttons added per step of the background fill: a small part of a frame on a slow phone. */
+const FILL_STEP = 48;
+/** The background fill runs at the latest this long after it was due, also on a page that is never idle (a busy chat). */
+const IDLE_TIMEOUT_MS = 200;
+/** One step of the background fill without requestIdleCallback (Safari): how long it may run. */
+const SLICE_MS = 8;
 const TONE_SWATCHES = ['✋', '✋🏻', '✋🏼', '✋🏽', '✋🏾', '✋🏿'];
 
 export interface Picker {
@@ -33,6 +47,30 @@ export interface Picker {
   panel: HTMLElement;
   /** Resolves when the emoji data is in (tests). */
   ready(): Promise<void>;
+}
+
+/** An emoji category whose grid is built a part at a time: its rows, and how many of them are in. */
+interface LazyGrid {
+  grid: HTMLElement;
+  list: EmojiRow[];
+  next: number;
+}
+
+/**
+ * Runs `step` when the page is idle (requestIdleCallback, at the latest after IDLE_TIMEOUT_MS) or
+ * on a timer where there is no such thing (Safari). `more()` says whether the step may go on.
+ * Returns the cancel.
+ */
+function whenIdle(step: (more: () => boolean) => void): () => void {
+  if (typeof requestIdleCallback === 'function') {
+    const id = requestIdleCallback((d) => step(() => d.timeRemaining() > 1), { timeout: IDLE_TIMEOUT_MS });
+    return () => cancelIdleCallback(id);
+  }
+  const id = setTimeout(() => {
+    const end = performance.now() + SLICE_MS;
+    step(() => performance.now() < end);
+  }, 0);
+  return () => clearTimeout(id);
 }
 
 export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picker {
@@ -114,7 +152,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
     return b;
   };
 
-  const section = (title: string, items: HTMLElement[], id?: string): HTMLElement => {
+  const section = (title: string, items: HTMLElement[], id?: string, pending = false): HTMLElement => {
     const s = document.createElement('section');
     if (id) s.dataset.group = id;
     const h = document.createElement('h4');
@@ -123,6 +161,7 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
     grid.className = 'grid';
     grid.setAttribute('role', 'group');
     grid.setAttribute('aria-label', title);
+    if (pending) grid.dataset.pending = '';
     grid.append(...items);
     s.append(h, grid);
     return s;
@@ -154,9 +193,110 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
     return out;
   };
 
+  /** The emoji categories of the current list still being built (null: all in). */
+  let filling: { lazy: LazyGrid[]; stop: () => void } | null = null;
+
+  const addRows = (lz: LazyGrid, count: number): void => {
+    const end = Math.min(lz.list.length, lz.next + count);
+    if (end <= lz.next) return;
+    lz.grid.append(...lz.list.slice(lz.next, end).map(emojiButton));
+    lz.next = end;
+    if (end === lz.list.length) {
+      delete lz.grid.dataset.pending;
+      lz.grid.style.removeProperty('min-height');
+    }
+  };
+
+  const stopFilling = (): void => {
+    filling?.stop();
+    filling = null;
+  };
+
+  /** Adds every emoji still missing (a key moves through the grid; no layout to measure). */
+  const fillAll = (): void => {
+    for (const lz of filling?.lazy ?? []) addRows(lz, Infinity);
+    stopFilling();
+  };
+
+  /**
+   * Builds the categories of `lazy` (just put in the list, their grids empty): sized to their
+   * final height, the rows in view now, the rest as described at the top of this file.
+   */
+  const startFilling = (lazy: LazyGrid[]): void => {
+    const first = lazy[0];
+    if (!first) return;
+    let frame = 0;
+    let cancelIdle = (): void => {};
+    const onScroll = (): void => {
+      frame ||= requestAnimationFrame(() => {
+        frame = 0;
+        fillInView(body.clientHeight);
+      });
+    };
+    const current: NonNullable<typeof filling> = {
+      lazy,
+      stop: () => {
+        body.removeEventListener('scroll', onScroll);
+        cancelAnimationFrame(frame);
+        cancelIdle();
+      },
+    };
+    filling = current;
+    addRows(first, 1);
+    // Measured on the first emoji, laid out even when its category is out of view.
+    first.grid.style.setProperty('content-visibility', 'visible');
+    const probe = first.grid.firstElementChild as HTMLElement | null;
+    const width = first.grid.clientWidth;
+    const cell = probe?.offsetWidth ?? 0;
+    const rowH = probe?.offsetHeight ?? 0;
+    first.grid.style.removeProperty('content-visibility');
+    if (!(width > 0 && cell > 0 && rowH > 0)) {
+      fillAll();
+      return;
+    }
+    const cols = Math.max(1, Math.round(width / cell));
+    for (const lz of lazy) {
+      const h = Math.ceil(lz.list.length / cols) * rowH;
+      lz.grid.style.setProperty('min-height', `${h}px`);
+      lz.grid.style.setProperty('contain-intrinsic-block-size', `auto ${h}px`);
+    }
+    /** Adds the rows from the top of each category down to `ahead` px below the visible part. */
+    const fillInView = (ahead: number): void => {
+      const open = lazy.filter((lz) => lz.next < lz.list.length);
+      const view = body.getBoundingClientRect();
+      const bottom = view.bottom + ahead;
+      const rects = open.map((lz) => lz.grid.getBoundingClientRect());
+      open.forEach((lz, i) => {
+        const r = rects[i]!;
+        if (r.bottom > view.top && r.top < bottom) addRows(lz, Math.ceil((bottom - r.top) / rowH) * cols - lz.next);
+      });
+    };
+    fillInView(0);
+    body.addEventListener('scroll', onScroll, { passive: true });
+    const step = (more: () => boolean): void => {
+      if (filling !== current) return;
+      if (!popover.isOpen) {
+        stopFilling();
+        return;
+      }
+      do {
+        const lz = lazy.find((l) => l.next < l.list.length);
+        if (!lz) {
+          stopFilling();
+          return;
+        }
+        addRows(lz, FILL_STEP);
+      } while (more());
+      cancelIdle = whenIdle(step);
+    };
+    cancelIdle = whenIdle(step);
+  };
+
   const render = (): void => {
+    stopFilling();
     const q = search.value.trim().toLowerCase();
     const parts: HTMLElement[] = [];
+    const lazy: LazyGrid[] = [];
     if (q) {
       const terms = q.split(/\s+/);
       const found: HTMLElement[] = [];
@@ -177,11 +317,16 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
       if (emotes.length) parts.push(section(t('chat.viewer.picker.emotes'), emotes.map(emoteButton), 'emotes'));
       if (deps.emojiAllowed()) {
         if (data) {
-          for (const [g, list] of data.groups) parts.push(section(groupTitle(g), list.map(emojiButton), String(g)));
+          for (const [g, list] of data.groups) {
+            const s = section(groupTitle(g), [], String(g), true);
+            lazy.push({ grid: s.lastElementChild as HTMLElement, list, next: 0 });
+            parts.push(s);
+          }
         } else parts.push(failed ? note('chat.viewer.picker.failed', true) : note('chat.viewer.picker.loading'));
       }
     }
     body.replaceChildren(...parts);
+    startFilling(lazy);
     const first = body.querySelector<HTMLButtonElement>('button.pick');
     if (first) first.tabIndex = 0;
   };
@@ -229,7 +374,8 @@ export function createPicker(button: HTMLButtonElement, deps: PickerDeps): Picke
   // Arrow keys move between the buttons of the grid (one tab stop for the whole grid).
   body.addEventListener('keydown', (e) => {
     const cur = (e.target as HTMLElement).closest?.('button.pick');
-    if (!cur) return;
+    if (!cur || !['ArrowRight', 'ArrowLeft', 'ArrowDown', 'ArrowUp'].includes(e.key)) return;
+    if (filling) fillAll();
     const all = [...body.querySelectorAll<HTMLButtonElement>('button.pick')];
     const i = all.indexOf(cur as HTMLButtonElement);
     const top = all[0]?.offsetTop ?? 0;

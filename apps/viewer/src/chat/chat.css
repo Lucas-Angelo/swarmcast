@@ -437,10 +437,6 @@ button.tone[aria-checked='true'] {
   overscroll-behavior: contain;
   padding: var(--sp-2);
 }
-.picker-body section {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 200px;
-}
 .picker-body section + section {
   margin-top: var(--sp-2);
   padding-top: 0;
@@ -455,6 +451,11 @@ button.tone[aria-checked='true'] {
 .picker-body .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  /* A category still being built (picker.ts) has its final height: its rows stay at the top. */
+  align-content: start;
+  /* Out of view, a grid is not laid out (picker.ts sets each emoji category's height). */
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto 200px;
 }
 button.pick {
   min-height: 36px;
