@@ -443,6 +443,10 @@ down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `ch
 
 Kick, "Remove from P2P" and "New link" work as before; mute is a separate state.
 
+The feed follows the newest message unless the streamer scrolled up, and holds still while a ⋯
+menu is open (it shows "New messages below" instead), so a click never lands on a button that
+moved under the pointer (`ChatFeed.tsx`).
+
 ## Flood protection and the video budget
 
 **Upload budget.** `B_chat = clamp(budgetShare × upload cap, 128 kbps, 960 kbps)` (5 % by default: lively chat at 120 viewers on a 10 Mbps cap needs about 408 kbps). The global rate

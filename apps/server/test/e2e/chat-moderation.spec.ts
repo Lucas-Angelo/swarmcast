@@ -169,6 +169,33 @@ test('from the ⋯ menu: highlight and pin reach viewers and joiners, the pin sh
   expect((await adminApi<AdminChatState>('GET', '/api/chat')).pin).toBeUndefined();
 });
 
+test('an open ⋯ menu holds still while new messages arrive, so a click lands on the button it aimed at', { tag: '@ui' }, async ({ page, bots }) => {
+  // Arrange: a feed that scrolls, following the newest message, with the menu of the last row open.
+  const { live } = await openChat(page);
+  const ana = await bots.join(uid('ana'));
+  const bia = await bots.join(uid('bia'));
+  await panelShows(page, ana.nickname);
+  await panelShows(page, bia.nickname);
+  for (let i = 1; i <= 3; i++) await bia.answer(bia.send(`earlier line ${i}`));
+  await ana.answer(ana.send('this menu stays put'));
+  const r = row(live, 'this menu stays put');
+  await expect(r).toBeVisible();
+  await r.getByTestId('chat-more').click();
+  const button = r.getByTestId('chat-highlight');
+  await expect(button).toBeInViewport();
+  const before = await button.boundingBox();
+
+  // Act: a new message reaches the panel while the menu is open.
+  await bia.answer(bia.send('a new line while the menu is open'));
+  await expect(row(live, 'a new line while the menu is open')).toHaveCount(1);
+
+  // Assert: nothing moved under the pointer; the panel says there is more below instead.
+  expect(await button.boundingBox()).toEqual(before);
+  await expect(live.getByRole('button', { name: translate('en', 'admin.chat.feed.newBelow') })).toBeVisible();
+  await button.click();
+  await expect(r).toHaveClass(/chat-msg-highlighted/);
+});
+
 test('a narrow window in Portuguese: the pinned message on top, the box and Send still on screen without scrolling', { tag: '@ui' }, async ({ page }) => {
   // Arrange
   await page.setViewportSize(NARROW_WINDOW);

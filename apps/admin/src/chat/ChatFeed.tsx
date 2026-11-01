@@ -19,14 +19,26 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { 
   const stick = useRef(true);
   const [below, setBelow] = useState(false);
   const [open, setOpen] = useState<number | null>(null);
+  /** The newest seq the feed has followed to (or flagged as "New messages below"). */
+  const followed = useRef(view.lastSeq);
 
-  // Follow new messages unless the streamer scrolled up to read.
+  // Follow new messages unless the streamer scrolled up to read, or has a ⋯ menu open: scrolling
+  // then would move the menu's buttons under the pointer between aiming and clicking (a click on
+  // "Remove highlight" could land on another button). The feed holds still and says there is more
+  // below; it follows again when the menu closes.
   useLayoutEffect(() => {
     const el = list.current;
     if (!el) return;
-    if (stick.current) el.scrollTop = el.scrollHeight;
-    else setBelow(true);
-  }, [view.rev]);
+    if (open !== null) {
+      if (view.lastSeq !== followed.current) setBelow(true);
+      return;
+    }
+    followed.current = view.lastSeq;
+    if (stick.current) {
+      el.scrollTop = el.scrollHeight;
+      setBelow(false);
+    } else setBelow(true);
+  }, [view.rev, open]);
 
   const onScroll = (): void => {
     const el = list.current;
