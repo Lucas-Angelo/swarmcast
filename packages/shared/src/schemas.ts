@@ -248,6 +248,11 @@ export interface Step {
   /** Translation key/params of the error, when it is a known one. */
   errorCode?: MessageKey;
   errorParams?: MessageParams;
+  /** English text of what a running step is doing now (e.g. "Cloudflare is busy, trying again in 5 s"). */
+  note?: string;
+  /** Translation key/params of the note. */
+  noteCode?: MessageKey;
+  noteParams?: MessageParams;
 }
 
 export type LivePhase = 'off' | 'starting' | 'waiting-obs' | 'live' | 'stopping';

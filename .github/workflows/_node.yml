@@ -25,6 +25,12 @@ permissions:
 env:
   FORCE_COLOR: '1'
   CARGO_TERM_COLOR: always
+  # No debug info in the Rust checks' builds (clippy, cargo test under cargo-llvm-cov): a third
+  # of the target folder the rust-cache saves per OS (measured on macOS: 1.77 to 1.19 GB), toward
+  # the repository's 10 GB cache limit (README.md, "Caches"). Coverage uses its own mapping, not
+  # debug info, and a failing test still prints its panic location; only RUST_BACKTRACE frames
+  # lose their file:line. Part of the rust-cache key (every CARGO_* variable).
+  CARGO_PROFILE_DEV_DEBUG: '0'
 
 jobs:
   node:
@@ -41,6 +47,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

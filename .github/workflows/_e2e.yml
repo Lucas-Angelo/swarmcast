@@ -51,6 +51,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -79,9 +96,11 @@ jobs:
       - name: Restore the Playwright browsers (Linux)
         if: runner.os == 'Linux'
         id: browsers
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A time limit per try and one more try (the save step below is the job's reference to
+        # actions/cache, whose restore code it runs).
+        uses: ./.github/actions/cache-restore
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
@@ -189,6 +208,23 @@ jobs:
       run:
         shell: bash
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false

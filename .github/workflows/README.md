@@ -18,6 +18,7 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
+| `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
 
 Files starting with `_` are reusable workflows (`workflow_call`), the stages of the pipeline.
 They have no trigger of their own. There is no `merge_group` trigger: GitHub offers the merge queue to
@@ -119,8 +120,9 @@ schedules and releases are never cancelled.
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
+| `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
@@ -183,6 +185,114 @@ runtime, and the fallback does not depend on that client.
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
 
+## Caches
+
+GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
+entries, so a job can find `main`'s npm or Rust cache gone and do the whole download or compile
+again (a cold run). What is saved, all from `main` unless noted:
+
+| Cache | Saved by | Entries | Size |
+|---|---|---|---|
+| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
+| `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
+| `sc-downloads-*` | `setup/save`: the pinned downloads, per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
+| `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
+| `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
+| `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
+| `sc-pkg-*` | `setup/save`: pkg's Node.js binaries | 3 | 0.13 GB |
+| `setup-go-*` | setup-go, per OS (also on other branches) | 4 | 0.08 GB |
+| `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
+
+That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
+them as 6.7 GiB), about 6.4 GB once the Rust checks' caches are saved without debug info (a third
+smaller: 1.77 GB to 1.19 GB for their target folder, measured on macOS). Every Rust entry is
+needed: each pipeline restores all eight (one per job and target); none is saved outside `main`.
+
+**`cache-hygiene.yml`** (`scripts/ci/cache-hygiene.mjs`, tested in `scripts/ci/test`) deletes what
+nobody restores again, and prints each deletion with its reason and the size before and after:
+
+- when a pull request closes, its caches (`refs/pull/<n>/merge`, `/head`); the sweep also catches
+  any left behind (a fork's pull request, whose token cannot delete);
+- the caches of a branch that no longer exists;
+- on `main`, superseded entries. A family is the key with its hashes and versions taken out
+  (`node-cache-Linux-x64-npm-*`, `v0-rust-checks-node-Linux-x64-*-*`, `codeql-trap-1-*-javascript-*`).
+  It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
+  the workflows compute: the npm cache's three files, `package-lock.json`,
+  `scripts/build/versions.json`, `apps/tray/go.sum`, and `main`'s commit for CodeQL), the newest
+  or the most recently used entry of a family, nor an older entry still used after the newest was
+  saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
+  image version still being rolled out). An older entry last used before the newest was saved is
+  superseded: a Rust or CodeQL cache rolls over that way (the run that saves the new entry
+  restored the old one by prefix, then nothing does).
+
+The sweep runs after every Pipeline and CodeQL run on `main` (once their caches are saved),
+daily, and by hand: run `cache-hygiene.yml` from the Actions tab, with `dry-run` (the default) to
+see the plan in the job's log and summary without deleting anything. It deletes only when it runs
+from `main`'s own workflow file; from any other ref it is always a dry run.
+
+Known limit: a `Cargo.lock` or toolchain change saves new entries for all eight Rust jobs in one
+pipeline run (4-5 GB) while the old ones still exist; until the sweep after that run deletes the
+old ones, the total can pass 10 GB and GitHub evicts the least recently used entries, which the
+next run on `main` saves again.
+
+**Incident (2026-11-01).** The caches had reached 10.94 GB in 95 entries: nine Rust entries on
+`main` (one a superseded duplicate for macos-x64), npm and pkg entries for two old lockfiles next
+to the current one, the `.deb` cache for three old lockfiles, 17 CodeQL TRAP caches (one per
+commit on `main`), the npm caches of closed pull requests (#45, #46, #47, #53: 0.9 GB; setup-node
+saved them because a pull request that changes a lockfile misses `main`'s key) and the Go caches
+of deleted branches. In 10x stability run 41283774499, `desktop macos-x64 / clean-machine
+(macos-15-intel)` found `main`'s npm entry but its download from the cache service stalled at 0 bytes
+and was aborted ("npm cache is not found", setup-node took 126 s); `npm ci --prefer-offline` then
+went to the registry on the slow Intel VM and the setup step ran out of time after 352 s in
+`npm ci` (in 20 other runs that step took 24-61 s). The first sweep deletes 50 entries (3.3 GB):
+the closed pull requests' and deleted branches' caches and every superseded entry on `main`.
+Since then pull requests restore `main`'s npm cache without saving one (`setup`; restores have a time limit, see "Stalled cache restores"), and the Rust
+checks build without debug info (`_node.yml`).
+
+### Stalled cache restores
+
+A cache restore whose download stalls must not run a job out of time. In 10x stability run
+41283774499, `desktop macos-x64 / clean-machine (macos-15-intel)` found `main`'s npm entry, but the
+download from the cache's storage stalled at 0 of 79.7 MB and was aborted after 12 s; setup-node
+then took 109 s more to exit (its process waits for the requests it left behind, unlike
+`actions/cache/restore`, which exits at once), and `npm ci --prefer-offline`, now without a cache,
+sat 352 s with no output (npm waits 5 minutes for a request that gets no answer) until the setup
+step's 8-minute limit stopped it. What we measured (temporary branches `soak/npm-cold-measure`,
+run 41293187839, and `soak/cache-stall-sim`, run 41293309829):
+
+- `npm ci --prefer-offline` from the registry with an empty npm cache (4 runs per runner image):
+  5-9 s on Ubuntu, 4-11 s on macOS arm64, 14-22 s on Windows, 31-47 s on `macos-15-intel`; with
+  the cache: 7-27 s plus 1-13 s for the restore. The cache saves at most about 20 s: a cold run is
+  not slow, a stalled request is.
+- A restore whose TLS connection to the cache's storage gets no answer (`iptables` dropping the
+  handshake with `*.blob.core.windows.net`) hung `actions/cache/restore` for 748 s before it gave
+  up, with `SEGMENT_DOWNLOAD_TIMEOUT_MINS=2`: that limit only covers the transfer of data, not the
+  request before it. The same restore straight after took 3 s. A composite action's steps cannot
+  have `timeout-minutes` ("Unexpected value 'timeout-minutes'").
+
+So: every `actions/cache` restore goes through `./.github/actions/cache-restore`. It runs
+`actions/cache`'s own restore code (its `restore-only` entry point, which the runner downloads for
+any job that references `actions/cache`) as a child process, cuts a try off after 90 s (kills the
+process group, so its `tar` too, and clears what the try may have half-extracted), and tries
+once more after a try that timed out or failed; a plain miss is not retried. The npm cache is no
+longer setup-node's: `setup` restores it with the same key and path (so existing entries keep
+working) and saves it from `main` with `actions/cache` in `lookup-only` mode (its post step saves
+when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` (the idle limit of
+its connections) to 60 s and `fetch-retries` to 4 for the job, and runs `npm ci` once more after a
+network error npm's own retries did not get past (npm does not retry a download that broke off
+mid-transfer); any other `npm ci` failure fails the step.
+Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
+measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
+the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
+(`setup-rust`), which cannot be wrapped; `setup-rust`'s step limit applies to them.
+
+Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage blocked for the first
+100 s, setup took 114 s (try 1 cut off at 90 s, try 2 restored in 12 s; 12 s without a block, run
+41294776882); blocked for good, 191 s (both tries cut off, then a cold `npm ci`); and with a 60 s
+disruption of the registry during `npm ci` (one in five connections stops after 100 kB), a plain
+`npm ci` failed with `ETIMEDOUT` after 110 s while `setup` took 201 s and passed (both restores cut
+off, `npm ci` failed on `ETIMEDOUT`, the second run took 5 s; run 41295992201).
+
 ## Coverage
 
 Measured in the test steps that already run the suites (no extra test runs), on every OS that runs
@@ -210,8 +320,16 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the pinned
-  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (`setup`) and the macOS `.dmg`
-  bundling step (hdiutil "Resource busy", `desktop.mjs`).
+  downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
+  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error (`setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
+  bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
+  (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
+  60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
+  images are the test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's
+  mirror), and a mirror serving a half-synchronised archive is outside our control: pipeline run
+  41273197813 lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds
+  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there: the start script's own
+  `apt-get install curl` (`run.sh` part b) runs once.
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
   at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
   artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long
@@ -220,8 +338,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   results and logs still run; a job that runs out is cancelled, and those steps
   (`if: ${{ !cancelled() }}`) do not.
 - **Only caches and diagnostics may fail without failing the job.** A cache is a speed-up: every
-  cache restore and save is `continue-on-error`, a restore's download gives up after 2 minutes
-  (`SEGMENT_DOWNLOAD_TIMEOUT_MINS`), and the save steps (`./.github/actions/setup/save`, the
+  cache restore and save is `continue-on-error`; the `actions/cache` restores go through
+  `./.github/actions/cache-restore`, which cuts a try off after 90 s and tries once more, then goes
+  on without the cache (see "Stalled cache restores" below); and the save steps (`./.github/actions/setup/save`, the
   Playwright browsers) are not even entered on events that save nothing and have a 3-minute
   limit. Uploads of test results, reports and logs, and the job-summary steps, are
   `continue-on-error` with a 5-minute limit. Nothing else is: a test, a build, a check or an
@@ -247,7 +366,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
-  (`codeql.yml`: `security-events: write`; `site.yml` deploy: `pages`, `id-token`; `release.yml`
+  (`codeql.yml`: `security-events: write`; `cache-hygiene.yml`: `actions: write` to delete caches; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
@@ -255,7 +374,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
-  instead of filling the 10 GB repository limit. One exception: the pinned-downloads cache
+  instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
   (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because
   some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
   request pays one slow download, its later runs restore it. A pull request cannot poison it:

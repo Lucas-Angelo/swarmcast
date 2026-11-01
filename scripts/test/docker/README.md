@@ -22,9 +22,37 @@ and by hand (`gh workflow run linux-docker.yml --ref <branch>`). A build job mak
 AppImage of the commit for each architecture (on Ubuntu 22.04, like the release); then one job
 per base image and architecture runs `run.sh --serial <base>` and `appimage.sh`. The tunnel
 check (d) runs on the weekly schedule only (Ubuntu 24.04, the `tunnel-test` input), because Cloudflare rate-limits quick
-tunnels. The images are built in each job (no layer cache: a weekly job outlives GitHub's 7-day
-cache eviction, and the repository's cache is full); their `apt-get` uses retries and a 30 s
-time limit per connection.
+tunnels.
+
+### Test images
+
+The images (`Dockerfile.*`: the test's scaffolding, installed with `apt-get`) are built in each
+job by `build.sh`, with no layer cache: a weekly job outlives GitHub's 7-day cache eviction, and
+the repository's 10 GB cache is full. So each job depends on the distribution's mirror at that
+moment, and `build.sh` makes a failure explain itself and survive one hiccup:
+
+- `apt-get` retries a connection 5 times with a 30 s time limit, and `apt-get update` fails on
+  any index it could not fetch (`APT::Update::Error-Mode=any`; by default it only warns and the
+  install then fails with "Unable to locate package"), so the log names the broken index;
+- the whole BuildKit log (`--progress=plain`, apt's own lines) is printed when a build fails;
+- a failed build is tried once more after 60 s (`BUILD_RETRY_PAUSE`), with `--no-cache`; a second
+  failure fails the suite with both logs. Infra recovery, not a test retry (the rules in
+  `.github/workflows/README.md`): only the scaffolding image is rebuilt, never a step that runs
+  SwarmCast, and the start script's own `apt-get install curl` (part b) runs once.
+
+Why: pipeline run 41273197813 (a 10-pipeline stability batch, 2026-11-01 05:38 UTC) lost
+`docker / ubuntu:24.04 x64` when `apt-get` exited with 100 while building `Dockerfile.install`,
+and `docker build -q` hid apt's message. The whole step took 22 s, two pulls and two earlier builds
+included, while apt's retries of a network error take 31 s by themselves (a 404 fails in 2 s): the
+error was one apt does not retry (a 404, a hash or size mismatch, an inconsistent index), so a
+mirror serving a half-synchronised archive, not a slow or refused connection. The other docker
+jobs of the batch ran one or two at a time, and the same run's OBS job built its Ubuntu 24.04 x64
+image from the same mirror two minutes later.
+
+A future option: prebuild the images on a schedule and pull them from GitHub's container
+registry (ghcr.io), pinned by tag or digest, building only when a Dockerfile changed; then a run
+would not touch the mirrors at all. It needs the package to be public (a private one has 500 MB
+of free storage, less than these images), which only the repository owner can switch.
 
 The release folder defaults to `<main checkout>/release` (override with `--release DIR` or
 `RELEASE_DIR`). Build it first (`npm run package` for each target, plus `SHA256SUMS.txt`).

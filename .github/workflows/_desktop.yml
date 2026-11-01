@@ -102,6 +102,23 @@ jobs:
       RELEASE: ${{ inputs.release }}
       RETENTION: ${{ github.event_name == 'pull_request' && 3 || 14 }}
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -248,6 +265,23 @@ jobs:
       SC_DESKTOP_ARTIFACTS: ${{ github.workspace }}/desktop-test-logs
       SC_DESKTOP_SCREENSHOTS: ${{ inputs.screenshots && format('{0}/guide-screenshots', github.workspace) || '' }}
     steps:
+      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
+      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
+      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
+      - name: Wait for github.com (macOS)
+        if: runner.os == 'macOS'
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          start=$SECONDS
+          for i in $(seq 1 36); do
+            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
+              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -272,9 +306,12 @@ jobs:
       # runner images ship. Time limits on this and the checks below: 2 to 4 times their slowest
       # run; one that runs out fails, so the logs are still uploaded (a job that runs out is
       # cancelled and uploads nothing).
+      # Its tunnel session waits for the live link as long as the app's own tunnel step may take
+      # (apps/server/src/tunnel/start-budget.ts, 4 min, plus 1 min): 11 minutes leaves the rest of
+      # the run (about 3 minutes) its margin even when the app needs all of it.
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
         if: ${{ !cancelled() && matrix.preflight }}
-        timeout-minutes: 8
+        timeout-minutes: 11
         run: |
           # pkg-windows-x64 also holds the installer suite's "newer" package: only this version here.
           find release -maxdepth 1 -name 'SwarmCast-v*' ! -name "SwarmCast-v$VERSION-*" -print -delete

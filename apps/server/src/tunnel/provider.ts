@@ -3,12 +3,45 @@ import { EventEmitter } from 'node:events';
 import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
 import { abortable, sleep } from '../core/retry.js';
+import type { TransientCause } from './start-failure.js';
+
+/** Cloudflare refused or failed a new tunnel; the provider tries again after `delayMs`. */
+export interface TunnelRetry {
+  cause: TransientCause;
+  /** cloudflared's own words. */
+  reason: string;
+  delayMs: number;
+  /** The attempt that comes after the wait (2 for the first retry), of `attempts` in total. */
+  attempt: number;
+  attempts: number;
+}
 
 export type TunnelEvents = {
   /** Emitted when the public URL becomes reachable (also after a reconnect that changed it). */
   url: [url: string];
   down: [reason: string];
+  /** Starting: Cloudflare refused or failed, a new attempt follows (see TunnelRetry). */
+  retry: [info: TunnelRetry];
+  /**
+   * The connector cannot reach Cloudflare over UDP (QUIC), its preferred route: it keeps failing
+   * before its first connection. `reason` is its own words. A new tunnel over TCP is the cure
+   * (start with `transport: 'tcp'`).
+   */
+  'udp-blocked': [reason: string];
 };
+
+/**
+ * How the connector reaches Cloudflare. `auto`: cloudflared's default, QUIC over UDP (port 7844),
+ * which it only gives up for HTTP/2 after many failures (minutes); `tcp`: HTTP/2 over TCP (port
+ * 7844) from the start, for networks that block or drop UDP.
+ */
+export type TunnelTransport = 'auto' | 'tcp';
+
+export interface TunnelStartOptions {
+  transport?: TunnelTransport;
+  /** Epoch ms after which a retry is not started (the tunnel step's budget, tunnel/start-budget.ts). */
+  deadline?: number;
+}
 
 /**
  * A way to make the local public server (127.0.0.1:<port>) reachable over HTTPS.
@@ -17,7 +50,7 @@ export type TunnelEvents = {
  */
 export abstract class TunnelProvider extends EventEmitter<TunnelEvents> {
   abstract readonly name: string;
-  abstract start(localPort: number): Promise<string>;
+  abstract start(localPort: number, opts?: TunnelStartOptions): Promise<string>;
   abstract stop(): Promise<void>;
   abstract get url(): string | null;
   /** Process id of the connector, if any (used by the shutdown verification). */

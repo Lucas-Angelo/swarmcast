@@ -34,9 +34,19 @@ set -o pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source-path=SCRIPTDIR source=pull.sh
 . "$DIR/pull.sh"
+# shellcheck source-path=SCRIPTDIR source=build.sh
+. "$DIR/build.sh"
 # shellcheck source-path=SCRIPTDIR source=lib.sh
 . "$DIR/lib.sh"
 ROOT="$(cd "$DIR/../../.." && pwd)"
+# How long part d waits for the live link: the app's own limit for its tunnel step (Cloudflare
+# refusals tried again, a new tunnel over TCP when UDP is blocked, a slow new name; see the file)
+# plus a minute for the other start steps. The app fails the step itself at that limit and prints
+# "✗ Could not start: <why>", which ends the wait at once. Read from the source, so this harness
+# never gives up while the app is still recovering by design (run 41283791976 gave up at 120 s).
+TUNNEL_BUDGET_MS="$(sed -n 's/^export const TUNNEL_START_BUDGET_MS = \([0-9_]*\);$/\1/p' "$ROOT/apps/server/src/tunnel/start-budget.ts" | tr -d _)"
+[ -n "$TUNNEL_BUDGET_MS" ] || { echo "run.sh: TUNNEL_START_BUDGET_MS not found in apps/server/src/tunnel/start-budget.ts" >&2; exit 2; }
+LINK_WAIT_S=$((TUNNEL_BUDGET_MS / 1000 + 60))
 
 RELEASE="${RELEASE_DIR:-}"
 SERIAL=0
@@ -143,7 +153,7 @@ build() { # build DOCKERFILE IMAGE BASE PLATFORM [build-args...]
   shift 4
   if [ "$BUILD" = 1 ]; then
     pull_image "$base" "$plat" || { echo "pull of $base ($plat) failed"; return 1; }
-    docker build -q --platform "$plat" -f "$DIR/$df" --build-arg "BASE=$base" "$@" -t "$img" "$DIR" >/dev/null ||
+    build_image "$img" "$df" --platform "$plat" --build-arg "BASE=$base" "$@" ||
       { echo "build of $img failed"; return 1; }
   fi
 }
@@ -212,15 +222,19 @@ tunnel_test() {
     bash -c 'echo $$ >/tmp/app.pid; exec bash /release/start-linux.sh --yes --skip-speedtest >/tmp/app.log 2>&1 </dev/null'
   link=""
   code=""
-  # The live link, which the app prints once its tunnel works.
+  # The live link, which the app prints once its tunnel works, or the app's own start error.
   tunnel_link() { link="$(docker exec "$c" grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com/join/[A-Za-z0-9_-]+' /tmp/app.log 2>/dev/null | head -n1)"; [ -n "$link" ]; }
+  start_failed() { docker exec "$c" grep -qF 'Could not start:' /tmp/app.log 2>/dev/null; }
+  link_or_failed() { tunnel_link || start_failed; }
   # /healthz through the tunnel from this host: 200 (headers in $hdr, status in $code).
   healthz_ok() { hdr="$(curl -sS -D - -o /dev/null --max-time 15 "$base/healthz" 2>&1)"; code="$(printf '%s' "$hdr" | awk 'toupper($1) ~ /^HTTP/ { c = $2 } END { print c }')"; [ "$code" = 200 ]; }
   tunnel_down() { code="$(curl -s -o /dev/null --max-time 10 -w '%{http_code}' "$base/healthz")"; [ "$code" != 200 ]; }
   app_gone() { ! docker exec "$c" bash -c 'kill -0 "$(cat /tmp/app.pid)" 2>/dev/null'; }
   t0=$SECONDS
-  if ! wait_for 180 tunnel_link; then
-    echo "FAIL no trycloudflare link after 180 s"; docker exec "$c" cat /tmp/app.log | sed 's/^/  | /'
+  if ! wait_for "$LINK_WAIT_S" link_or_failed || ! tunnel_link; then
+    if start_failed; then echo "FAIL the app could not start: $(docker exec "$c" grep -F 'Could not start:' /tmp/app.log | head -n1)"
+    else echo "FAIL no trycloudflare link after $LINK_WAIT_S s (the app's tunnel step limit + 60 s)"; fi
+    docker exec "$c" cat /tmp/app.log | sed 's/^/  | /'
     echo "$target|d. quick tunnel|FAIL" >>"$res"; docker rm -f "$c" >/dev/null; return
   fi
   base="${link%/join/*}"

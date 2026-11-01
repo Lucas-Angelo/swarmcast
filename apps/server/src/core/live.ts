@@ -39,14 +39,15 @@ import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
 import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
 import { TrackerService } from '../tracker/tracker.js';
-import { probeHealth, waitForReachable, type TunnelProvider } from '../tunnel/provider.js';
+import { probeHealth, waitForReachable, type ReachabilityIo, type TunnelProvider, type TunnelRetry, type TunnelTransport } from '../tunnel/provider.js';
+import { REACHABLE_TIMEOUT_MS, TUNNEL_START_BUDGET_MS } from '../tunnel/start-budget.js';
 import { ActivityLog } from './activity.js';
 import type { AppConfig } from './config.js';
 import type { Logger } from './logger.js';
 import { notify } from './notify.js';
 import { firstFreePort, isListening, isPortFree } from './ports.js';
 import { CodedError, codeOf, coded } from './messages.js';
-import { abortable } from './retry.js';
+import { abortable, QuitAbortError } from './retry.js';
 
 export interface LiveDeps {
   config: AppConfig;
@@ -78,6 +79,8 @@ export interface LiveDeps {
   brandingDir?: string;
   /** Replaces parts of the own-public-address watch (tests: a fake lookup, fast ticks). */
   egress?: Partial<Omit<EgressWatchOptions, 'log'>>;
+  /** Replaces the tunnel step's network checks and limits (tests; defaults: tunnel/start-budget.ts). */
+  tunnelCheck?: { io?: ReachabilityIo; reachableMs?: number; budgetMs?: number };
 }
 
 type StepDef = { id: string; labelKey: MessageKey };
@@ -144,6 +147,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   /** Last count broadcast to viewers (undefined = nothing sent yet). */
   private sentCount: number | null | undefined;
   private tunnelDrops = 0;
+  /** Aborted when the tunnel reports UDP blocked while the tunnel step waits for its address. */
+  private tunnelUdpBlocked: AbortController | null = null;
   private busy: Promise<unknown> = Promise.resolve();
   /** Aborted when the app quits: running speed tests stop at once. */
   private readonly quitting = new AbortController();
@@ -324,6 +329,40 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.tunnelDrops += 1;
       this.warn('warn.tunnelDropped', { reason });
     });
+    d.tunnel.on('retry', (r) => this.onTunnelRetry(r));
+    d.tunnel.on('udp-blocked', (reason) => {
+      // During the live, cloudflared keeps its connection (and its own fallback) as it is.
+      if (!this.tunnelUdpBlocked) return;
+      this.d.log.warn({ reason }, 'the tunnel cannot reach Cloudflare over UDP');
+      this.tunnelUdpBlocked.abort();
+    });
+  }
+
+  /** The tunnel step opens a new tunnel over TCP: say why on the step and in the activity log. */
+  private onTunnelTcp(causeKey: 'tunnel.cause.udpBlocked' | 'tunnel.cause.noAnswer'): void {
+    const params = { causeKey };
+    const s = this.steps.find((x) => x.id === 'tunnel' && x.status === 'running');
+    if (s) {
+      s.note = translate('en', 'step.tunnel.tcp', params);
+      s.noteCode = 'step.tunnel.tcp';
+      s.noteParams = params;
+    }
+    this.activity.add({ level: 'warn', kind: 'system', code: 'step.tunnel.tcp', params });
+    this.changed();
+  }
+
+  /** Cloudflare refused or failed a new tunnel while starting: say so on the step and in the activity log. */
+  private onTunnelRetry(r: TunnelRetry): void {
+    const params = { causeKey: `tunnel.cause.${r.cause}`, seconds: Math.ceil(r.delayMs / 1000), attempt: r.attempt, attempts: r.attempts };
+    const s = this.steps.find((x) => x.id === 'tunnel' && x.status === 'running');
+    if (s) {
+      s.note = translate('en', 'step.tunnel.retry', params);
+      s.noteCode = 'step.tunnel.retry';
+      s.noteParams = params;
+    }
+    // Cloudflare's own words are already there: the provider logs cloudflared's error line.
+    this.activity.add({ level: 'warn', kind: 'system', code: 'step.tunnel.retry', params });
+    this.changed();
   }
 
   private changed(): void {
@@ -448,11 +487,13 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.changed();
     try {
       const r = await fn();
+      clearNote(s);
       s.status = 'ok';
       this.activity.action('log.stepOk', { stepKey: s.labelKey });
       this.changed();
       return r;
     } catch (err) {
+      clearNote(s);
       s.status = 'error';
       s.error = (err as Error).message;
       const c = codeOf(err);
@@ -519,18 +560,59 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     });
   }
 
-  /** The tunnel step can take minutes (new quick-tunnel names need DNS): quitting gives up at once. */
+  /**
+   * The tunnel step can take minutes (new quick-tunnel names need DNS, Cloudflare can refuse for a
+   * while): quitting gives up at once, and the whole step at most TUNNEL_START_BUDGET_MS (see
+   * tunnel/start-budget.ts, which the test harnesses wait for). A tunnel whose address does not
+   * answer in time, or which cannot reach Cloudflare over UDP, is replaced once by one over TCP.
+   */
   private async openTunnel(): Promise<string> {
-    const signal = this.quitting.signal;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
-      const url = await abortable(this.d.tunnel.start(this.d.config.ports.public), signal);
-      if (this.d.tunnel.name === 'none') return url;
-      if (await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal, probe: this.access.probeToken() })) return url;
-      this.d.log.warn({ attempt }, 'tunnel address not reachable yet, retrying with a new tunnel');
-      await this.d.tunnel.stop();
+    const quit = this.quitting.signal;
+    const budgetMs = this.d.tunnelCheck?.budgetMs ?? TUNNEL_START_BUDGET_MS;
+    const budget = new AbortController();
+    const timer = setTimeout(() => budget.abort(), budgetMs);
+    const deadline = Date.now() + budgetMs;
+    const signal = AbortSignal.any([quit, budget.signal]);
+    let transport: TunnelTransport = 'auto';
+    try {
+      for (let attempt = 1; ; attempt++) {
+        // Listening from the start: cloudflared's QUIC failures can come right after its address.
+        const udpBlocked = new AbortController();
+        this.tunnelUdpBlocked = udpBlocked;
+        let reachable = false;
+        try {
+          // On abort, the start's teardown stops cloudflared, which ends tunnel.start().
+          const url = await abortable(this.d.tunnel.start(this.d.config.ports.public, { transport, deadline }), signal);
+          if (this.d.tunnel.name === 'none') return url;
+          reachable = await waitForReachable(url, this.access.liveId, {
+            timeoutMs: this.d.tunnelCheck?.reachableMs ?? REACHABLE_TIMEOUT_MS,
+            signal: AbortSignal.any([signal, udpBlocked.signal]),
+            probe: this.access.probeToken(),
+            io: this.d.tunnelCheck?.io,
+          });
+          if (reachable) return url;
+        } catch (err) {
+          // Only the wait that `udp-blocked` cut short goes on to the TCP tunnel.
+          if (!(udpBlocked.signal.aborted && err instanceof QuitAbortError) || signal.aborted) throw err;
+        } finally {
+          this.tunnelUdpBlocked = null;
+        }
+        await this.d.tunnel.stop();
+        if (transport === 'tcp') throw new CodedError('err.tunnelNoAnswer');
+        const causeKey = udpBlocked.signal.aborted ? 'tunnel.cause.udpBlocked' : 'tunnel.cause.noAnswer';
+        this.d.log.warn({ attempt, cause: causeKey }, 'opening a new tunnel over TCP');
+        this.onTunnelTcp(causeKey);
+        transport = 'tcp';
+      }
+    } catch (err) {
+      if (err instanceof QuitAbortError && budget.signal.aborted && !quit.aborted) {
+        this.d.log.warn({ budgetMs }, 'the tunnel did not open within its time limit');
+        throw new CodedError('err.tunnelTimeout', { minutes: Math.max(1, Math.round(budgetMs / 60_000)) });
+      }
+      throw err;
+    } finally {
+      clearTimeout(timer);
     }
-    throw new CodedError('err.tunnelNoAnswer');
   }
 
   private async onTunnelUrl(url: string): Promise<void> {
@@ -1129,4 +1211,11 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.tracker.close();
     this.limiter.close();
   }
+}
+
+/** A finished step says what happened (ok, or its error), not what it was doing. */
+function clearNote(s: Step): void {
+  delete s.note;
+  delete s.noteCode;
+  delete s.noteParams;
 }
