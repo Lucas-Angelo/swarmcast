@@ -177,7 +177,7 @@ describe('quick tunnel with the real cloudflared on a network that drops UDP', (
     const { tunnel, udpBlocked } = realTunnel(service, [], edge.port);
     // Act
     const url = await tunnel.start(18080, { transport: 'tcp' });
-    await until(() => edge.tlsNames.includes('h2.cftunnel.com'));
+    await until(() => edge.tlsNames.some((name) => name === 'h2.cftunnel.com'));
     // Assert
     expect(url).toBe(`https://${HOSTNAME}`);
     expect(udpBlocked).toEqual([]);
