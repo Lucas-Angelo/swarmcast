@@ -895,7 +895,7 @@ export const test = base.extend<E2EFixtures>({
     async ({}, use, testInfo) => {
       await streamGate(testInfo);
       // DIAG: a test still running after 70 s on Linux CI: every WebKit process's threads (gdb) into RUN_DIR.
-      const dumpTimer = process.env.RUN_DIR && process.platform === 'linux' && testInfo.project.name === 'webkit'
+      const dumpTimer = process.env.RUN_DIR && process.platform === 'linux' && testInfo.project.name === 'webkit' && !testInfo.title.startsWith('probe')
         ? setTimeout(() => {
             const out = path.join(process.env.RUN_DIR!, `hang-${Date.now()}.txt`);
             try {
