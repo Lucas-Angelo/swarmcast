@@ -36,3 +36,25 @@ export function firefoxEnv(base = process.env) {
   }
   return { ...base, MOZ_STARTUP_CACHE: cachePath };
 }
+
+/**
+ * The preferences for a Firefox the harnesses launch (Playwright's `firefoxUserPrefs`): `extra`
+ * plus form history turned off.
+ *
+ * Playwright gives each browser context its own cookies and storage, but in Firefox the contexts
+ * of one browser share one profile, and with it the form history (formhistory.sqlite): Firefox
+ * saves the text fields of every submitted form there, even a submit the page cancels (the
+ * DOMFormBeforeSubmit event comes before the page's submit handler). So the nicknames a test typed
+ * on the join page came back in a later test's own new context: typing "A" opened Firefox's
+ * autocomplete list under the nickname field, right over "Watch". That list is browser UI, not
+ * the page: Playwright cannot see it (the button was visible, enabled and the hit target), and
+ * Firefox's Playwright build closes it before each mouse event but not when it opens after that,
+ * so it took the press and the page got only the release: no click, so no join (nickname.spec
+ * "one character", e2e chat group on macOS, in CI and in a soak). Chromium's and WebKit's
+ * contexts keep nothing like it; with form history off, Firefox's do not either.
+ * @param {Record<string, string | number | boolean>} [extra]
+ * @returns {Record<string, string | number | boolean>}
+ */
+export function firefoxPrefs(extra = {}) {
+  return { 'browser.formfill.enable': false, ...extra };
+}

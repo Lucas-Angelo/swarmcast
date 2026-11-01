@@ -20,7 +20,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bareEnv, loginFromOutput, waitLiveLink as waitLiveLinkOf } from '../lib/app.mjs';
 import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
-import { firefoxEnv } from '../lib/firefox.mjs';
+import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { mdCell } from '../lib/markdown.mjs';
 import { isListening } from '../lib/ports.mjs';
@@ -792,11 +792,12 @@ export async function launchBrowser(kind) {
   if (kind === 'firefox') {
     b = await firefox.launch({
       env: firefoxEnv(),
-      firefoxUserPrefs: {
+      // Form history off: the pages of one Firefox share it (lib/firefox.mjs).
+      firefoxUserPrefs: firefoxPrefs({
         'media.peerconnection.ice.obfuscate_host_addresses': false,
         'media.autoplay.default': 0,
         'media.autoplay.blocking_policy': 0,
-      },
+      }),
     });
   } else {
     b = await chromium.launch({ channel: kind, args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'] });
