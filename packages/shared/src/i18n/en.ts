@@ -608,6 +608,7 @@ export const en = {
   'watch.quality.audioOnly': 'Audio only (saves data)',
   'watch.audioOnly.title': 'Audio only',
   'watch.audioOnly.hint': 'The picture is off to save data. Pick a video quality to see it again.',
+  'watch.audioOnly.failed': 'Audio only does not work on this device, so the video is back.',
   'watch.latency.title': 'Playback',
   'watch.latency.stable': 'Stable',
   'watch.latency.lowDelay': 'Lower delay',

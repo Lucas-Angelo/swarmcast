@@ -30,6 +30,18 @@ export const AUDIO_ONLY_URL = `/hls/${AUDIO_ONLY_PLAYLIST}`;
  */
 export const AUDIO_ONLY_GONE_AFTER = 1;
 
+/**
+ * hls.js resets of the MediaSource (`mediaSourceRequiresReset`) within AUDIO_ONLY_BROKEN_WINDOW_MS
+ * after which audio-only playback gives up for this page and the video comes back. A browser that
+ * cannot output the sound plays video on the picture's clock, but sound alone not at all: Firefox
+ * on a computer without an audio output (the Linux CI runners) fails the element with
+ * MEDIA_ERR_DECODE "OnMediaSinkAudioError" as soon as it is unmuted; hls.js then reset the
+ * MediaSource and loaded the whole audio playlist again, every 2 s, forever (34 MB in 8 s instead
+ * of 0.1 MB, soak run 41330071767, diagnosis run 41333831170). One reset can be a one-off.
+ */
+export const AUDIO_ONLY_BROKEN_AFTER = 2;
+export const AUDIO_ONLY_BROKEN_WINDOW_MS = 30_000;
+
 type Listener = (on: boolean) => void;
 
 /**
@@ -83,6 +95,9 @@ export interface AudioOnlySwitchOptions {
   saved: boolean;
   save(on: boolean): void;
   state?: AudioOnlyState;
+  /** Audio only could not play on this device and the video came back (AUDIO_ONLY_BROKEN_AFTER): tell the viewer. */
+  onBroken?(): void;
+  now?: () => number;
 }
 
 export interface AudioOnlySwitch {
@@ -102,7 +117,9 @@ export interface AudioOnlySwitch {
   /**
    * Feed every hls.js ERROR. A 404 on the audio-only playlist means the stream has no separate
    * audio (OBS sends it muxed, or none): the player goes back to video for this page (its next
-   * reload loads index.m3u8), and the saved choice stays for the next stream.
+   * reload loads index.m3u8), and the saved choice stays for the next stream. Repeated resets
+   * of the MediaSource (AUDIO_ONLY_BROKEN_AFTER) mean this device cannot play the sound alone: the
+   * video comes back at once, and audio only is not offered again on this page.
    */
   onError(details: string, httpCode?: number): void;
   subscribe(fn: () => void): () => void;
@@ -111,7 +128,10 @@ export interface AudioOnlySwitch {
 export function createAudioOnlySwitch(o: AudioOnlySwitchOptions): AudioOnlySwitch {
   const state = o.state ?? audioOnlyState;
   const audioUrl = o.audioUrl ?? AUDIO_ONLY_URL;
+  const now = o.now ?? (() => Date.now());
   let hasAudio = false;
+  let broken = false;
+  let resets: number[] = [];
   let heights: number[] = [];
   const listeners = new Set<() => void>();
   const changed = (): void => {
@@ -130,7 +150,7 @@ export function createAudioOnlySwitch(o: AudioOnlySwitchOptions): AudioOnlySwitc
       return state.on;
     },
     get available() {
-      return state.on || hasAudio;
+      return state.on || (hasAudio && !broken);
     },
     get heights() {
       return heights;
@@ -145,7 +165,20 @@ export function createAudioOnlySwitch(o: AudioOnlySwitchOptions): AudioOnlySwitc
       o.load(on ? audioUrl : o.videoUrl, on ? 'audio only' : 'video again');
     },
     onError(details, httpCode) {
-      if (!state.on || httpCode !== 404 || details !== 'manifestLoadError') return;
+      if (!state.on) return;
+      if (details === 'mediaSourceRequiresReset') {
+        const t = now();
+        resets = [...resets.filter((at) => t - at < AUDIO_ONLY_BROKEN_WINDOW_MS), t];
+        if (resets.length < AUDIO_ONLY_BROKEN_AFTER) return;
+        resets = [];
+        broken = true;
+        state.set(false);
+        changed();
+        o.load(o.videoUrl, 'audio only cannot play here');
+        o.onBroken?.();
+        return;
+      }
+      if (httpCode !== 404 || details !== 'manifestLoadError') return;
       hasAudio = false;
       state.set(false);
       changed();
@@ -255,4 +288,27 @@ export function mountAudioOnlyPoster(player: HTMLElement, o: { state?: AudioOnly
     });
   });
   return root;
+}
+
+/**
+ * A short line over the player (role="status", read by screen readers) that goes away by itself:
+ * why the video came back (AudioOnlySwitchOptions.onBroken).
+ */
+export function showPlayerNotice(player: HTMLElement, text: string, ms = 8000): HTMLElement {
+  const doc = player.ownerDocument;
+  let el = player.querySelector<HTMLElement>('.audio-only-notice');
+  if (!el) {
+    el = doc.createElement('p');
+    el.className = 'audio-only-notice';
+    el.setAttribute('role', 'status');
+    el.dataset.testid = 'audio-only-notice';
+    player.append(el);
+  }
+  el.textContent = text;
+  el.hidden = false;
+  const shown = el;
+  setTimeout(() => {
+    if (shown.textContent === text) shown.hidden = true;
+  }, ms);
+  return el;
 }

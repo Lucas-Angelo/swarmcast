@@ -27,7 +27,7 @@ import {
   swarmIdBuilderFor,
   urgentSecondsFor,
 } from './player-config.js';
-import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, type AudioOnlySwitch } from './audio-only.js';
+import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
@@ -502,7 +502,15 @@ async function main(): Promise<void> {
   adaptive = attachAdaptiveDelay(hls, engine, video, { profile, events: Hls.Events, p2pEnabled: () => stats.p2pEnabled, ...delayTestFlags(location.search, cfg.testHooks === true) });
   fitLatency();
   // "Audio only" (audio-only.ts): every load of the source below asks it which playlist to load.
-  const source = createAudioOnlySwitch({ hls, events: Hls.Events, videoUrl: cfg.playlistUrl, saved: loadAudioOnly(), save: saveAudioOnly, load: (_url, why) => reloadSource(why) });
+  const source = createAudioOnlySwitch({
+    hls,
+    events: Hls.Events,
+    videoUrl: cfg.playlistUrl,
+    saved: loadAudioOnly(),
+    save: saveAudioOnly,
+    load: (_url, why) => reloadSource(why),
+    onBroken: () => showPlayerNotice(video.parentElement!, t('watch.audioOnly.failed')),
+  });
   mountAudioOnlyPoster(video.parentElement!, { labels: { title: t('watch.audioOnly.title'), hint: t('watch.audioOnly.hint') }, brand: () => fetchPosterBrand() });
   mountPlayerControls(hls, engine, playlistWindow, (id) => adaptive?.setProfile(id), source);
   setInterval(showDelay, 1000);

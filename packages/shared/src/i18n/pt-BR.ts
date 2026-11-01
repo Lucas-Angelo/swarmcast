@@ -604,6 +604,7 @@ export const ptBR: Messages = {
   'watch.quality.audioOnly': 'Só o áudio (economiza dados)',
   'watch.audioOnly.title': 'Só o áudio',
   'watch.audioOnly.hint': 'A imagem está desligada para economizar dados. Escolha uma qualidade de vídeo para vê-la de novo.',
+  'watch.audioOnly.failed': 'Só o áudio não funciona neste aparelho, então o vídeo voltou.',
   'watch.latency.title': 'Reprodução',
   'watch.latency.stable': 'Estável',
   'watch.latency.lowDelay': 'Menos atraso',

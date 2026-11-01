@@ -14,7 +14,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIO_ONLY_PLAYLIST, variantStreamSwarmId } from '@swarmcast/shared';
 import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
-import { AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, type ParsedManifest } from '../../src/audio-only.js';
+import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
 import { createManifestReloader, loadAudioOnly, loadPreferredHeight, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
@@ -74,8 +74,10 @@ function setup(o: { saved?: boolean } = {}) {
   const state = new AudioOnlyState();
   const load = vi.fn<(url: string, why: string) => void>();
   const save = vi.fn<(on: boolean) => void>();
-  const source = createAudioOnlySwitch({ hls, events: EVENTS, videoUrl: '/hls/index.m3u8', load, saved: o.saved ?? false, save, state });
-  return { hls, state, load, save, source };
+  const onBroken = vi.fn();
+  const clock = { t: 1_000_000 };
+  const source = createAudioOnlySwitch({ hls, events: EVENTS, videoUrl: '/hls/index.m3u8', load, saved: o.saved ?? false, save, state, onBroken, now: () => clock.t });
+  return { hls, state, load, save, source, onBroken, clock };
 }
 
 function mountMenu(hls: FakeHls, source: ReturnType<typeof setup>['source']) {
@@ -213,6 +215,66 @@ describe('a vanished media playlist while audio only plays', () => {
     reloader.onError('levelLoadError', 503);
     // Assert
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+describe('a device that cannot play the sound alone', () => {
+  it('goes back to video at once after the MediaSource is reset twice in a row, and stops offering audio only', () => {
+    // Arrange: Firefox without an audio output fails the element as soon as it is unmuted, and hls.js resets the MediaSource
+    const { hls, source, state, load, save, onBroken, clock } = setup();
+    hls.parsed(VIDEO_LEVELS, AUDIO_TRACK);
+    source.set(true);
+    load.mockClear();
+    save.mockClear();
+    // Act
+    source.onError('mediaSourceRequiresReset');
+    clock.t += 2000;
+    source.onError('mediaSourceRequiresReset');
+    // Assert
+    expect(state.on).toBe(false);
+    expect(load.mock.calls).toEqual([['/hls/index.m3u8', 'audio only cannot play here']]);
+    expect(onBroken).toHaveBeenCalledTimes(1);
+    expect(source.available).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('one reset is a one-off: audio only goes on', () => {
+    // Arrange
+    const { source, state, load, clock } = setup({ saved: true });
+    // Act
+    source.onError('mediaSourceRequiresReset');
+    clock.t += AUDIO_ONLY_BROKEN_WINDOW_MS;
+    source.onError('mediaSourceRequiresReset');
+    // Assert
+    expect(state.on).toBe(true);
+    expect(load).not.toHaveBeenCalled();
+  });
+
+  it('resets while video plays are hls.js own business', () => {
+    // Arrange
+    const { source, load, onBroken } = setup();
+    // Act
+    source.onError('mediaSourceRequiresReset');
+    source.onError('mediaSourceRequiresReset');
+    // Assert
+    expect(load).not.toHaveBeenCalled();
+    expect(onBroken).not.toHaveBeenCalled();
+  });
+
+  it('the notice says why, as a status, and goes away by itself', () => {
+    // Arrange
+    vi.useFakeTimers();
+    const p = document.createElement('div');
+    document.body.append(p);
+    // Act
+    const el = showPlayerNotice(p, 'Audio only does not work on this device, so the video is back.', 8000);
+    const shown = !el.hidden;
+    vi.advanceTimersByTime(8000);
+    // Assert
+    expect(shown).toBe(true);
+    expect(el.getAttribute('role')).toBe('status');
+    expect(el.hidden).toBe(true);
+    vi.useRealTimers();
   });
 });
 

@@ -69,3 +69,22 @@
     display: none;
   }
 }
+/* Why the video came back (audio-only.ts showPlayerNotice): above the player's own control bar. */
+.audio-only-notice {
+  position: absolute;
+  left: 50%;
+  bottom: 3.5rem;
+  transform: translateX(-50%);
+  max-width: calc(100% - 2 * var(--sp-4));
+  margin: 0;
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--sc-radius-md);
+  background: var(--scrim);
+  color: var(--on-video);
+  font-size: var(--fs-sm);
+  text-align: center;
+  pointer-events: none;
+}
+.audio-only-notice[hidden] {
+  display: none;
+}

@@ -10,6 +10,12 @@
 // - with the quality ladder on, when the streamer's PC drops its last converted quality, the
 //   ladder's audio playlist (audio.m3u8) goes away with it and the stream goes on with the
 //   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze;
+// - with the sound on: where the device has a sound output, audio only plays on; where it has none
+//   (Firefox on the Linux runners fails a sound-only element with "OnMediaSinkAudioError" once it
+//   is unmuted, and hls.js used to reset and reload the whole audio playlist every 2 s, forever:
+//   34 MB in 8 s), the video comes back after at most two resets and audio only is no longer
+//   offered on that page. The other checks run muted, as a page starts, so they hold on every
+//   runner;
 // - P2P (checked on Chromium): audio-only playback joins the swarm video viewers share their audio
 //   track in (the same playlist, the same segments and hashes), so audio travels between the two,
 //   every segment verified by hash.
@@ -132,7 +138,6 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   const { page } = await viewers.join(uid('audio'));
   const received = hlsBytes(page);
   await waitPlaying(page);
-  await unmute(page);
   const menu = page.locator('.quality-menu');
   await expect(menu.locator('option').last()).toHaveText(AUDIO_ONLY);
   const videoBytes = await bytesDuring(page, received, MEASURE_MS);
@@ -204,6 +209,44 @@ test('audio-only and video viewers share the audio over P2P, verified by hash', 
   await expect.poll(async () => (await stats(audio.page)).p2pDownBytes + (await stats(audio.page)).p2pUpBytes, { timeout: 90_000, intervals: [2000] }).toBeGreaterThan(0);
   expect((await stats(audio.page)).hashFailures + (await stats(video.page)).hashFailures).toBe(0);
   await playsOn(audio.page, 2);
+});
+
+test('with the sound on, audio only plays where the device has a sound output; where it has none, the video comes back without loading in a loop', { tag: '@media' }, async ({ viewers }) => {
+  // Arrange
+  const { page } = await viewers.join(uid('audioSound'), { setup: rememberAudioOnly });
+  await playingAudioOnly(page);
+  await waitPlaying(page);
+  await page.evaluate(() => {
+    const w = window as unknown as { __hls: { on(e: string, f: (e: string, d: { details: string }) => void): void }; __resets: number };
+    w.__resets = 0;
+    w.__hls.on('hlsError', (_e, d) => {
+      if (d.details === 'mediaSourceRequiresReset') w.__resets += 1;
+    });
+  });
+
+  // Act
+  await unmute(page);
+  await measuredWindow(page, 15_000);
+
+  // Assert
+  const resets = await page.evaluate(() => (window as unknown as { __resets: number }).__resets);
+  const now = await player(page);
+  console.log(`audio only with the sound on: ${resets} MediaSource resets, playing ${now.source}`);
+  expect(resets, 'MediaSource resets (each one loads the whole audio playlist again)').toBeLessThanOrEqual(2);
+  if (now.source === '/hls/audio-only.m3u8') {
+    expect(resets).toBe(0);
+    await playingAudioOnly(page);
+    await playsOn(page, 2);
+  } else {
+    // No sound output: the video is back, said why, and audio only is no longer offered here.
+    expect(now.source).toBe('/hls/index.m3u8');
+    expect((await stats(page)).lastReload).toBe('audio only cannot play here');
+    await expect.poll(async () => (await player(page)).videoWidth).toBeGreaterThan(0);
+    await expect(page.getByTestId('audio-only')).toBeHidden();
+    await expect(page.locator('.quality-menu option', { hasText: AUDIO_ONLY })).toHaveCount(0);
+    await playsOn(page, 2);
+    expect(await savedChoice(page)).toBe('on');
+  }
 });
 
 const serverQualities = async (): Promise<number[]> => (await adminApi<QualityState>('GET', '/api/quality')).variants.map((v) => v.height);
