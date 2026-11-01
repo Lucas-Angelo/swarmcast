@@ -96,9 +96,11 @@ jobs:
       - name: Restore the Playwright browsers (Linux)
         if: runner.os == 'Linux'
         id: browsers
-        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        # A time limit per try and one more try (the save step below is the job's reference to
+        # actions/cache, whose restore code it runs).
+        uses: ./.github/actions/cache-restore
         continue-on-error: true
-        timeout-minutes: 3
+        timeout-minutes: 4
         with:
           path: ~/.cache/ms-playwright
           key: ms-playwright-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}

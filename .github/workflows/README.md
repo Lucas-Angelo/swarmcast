@@ -121,6 +121,7 @@ schedules and releases are never cancelled.
 |---|---|
 | `.github/actions/setup` | Node.js and `npm ci` with the npm cache; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
+| `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
@@ -183,6 +184,41 @@ runtime, and the fallback does not depend on that client.
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
 
+### Stalled cache restores
+
+A cache restore whose download stalls must not run a job out of time. In 10x stability run
+41283774499, `desktop macos-x64 / clean-machine (macos-15-intel)` found `main`'s npm entry, but the
+download from the cache's storage stalled at 0 of 79.7 MB and was aborted after 12 s; setup-node
+then took 109 s more to exit (its process waits for the requests it left behind, unlike
+`actions/cache/restore`, which exits at once), and `npm ci --prefer-offline`, now without a cache,
+sat 352 s with no output (npm waits 5 minutes for a request that gets no answer) until the setup
+step's 8-minute limit stopped it. What we measured (temporary branches `soak/npm-cold-measure`,
+run 41293187839, and `soak/cache-stall-sim`, run 41293309829):
+
+- `npm ci --prefer-offline` from the registry with an empty npm cache (4 runs per runner image):
+  5-9 s on Ubuntu, 4-11 s on macOS arm64, 14-22 s on Windows, 31-47 s on `macos-15-intel`; with
+  the cache: 7-27 s plus 1-13 s for the restore. The cache saves at most about 20 s: a cold run is
+  not slow, a stalled request is.
+- A restore whose TLS connection to the cache's storage gets no answer (`iptables` dropping the
+  handshake with `*.blob.core.windows.net`) hung `actions/cache/restore` for 748 s before it gave
+  up, with `SEGMENT_DOWNLOAD_TIMEOUT_MINS=2`: that limit only covers the transfer of data, not the
+  request before it. The same restore straight after took 3 s. A composite action's steps cannot
+  have `timeout-minutes` ("Unexpected value 'timeout-minutes'").
+
+So: every `actions/cache` restore goes through `./.github/actions/cache-restore`. It runs
+`actions/cache`'s own restore code (its `restore-only` entry point, which the runner downloads for
+any job that references `actions/cache`) as a child process, cuts a try off after 90 s (kills the
+process group, so its `tar` too, and clears what the try may have half-extracted), and tries
+once more after a try that timed out or failed; a plain miss is not retried. The npm cache is no
+longer setup-node's: `setup` restores it with the same key and path (so existing entries keep
+working) and saves it from `main` with `actions/cache` in `lookup-only` mode (its post step saves
+when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` to 60 s and
+`fetch-retries` to 4 for the job, so a request that gets no answer is retried after a minute.
+Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
+measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
+the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
+(`setup-rust`), which cannot be wrapped; `setup-rust`'s step limit applies to them.
+
 ## Coverage
 
 Measured in the test steps that already run the suites (no extra test runs), on every OS that runs
@@ -210,7 +246,8 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the pinned
-  downloads (`fetch-binaries.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
+  downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
+  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`, set by `setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
   60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
@@ -227,8 +264,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   results and logs still run; a job that runs out is cancelled, and those steps
   (`if: ${{ !cancelled() }}`) do not.
 - **Only caches and diagnostics may fail without failing the job.** A cache is a speed-up: every
-  cache restore and save is `continue-on-error`, a restore's download gives up after 2 minutes
-  (`SEGMENT_DOWNLOAD_TIMEOUT_MINS`), and the save steps (`./.github/actions/setup/save`, the
+  cache restore and save is `continue-on-error`; the `actions/cache` restores go through
+  `./.github/actions/cache-restore`, which cuts a try off after 90 s and tries once more, then goes
+  on without the cache (see "Stalled cache restores" below); and the save steps (`./.github/actions/setup/save`, the
   Playwright browsers) are not even entered on events that save nothing and have a 3-minute
   limit. Uploads of test results, reports and logs, and the job-summary steps, are
   `continue-on-error` with a 5-minute limit. Nothing else is: a test, a build, a check or an
