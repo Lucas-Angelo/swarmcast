@@ -2,10 +2,10 @@ import type { IncomingMessage } from 'node:http';
 import fc from 'fast-check';
 import type { WebSocket } from 'ws';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { defaultChatSettings, validateNickname, type ChatSettings } from '@swarmcast/shared';
+import { CHAT_FRAME_PREFIX, CHAT_REACT_FRAME_PREFIX, CHAT_REACT_FRAMES_MAX_PER_10S, CHAT_REACT_FRAMES_PER_10S, defaultChatSettings, validateNickname, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl } from '../../src/access/access.js';
 import { ChatHub } from '../../src/chat/hub.js';
-import { ControlChannel } from '../../src/control/control.js';
+import { chatFrameKind, ControlChannel } from '../../src/control/control.js';
 import { ActivityLog } from '../../src/core/activity.js';
 import { FakeControlSocket, manualClock, silentLog } from './helpers.js';
 import { joinViewer } from './helpers-b.js';
@@ -13,6 +13,8 @@ import { joinViewer } from './helpers-b.js';
 // The chat rides on the viewer's /control WebSocket (control/control.ts). Chat frames have a
 // budget of their own (20 per 10 s, CHAT_MAX_FRAMES_PER_10S) next to the control budget (30 per
 // 10 s): a socket over either is terminated, and nothing else terminates it but binary frames.
+// Reaction frames (`chat.react`, reserved for 0.5.0) have yet another budget: 10 per 10 s are
+// handed on, up to 20 are ignored, the 21st terminates; they never count as chat frames.
 
 const REQ = { url: '/control' } as IncomingMessage;
 
@@ -55,7 +57,8 @@ function setup(over: Partial<ChatSettings> = {}) {
 const fuzzFrame = fc.oneof(
   fc.string({ maxLength: 300 }),
   fc.string({ unit: 'binary', maxLength: 300 }).map((x) => `{"t":"chat.send","n":1,"text":${JSON.stringify(x)}}`),
-  fc.json().map((j) => `{"t":"chat.${['send', 'color', 'resume', 'x'][j.length % 4]}",${j.startsWith('{') ? j.slice(1) : `"v":${j}}`}`),
+  fc.json().map((j) => `{"t":"chat.${['send', 'color', 'resume', 'x', 'react', 'reactx'][j.length % 6]}",${j.startsWith('{') ? j.slice(1) : `"v":${j}}`}`),
+  fc.array(fc.nat({ max: 99 }), { maxLength: 12 }).map((c) => `{"t":"chat.react","c":${JSON.stringify(c)}}`),
   fc.constantFrom('{"t":"chat.send","n":1,"text":{"__proto__":{"x":1}}}', '{"t":"chat.send","constructor":{"prototype":{}}}', '{"t":"chat.color","color":"#zzzzzz"}', '{"t":"chat.resume","after":1e308}', '{"t":"chat.send"', '~o1', '~d1 x'),
   fc.uint8Array({ maxLength: 64 }).map((u) => Buffer.from(u)),
 );
@@ -70,9 +73,11 @@ function frameFuzz({ hub, clock, connect }: ReturnType<typeof setup>) {
   return fc.property(fc.array(fuzzFrame, { maxLength: 30 }), (frames) => {
     clock.advance(11_000);
     const sock = connect();
-    const chat = frames.filter((f) => (typeof f === 'string' ? f : f.toString('latin1')).startsWith('{"t":"chat.')).length;
+    const kinds = frames.map((f) => chatFrameKind(typeof f === 'string' ? Buffer.from(f) : f));
+    const chat = kinds.filter((k) => k === 'chat').length;
+    const react = kinds.filter((k) => k === 'react').length;
     for (const f of frames) expect(() => sock.receive(f)).not.toThrow();
-    if (chat <= 20) expect(sock.terminate).not.toHaveBeenCalled();
+    if (chat <= 20 && react <= CHAT_REACT_FRAMES_MAX_PER_10S) expect(sock.terminate).not.toHaveBeenCalled();
     expect(hub.ringSize.items).toBeLessThanOrEqual(200);
     expect(hub.isBroken).toBe(false);
     sock.emit('close');
@@ -94,6 +99,102 @@ describe('chat on /control', () => {
     sock.receive('{"t":"chat.send","n":21,"text":"x"}');
     // Assert
     expect(sock.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('reaction frames have their own budget: 20 chat frames and 10 reaction frames in 10 s keep the socket', () => {
+    // Arrange
+    const { connect, hub } = setup({ slowModeS: 0 });
+    const sock = connect();
+    const frame = vi.spyOn(hub, 'frame');
+    // Act
+    for (let i = 1; i <= 20; i++) {
+      sock.receive(`{"t":"chat.send","n":${i},"text":"m${i}"}`);
+      if (i <= CHAT_REACT_FRAMES_PER_10S) sock.receive('{"t":"chat.react","c":[1]}');
+    }
+    // Assert
+    expect(sock.terminate).not.toHaveBeenCalled();
+    expect(frame).toHaveBeenCalledTimes(20 + CHAT_REACT_FRAMES_PER_10S);
+  });
+
+  it(`reaction frames past ${CHAT_REACT_FRAMES_PER_10S} per 10 s are ignored, past ${CHAT_REACT_FRAMES_MAX_PER_10S} the socket is terminated`, () => {
+    // Arrange
+    const { connect, hub, clock } = setup();
+    const sock = connect();
+    const frame = vi.spyOn(hub, 'frame');
+    // Act
+    for (let i = 0; i < CHAT_REACT_FRAMES_MAX_PER_10S; i++) sock.receive('{"t":"chat.react","c":[1]}');
+    // Assert
+    expect(frame).toHaveBeenCalledTimes(CHAT_REACT_FRAMES_PER_10S);
+    expect(sock.terminate).not.toHaveBeenCalled();
+    expect(sock.sent.filter((d) => d.startsWith('{"t":"chat.reject"'))).toEqual([]);
+    // Act
+    clock.advance(10_001);
+    sock.receive('{"t":"chat.react","c":[1]}');
+    // Assert
+    expect(frame).toHaveBeenCalledTimes(CHAT_REACT_FRAMES_PER_10S + 1);
+    // Act
+    for (let i = 0; i < CHAT_REACT_FRAMES_MAX_PER_10S; i++) sock.receive('{"t":"chat.react","c":[1]}');
+    // Assert
+    expect(sock.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('an oversized reaction frame is dropped before it is decoded, without a reply', () => {
+    // Arrange
+    const { connect, hub } = setup();
+    const sock = connect();
+    const big = Buffer.from(`{"t":"chat.react","c":[${'1,'.repeat(1500)}1]}`);
+    const toString = vi.spyOn(big, 'toString');
+    const frame = vi.spyOn(hub, 'frame');
+    const before = sock.sent.length;
+    // Act
+    sock.receive(big);
+    // Assert
+    expect(toString).not.toHaveBeenCalled();
+    expect(frame).not.toHaveBeenCalled();
+    expect(sock.sent).toHaveLength(before);
+    expect(sock.terminate).not.toHaveBeenCalled();
+  });
+
+  it('a reaction frame reaches the hub, which has nothing to do with it yet: no reply, no item, no fault', () => {
+    // Arrange
+    const { connect, hub } = setup();
+    const sock = connect();
+    const before = sock.sent.length;
+    // Act
+    sock.receive('{"t":"chat.react","c":[2,0,1],"t":"chat.send","n":1,"text":"smuggled"}');
+    hub.flush();
+    // Assert
+    expect(sock.sent).toHaveLength(before);
+    expect(hub.lastSeq).toBe(0);
+    expect(hub.isBroken).toBe(false);
+  });
+
+  it('frame kinds come from the first bytes only: chat.react (closing quote included) or any other chat frame', () => {
+    // Arrange
+    const cases = ['{"t":"chat.react","c":[1]}', '{"t":"chat.react"', '{"t":"chat.reactx","c":[1]}', '{"t":"chat.send","n":1}', '{"t":"chat.', '{"t":"chat', ' {"t":"chat.react"}', '{"t":"stats"}', ''];
+    // Act
+    const kinds = cases.map((c) => chatFrameKind(Buffer.from(c)));
+    // Assert
+    expect(kinds).toEqual(['react', 'react', 'chat', 'chat', 'chat', null, null, null, null]);
+  });
+
+  it('frame kinds (fuzz): react exactly when the bytes start with the react prefix, chat when they start with the chat prefix otherwise', () => {
+    // Arrange
+    const bytes = fc.oneof(
+      fc.uint8Array({ maxLength: 40 }).map((u) => Buffer.from(u)),
+      fc.string({ maxLength: 40 }).map((x) => Buffer.from(CHAT_FRAME_PREFIX + x)),
+      fc.string({ maxLength: 40 }).map((x) => Buffer.from(CHAT_REACT_FRAME_PREFIX + x)),
+      fc.integer({ min: 0, max: CHAT_REACT_FRAME_PREFIX.length }).map((n) => Buffer.from(CHAT_REACT_FRAME_PREFIX.slice(0, n))),
+    );
+    const property = fc.property(bytes, (b) => {
+      const text = b.toString('latin1');
+      const want = text.startsWith(CHAT_REACT_FRAME_PREFIX) ? 'react' : text.startsWith(CHAT_FRAME_PREFIX) ? 'chat' : null;
+      return chatFrameKind(b) === want;
+    });
+    // Act
+    const run = () => fc.assert(property, { numRuns: 2000, seed: 17 });
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it('a raw frame over 2 KB is refused before it is decoded, without closing the socket', () => {

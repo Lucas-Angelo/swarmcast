@@ -103,6 +103,21 @@ export function tc(coded: { code?: string | null; params?: MessageParams | null 
   return translate(current, coded.code, coded.params ?? undefined);
 }
 
+/**
+ * Translate a code and params that came over the wire (chat system lines) without ever throwing:
+ * a code this build does not know (a newer server) gives `fallback`, and only string and finite
+ * number params are used (anything else is left out, so its placeholder stays as written).
+ */
+export function translateWire(code: unknown, params: unknown, fallback: MessageKey, lang: Lang = current): string {
+  if (!isMessageKey(code)) return translate(lang, fallback);
+  if (params === null || typeof params !== 'object') return translate(lang, code);
+  const clean: MessageParams = {};
+  for (const [k, v] of Object.entries(params)) {
+    if (typeof v === 'string' || (typeof v === 'number' && Number.isFinite(v))) clean[k] = v;
+  }
+  return translate(lang, code, clean);
+}
+
 /** "less than a minute", "12 minutes", "1 h 5 min". */
 export function humanDuration(ms: number, lang: Lang = current): string {
   if (ms < 60_000) return translate(lang, 'time.lessThanMinute');

@@ -10,6 +10,7 @@ import {
   CHAT_GLOBAL_MAX_PER_S,
   CHAT_GLOBAL_MIN_PER_S,
   CHAT_PROTOCOL_VERSION,
+  CHAT_REACT_FRAME_PREFIX,
   CHAT_RING_MAX_BYTES,
   CHAT_RING_MAX_ITEMS,
   canonicalizeChatText,
@@ -84,6 +85,22 @@ type Reject = { code: ChatRejectCode; params?: MessageParams; retryMs?: number }
 interface RingEntry {
   item: ChatRingItem;
   bytes: number;
+  /** Other authors the item names (a reply's parent, a mention): kept in the roster and sent with it. */
+  refs?: readonly string[];
+}
+
+/**
+ * Every author key the items name: the author of each message and the authors it refers to
+ * (`refs`), plus `extra`. Snapshots, resume answers and the panel send roster entries for exactly
+ * these, and the periodic prune keeps them.
+ */
+export function ringAuthors(entries: Iterable<{ item: ChatItem; refs?: readonly string[] }>, extra: Iterable<string> = []): Set<string> {
+  const keys = new Set(extra);
+  for (const e of entries) {
+    if (e.item.k === 'm') keys.add(e.item.a);
+    if (e.refs) for (const a of e.refs) keys.add(a);
+  }
+  return keys;
 }
 
 /** More internal errors than this in a minute stop the chat for the rest of the live. */
@@ -270,9 +287,8 @@ export class ChatHub {
     const shield = this.d.shieldLevel?.() ?? 0;
     if (refresh || protectState(this.detector.level, shield, this.manualProtect, this.d.settings().autoProtect) !== this.protect) this.refresh();
     if (this.ticks % 60 === 0) {
-      // Forget members whose session ended; keep authors still visible in the ring.
-      const inRing = new Set<string>();
-      for (const e of this.ring) if (e.item.k === 'm') inRing.add(e.item.a);
+      // Forget members whose session ended; keep authors still visible in the ring (or named by it).
+      const inRing = ringAuthors(this.ring);
       for (const m of [...this.moderation.members()]) if (m.sessionId !== STREAMER_ID && !this.d.access.sessions.has(m.sessionId)) this.moderation.forget(m.sessionId, (a) => inRing.has(a));
       this.moderation.prune((m) => inRing.has(m.a));
     }
@@ -364,6 +380,8 @@ export class ChatHub {
     const now = this.now();
     this.detector.frame(now);
     if (text.startsWith('{"t":"chat.send"')) return this.onSend(session, socket, text, now);
+    // Reaction frames (reserved for 0.5.0) have their own budget on /control and no handler yet.
+    if (text.startsWith(CHAT_REACT_FRAME_PREFIX)) return;
     if (!this.eff.enabled) return;
     let raw: unknown;
     try {
@@ -539,8 +557,9 @@ export class ChatHub {
     if (after >= this.seq) return;
     const oldest = this.ring[0]?.item.s ?? this.seq + 1;
     if (after + 1 < oldest || after > this.seq) return this.resyncSocket(socket, session);
-    const items = this.ring.filter((e) => e.item.s > after).map((e) => e.item);
-    const roster = this.rosterFor(items);
+    const entries = this.ring.filter((e) => e.item.s > after);
+    const items = entries.map((e) => e.item);
+    const roster = this.rosterFor(entries);
     this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items] } satisfies ChatServerMessage));
     this.batcher.markKnown(socket, roster.map((r) => r.a));
   }
@@ -568,12 +587,12 @@ export class ChatHub {
     this.toAdmin(item);
   }
 
-  /** Accept a message into the ring and the next batch; returns its seq. */
-  private append(m: ChatMember, body: { x: string } | { g: GifRef }, prio: boolean): number {
+  /** Accept a message into the ring and the next batch; returns its seq. `refs`: other authors it names. */
+  private append(m: ChatMember, body: { x: string } | { g: GifRef }, prio: boolean, refs?: readonly string[]): number {
     this.announce(m);
     const item: ChatRingItem = { k: 'm', s: ++this.seq, at: this.now(), a: m.a, ...body };
-    this.ringPush(item);
-    this.batcher.push(item, prio);
+    this.ringPush(item, refs);
+    this.batcher.push(item, prio, refs);
     this.toAdmin(item);
     return item.s;
   }
@@ -586,21 +605,19 @@ export class ChatHub {
     this.toAdmin(item);
   }
 
-  private ringPush(item: ChatRingItem): void {
+  private ringPush(item: ChatRingItem, refs?: readonly string[]): void {
     const bytes = JSON.stringify(item).length;
-    this.ring.push({ item, bytes });
+    this.ring.push({ item, bytes, ...(refs?.length ? { refs } : {}) });
     this.ringBytes += bytes;
     while (this.ring.length > CHAT_RING_MAX_ITEMS || this.ringBytes > CHAT_RING_MAX_BYTES) this.ringBytes -= this.ring.shift()!.bytes;
   }
 
-  private rosterFor(items: readonly ChatItem[], extra: string[] = []): ChatAuthor[] {
-    const keys = new Set(extra);
-    for (const i of items) if (i.k === 'm') keys.add(i.a);
-    // Only the authors of these items (and `extra`): a viewer who later gets a message from an
+  private rosterFor(entries: readonly RingEntry[], extra: string[] = []): ChatAuthor[] {
+    // Only the authors these entries name (and `extra`): a viewer who later gets an item naming an
     // author it has no entry for gets that entry from the batcher first (per-socket roster,
     // batcher.ts), so hellos stay small even when many viewers reconnect at once.
     const out: ChatAuthor[] = [];
-    for (const a of keys) {
+    for (const a of ringAuthors(entries, extra)) {
       const au = this.moderation.authorOf(a);
       if (au) out.push(au);
     }
@@ -676,11 +693,11 @@ export class ChatHub {
       const after = opts.after;
       const oldest = this.ring[0]?.item.s ?? this.seq + 1;
       if (after !== undefined && after > 0 && after <= this.seq && after + 1 >= oldest && this.modSeq < after) {
-        const items: ChatItem[] = this.ring.filter((e) => e.item.s > after).map((e) => e.item);
-        if (items.length <= Math.max(n, SNAPSHOT_IN_DEBT)) return { ...base, roster: this.rosterFor(items, [you.a]), items, delta: true as const };
+        const entries = this.ring.filter((e) => e.item.s > after);
+        if (entries.length <= Math.max(n, SNAPSHOT_IN_DEBT)) return { ...base, roster: this.rosterFor(entries, [you.a]), items: entries.map((e): ChatItem => e.item), delta: true as const };
       }
-      const items: ChatItem[] = n > 0 ? this.ring.slice(-n).map((e) => e.item) : [];
-      return { ...base, roster: this.rosterFor(items, [you.a]), items };
+      const entries = n > 0 ? this.ring.slice(-n) : [];
+      return { ...base, roster: this.rosterFor(entries, [you.a]), items: entries.map((e): ChatItem => e.item) };
     });
   }
 
@@ -827,7 +844,7 @@ export class ChatHub {
       const m = this.moderation.member(s);
       return { sessionId: s.id, a: m.a, nickname: s.nickname, color: m.color, colorLocked: m.colorLocked, mutedUntil: this.moderation.mutedUntil(s), tag: m.tag };
     });
-    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(items), items, lastSeq: this.seq, sessions, counters: this.counters() };
+    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(this.ring), items, lastSeq: this.seq, sessions, counters: this.counters() };
   }
 
   /** Author key → session id of every author in the ring (the panel acts on sessions). */

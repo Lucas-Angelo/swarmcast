@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { defaultChatSettings } from '@swarmcast/shared';
+import { CHAT_EPHEMERAL_PENDING_MAX, defaultChatSettings } from '@swarmcast/shared';
 import { ChatBatcher, type ChatSocket } from '../../src/chat/batcher.js';
 import { KeyedBuckets, RateWindow, TokenBucket } from '../../src/chat/buckets.js';
 import { AdaptiveSlowMode, ChatDetector, protectState } from '../../src/chat/detector.js';
@@ -528,6 +528,188 @@ describe('batcher', () => {
     expect(sent).toBeGreaterThan(budget * seconds * 0.5);
     expect(b.droppedForBudget).toBeGreaterThan(0);
     expect(itemsOf(socks[0]!).filter((i) => i.k === 'd')).toHaveLength(seconds / 10);
+  });
+
+  /** A batcher over `socks` with a huge budget on clock `t` (a function), recording resyncs. */
+  function quick(socks: Sock[], now: () => number = () => 5000) {
+    const resynced: ChatSocket[] = [];
+    const b = new ChatBatcher({ transport: { sockets: () => socks }, budgetBps: () => 1e9, slow: () => false, resync: (s) => resynced.push(s), now });
+    return { b, resynced };
+  }
+  /** An ephemeral item such as 0.5.0's vote counts (`c` per option). */
+  const tally = (c: number[]) => ({ k: 'tally', c });
+  const sum = (a: { k: string; c: number[] }, b: { k: string; c: number[] }) => ({ k: a.k, c: a.c.map((x, i) => x + (b.c[i] ?? 0)) });
+
+  it('ephemeral items: one per key (latest wins, or merged), after the queued items, without a seq', () => {
+    // Arrange
+    const a = new Sock();
+    const { b } = quick([a]);
+    // Act
+    b.pushLatest('poll', tally([1, 0]));
+    b.push({ k: 'm', s: 1, at: 5000, a: 'k', x: 'hi' }, false);
+    b.pushLatest('poll', tally([2, 1]));
+    b.pushLatest('rx', tally([1, 0, 0]), sum);
+    b.pushLatest('rx', tally([0, 2, 1]), sum);
+    const pending = b.pending;
+    b.flush();
+    // Assert
+    expect(pending).toBe(3);
+    expect(JSON.parse(a.sent[0]!)).toEqual({
+      t: 'chat.batch',
+      items: [
+        { k: 'm', s: 1, at: 5000, a: 'k', x: 'hi' },
+        { k: 'tally', c: [2, 1] },
+        { k: 'tally', c: [1, 2, 1] },
+      ],
+    });
+    expect(b.pending).toBe(0);
+  });
+
+  it('a batch of ephemeral items alone goes out too', () => {
+    // Arrange
+    const a = new Sock();
+    const { b } = quick([a]);
+    // Act
+    b.pushLatest('poll', tally([3]));
+    b.flush();
+    // Assert
+    expect(itemsOf(a)).toEqual([{ k: 'tally', c: [3] }]);
+  });
+
+  it('a slow socket that missed only ephemeral items gets neither a snapshot nor a skip, just the next batch', () => {
+    // Arrange
+    const a = new Sock();
+    const slow = new Sock();
+    const { b, resynced } = quick([a, slow]);
+    slow.bufferedAmount = 100_000;
+    b.pushLatest('poll', tally([1]));
+    b.flush();
+    // Act
+    slow.bufferedAmount = 0;
+    b.pushLatest('poll', tally([2]));
+    b.flush();
+    // Assert
+    expect(resynced).toEqual([]);
+    expect(slow.sent).toHaveLength(1);
+    expect(itemsOf(slow)).toEqual([{ k: 'tally', c: [2] }]);
+  });
+
+  it('a slow socket that missed messages and ephemeral items is told about the messages only (a skip, no snapshot)', () => {
+    // Arrange
+    const a = new Sock();
+    const slow = new Sock();
+    const { b, resynced } = quick([a, slow]);
+    slow.bufferedAmount = 100_000;
+    b.push({ k: 'm', s: 1, at: 5000, a: 'k', x: 'hi' }, false);
+    b.pushLatest('rx', tally([5]));
+    b.flush();
+    // Act
+    slow.bufferedAmount = 0;
+    b.push({ k: 'm', s: 2, at: 5000, a: 'k', x: 'yo' }, false);
+    b.flush();
+    // Assert
+    expect(resynced).toEqual([]);
+    expect(itemsOf(slow)).toEqual([
+      { k: 'skip', n: 1 },
+      { k: 'm', s: 2, at: 5000, a: 'k', x: 'yo' },
+    ]);
+  });
+
+  it('over budget: ephemeral items are dropped before any viewer message, without a skip for them', () => {
+    // Arrange
+    const socks = Array.from({ length: 100 }, () => new Sock());
+    let t = 10_000;
+    const b = new ChatBatcher({ transport: { sockets: () => socks }, budgetBps: () => 20_000, slow: () => false, resync: () => {}, now: () => t });
+    b.push({ k: 'm', s: 1, at: t, a: 'k', x: 'first' }, false);
+    b.flush();
+    for (let i = 0; i < 5; i++) b.push({ k: 'm', s: i + 2, at: t, a: 'k', x: 'short' }, false);
+    b.push({ k: 'd', s: [1] }, true);
+    for (let i = 0; i < 8; i++) b.pushLatest(`poll${i}`, tally(Array.from({ length: 40 }, (_, j) => 1000 + i + j)));
+    // Act
+    b.flush();
+    t += 1000;
+    b.flush();
+    // Assert
+    const items = itemsOf(socks[0]!);
+    expect(b.droppedEphemeral).toBeGreaterThan(0);
+    expect(items.filter((i) => i.k === 'tally')).toHaveLength(8 - b.droppedEphemeral);
+    expect(items.some((i) => i.k === 'd')).toBe(true);
+    expect(items.filter((i) => i.k === 'm')).toHaveLength(6);
+    expect(items.some((i) => i.k === 'skip')).toBe(false);
+    expect(b.droppedForBudget).toBe(0);
+  });
+
+  it(`at most ${CHAT_EPHEMERAL_PENDING_MAX} ephemeral keys wait; beyond that the oldest key is dropped`, () => {
+    // Arrange
+    const a = new Sock();
+    const { b } = quick([a]);
+    // Act
+    for (let i = 0; i <= CHAT_EPHEMERAL_PENDING_MAX; i++) b.pushLatest(`k${i}`, tally([i]));
+    b.flush();
+    // Assert
+    const items = itemsOf(a) as unknown as Array<{ c: number[] }>;
+    expect(items).toHaveLength(CHAT_EPHEMERAL_PENDING_MAX);
+    expect(items[0]!.c).toEqual([1]);
+    expect(b.droppedEphemeral).toBe(1);
+  });
+
+  it('roster: a socket that joined later gets the entries of the authors an item refers to, just before the batch', () => {
+    // Arrange
+    const early = new Sock();
+    const late = new Sock();
+    const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
+    const ana = { a: 'k1', n: 'Ana', c: '#e5484d', r: 'viewer' as const };
+    const roster = new Map([
+      ['k1', ana],
+      ['k2', bia],
+    ]);
+    const b = new ChatBatcher({ transport: { sockets: () => [early, late] }, budgetBps: () => 1e9, slow: () => false, resync: () => {}, authorOf: (a) => roster.get(a), now: () => 5000 });
+    b.markKnown(early, ['k1', 'k2']);
+    b.markKnown(late, ['k1']);
+    // Act
+    b.push({ k: 'm', s: 7, at: 5000, a: 'k1', x: '@Bia oi' }, false, ['k2']);
+    b.flush();
+    b.push({ k: 'm', s: 8, at: 5000, a: 'k1', x: '@Bia de novo' }, false, ['k2']);
+    b.flush();
+    // Assert
+    expect(early.sent.map((x) => JSON.parse(x))).toEqual([
+      { t: 'chat.batch', items: [{ k: 'm', s: 7, at: 5000, a: 'k1', x: '@Bia oi' }] },
+      { t: 'chat.batch', items: [{ k: 'm', s: 8, at: 5000, a: 'k1', x: '@Bia de novo' }] },
+    ]);
+    expect(late.sent.map((x) => JSON.parse(x))).toEqual([
+      { t: 'chat.batch', items: [{ k: 'u', au: bia }] },
+      { t: 'chat.batch', items: [{ k: 'm', s: 7, at: 5000, a: 'k1', x: '@Bia oi' }] },
+      { t: 'chat.batch', items: [{ k: 'm', s: 8, at: 5000, a: 'k1', x: '@Bia de novo' }] },
+    ]);
+  });
+
+  it('roster: a referred author announced in the same batch is not sent twice', () => {
+    // Arrange
+    const late = new Sock();
+    const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
+    const authorOf = vi.fn(() => bia);
+    const b = new ChatBatcher({ transport: { sockets: () => [late] }, budgetBps: () => 1e9, slow: () => false, resync: () => {}, authorOf, now: () => 5000 });
+    b.markKnown(late, ['k1']);
+    // Act
+    b.push({ k: 'u', au: bia }, true);
+    b.push({ k: 'm', s: 3, at: 5000, a: 'k1', x: 'hi' }, false, ['k2']);
+    b.flush();
+    // Assert
+    expect(late.sent).toHaveLength(1);
+    expect(authorOf).not.toHaveBeenCalled();
+  });
+
+  it('reset() drops pending ephemeral items too', () => {
+    // Arrange
+    const a = new Sock();
+    const { b } = quick([a]);
+    b.pushLatest('poll', tally([1]));
+    // Act
+    b.reset();
+    b.flush();
+    // Assert
+    expect(a.sent).toEqual([]);
+    expect(b.pending).toBe(0);
   });
 
   it('the pending queue is capped at 500 items', () => {

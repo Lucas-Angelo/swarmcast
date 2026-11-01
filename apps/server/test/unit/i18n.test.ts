@@ -1,6 +1,7 @@
+import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 import { estimateCapacity, nicknameError } from '@swarmcast/shared';
-import { formatNumber, humanDuration, isMessageKey, resolveLang, tc, translate, type MessageKey } from '@swarmcast/shared/i18n';
+import { formatNumber, humanDuration, isMessageKey, resolveLang, tc, translate, translateWire, type MessageKey } from '@swarmcast/shared/i18n';
 import { en } from '../../../../packages/shared/src/i18n/en.js';
 import { ptBR } from '../../../../packages/shared/src/i18n/pt-BR.js';
 
@@ -102,6 +103,35 @@ describe('i18n dictionaries', () => {
     // Assert
     expect(unknown).toBe('English fallback');
     expect(none).toBe('x');
+  });
+
+  // A chat system line from a newer server (a code this build lacks) or with odd params must
+  // never throw inside the renderer: it would abort every other line of that batch.
+  it.each([
+    ['an unknown code', 'chat.sys.pollStarted', { question: 'x' }, 'en', 'Something changed in the chat that this page cannot show. Reload the page to see it.'],
+    ['an unknown code in pt-BR', 'chat.sys.pollStarted', undefined, 'pt-BR', 'Algo mudou no chat que esta página não consegue mostrar. Recarregue a página para ver.'],
+    ['a prototype key', 'toString', undefined, 'en', 'Something changed in the chat that this page cannot show. Reload the page to see it.'],
+    ['a non-string code', 42, undefined, 'en', 'Something changed in the chat that this page cannot show. Reload the page to see it.'],
+    ['a known code', 'chat.sys.muted', { nickname: 'Ana', minutes: 10 }, 'en', 'Ana was muted for 10 min.'],
+    ['params that are not plain values', 'chat.sys.muted', { nickname: { toString: 'x' }, minutes: [1] }, 'en', '{nickname} was muted for {minutes} min.'],
+    ['params that are not an object', 'chat.sys.muted', 'Ana', 'en', '{nickname} was muted for {minutes} min.'],
+    ['a plural count that is not a number', 'chat.viewer.skipped', { count: 'many' }, 'en', 'many messages skipped'],
+  ] as const)('a wire code with %s is translated or falls back', (_case, code, params, lang, want) => {
+    // Act
+    const text = translateWire(code, params, 'chat.sys.unknown', lang);
+    // Assert
+    expect(text).toBe(want);
+  });
+
+  it('a wire code never throws, whatever the code and params (fuzz)', () => {
+    // Arrange
+    const keys = Object.keys(en);
+    const code = fc.oneof(fc.constantFrom(...keys), fc.string(), fc.jsonValue());
+    const property = fc.property(code, fc.jsonValue(), fc.constantFrom('en' as const, 'pt-BR' as const), (c, p, lang) => typeof translateWire(c, p, 'chat.sys.unknown', lang) === 'string');
+    // Act
+    const run = () => fc.assert(property, { numRuns: 2000, seed: 7 });
+    // Assert
+    expect(run).not.toThrow();
   });
 
   it.each([
