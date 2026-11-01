@@ -101,7 +101,33 @@ test('strangers never see whose stream it is', { tag: '@ui' }, async ({ viewers,
 
   for (const p of ['/', '/join', '/join/not-the-current-link', '/watch', '/api/brand']) {
     // Act
-    const res = await page.goto(new URL(p, baseURL).toString());
+    const nav = page.goto(new URL(p, baseURL).toString());
+    // DIAG: a goto with no answer in 15 s: is the server alive, does another page/context of this browser load?
+    const timer = setTimeout(() => {
+      void (async () => {
+        console.log(`DIAG ${new Date().toISOString()} goto ${p} stuck 15 s`);
+        try {
+          const r = await page.request.get(new URL('/healthz', baseURL).toString(), { timeout: 10_000 });
+          console.log(`DIAG node-side GET /healthz: ${r.status()}`);
+        } catch (e) { console.log(`DIAG node-side GET failed: ${String(e)}`); }
+        try {
+          const p2 = await page.context().newPage();
+          const r2 = await p2.goto(new URL('/healthz', baseURL).toString(), { timeout: 15_000 });
+          console.log(`DIAG same-context new page /healthz: ${r2?.status()}`);
+        } catch (e) { console.log(`DIAG same-context new page failed: ${String(e)}`); }
+        try {
+          const c3 = await viewers.browserContext();
+          const p3 = await c3.newPage();
+          const r3 = await p3.goto(new URL('/healthz', baseURL).toString(), { timeout: 15_000 });
+          console.log(`DIAG new context /healthz: ${r3?.status()}`);
+        } catch (e) { console.log(`DIAG new context failed: ${String(e)}`); }
+        try {
+          const r4 = await page.evaluate(() => document.readyState + ' ' + location.href).catch((e) => String(e));
+          console.log(`DIAG stuck page state: ${r4}`);
+        } catch (e) { console.log(`DIAG evaluate failed: ${String(e)}`); }
+      })();
+    }, 15_000);
+    const res = await nav.finally(() => clearTimeout(timer));
 
     // Assert
     expect(await res!.text(), p).not.toContain(NAME);

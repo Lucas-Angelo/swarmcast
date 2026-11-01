@@ -24,7 +24,7 @@ process.env.SWARMCAST_TEST_HOOKS ??= '1';
 // output. Synchronous writes, so the last lines before a crash are kept. Playwright empties
 // test-results/ before it starts this server.
 fs.mkdirSync('test-results', { recursive: true });
-const serverLog = fs.openSync(path.join('test-results', 'e2e-server.log'), 'w');
+const serverLog = fs.openSync(path.join(process.env.RUN_DIR ?? 'test-results', process.env.RUN_DIR ? 'e2e-server.log' : 'e2e-server.log'), 'w');
 const toServerLog = (chunk: unknown): void => {
   try {
     if (typeof chunk === 'string') fs.writeSync(serverLog, chunk);

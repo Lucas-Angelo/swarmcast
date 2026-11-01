@@ -175,6 +175,24 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
 
   // Headers must arrive quickly; Node's default (60 s) is generous for a slowloris.
   app.server.headersTimeout = direct ? 8_000 : 15_000;
+  // DIAG (soak/webkit-goto-diag only, never merged): every connection and request with its client port.
+  {
+    let connSeq = 0;
+    app.server.on('connection', (socket: Duplex) => {
+      const id = ++connSeq;
+      const port = (socket as unknown as { remotePort?: number }).remotePort;
+      (socket as unknown as { __diag: number }).__diag = id;
+      log.info({ diag: 'conn', id, port }, 'diag conn open');
+      socket.once('close', () => log.info({ diag: 'conn', id, port }, 'diag conn close'));
+    });
+    app.server.on('clientError', (err: Error) => log.info({ diag: 'clientError', err: err.message }, 'diag client error'));
+    app.addHook('onRequest', async (req) => {
+      log.info({ diag: 'req', conn: (req.socket as unknown as { __diag?: number }).__diag, port: req.socket.remotePort, m: req.method, u: req.url.slice(0, 48) }, 'diag req');
+    });
+    app.addHook('onResponse', async (req, reply) => {
+      log.info({ diag: 'res', conn: (req.socket as unknown as { __diag?: number }).__diag, port: req.socket.remotePort, s: reply.statusCode, u: req.url.slice(0, 48) }, 'diag res');
+    });
+  }
   const pages = loadPages(deps.viewerDir);
   const ip = (req: FastifyRequest): string => clientIp(req, opts.trustTunnel && !direct);
   const sec = deps.security;

@@ -8,6 +8,11 @@ const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 // Dates the specs and the e2e server format (log file names, "muted until") do not depend on
 // the machine's timezone: the runner, its workers and the server it starts all use UTC.
 process.env.TZ = 'UTC';
+// DIAG: browser stdout/stderr (WebKit logs) to a file next to the run's results.
+if (process.env.RUN_DIR) {
+  process.env.DEBUG = 'pw:browser';
+  process.env.DEBUG_FILE = `${process.env.RUN_DIR}/pw-browser-${process.pid}.log`;
+}
 
 export default defineConfig({
   testDir: 'apps/server/test/e2e',
@@ -81,6 +86,6 @@ export default defineConfig({
         },
       },
     },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    { name: 'webkit', use: { ...devices['Desktop Safari'], launchOptions: { env: { ...process.env, WEBKIT_DEBUG: 'Network,Loading,ResourceLoading,ProcessSwapping,WebsiteDataStores' } } } },
   ],
 });
