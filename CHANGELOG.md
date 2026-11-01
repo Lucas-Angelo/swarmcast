@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
+
+### Security
+
+- The updated cloudflared includes security fixes in two of its libraries: go-jose (a key with a huge RSA size could make it work very hard; now refused) and chi. The quick tunnel SwarmCast opens does not use the affected parts, but your copy now has the fixes too.
+
 ## [0.4.2] - 2026-11-01
 
 ### Changed

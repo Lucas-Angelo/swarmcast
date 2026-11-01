@@ -275,13 +275,13 @@ flowchart TB
   - Unknown keys are fatal.
   - HLS reading requires a cookie-check redirect and an `hlsSession` cookie.
   - Sources: [mediamtx.yml v1.21.3](https://raw.githubusercontent.com/bluenviron/mediamtx/v1.21.3/mediamtx.yml), [authentication](https://mediamtx.org/docs/features/authentication), [read/hls](https://mediamtx.org/docs/read/hls).
-- **cloudflared 2026.10.4**.
+- **cloudflared 2026.10.7** (released 2026-10-30).
   - Quick tunnels need no account or domain. They are meant "for testing and development", have no uptime guarantee, accept up to 200 in-flight requests (429 beyond that), do not support SSE, and get a new hostname every time. **Open WebSockets count as in-flight requests** for as long as they are open: see [Quick tunnel limit](#quick-tunnel-limit-measured-2026-10-26).
   - WebSockets work: Cloudflare's Sandbox SDK tunnel docs say so, and our own test over a real quick tunnel confirmed it.
   - A `~/.cloudflared/config.yml` can override `--url`, so we pass an empty `--config` file owned by the app.
   - The URL is printed on stderr inside an ASCII box.
   - Releases have no checksum file, so we use the GitHub asset digests. For darwin, the checksums in the release notes refer to the binary inside the archive.
-  - Sources: [quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Sandbox SDK tunnels](https://developers.cloudflare.com/sandbox/sdk/api/tunnels/), [release 2026.10.4](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.4).
+  - Sources: [quick tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/), [Sandbox SDK tunnels](https://developers.cloudflare.com/sandbox/sdk/api/tunnels/), [release 2026.10.7](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.7), [release notes](https://github.com/cloudflare/cloudflared/blob/2026.10.7/RELEASE_NOTES).
 - **Cloudflare terms**.
   - The Service-Specific Terms (Application Services, updated 2026-09-28), CDN section, say that unless you are on Enterprise, serving video and other large files through the CDN requires paid services (Stream etc.), and Cloudflare may limit or disable it.
   - The terms do not say whether this applies to Tunnel traffic. Quick tunnels fall under the [Website & Online Services Terms](https://www.cloudflare.com/website-terms/), and cloudflared's banner says Cloudflare may investigate use.
