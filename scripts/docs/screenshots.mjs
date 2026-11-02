@@ -938,6 +938,8 @@ async function captureLocale(browser, lang) {
 async function showPlayerControls(page) {
   const bar = await page.getByTestId('controls').boundingBox();
   if (!bar) return log('no player controls');
+  // Scrolled out of sight (the phone picture shows the page below the player): nothing to show.
+  if (bar.y + bar.height <= 0 || bar.y >= page.viewportSize().height) return;
   await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
   await page.waitForFunction(() => !document.querySelector('.player')?.classList.contains('pc-idle'), null, { timeout: 5000 }).catch(() => log('the player controls stayed faded'));
 }
