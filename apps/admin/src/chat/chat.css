@@ -396,8 +396,12 @@
 /* ---- Polls and predictions, slash commands (docs/CHAT.md) ------------------------------------
  * The poll card sits under the pinned message, above the feed; the form above the "Send as …" box.
  * Bars are a transform of --p (set through the CSSOM), so new counts never relayout the column. */
+/* The card and the form share the column with the feed and the box, whose height is the window's:
+ * each one scrolls on its own past its share, and the form's Start row stays in view. */
 .chat-poll {
   flex: none;
+  max-height: 40%;
+  overflow-y: auto;
   margin-bottom: var(--sp-2);
   padding: var(--sp-1) var(--sp-2) var(--sp-2);
   border: 1px solid var(--sc-border);
@@ -455,14 +459,25 @@
   flex: none;
   font-variant-numeric: tabular-nums;
 }
+.chat-feed.with-form .chat-list {
+  min-height: 3rem;
+}
 .chat-poll-form {
   flex: none;
+  max-height: 60%;
+  overflow-y: auto;
   display: grid;
   gap: var(--sp-1);
   margin-bottom: var(--sp-2);
   padding: var(--sp-2);
   border: 1px solid var(--sc-border);
   border-radius: var(--sc-radius-md);
+  background: var(--sc-surface-2);
+}
+.chat-poll-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--sp-2));
+  padding: var(--sp-1) 0;
   background: var(--sc-surface-2);
 }
 .chat-poll-form fieldset {

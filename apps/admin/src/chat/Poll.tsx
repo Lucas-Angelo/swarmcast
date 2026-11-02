@@ -142,7 +142,7 @@ export function PollForm({ kind: initialKind, onClose }: { kind: ChatPollKind; o
         </label>
         <Info text={t('admin.chat.poll.newOnly.tip')} />
       </div>
-      <div class="row tight">
+      <div class="row tight chat-poll-actions">
         <button type="submit" class="primary small" data-testid="chat-poll-start" disabled={busy}>
           {t('admin.chat.poll.start')}
         </button>

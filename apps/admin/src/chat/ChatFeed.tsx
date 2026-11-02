@@ -96,9 +96,10 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled, comm
   };
 
   return (
-    <div class="chat-feed">
+    <div class={`chat-feed${form !== null ? ' with-form' : ''}`}>
       {view.pin && <PinnedBar pin={view.pin} until={view.pinUntil} author={view.roster.get(view.pin.a)} dark={dark} />}
-      {view.poll && <PollCard poll={view.poll} until={view.pollUntil} viewers={view.info.size} />}
+      {/* The form takes the card's place while it is open (the column's height is the window's). */}
+      {view.poll && form === null && <PollCard poll={view.poll} until={view.pollUntil} viewers={view.info.size} />}
       <ol class="chat-list" ref={list} onScroll={onScroll} aria-live="polite" aria-label={t('admin.chat.feed')} data-testid="chat-feed">
         {view.items.length === 0 && <li class="chat-empty muted small">{t('admin.chat.feed.empty')}</li>}
         {view.items.map((it) =>
@@ -369,10 +370,7 @@ function SendBox({
   const [closed, setClosed] = useState(false);
   const { count, over } = draftLength(text, maxGraphemes);
   const name = streamerName || t('chat.streamer');
-  useEffect(() => {
-    setErr(null);
-    if (text !== '') setNote(null);
-  }, [text]);
+  useEffect(() => setErr(null), [text]);
   const people = useMemo(() => mentionableAuthors(view.items, view.roster), [view.rev]);
   const query = mentionQuery(text, caret);
   // A command name being typed ("/enq"): the matching commands, with how to write them.
@@ -570,6 +568,10 @@ function SendBox({
           disabled={!enabled}
           onInput={(e) => {
             const el = e.target as HTMLInputElement;
+            // The last command's line goes as soon as the streamer types again (here, not in an
+            // effect: an effect runs after the next frame, and could wipe the line of a command sent
+            // right after typing).
+            setNote(null);
             setText(el.value);
             setCaret(el.selectionStart ?? el.value.length);
             setClosed(false);

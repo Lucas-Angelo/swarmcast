@@ -103,6 +103,7 @@ server recognises it before decoding it.
 | `chat.send` | `n` (nonce, 1…2³¹−1), exactly one of `text` (≤ 1,500 UTF-16 units) or `gif`; optional `re` (the seq it replies to) and `mn` (≤ 3 author keys it mentions, `[0-9a-z]{1,10}`) | Send a message ("Replies and mentions") |
 | `chat.color` | `color` `#rrggbb` | Choose my name colour (rate limited, ignored while locked) |
 | `chat.resume` | `after` (a seq) | I missed items after `after` (gap or reconnect) |
+| `chat.vote` | `n`, `id` (the poll, `p[0-9a-z]{1,10}`), `o` (option, 0–4) | My vote in a poll or prediction ("Polls and predictions") |
 
 Reaction frames (`{"t":"chat.react"…`, reserved for 0.5.0, no handler yet) have a frame budget of
 their own, so a viewer who taps reactions while chatting can never reach the chat budget that
@@ -122,6 +123,7 @@ and 498. Clients build the image URL from a fixed template for that provider.
 | `chat.settings` | The effective public settings |
 | `chat.you` | My state: author key, colour, lock, `mutedUntil`, `waitUntil` |
 | `chat.reset` | A full snapshot that replaces the client's list |
+| `chat.voted` | `n`, `id`, `o`, `c` (the counts now): this device's vote was counted; sent to every socket of every session of that device |
 
 Items inside a batch or snapshot:
 
@@ -135,17 +137,20 @@ Items inside a batch or snapshot:
 | `skip` | Not delivered | `n` messages this viewer did not get (budget or a slow connection) |
 | `hl` | Highlight changed | `s` the message (not a seq of its own), `on` true or false |
 | `pin` | Pin changed | `p`: the pinned message (`s`, `a`, `x` or `g`, `at` when pinned, `endsIn` ms left for a timed pin) or `null` |
+| `poll` | Poll changed | `p`: the poll or prediction (`id`, `kind`, `q`, `o`, `st`, `c`, `endsIn` while open, `win` once answered, `newOnly`, `mine` in a snapshot) or `null` |
+| `pt` | Vote counts | `id`, `c`: the counts of that poll now (ephemeral, latest-wins) |
 
 The **author key** `a` is an opaque base36 counter per live, never the session id. The **tag** is 4
 base32 characters from an HMAC of the session id with a per-live salt; it tells apart two people
 whose names look alike. `r` is `viewer` or `streamer`, and only messages posted from the panel ever
 carry `streamer`.
 
-**Snapshot** (`ChatSnapshot`): `{v, settings, you, roster, items, lastSeq, pin?}`. `v` is
+**Snapshot** (`ChatSnapshot`): `{v, settings, you, roster, items, lastSeq, pin?, poll?}`. `v` is
 `CHAT_PROTOCOL_VERSION` (1). `items` are the last `historyOnJoin` ring items (20 at most under
 "slow" protection, none under "lockdown"); `roster` holds only the authors of those items, the
 pinned message's author and the viewer. `pin` is the pinned message, in full snapshots and
-reconnect deltas alike (absent: nothing is pinned). The snapshot's bytes are counted against the
+reconnect deltas alike (absent: nothing is pinned), and `poll` the poll or prediction on screen, with
+this device's vote as `mine` (absent: none). The snapshot's bytes are counted against the
 chat budget.
 
 **Ordering and gaps.** `seq` increases by one per ring item within a live and starts at 1 after every
@@ -168,15 +173,16 @@ without a resume.
   missed items and asks to resume, so a new kind that took a `seq` would stall every older page for
   3 s each time. Every other kind is seq-less, and clients treat an unknown kind as seq-less even if
   it carries an `s`.
-- **Durable seq-less items** (`u`, `d`, `clr`, and later polls): never dropped; a socket too slow
-  to get one receives a fresh snapshot when it catches up.
+- **Durable seq-less items** (`u`, `d`, `clr`): never dropped; a socket too slow to get one
+  receives a fresh snapshot when it catches up.
 - **State items** (`ChatBatcher.pushState(key, item, refs?)`: `pin` under the key `pin`, `hl`
-  under `hl:<seq>`): durable too, never dropped, but each one only says what a piece of state is
+  under `hl:<seq>`, `poll` under `poll`): durable too, never dropped, but each one only says what a piece of state is
   now. A socket too slow to get some is sent the current state of each key it missed when it
   catches up (`stateOf` in [`hub.ts`](../apps/server/src/chat/hub.ts)), after the roster entries
   they name and before the next batch, instead of a snapshot; owing more than
   `CHAT_STATE_MISSED_MAX` (64) keys, or a durable item as well, still means a snapshot.
-- **Ephemeral items** (`ChatBatcher.pushLatest(key, item, merge?)`, for vote and reaction counts):
+- **Ephemeral items** (`ChatBatcher.pushLatest(key, item, merge?)`: the vote counts `pt` under `pt`,
+  and later reaction counts):
   latest-wins state, at most one pending per key (a newer one replaces the pending one, or `merge`
   folds the two), at most `CHAT_EPHEMERAL_PENDING_MAX` (32) keys, sent after the batch's other
   items. Under upload pressure they are the first to go, silently (no `skip`, which counts
@@ -202,7 +208,7 @@ ordinary chat frame) and never count as chat frames; one over 2 KB is dropped be
 without a reply. A new page sends them only to a server that announces reactions in its settings,
 so an older server never sees them.
 
-**Per-network limits** (votes in 0.5.0) group addresses with `networkKey()`
+**Per-network limits** (poll votes) group addresses with `networkKey()`
 ([`network.ts`](../apps/server/src/access/network.ts)): an IPv4 address is its own network, an
 IPv6 address counts by its /64 (`CHAT_IPV6_NETWORK_PREFIX`; one home or phone usually holds a whole
 /64), and an IPv4-mapped IPv6 address is the IPv4 address. The existing per-IP message bucket still
@@ -232,6 +238,10 @@ translated).
 | `text.combining` | More than 20 combining marks had to be dropped |
 | `text.tooManyEmoji` | Over the emoji cap |
 | `text.script` | Not Latin while the streamer allows Latin only |
+| `chat.err.pollClosed` | The vote names a poll that is not open (ended, gone, another one) or an option it does not have |
+| `chat.err.voted` | This device already voted in this poll (`params.o`: its option) |
+| `chat.err.pollLate` | "Only people already watching": the session joined after the poll opened |
+| `chat.err.pollNet` | Its network (IPv4 address, IPv6 /64) already gave CHAT_POLL_VOTES_PER_NET (10) votes |
 
 Rejects to one socket are coalesced to 2 per second (slow-mode answers excepted), so a flooding
 script gets silence instead of one reply per frame.
@@ -488,6 +498,125 @@ hidden. **Panel.** **Reply** in the ⋯ menu, the same bar over the "Send as …
 who wrote in the feed with their tags, the quote above replies, and "Mentions you" on messages that
 mention the streamer.
 
+## Polls and predictions
+
+The streamer can ask everyone a question: a **poll** (people vote and see the results) or a
+**prediction** (people guess; the streamer picks the right answer once the guesses end). There are no
+points or currency: a poll is advisory, so its stakes are zero. Only the panel can start, end, answer
+or remove one (REST, below); no viewer frame can, and the server never reads chat text as a command.
+The state machine is [`apps/server/src/chat/polls.ts`](../apps/server/src/chat/polls.ts) (pure, on an
+injected clock); the hub wires it ([`hub.ts`](../apps/server/src/chat/hub.ts)).
+
+- **One at a time.** 2 to 5 options (`CHAT_POLL_OPTIONS_MIN`/`MAX`), open for 15 s to 10 min
+  (`CHAT_POLL_SECONDS_MIN`/`MAX`; the form offers 30 s, 1, 2, 5 and 10 minutes, 2 minutes by default).
+  A new one is refused (`admin.chat.err.pollOpen`) while one is open or waiting for its answer, and
+  replaces the results of a finished one.
+- **Text.** Question and options go through the Unicode pipeline (`canonicalizeChatText`, 80 and 30
+  graphemes, `CHAT_POLL_QUESTION_MAX_GRAPHEMES`, `CHAT_POLL_OPTION_MAX_GRAPHEMES`); two options with the
+  same comparison key ("Sim" and "sim ", or a look-alike) are refused. Blocked words do not apply: it is
+  the streamer's own text, as for the streamer's messages. Clients check every string with the shared
+  invariants and draw it from text nodes in `<bdi>` boxes.
+- **Lifecycle.** `open` → (its time is up, or **End now**) → `closed` for a poll, whose results stay
+  on screen for `CHAT_POLL_RESULTS_S` (60 s), or `locked` for a prediction, which waits for the right
+  answer up to `CHAT_PREDICTION_LOCK_MAX_MIN` (30 minutes, then it is removed) → `resolved` (the
+  answer, on screen for 60 s) → gone (`p: null`). **Cancel** / **Remove** takes it away in any state.
+  One timer at the next deadline (unref) plus the hub's one-second tick; a vote is checked against
+  `now < endsAt` to the millisecond whatever the timers did.
+- **Results live.** Viewers see the percentages while voting. The counts go out as an ephemeral `pt`
+  item, at most one per `CHAT_POLL_TALLY_MS` (1 s; `CHAT_POLL_TALLY_MS_LARGE`, 2 s, above 40 viewers,
+  under protection, under event-loop pressure or with the upload budget in debt), only when they
+  changed: about 35 bytes, dropped first under budget pressure, never a reason for a snapshot. The
+  voter gets `chat.voted` with the counts at once.
+- **One vote per device**, final and anonymous. Votes are keyed by the device cookie (`sc_device`,
+  random, set by the server), which every tab and every one of the up to 3 sessions of one browser
+  share; `chat.voted` goes to all of their sockets. A second vote from that device gets
+  `chat.err.voted` with the option it chose. A private window or another browser is another device: it
+  costs a full join (rate limits, a unique nickname, the browser check when the shield asks).
+- **At most 10 votes per network** (`CHAT_POLL_VOTES_PER_NET`, `networkKey()`: an IPv4 address, an
+  IPv6 /64): the rest get `chat.err.pollNet` and are counted once per device for the streamer ("3 votes
+  not counted: too many from one network", `rn`, panel only).
+- **"Only people already watching"** (`newOnly`): only sessions that joined before it opened may vote
+  (`chat.err.pollLate`). On by default for predictions, off for polls (the streamer can change it), and
+  forced on while protection is `slow` or `lockdown`.
+- **Votes cost no message limit.** One chat frame each (the 20-per-10-s socket budget) and O(1) checks,
+  never the slow mode, burst, per-IP or global buckets: one vote per device is its own limit. Refusals
+  are coalesced like every other (2 per second per socket).
+- **Memory only, no per-voter record shown.** The vote of each device is kept in memory for "your
+  vote" after a reload and wiped with the poll; logs and the activity log hold counts only (never the
+  question, an option or who voted what); the streamer sees counts.
+- **Compatibility.** Nothing new reaches a page older than 0.5.0 that it could stumble on: it ignores
+  the `poll` and `pt` kinds, the snapshot's `poll` and the `chat.voted` type, and never sends a vote.
+  No `sys` line is posted for a poll (`chat-compat.test.ts`).
+
+| Moderation or setting | Polls and predictions |
+|---|---|
+| Mute | A muted viewer cannot vote (`chat.err.muted`, `chat.err.mutedLive`): a mute is "no taking part"; the card shows "Muted people cannot vote." |
+| Kick | Their vote no longer counts (the count goes down); a kick bans the device for the live, so it cannot vote again |
+| New-viewer wait, lockdown | Refused like a message (`chat.err.newViewer`, `chat.err.protect`); `slow` and `lockdown` also force "only people already watching" |
+| Slow mode, content modes, blocked words, links | Not affected (votes are not messages; the text is the streamer's) |
+| Event-loop guard paused | Votes refused (`chat.err.busy`), like messages; counts slowed to one per 2 s under pressure |
+| Clear chat | The poll stays (it is not a message) |
+| Chat off | Viewers have no chat, so no card; votes are refused (`chat.err.off`); the poll keeps running and shows again when the chat comes back (a resume answer carries the current `poll`) |
+| Reconnect, snapshot, resume | The poll is in every snapshot and delta (with this device's vote), also under lockdown, and in resume answers |
+| Slow socket | Misses counts silently (the next one replaces them); a missed change of state comes as the current poll when it catches up (state item) |
+| Stop everything, a server restart | Wiped: the next live has no poll, and a restart is a new live |
+
+**Viewer page** ([`poll.ts`](../apps/viewer/src/chat/poll.ts)). A card under the pinned bar and above
+the list (never over the list or the input), with a honey top border: "Poll" or "Prediction", the time
+left, the question, the options as full-width buttons with a bar and a percentage each (the bar is a
+`transform: scaleX()` of `--p`, set through the CSSOM), and a line under them: "Tap an option. Your vote
+is final and anonymous.", "You voted: Pizza · 12 votes", "Poll ended", "Guesses are closed. Waiting for
+the answer…", "The answer: Bia · 3 people got it right · You got it!". After the vote, the end or the
+answer the buttons stay focusable (`aria-disabled`, `aria-pressed` on your vote) so the keyboard and
+screen readers keep their place; the card is a labelled region, and a polite live region announces
+only changes of state (opened with its question, ended, the answer, your vote, a refusal), at most one
+per 2 s, never the counts. ▾ folds the card to its header. On a phone (under 720 px) a new poll starts
+folded to one line with its question, so the few lines of chat under the player keep their room until
+the viewer taps it. "Show chat" says "Poll" while one is open and the chat is hidden.
+
+**Panel.** **Poll** under the "Send as …" box opens the form: Poll or Prediction, the question, 2 to 5
+options (+ and −), the time to vote, and "Only people already watching" (with a tip). The card above
+the feed shows the live counts and percentages, the time left, "12 votes from 30 watching", the votes
+refused for their network, and **End now** (**End guesses** for a prediction), **Cancel**, **Right
+answer** on each option of a prediction whose guesses ended, and **Remove** for the results. The
+activity log says when one opened, ended (with its count), was answered (how many got it right) or was
+removed.
+
+## Slash commands
+
+A shortcut for the streamer in the panel's message box; the buttons stay (a command is never the only
+way). One pure parser, [`commands.ts`](../packages/shared/src/chat/commands.ts), shared by the panel
+and the viewer page: no DOM, no network, never throws, linear (no regex that can backtrack). A command
+becomes the same REST call its button makes ([`logic.ts`](../apps/admin/src/chat/logic.ts)
+`runCommand`); **the server never reads chat text as a command**. Names in English and Portuguese both
+work whatever the panel's language, without case or accents (`/Enquête` = `/enquete` = `/poll`); text
+that does not start with a known name is sent as a message (`/o/`, `/s`), and `//text` sends "/text".
+
+| English | Portuguese | Does |
+|---|---|---|
+| `/help`, `/?` | `/ajuda` | The list of commands (also the **?** next to Send) |
+| `/poll [time] Question \| A \| B` | `/enquete [tempo] Pergunta \| A \| B` | Starts a poll; alone, opens the form. A time first is optional: `30s`, `2m`, `1m30s` (a bare number is part of the question); 2 to 5 options split on `\|` (or `;`) |
+| `/prediction …` | `/palpite …` | The same for a prediction |
+| `/end` | `/encerrar` | Ends the voting now |
+| `/answer N` | `/resposta N` | The right answer of a prediction whose guesses ended (N from 1) |
+| `/cancel` | `/cancelar` | Removes the poll or prediction |
+| `/pin [text]` | `/fixar [texto]` | Sends the text and pins it; alone, pins the message being replied to |
+| `/unpin` | `/desafixar` | Unpins |
+| `/clear` | `/limpar` | Asks the Clear question first, as the button does: never clears by itself |
+| `/slow N` · `/slow off` | `/lento N` · `/lento desligar` | Slow mode, 0 to 300 s |
+| `/mute Name [minutes \| live]` | `/silenciar Nome [minutos \| live]` | 10 minutes when left out. The name is matched without case or accents among the people watching; two look-alikes are told apart with the tag (`Ana#K3QF`) |
+| `/unmute Name` | `/dessilenciar Nome` | |
+| `/protect off \| slow \| lockdown` | `/proteger desligado \| lento \| bloqueio` | Flood protection by hand |
+
+While the text starts with "/" a list of the matching commands shows above the box with how to write
+them (↑/↓, Tab or Enter completes a name; Enter on a whole name runs it); the result, or why it did
+not run, shows under the box ("Poll started.", "Write the number of the right option, from 1 to 5.").
+The panel's onboarding tour mentions it in its chat step.
+
+**Viewers** have `/help` (`/ajuda`, `/?`) only, answered on the page with a short box of what they can
+do (reply, mention, vote, settings) and never sent. A streamer command typed by a viewer is not sent
+either (it would show "/poll …" to everyone): the box keeps it and says only the streamer can use it.
+
 ## Moderation (panel)
 
 While live with the chat on (`AdminState.chatEnabled`, pushed on `/ws` when the setting changes), the
@@ -504,6 +633,8 @@ down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `ch
 | Highlight / Remove highlight | Marks the message for everyone (at most 20 at once), or takes the mark off |
 | Pin to top / Unpin | One pinned message at the top of everyone's chat, until unpinned or for 5, 15 or 60 minutes ("Highlight and pin") |
 | Reply | Answers the message from the "Send as …" box, with its quote ("Replies and mentions") |
+| Poll / prediction | Ask everyone a question; End now, the right answer, Cancel, Remove ("Polls and predictions") |
+| Commands | `/poll`, `/pin`, `/mute`… in the "Send as …" box, and **?** for the list ("Slash commands") |
 | Clear | A `clr` item; the ring is emptied |
 | Mute | 1, 10 or 60 minutes (any value up to 1,440), or **until the end of this live**. Keyed by the device cookie and the session, never by IP, so it survives leaving and rejoining. The viewer sees "muted until…". There are no accounts, so a mute cannot follow a person to the next live |
 | Unmute | Applies at once |
@@ -636,6 +767,10 @@ with zod ([`apps/server/src/admin/chat-routes.ts`](../apps/server/src/admin/chat
 | `POST /api/chat/highlight` | `{s, on}` | Highlight a ring message for everyone, or take the highlight off (`admin.chat.err.gone` when it is not in the ring) |
 | `POST /api/chat/pin` | `{s, minutes?: 1…120 \| null}` | Pin a ring message (replaces any other pin); `null` or absent = until unpinned |
 | `POST /api/chat/unpin` | — | Unpin |
+| `POST /api/chat/poll` | `{kind: poll \| prediction, question ≤ 500 units, options: 2–5 strings ≤ 200 units, seconds: 15…600, newOnly?}` | Start a poll or prediction (`admin.chat.err.pollOpen`, `.pollQuestion`, `.pollOption`, `.pollDuplicate`, `.disabled`) |
+| `POST /api/chat/poll/end` | — | End the voting now (`admin.chat.err.noPoll`, `.pollState`) |
+| `POST /api/chat/poll/resolve` | `{option: 0…4}` | The right answer of a prediction whose guesses ended (`.pollState`, `.pollAnswer`) |
+| `POST /api/chat/poll/cancel` | — | Remove it in any state |
 
 The panel's `/ws` gets chat items in their own message type (`{type: 'chat', reset, items,
 sessions, counters}`), so the big panel snapshot never carries chat. Counters: accepted and rejected
@@ -667,13 +802,15 @@ the chat stopped itself.
 | Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, state items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
-| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
+| Polls: the state machine on a manual clock (lifecycle, timers to the millisecond, one vote per device, per network with IPv4 and IPv6 /64, "only people already watching", kick, counts), the hub (frames, three sessions and tabs of one device, moderation refusals, hostile and replayed frames, counts at most one per window, slow sockets, snapshots and resume, Clear, chat off, Stop, the panel's `rn`, 120 votes at once); slash commands (both languages, accents, every command and error, text stays text, a fuzzed property: total, round trip, linear) | [`chat-polls.test.ts`](../apps/server/test/unit/chat-polls.test.ts), [`commands.test.ts`](../packages/shared/test/chat/commands.test.ts), [`chat-logic.test.ts`](../apps/admin/test/unit/chat-logic.test.ts) |
+| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop); polls (one vote across tabs and sessions of a browser, a late joiner, a kick, a prediction, Stop; a burst of 120 vote frames from one network) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
 | The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
 | Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin); replies and mentions under the content modes, blocked words, mute and clear | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
 | The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (reply, highlight, pin, unpin), the @ list, "Mentions you", settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
-| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones); the poll card (place, mouse and keyboard votes, live percentages, ended / waiting / answered, reload, mute, Portuguese, folded on phones) and `/help` | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-poll.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| Polls and commands end to end: the panel's form and card with real viewer pages (live results, a late viewer, a reload, End now, Remove), a prediction answered from the panel, commands in Portuguese and English (suggestions, the ? list, `/limpar` asks first), moderation (mute, chat off, Clear), a narrow panel | [`apps/server/test/e2e/chat-polls.spec.ts`](../apps/server/test/e2e/chat-polls.spec.ts) |
 
 ## Load and soak
 
@@ -694,6 +831,7 @@ protection, tunnel in-flight) and checks each scenario after a 5 s calm baseline
 | dup-storm | 60 | the same text | repeats refused or detected |
 | gif-spam | 30 | GIFs as fast as allowed | at most one GIF per 30 s per viewer |
 | reconnect-storm | 120 | everyone drops and reconnects at once (`?chatAfter`) | everyone gets their hello back within 10 s |
+| vote-storm | 120 | lively chat; a poll opens and every bot votes within 1 s | every vote answered and counted; at most one vote count per 2 s per viewer; delivery p95 ≤ 1 s |
 
 In every scenario: no bot that keeps to the limits loses its socket, the event-loop p99 stays within
 30 ms of calm, chat adds no connection, and chat upload stays within its budget (twice the budget while

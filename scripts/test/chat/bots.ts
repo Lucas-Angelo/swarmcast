@@ -46,6 +46,10 @@ export interface BotStats {
   undrained: number;
   /** Observers the end marker did not reach. */
   markerMissed: number;
+  /** Vote storm: votes sent, `chat.voted` answers, and the most vote counts (`pt`) one observer got. */
+  votesSent: number;
+  voted: number;
+  maxTalliesPerObserver: number;
 }
 
 /**
@@ -96,7 +100,12 @@ const stats: BotStats = {
   joinFailures: 0,
   undrained: 0,
   markerMissed: 0,
+  votesSent: 0,
+  voted: 0,
+  maxTalliesPerObserver: 0,
 };
+/** Vote counts (`pt` items) each observer got, by bot index. */
+const tallies = new Map<number, number>();
 const bots: Bot[] = [];
 const rejects = new Map<string, number>();
 const closedByServer = new Map<string, number>();
@@ -153,6 +162,7 @@ async function connect(bot: Bot): Promise<void> {
       }
       if (m.t === 'chat.reset') seen(m.lastSeq);
       if (m.t === 'chat.batch') for (const it of m.items) if (it.k === 'm' || it.k === 'sys') seen(it.s);
+      if (m.t === 'chat.voted') stats.voted++;
       if (m.t === 'chat.ack') {
         seen(m.s);
         bot.acks++;
@@ -165,6 +175,7 @@ async function connect(bot: Bot): Promise<void> {
             stats.delivered++;
             stats.latencies.push(now - it.at);
           } else if (it.k === 'skip') stats.skipped += it.n;
+          else if (it.k === 'pt') tallies.set(bot.i, (tallies.get(bot.i) ?? 0) + 1);
         }
       }
     });
@@ -285,11 +296,29 @@ async function observersReach(seq: number): Promise<number> {
   );
 }
 
-async function run(): Promise<void> {
+/** Every bot votes once in poll `id`, at a random moment within `withinMs`, within its frame ceiling. */
+function voteAll(id: string, options: number, withinMs: number): Promise<void> {
+  return Promise.all(
+    bots.map(async (bot) => {
+      await new Promise((r) => setTimeout(r, Math.random() * withinMs));
+      await new Promise((r) => setTimeout(r, frameSlotIn(bot)));
+      const ws = bot.ws;
+      if (ws?.readyState !== WebSocket.OPEN) return;
+      const n = (bot.nonce = (bot.nonce % 2_000_000_000) + 1);
+      ws.send(JSON.stringify({ t: 'chat.vote', n, id, o: bot.i % options }));
+      bot.sentAt.push(Date.now());
+      if (bot.sentAt.length > CHAT_MAX_FRAMES_PER_10S) bot.sentAt.shift();
+      stats.votesSent++;
+    }),
+  ).then(() => {});
+}
+
+async function run(pollId?: string): Promise<void> {
   const b = scenario.behaviour;
   const perS = b.kind === 'idle' ? 0 : b.perBotPerS;
   const end = Date.now() + scenario.seconds * 1000;
   const jobs: Array<Promise<void>> = [drive([...bots], perS, end)];
+  if (scenario.poll && pollId) jobs.push(voteAll(pollId, scenario.poll.options, scenario.poll.voteWithinMs));
   if (scenario.raid) {
     const r = scenario.raid;
     jobs.push(
@@ -327,6 +356,7 @@ async function run(): Promise<void> {
   process.send!({ type: 'drained' });
   stats.markerMissed = await observersReach(await endMarkerSeq);
   for (const bot of bots) stats.maxGifAcksPerBot = Math.max(stats.maxGifAcksPerBot, bot.acks);
+  stats.maxTalliesPerObserver = Math.max(0, ...tallies.values());
   if (scenario.behaviour.kind !== 'gif') stats.maxGifAcksPerBot = 0;
   for (const bot of bots) {
     bot.closing = true;
@@ -334,14 +364,14 @@ async function run(): Promise<void> {
   }
 }
 
-process.on('message', (msg: { type: 'start'; base: string; link: string; scenario: Scenario } | { type: 'go' } | { type: 'end-marker'; seq: number }) => {
+process.on('message', (msg: { type: 'start'; base: string; link: string; scenario: Scenario } | { type: 'go'; pollId?: string } | { type: 'end-marker'; seq: number }) => {
   if (msg.type === 'start') {
     base = msg.base;
     link = msg.link;
     scenario = msg.scenario;
     void joinAll(0, scenario.bots, 8).then(() => process.send!({ type: 'joined', bots: stats.bots, joinFailures: stats.joinFailures }));
   } else if (msg.type === 'go') {
-    void run().then(() => {
+    void run(msg.pollId).then(() => {
       stats.rejects = [...rejects];
       stats.closedByServer = [...closedByServer];
       process.send!({ type: 'done', stats }, () => process.exit(0));
