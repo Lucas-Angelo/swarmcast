@@ -15,6 +15,7 @@ its area and add a row here in the same pull request.
 | Every text in English and Brazilian Portuguese; installers and scripts never ask questions | the users are not technical, many are in Brazil | [CONTRIBUTING.md](../CONTRIBUTING.md#ground-rules-for-changes), [scripts/README.md](../scripts/README.md) |
 | The website is the only guide for streamers and viewers; the offline guide in the installer zips is generated from it | one place to edit, both always say the same | [site/README.md](../site/README.md), [RELEASING.md §5](RELEASING.md#5-what-a-release-publishes) |
 | Forest & Cream palette, colours only through the brand tokens, no purple | calm and trustworthy, kept apart from other brands | [assets/brand/README.md](../assets/brand/README.md#palette-forest--cream-chosen), [site/DESIGN.md](../site/DESIGN.md) |
+| Watch page laid out like the big streaming sites: the video edge to edge and as tall as leaves the info row in view, the chat a column fixed on the right (`position: fixed`, not a grid row: a spanning grid item made the rows grow), playback and P2P in a Settings menu, the banner under the video | the video was small with empty margins and the settings always took room; the patterns viewers know, without any follow / subscribe | [apps/viewer/README.md](../apps/viewer/README.md), `apps/viewer/src/style.css` "Watch page" |
 
 ## Runtime and packaging
 
