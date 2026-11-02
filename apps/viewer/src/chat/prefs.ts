@@ -16,6 +16,8 @@ export interface ChatPrefs {
   gifs: boolean;
   /** Animate GIFs; null = follow the system's "reduce motion" setting. */
   animate: boolean | null;
+  /** Mark the messages that mention this viewer (on by default; turning it off is the target's own way out of mention spam). */
+  mentions: boolean;
 }
 
 const KEY = 'swarmcast.chat';
@@ -53,6 +55,7 @@ export function createPrefsStore(storage: () => PrefsStorage | null = () => loca
       recent: Array.isArray(stored.recent) ? stored.recent.filter((r): r is string => typeof r === 'string' && r.length <= 40).slice(0, RECENT_MAX) : [],
       gifs: stored.gifs === true,
       animate: typeof stored.animate === 'boolean' ? stored.animate : null,
+      mentions: stored.mentions !== false,
     };
     return memory;
   };

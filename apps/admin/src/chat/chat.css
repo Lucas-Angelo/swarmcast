@@ -220,7 +220,102 @@
   bottom: 5.2em;
 }
 .chat-send {
+  position: relative;
   margin-top: var(--sp-2);
+}
+/* ---- Replies and mentions (docs/CHAT.md "Replies and mentions") ---------------------------- */
+.chat-quote {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.chat-quote-nick {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: var(--sc-weight-semibold);
+}
+/* ": " sits right after the name, as in a message (the flex gap would open a space before it). */
+.chat-quote-sep {
+  margin-left: -4px;
+  white-space: pre;
+}
+.chat-quote-text,
+.chat-replying-quote {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+}
+.chat-quote.gone .chat-quote-text {
+  font-style: italic;
+}
+.chat-quote .sc-ico-reply::before,
+.chat-replying .sc-ico-reply::before,
+.chat-menu .sc-ico-reply::before {
+  -webkit-mask-image: url('../../../../packages/shared/web/icons/reply.svg');
+  mask-image: url('../../../../packages/shared/web/icons/reply.svg');
+}
+.chat-replying {
+  flex-wrap: nowrap;
+  margin-bottom: var(--sp-1);
+  padding-left: var(--sp-2);
+  border-left: 3px solid var(--sc-accent);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.chat-replying-label {
+  flex: none;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-msg-mentions-me {
+  border-left: 3px solid var(--sc-secondary);
+  padding-left: calc(var(--sp-1) + 1px);
+}
+.chat-mark-mention {
+  border-color: var(--sc-secondary);
+  color: var(--sc-ink);
+  background: var(--tint-honey);
+}
+.chat-mention {
+  font-weight: var(--sc-weight-semibold);
+}
+.chat-mention.me {
+  border-radius: var(--sc-radius-sm);
+  background: var(--tint-honey);
+  color: var(--sc-ink);
+}
+.chat-mentions {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  max-height: 240px;
+  margin: 0 0 4px;
+  padding: 4px 0;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: var(--sc-radius-md);
+  box-shadow: var(--sc-shadow-float);
+}
+.chat-mentions li {
+  overflow: hidden;
+  padding: 4px var(--sp-2);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-mentions li[aria-selected='true'],
+.chat-mentions li:hover {
+  background: var(--sc-accent-soft);
 }
 .chat-input {
   flex: 1;

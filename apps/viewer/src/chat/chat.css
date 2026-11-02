@@ -252,6 +252,214 @@ button.pinned-more[hidden] {
   display: none;
 }
 
+/* ---- Replies and mentions (docs/CHAT.md "Replies and mentions") ------------------------------
+ * A reply starts with one clipped line: ↩, the name and the quote, each isolated, so neither can
+ * spill into the other or into the reply. Every row has a Reply button in its top right corner,
+ * shown on hover, when a tap opened the row's actions, or while it has the focus (the arrow keys
+ * reach it from the list). A message that mentions this viewer gets a honey bar and its "@Name" a
+ * honey tint, only while "Highlight messages that mention me" is on; nothing else about it changes. */
+.msg {
+  position: relative;
+}
+.msg.is-reply {
+  max-height: calc(1em * var(--chat-lh) * 7 + 4px);
+}
+button.reply-quote {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--sc-muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: var(--chat-lh);
+  font-weight: var(--sc-weight-regular);
+  justify-content: flex-start;
+  text-align: start;
+  white-space: nowrap;
+  cursor: pointer;
+}
+button.reply-quote:hover {
+  background: transparent;
+}
+button.reply-quote:hover .q-text {
+  text-decoration: underline;
+}
+.reply-quote .sc-ico-reply,
+.chat-replying .sc-ico-reply,
+.msg-reply .sc-ico-reply {
+  flex: none;
+}
+.reply-quote .q-nick,
+.chat-replying .q-nick {
+  flex: none;
+  max-width: 40%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+  font-weight: var(--sc-weight-semibold);
+}
+.reply-quote .sep {
+  flex: none;
+  margin-left: calc(-1 * var(--sp-1));
+}
+.reply-quote .q-text,
+.chat-replying .q-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  unicode-bidi: isolate;
+}
+.reply-quote .q-text img.emote {
+  width: 1.4em;
+  height: 1.4em;
+  margin: -0.2em 0;
+}
+.reply-quote.gone .q-text {
+  font-style: italic;
+}
+/* Scoped like the pin icon, so it wins over brand.css's `mask` shorthand in any load order. */
+.chat .sc-ico-reply::before {
+  -webkit-mask-image: url('../../../../packages/shared/web/icons/reply.svg');
+  mask-image: url('../../../../packages/shared/web/icons/reply.svg');
+}
+button.msg-reply {
+  position: absolute;
+  top: 0;
+  right: var(--sp-1);
+  min-height: 28px;
+  min-width: 32px;
+  padding: 0 var(--sp-2);
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+  line-height: 1;
+  opacity: 0;
+  pointer-events: none;
+}
+.msg:hover button.msg-reply,
+.msg.actions button.msg-reply,
+button.msg-reply:focus-visible,
+button.msg-reply:focus {
+  opacity: 1;
+  pointer-events: auto;
+}
+button.msg-reply:hover,
+button.msg-reply:focus-visible {
+  color: var(--sc-ink);
+  background: var(--sc-surface-2);
+}
+button.msg-reply:focus-visible {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: -2px;
+}
+.msg.flash {
+  outline: 2px solid var(--sc-focus);
+  outline-offset: -2px;
+}
+.mention-highlight .msg.mentions-me {
+  border-left: 3px solid var(--sc-secondary);
+  padding-left: calc(var(--sp-4) - 3px);
+}
+.mention-highlight .msg .mention.me {
+  border-radius: var(--sc-radius-sm);
+  background: var(--tint-honey);
+  color: var(--sc-ink);
+  font-weight: var(--sc-weight-semibold);
+}
+.chat-list:not(.mention-highlight) .mention-note {
+  display: none;
+}
+.msg .mention {
+  font-weight: var(--sc-weight-semibold);
+}
+.chat-replying {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-1);
+  padding-left: var(--sp-2);
+  border-left: 3px solid var(--sc-accent);
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+.chat-replying[hidden] {
+  display: none;
+}
+.replying-label {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--sp-1);
+  max-width: 55%;
+  overflow: hidden;
+}
+.chat-replying .q-text::before {
+  content: '· ';
+}
+.chat-replying .q-text:empty::before {
+  content: none;
+}
+.chat-replying button.replying-cancel {
+  flex: none;
+  min-height: 28px;
+  min-width: 28px;
+  margin-left: auto;
+}
+.chat-input {
+  position: relative;
+}
+.chat-mentions {
+  position: absolute;
+  z-index: 4;
+  left: var(--sp-3);
+  right: var(--sp-3);
+  bottom: 100%;
+  max-height: 240px;
+  margin: 0 0 var(--sp-1);
+  padding: var(--sp-1) 0;
+  overflow-y: auto;
+  list-style: none;
+  background: var(--sc-surface);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: var(--sc-radius-md);
+  box-shadow: var(--sc-shadow-float);
+}
+.chat-mentions[hidden] {
+  display: none;
+}
+.chat-mentions li {
+  overflow: hidden;
+  padding: var(--sp-1) var(--sp-3);
+  color: var(--sc-ink);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.chat-mentions li bdi {
+  unicode-bidi: isolate;
+  font-weight: var(--sc-weight-semibold);
+}
+.chat-mentions li .tag {
+  color: var(--sc-muted);
+  font-size: var(--fs-xs);
+}
+.chat-mentions li[aria-selected='true'],
+.chat-mentions li:hover {
+  background: var(--sc-accent-soft);
+}
+
 button.chat-pill {
   position: absolute;
   left: 50%;

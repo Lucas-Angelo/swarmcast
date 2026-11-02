@@ -6,7 +6,7 @@ import { Info } from '../Info.js';
 import { isMuted, MUTE_CHOICES, PIN_CHOICES } from './logic.js';
 
 /**
- * The actions on one person (and, from the feed, on one message): highlight, pin to the top and
+ * The actions on one person (and, from the feed, on one message): reply, highlight, pin to the top and
  * unpin, delete, mute for a time or until the stream ends, unmute, change the name colour
  * (optionally locked). Shown inline under the row it belongs to; Escape or Close hides it.
  */
@@ -18,6 +18,7 @@ export function ModerationMenu({
   pinned = false,
   info,
   onClose,
+  onReply,
 }: {
   nickname: string;
   /** Absent for the streamer's own messages and for someone who left. */
@@ -29,6 +30,8 @@ export function ModerationMenu({
   pinned?: boolean;
   info?: ChatSessionInfo;
   onClose: () => void;
+  /** Answer this message from the "Send as …" box (absent: no Reply). */
+  onReply?: () => void;
 }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
@@ -62,6 +65,11 @@ export function ModerationMenu({
   return (
     <div class="chat-menu" ref={box} role="group" aria-label={t('admin.chat.menu.for', { nickname })} data-testid="chat-menu">
       <div class="row tight">
+        {seq !== undefined && onReply && (
+          <button type="button" class="small" data-testid="chat-reply" title={t('admin.chat.reply.tip')} disabled={busy} onClick={onReply}>
+            <span class="sc-ico-reply" aria-hidden="true" /> {t('admin.chat.reply')}
+          </button>
+        )}
         {seq !== undefined && (
           <button type="button" class="small danger" data-testid="chat-delete" title={t('admin.chat.delete.tip')} disabled={busy} onClick={() => void run(() => chatApi.remove([seq]))}>
             {t('admin.chat.delete')}

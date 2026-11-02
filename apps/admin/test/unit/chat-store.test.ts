@@ -251,3 +251,20 @@ describe('panel chat store: highlight and pin', () => {
     expect(seqs(st)).toEqual([1, 2]);
   });
 });
+
+describe('panel chat store: replies (docs/CHAT.md "Replies and mentions")', () => {
+  it('a delete wipes the quote of every reply to that message, as on the server; other replies keep theirs', () => {
+    // Arrange
+    const st = new ChatStore();
+    const reply = (s: number, to: number): ChatItem => ({ k: 'm', s, at: s, a: 'k1', x: 'resposta', re: { s: to, a: 'k1', q: `msg ${to}` }, mn: ['k1'] });
+    st.apply(msg([{ k: 'u', au: ana }, m(1), m(2), reply(3, 1), reply(4, 2)]));
+    const before = st.view().items;
+    // Act
+    st.apply(msg([{ k: 'd', s: [1] }]));
+    // Assert
+    const items = st.view().items;
+    expect(items.map((i) => (i.k === 'm' ? (i.re ?? null) : null))).toEqual([null, { s: 1, a: 'k1', gone: 1 }, { s: 2, a: 'k1', q: 'msg 2' }]);
+    expect(items.find((i) => i.s === 3)).toMatchObject({ mn: ['k1'], x: 'resposta' });
+    expect(before.find((i) => i.s === 3)).toMatchObject({ re: { q: 'msg 1' } });
+  });
+});
