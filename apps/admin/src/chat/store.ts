@@ -127,7 +127,10 @@ export class ChatStore {
         case 'd': {
           if (!Array.isArray(it.s)) break;
           const gone = new Set(it.s);
-          this.items = this.items.filter((x) => !(x.k === 'm' && gone.has(x.s)));
+          // Replies to a deleted message lose its quote, as on the server and the viewers' pages.
+          this.items = this.items
+            .filter((x) => !(x.k === 'm' && gone.has(x.s)))
+            .map((x) => (x.k === 'm' && x.re && gone.has(x.re.s) && x.re.gone !== 1 ? { ...x, re: { s: x.re.s, a: x.re.a, gone: 1 as const } } : x));
           if (this.pin && gone.has(this.pin.s)) this.setPin(null);
           break;
         }

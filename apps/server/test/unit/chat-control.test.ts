@@ -61,6 +61,14 @@ const fuzzFrame = fc.oneof(
   fc.array(fc.nat({ max: 99 }), { maxLength: 12 }).map((c) => `{"t":"chat.react","c":${JSON.stringify(c)}}`),
   fc.constantFrom('{"t":"chat.send","n":1,"text":{"__proto__":{"x":1}}}', '{"t":"chat.send","constructor":{"prototype":{}}}', '{"t":"chat.color","color":"#zzzzzz"}', '{"t":"chat.resume","after":1e308}', '{"t":"chat.send"', '~o1', '~d1 x'),
   fc.uint8Array({ maxLength: 64 }).map((u) => Buffer.from(u)),
+  // Replies and mentions with hostile values: huge, fractional, negative or wrong-typed seqs, key lists
+  // too long, nested, or of the wrong shape (docs/CHAT.md, "Replies and mentions").
+  fc
+    .tuple(
+      fc.oneof(fc.integer(), fc.double(), fc.string({ maxLength: 12 }), fc.constant(null), fc.array(fc.nat(), { maxLength: 3 }), fc.constantFrom(1, 2, 3, 2 ** 53, -1, 0)),
+      fc.oneof(fc.array(fc.string({ maxLength: 12 }), { maxLength: 6 }), fc.array(fc.constantFrom('1', '2', 'a', 'zz'), { maxLength: 4 }), fc.string({ maxLength: 12 }), fc.json({ maxDepth: 3 })),
+    )
+    .map(([re, mn]) => `{"t":"chat.send","n":1,"text":"@Ana oi","re":${JSON.stringify(re) ?? 'null'},"mn":${typeof mn === 'string' && mn.startsWith('{') ? mn : JSON.stringify(mn)}}`),
 );
 
 /**
@@ -80,6 +88,15 @@ function frameFuzz({ hub, clock, connect }: ReturnType<typeof setup>) {
     if (chat <= 20 && react <= CHAT_REACT_FRAMES_MAX_PER_10S) expect(sock.terminate).not.toHaveBeenCalled();
     expect(hub.ringSize.items).toBeLessThanOrEqual(200);
     expect(hub.isBroken).toBe(false);
+    // A reply only ever names a message the ring held; mentions only ever name people who wrote.
+    const state = hub.adminState();
+    const authors = new Set(state.roster.map((r) => r.a));
+    for (const m of state.items) {
+      if (m.k !== 'm') continue;
+      if (m.re) expect(Number.isSafeInteger(m.re.s) && m.re.s >= 1 && m.re.s < m.s).toBe(true);
+      for (const a of m.mn ?? []) expect(authors.has(a)).toBe(true);
+      expect((m.mn ?? []).length).toBeLessThanOrEqual(3);
+    }
     sock.emit('close');
     return true;
   });

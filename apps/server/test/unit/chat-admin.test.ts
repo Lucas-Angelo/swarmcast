@@ -82,6 +82,28 @@ describe('chat admin API', () => {
     expect(state.items.every((i) => i.k === 'sys')).toBe(true);
   });
 
+  it('the streamer replies to a message (the server quotes it) and the reply and mention fields are validated', async () => {
+    // Arrange
+    const { call } = await chatPanel();
+    await call('POST', '/api/chat/send', { text: 'Bem-vindos!' });
+    // Act
+    const reply = await call('POST', '/api/chat/send', { text: 'repetindo', re: 1 });
+    const toNothing = await call('POST', '/api/chat/send', { text: 'resposta a nada', re: 4711 });
+    const state = (await call('GET', '/api/chat')).json() as AdminChatState;
+    const bad = await Promise.all([
+      call('POST', '/api/chat/send', { text: 'a', re: 0 }),
+      call('POST', '/api/chat/send', { text: 'a', re: '1' }),
+      call('POST', '/api/chat/send', { text: 'a', mn: ['a', 'b', 'c', 'd'] }),
+      call('POST', '/api/chat/send', { text: 'a', mn: ['<b>'] }),
+    ]);
+    // Assert
+    expect(reply.json()).toEqual({ ok: true, s: 2 });
+    expect(toNothing.json()).toEqual({ ok: true, s: 3 });
+    expect(state.items.find((i) => i.k === 'm' && i.s === 2)).toMatchObject({ re: { s: 1, q: 'Bem-vindos!' } });
+    expect(state.items.find((i) => i.k === 'm' && i.s === 3)).not.toHaveProperty('re');
+    for (const r of bad) expect(r.statusCode).toBe(400);
+  });
+
   it('highlight, pin and unpin: only through the panel, with validated bodies and coded errors', async () => {
     // Arrange
     const { headers, call } = await chatPanel();
