@@ -381,6 +381,9 @@ async function capturePoll(browser, lang, desktop, phone, third) {
     [third, 1],
     [desktop, 0],
   ]) {
+    // In front, as the person looking at it would have it: a page left in the back for minutes gets its
+    // timers slowed down by the browser (the countdown would stand still in the picture).
+    await page.bringToFront();
     const card = page.getByTestId('chat-poll');
     await card.waitFor({ timeout: 15_000 });
     if (await card.getByTestId('chat-poll-peek').isVisible()) await card.getByTestId('chat-poll-peek').click();
@@ -392,6 +395,7 @@ async function capturePoll(browser, lang, desktop, phone, third) {
   const viewerCard = desktop.getByTestId('chat-poll');
   await poll('the counts on the viewer page', async () => counted(await viewerCard.getByTestId('chat-poll-status').textContent()), 15_000, 200);
   await desktop.mouse.move(0, 0);
+  await poll('the countdown running', async () => !/5:00/.test((await viewerCard.getByTestId('chat-poll-time').textContent()) ?? ''), 15_000, 200);
   await guideShot(desktop, viewerCard, 'live', lang, 'chat-poll-viewer', {
     pad: 12,
     callouts: [viewerCard.getByTestId('chat-poll-time'), viewerCard.locator('.poll-options'), viewerCard.getByTestId('chat-poll-status')],

@@ -25,9 +25,16 @@ export function CommandHelp({ onPick, onClose }: { onPick: (c: ChatCommandDef) =
             <li key={c.id}>
               <button type="button" class="chat-cmd-pick" data-testid="chat-cmd-pick" data-cmd={c.id} onClick={() => onPick(c)}>
                 <code>{t(c.usage)}</code>
-                {names.other !== names.main && <span class="muted small"> · /{names.other}</span>}
               </button>
-              <span class="small"> {t(c.help)}</span>
+              <span class="small">
+                {t(c.help)}
+                {names.other !== names.main && (
+                  <>
+                    {' · '}
+                    <code>/{names.other}</code>
+                  </>
+                )}
+              </span>
             </li>
           );
         })}

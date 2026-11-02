@@ -530,7 +530,7 @@
   left: 0;
   right: 0;
   bottom: 100%;
-  max-height: min(18rem, 60vh);
+  max-height: min(20rem, 55vh);
   overflow-y: auto;
   margin: 0 0 4px;
   padding: var(--sp-2);
@@ -544,16 +544,28 @@
   padding: 0;
   list-style: none;
   display: grid;
-  gap: 4px;
+  gap: var(--sp-2);
+}
+.chat-cmd-help li {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+.chat-cmd-help li > .small {
+  color: var(--sc-muted);
 }
 .chat-cmd-help p {
   margin: 2px 0 var(--sp-1);
 }
 button.chat-cmd-pick {
-  padding: 0 6px;
+  max-width: 100%;
+  padding: 2px 6px;
   background: transparent;
   border-color: var(--sc-border);
   font-weight: var(--sc-weight-regular);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 @media (prefers-reduced-motion: no-preference) {
   .chat-poll-bar {

@@ -210,7 +210,7 @@ test('chat slash commands in the panel, in Portuguese and English: suggestions, 
   const help = live.getByTestId('chat-cmd-help');
   await expect(help).toBeVisible();
   await expect(help.getByTestId('chat-cmd-pick')).toHaveCount(13);
-  await expect(help.getByTestId('chat-cmd-pick').filter({ hasText: '/enquete [tempo] Pergunta' })).toContainText('/poll');
+  await expect(help.locator('li').filter({ hasText: '/enquete [tempo] Pergunta' })).toContainText('/poll');
 
   // Act
   await help.locator('[data-cmd="pin"]').click();
