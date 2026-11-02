@@ -1,17 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { DiscontinuityClock, PlaylistStitcher, parseMediaPlaylist } from '../../src/hls/playlist.js';
 
-// The PROGRAM-DATE-TIME of each segment the origin serves agrees with the segment durations
-// inside one upstream run. MediaMTX stamps a segment with the wall clock at which its first
-// frame arrived, so when OBS sends its first seconds at once (a burst at connect, a reconnect
-// that flushes a backlog) two 2 s segments get dates 1 ms apart. hls.js lines the audio
-// playlist up with the video one by these dates (alignMediaPlaylistByPDT: the first audio
-// segment of the run against the middle video one), so for the first ~40 s of such a run it
-// placed every audio segment 2 s late: a new viewer loaded audio and video of different
-// moments, filled the holes out of order and jumped to the start of the video, where there was
-// no audio. Linux WebKit froze for good on that jump (its GStreamer media source deadlocks;
-// e2e branding.spec on CI and in Docker, gdb: main thread in gst_pad_push_event, webkitmediasrc
-// waiting on the main thread).
+// The PROGRAM-DATE-TIME of each segment the origin serves is, inside one upstream run, the
+// previous segment's date plus its duration, exactly. MediaMTX stamps a segment with the wall
+// clock at which its first frame arrived: when OBS sends its first seconds at once (a burst at
+// connect, a reconnect that flushes a backlog) two 2 s segments get dates 1 ms apart, and
+// otherwise the dates wander by a few ms. hls.js lines the audio playlist up with the video one
+// by these dates (alignMediaPlaylistByPDT: the first audio segment of the run against the middle
+// video one) and shifts the audio by whatever dates and durations disagree on in between. A
+// viewer whose start fell near a segment boundary (always early in a run) loaded audio and video
+// of neighbouring segments and jumped to where the video started and the audio did not: Linux
+// WebKit froze for good (its GStreamer media source deadlocks; e2e branding.spec on CI and in
+// Docker, gdb: main thread in gst_pad_push_event, webkitmediasrc waiting on the main thread).
+// A tolerance of 250 ms was tried first: the few ms it left still froze 4 starts in 5.
 
 /** One MediaMTX-style fMP4 media playlist of run `run`: segments `[from, to)` with their dates. */
 function playlist(run: string, from: number, to: number, dates: Record<number, string>, durations: Record<number, number> = {}): string {
@@ -53,7 +54,7 @@ const BURST = {
 const BURST_DURATIONS = { 3: 2.026 };
 
 describe('PROGRAM-DATE-TIME served by the origin', () => {
-  it('a burst at the start of a run: every date follows from the next segment and its duration', () => {
+  it('a burst at the start of a run: every date is the previous one plus its duration', () => {
     // Arrange
     const st = new PlaylistStitcher(20, 40);
 
@@ -62,14 +63,27 @@ describe('PROGRAM-DATE-TIME served by the origin', () => {
 
     // Assert
     const d = dates(st.render());
-    const gap = (i: number): number => d[`r1_video1_seg${i + 1}.mp4`]! - d[`r1_video1_seg${i}.mp4`]!;
-    // Within a few ms (MediaMTX's own jitter is left alone), never the 1 ms of the burst.
-    expect(Math.abs(gap(0) - 2000)).toBeLessThanOrEqual(5);
-    expect(Math.abs(gap(1) - 2000)).toBeLessThanOrEqual(5);
-    expect(Math.abs(gap(2) - 2000)).toBeLessThanOrEqual(5);
-    expect(Math.abs(gap(3) - 2026)).toBeLessThanOrEqual(5);
-    // The newest segment keeps MediaMTX's own date: the dates stay on the wall clock.
-    expect(d['r1_video1_seg4.mp4']).toBe(Date.parse(BURST[4]));
+    expect(d['r1_video1_seg0.mp4']).toBe(Date.parse(BURST[0]));
+    expect(d['r1_video1_seg1.mp4']! - d['r1_video1_seg0.mp4']!).toBe(2000);
+    expect(d['r1_video1_seg2.mp4']! - d['r1_video1_seg1.mp4']!).toBe(2000);
+    expect(d['r1_video1_seg3.mp4']! - d['r1_video1_seg2.mp4']!).toBe(2000);
+    expect(d['r1_video1_seg4.mp4']! - d['r1_video1_seg3.mp4']!).toBe(2026);
+  });
+
+  it('a date once served never moves: the same dates on the next reload, and after the run start left the window', () => {
+    // Arrange
+    const st = new PlaylistStitcher(3);
+    feed(st, playlist('r1', 0, 3, BURST));
+    const first = dates(st.render());
+
+    // Act: upstream moved on; seg0 and seg1 (the burst) left both windows.
+    feed(st, playlist('r1', 2, 5, BURST, BURST_DURATIONS));
+
+    // Assert
+    const later = dates(st.render());
+    expect(later['r1_video1_seg2.mp4']).toBe(first['r1_video1_seg2.mp4']);
+    expect(later['r1_video1_seg0.mp4']).toBeUndefined();
+    expect(later['r1_video1_seg4.mp4']! - later['r1_video1_seg2.mp4']!).toBe(4026);
   });
 
   it('the audio and video playlists of the run get the same dates for the same moments', () => {
@@ -90,21 +104,15 @@ describe('PROGRAM-DATE-TIME served by the origin', () => {
     for (let i = 0; i < 5; i++) expect(a[`r1_audio2_seg${i}.mp4`], `seg${i}`).toBe(v[`r1_video1_seg${i}.mp4`]);
   });
 
-  it('dates that already agree with the durations are served exactly as MediaMTX wrote them', () => {
+  it("MediaMTX's few ms of wander are gone too: hls.js would shift the audio by them", () => {
     // Arrange
     const st = new PlaylistStitcher(20, 40);
-    const text = playlist('r1', 10, 14, {
-      10: '2026-11-01T18:30:00.000Z',
-      11: '2026-11-01T18:30:02.003Z',
-      12: '2026-11-01T18:30:04.001Z',
-      13: '2026-11-01T18:30:06.002Z',
-    });
 
     // Act
-    feed(st, text);
+    feed(st, playlist('r1', 10, 14, { 10: '2026-11-01T18:30:00.000Z', 11: '2026-11-01T18:30:02.003Z', 12: '2026-11-01T18:30:03.974Z', 13: '2026-11-01T18:30:06.002Z' }));
 
     // Assert
-    for (const line of text.split('\n').filter((l) => l.startsWith('#EXT-X-PROGRAM-DATE-TIME:'))) expect(st.render()).toContain(line);
+    expect(Object.values(dates(st.render()))).toEqual([0, 2000, 4000, 6000].map((ms) => Date.parse('2026-11-01T18:30:00.000Z') + ms));
   });
 
   it('a new run keeps its own dates: nothing is carried across a discontinuity', () => {
@@ -118,9 +126,9 @@ describe('PROGRAM-DATE-TIME served by the origin', () => {
     // Assert
     const d = dates(st.render());
     expect(d['r1_video1_seg2.mp4']).toBe(Date.parse('2026-11-01T18:00:04.000Z'));
-    expect(d['r2_video1_seg2.mp4']).toBe(Date.parse('2026-11-01T18:00:38.000Z'));
-    expect(d['r2_video1_seg1.mp4']).toBe(Date.parse('2026-11-01T18:00:36.001Z'));
-    expect(d['r2_video1_seg0.mp4']).toBe(Date.parse('2026-11-01T18:00:34.001Z'));
+    expect(d['r2_video1_seg0.mp4']).toBe(Date.parse('2026-11-01T18:00:36.000Z'));
+    expect(d['r2_video1_seg1.mp4']).toBe(Date.parse('2026-11-01T18:00:38.000Z'));
+    expect(d['r2_video1_seg2.mp4']).toBe(Date.parse('2026-11-01T18:00:40.000Z'));
   });
 
   it('segments without a date stay without one', () => {

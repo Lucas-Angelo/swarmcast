@@ -5,9 +5,9 @@
 // the holes out of order and jumped to where the video started and the audio did not: Linux
 // WebKit froze for good on that jump (its GStreamer media source deadlocks; seen in
 // branding.spec on CI, where a page froze mid-assertion and the next test's page never loaded).
-// The origin now serves dates in step with the segment durations (hls/playlist.ts
-// consistentDates). Checked on every engine: the served dates right after a reconnect, and
-// viewers joining one after the other through the run's first 30 s all play.
+// The origin now dates each segment of a run as the previous one plus its duration (hls/playlist.ts
+// withDate). Checked on every engine: the served dates right after a reconnect, and viewers
+// joining one after the other through the run's first 30 s all play.
 import type { Page } from '@playwright/test';
 import { expect, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
 
@@ -48,7 +48,8 @@ test('right after OBS reconnects, the served dates follow the segment durations 
   await reconnectObs(null);
   const since = Date.now();
 
-  // Assert: the new run's first segments (the burst) are dated in step with their durations.
+  // Assert: the new run's first segments (the burst) are dated in step with their durations, to
+  // the millisecond (hls.js shifts the audio by any difference).
   let lists: Record<string, string> = {};
   await expect
     .poll(
@@ -63,7 +64,7 @@ test('right after OBS reconnects, the served dates follow the segment durations 
   for (const [name, text] of Object.entries(lists)) {
     const run = newestRun(text);
     const gaps = run.slice(1).map(([d], i) => d - run[i]![0] - run[i]![1] * 1000);
-    for (const gap of gaps) expect(Math.abs(gap), `${name}: a date ${gap} ms off the segment's duration\n${text}`).toBeLessThanOrEqual(250);
+    for (const gap of gaps) expect(Math.abs(gap), `${name}: a date ${gap} ms off the segment's duration\n${text}`).toBeLessThanOrEqual(1);
   }
 
   // Assert: viewers who join during the run's first 30 s play (each one a new browser).
