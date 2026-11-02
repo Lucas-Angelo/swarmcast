@@ -481,3 +481,88 @@ describe('ChatSession: highlight and pin (seq-less state items)', () => {
     expect(shown).toEqual([1, 2, 3]);
   });
 });
+
+describe('ChatSession: replies and mentions (docs/CHAT.md "Replies and mentions")', () => {
+  const msgEntry = (entries: ChatEntry[], s: number) => entries.find((e): e is Extract<ChatEntry, { kind: 'msg' }> => e.kind === 'msg' && e.s === s);
+
+  it('a reply entry carries the quoted author from the roster and the server quote; a GIF and a deleted message have no quote', () => {
+    // Arrange
+    const { session, entries } = setup();
+
+    // Act
+    session.frame(
+      batch(
+        { k: 'u', au: bia },
+        { k: 'm', s: 3, at: 3, a: 'k2', x: 'concordo', re: { s: 1, a: 'k1', q: 'm1', cut: 1 } },
+        { k: 'm', s: 4, at: 4, a: 'k2', x: 'kkk', re: { s: 2, a: 'k1', gif: 1 } },
+        { k: 'm', s: 5, at: 5, a: 'k2', x: 'hã?', re: { s: 2, a: 'k1', gone: 1 } },
+        { k: 'm', s: 6, at: 6, a: 'k2', x: 'quem?', re: { s: 2, a: 'k9' } },
+      ),
+    );
+
+    // Assert
+    expect(msgEntry(entries, 3)?.reply).toEqual({ s: 1, author: ana, quote: 'm1', cut: true });
+    expect(msgEntry(entries, 4)?.reply).toEqual({ s: 2, author: ana, gif: true });
+    expect(msgEntry(entries, 5)?.reply).toEqual({ s: 2, author: ana, gone: true });
+    expect(msgEntry(entries, 6)?.reply).toEqual({ s: 2, author: { a: 'k9', n: '…', c: '', r: 'viewer' } });
+  });
+
+  it('a malformed reply or mention list is ignored on its own: the message still shows', () => {
+    // Arrange
+    const { session, entries, shown } = setup();
+    const odd = [{ s: 'x', a: 'k1' }, { s: 1 }, { s: 1, a: 'k1', q: 5 }, null, 'k1'];
+
+    // Act
+    session.frame(batch(...odd.map((re, i) => ({ k: 'm', s: 3 + i, at: 3, a: 'k1', x: `r${i}`, re, mn: i % 2 ? 'k1' : [7, null, {}] }) as unknown as ChatItem)));
+
+    // Assert
+    expect(shown).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(entries.slice(2).map((e) => (e.kind === 'msg' ? [e.reply, e.mentions] : null))).toEqual(odd.map(() => [undefined, undefined]));
+  });
+
+  it('a `d` for the quoted message wipes the quote of a reply in the same batch, and of one that arrives after it', () => {
+    // Arrange
+    const { session, entries, calls } = setup();
+
+    // Act
+    session.frame(batch({ k: 'm', s: 3, at: 3, a: 'k1', x: 'sim', re: { s: 1, a: 'k1', q: 'm1' } }, { k: 'd', s: [1] }));
+    session.frame(batch({ k: 'm', s: 4, at: 4, a: 'k1', x: 'atrasada', re: { s: 1, a: 'k1', q: 'm1' } }));
+
+    // Assert
+    expect(msgEntry(entries, 3)?.reply).toEqual({ s: 1, author: ana, gone: true });
+    expect(msgEntry(entries, 4)?.reply).toEqual({ s: 1, author: ana, gone: true });
+    expect(calls).toContain('remove 1');
+  });
+
+  it('mentions: the people the page knows, at most three; "mentions me" when this viewer is one of them; never for a GIF', () => {
+    // Arrange
+    const { session, entries } = setup({ roster: [ana, bia, { a: 'me', n: 'Eu', c: '#0090ff', r: 'viewer' }] });
+
+    // Act
+    session.frame(
+      batch(
+        { k: 'm', s: 3, at: 3, a: 'k1', x: '@Bia @Eu', mn: ['k2', 'me', 'zz'] },
+        { k: 'm', s: 4, at: 4, a: 'k1', x: '@Bia', mn: ['k2'] },
+        { k: 'm', s: 5, at: 5, a: 'k1', g: { p: 'klipy', id: 'x', w: 20, h: 20, m: '/ii/a' }, mn: ['me'] } as ChatItem,
+      ),
+    );
+
+    // Assert
+    expect(msgEntry(entries, 3)?.mentions?.map((a) => a.n)).toEqual(['Bia', 'Eu']);
+    expect(msgEntry(entries, 3)?.mentionsMe).toBe(true);
+    expect(msgEntry(entries, 4)?.mentionsMe).toBeUndefined();
+    expect(msgEntry(entries, 5)?.mentions).toBeUndefined();
+  });
+
+  it('replies and mentions never take part in the seq order: no resume', () => {
+    // Arrange
+    const { session, sent, shown } = setup();
+
+    // Act
+    session.frame(batch({ k: 'm', s: 3, at: 3, a: 'k1', x: 'oi', re: { s: 99, a: 'k1', q: 'x' }, mn: ['k1'] }));
+
+    // Assert
+    expect(shown).toEqual([1, 2, 3]);
+    expect(sent).toEqual([]);
+  });
+});

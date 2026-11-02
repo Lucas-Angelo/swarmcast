@@ -1,3 +1,4 @@
+import { gcbOf } from './grapheme.js';
 import { CHAT_MENTION_SUGGESTIONS, CHAT_MENTIONS_MAX } from './limits.js';
 import { plainNameKey } from './nickname.js';
 import { P_ANYMARK, P_DIGIT, P_LETTER, props } from './ucd.js';
@@ -7,7 +8,8 @@ import { P_ANYMARK, P_DIGIT, P_LETTER, props } from './ucd.js';
  *
  * A mention is "@" + a person's nickname, exactly as it is (canonical text), not inside a word
  * (nothing that is a letter, digit or mark right before the "@", nor right after a name that ends in
- * one), so "ana@Ana.com" or "@Anabela" never mention "Ana". The client finds them in the text it
+ * one), so "ana@Ana.com" or "@Anabela" never mention "Ana", and never in the middle of a grapheme
+ * (a mark or a joiner right after the name belongs to its last character). The client finds them in the text it
  * sends and names the people by author key (`mn`); the server checks each key against the text again
  * and against its own rules, so the key list is only a claim. Resolving by key plus the exact name is
  * what makes a look-alike name ("@Аna" with a Cyrillic А) mention nobody: nicknames are unique by
@@ -35,6 +37,12 @@ const UNDERSCORE = 0x5f;
 /** Letters, digits, marks and "_": what a mention may not touch on either side. */
 function isWordCp(cp: number): boolean {
   return cp === UNDERSCORE || (props(cp) & (P_LETTER | P_DIGIT | P_ANYMARK)) !== 0;
+}
+
+/** Extend, ZWJ, SpacingMark: a code point that joins the grapheme before it (UAX #29 GB9, GB9a). */
+function joinsPrevious(cp: number): boolean {
+  const g = gcbOf(cp);
+  return g === 'E' || g === 'Z' || g === 'S';
 }
 
 /** The code point that ends right before offset `i` (-1 at the start). */
@@ -73,7 +81,8 @@ export function findMentionSpans(text: string, candidates: Iterable<MentionCandi
   if (by.size === 0) return out;
   for (let i = text.indexOf('@'); i >= 0 && i < text.length; i = text.indexOf('@', i + 1)) {
     const before = cpBefore(text, i);
-    if (before >= 0 && isWordCp(before)) continue;
+    // A Prepend character before the "@" would make the "@" part of its grapheme.
+    if (before >= 0 && (isWordCp(before) || gcbOf(before) === 'P')) continue;
     const list = by.get(text[i + 1] ?? '');
     if (!list) continue;
     for (const c of list) {
@@ -82,7 +91,7 @@ export function findMentionSpans(text: string, candidates: Iterable<MentionCandi
       // A name that ends in a letter, digit or mark must not run on into a longer word.
       const last = cpBefore(text, end);
       const next = end < text.length ? text.codePointAt(end)! : -1;
-      if (isWordCp(last) && next >= 0 && isWordCp(next)) continue;
+      if (next >= 0 && (joinsPrevious(next) || (isWordCp(last) && isWordCp(next)))) continue;
       out.push({ start: i, end, a: c.a });
       i = end - 1;
       break;
