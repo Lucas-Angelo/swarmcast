@@ -15,8 +15,9 @@ import { joinViewer } from './helpers-b.js';
 // messages in the same order, and neither ever asks to resume or for a reload. The frames include
 // what 0.5.0 builds on: ephemeral latest-wins items (also missed by a slow socket), roster entries
 // for authors an item only refers to, and reaction frames the server ignores for now; and what
-// 0.5.0 sends: highlights and the pin (seq-less state items, a snapshot field), which a v0.4.2 page
-// simply does not show.
+// 0.5.0 sends: highlights and the pin (seq-less state items, a snapshot field), and replies and
+// mentions (optional fields of a message), which a v0.4.2 page simply does not show: it shows a
+// reply as the plain message it also is.
 
 interface Page {
   session: { hello(s: Parameters<ChatSession['hello']>[0]): void; frame(m: ChatServerMessage): void; connection(o: boolean): void; readonly lastSeq: number; readonly roster: Map<string, ChatAuthor> };
@@ -29,6 +30,10 @@ interface Page {
   /** What the page shows pinned (seq, author name, text), and the seqs it shows highlighted (current pages only). */
   pin: { s: number; n: string; x?: string } | null;
   lit: Set<number>;
+  /** The text of each message shown, and (current pages) what each reply shows of the message it answers and who it mentions. */
+  text: Map<number, string | undefined>;
+  replies: Map<number, { n: string; q?: string; gone?: boolean }>;
+  mentions: Map<number, string[]>;
 }
 
 /** A page running `Session` (the current one or v0.4.2's) with a view that records what it shows. */
@@ -37,9 +42,19 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
   const sent: Array<{ t: string }> = [];
   const alarms: string[] = [];
   const lit = new Set<number>();
+  const text: Page['text'] = new Map();
+  const replies: Page['replies'] = new Map();
+  const mentions: Page['mentions'] = new Map();
   const out = { pin: null as Page['pin'] };
-  const mark = (e: Array<{ kind: string; s?: number; highlighted?: boolean }>) => {
-    for (const x of e) if (x.kind === 'msg' && x.highlighted) lit.add(x.s!);
+  type Shown = { kind: string; s?: number; highlighted?: boolean; text?: string; reply?: { author: { n: string }; quote?: string; gone?: boolean }; mentions?: Array<{ n: string }> };
+  const mark = (e: Shown[]) => {
+    for (const x of e) {
+      if (x.kind !== 'msg') continue;
+      if (x.highlighted) lit.add(x.s!);
+      text.set(x.s!, x.text);
+      if (x.reply) replies.set(x.s!, { n: x.reply.author.n, ...(x.reply.quote !== undefined ? { q: x.reply.quote } : {}), ...(x.reply.gone ? { gone: true } : {}) });
+      if (x.mentions?.length) mentions.set(x.s!, x.mentions.map((m) => m.n));
+    }
   };
   const drop = (keep: (s: number) => boolean): void => {
     const rest = shown.filter(keep);
@@ -47,13 +62,15 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     shown.push(...rest);
   };
   const view = {
-    reset: (e: Array<{ kind: string; s?: number }>) => {
+    reset: (e: Shown[]) => {
       shown.length = 0;
       lit.clear();
+      replies.clear();
+      mentions.clear();
       for (const x of e) if (x.kind !== 'skip') shown.push(x.s!);
       mark(e);
     },
-    append: (e: Array<{ kind: string; s?: number }>) => {
+    append: (e: Shown[]) => {
       for (const x of e) if (x.kind !== 'skip') shown.push(x.s!);
       mark(e);
     },
@@ -80,6 +97,9 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     sent,
     alarms,
     lit,
+    text,
+    replies,
+    mentions,
     get pin() {
       return out.pin;
     },
@@ -277,6 +297,71 @@ describe('chat protocol v1: a v0.4.2 page and a current page on this server', ()
     expect(current.pin).toBeNull();
     expect(current.shown).toEqual(old.shown);
     expect(old.shown).toEqual([hub.lastSeq]);
+    expect(old.sent).toEqual([]);
+    expect(current.sent).toEqual([]);
+    expect(old.alarms).toEqual([]);
+    expect(current.alarms).toEqual([]);
+    expect(old.session.lastSeq).toBe(hub.lastSeq);
+  });
+
+  it('replies and mentions: both pages show the same messages with the same text, the current one also the quote and the mentions; a reconnect after a delete shows the quote wiped', () => {
+    // Arrange
+    const clock = manualClock(1_000_000_000_000);
+    const access = new AccessControl(clock.now);
+    access.begin();
+    const settings: ChatSettings = { ...defaultChatSettings(), slowModeS: 0, duplicateWindowS: 0 };
+    const sockets: PipeSocket[] = [];
+    const host: ChatHost = { sockets: () => sockets, socketsOf: (id) => sockets.filter((s) => s.sessionId === id) };
+    const hub = new ChatHub({ access, host, settings: () => settings, uploadCapMbps: () => 10, viewers: () => 3, activity: new ActivityLog(), log: silentLog, now: clock.now, guard: { sample: () => ({ p99Ms: 10, elu: 0.1 }), intervalMs: 3_600_000 } });
+    hub.begin();
+    onTestFinished(() => hub.reset());
+    const join = (name: string) => {
+      const s = joinViewer(access, name, { deviceId: name });
+      s.joinedAt = clock.now() - 600_000;
+      const sock = new PipeSocket(s.id);
+      sockets.push(sock);
+      return { s, sock };
+    };
+    const ana = join('Ana');
+    const viewer = join('Bia');
+    const old = page(ChatSession042);
+    const current = page(ChatSession);
+    viewer.sock.pages.push(old, current);
+    const snap = hub.snapshot(viewer.s)!;
+    old.session.hello(snap);
+    current.session.hello(snap);
+    hub.helloSent(viewer.sock, snap, 0);
+    let n = 0;
+    const say = (who: { s: typeof ana.s; sock: PipeSocket }, text: string, extra: { re?: number; mn?: string[] } = {}) => {
+      clock.advance(2100);
+      hub.frame(who.s, who.sock, JSON.stringify({ t: 'chat.send', n: ++n, text, ...extra }));
+      return hub.lastSeq;
+    };
+    const anaKey = hub.you(ana.s).a;
+    const biaKey = hub.you(viewer.s).a;
+    // Act
+    const question = say(ana, 'alguém sabe a música?');
+    say(viewer, 'oi');
+    const answer = say(viewer, '@Ana é a do começo', { re: question, mn: [anaKey] });
+    const back = say(ana, '@Bia valeu!', { re: answer, mn: [biaKey] });
+    hub.sendAsStreamer({ text: 'boa', re: back });
+    hub.flush();
+    const live = { replies: new Map(current.replies), mentions: new Map(current.mentions) };
+    hub.delete([question]);
+    hub.flush();
+    const again = hub.snapshot(viewer.s, { after: old.session.lastSeq })!;
+    old.session.hello(again);
+    current.session.hello(again);
+    // Assert
+    expect(current.shown).toEqual(old.shown);
+    expect([...current.text]).toEqual([...old.text]);
+    expect(old.text.get(answer)).toBe('@Ana é a do começo');
+    expect(old.replies.size + old.mentions.size).toBe(0);
+    expect(live.replies.get(answer)).toEqual({ n: 'Ana', q: 'alguém sabe a música?' });
+    expect(live.replies.get(back)).toEqual({ n: 'Bia', q: '@Ana é a do começo' });
+    expect(live.mentions.get(answer)).toEqual(['Ana']);
+    expect(live.mentions.get(back)).toEqual(['Bia']);
+    expect(current.replies.get(answer)).toEqual({ n: 'Ana', gone: true });
     expect(old.sent).toEqual([]);
     expect(current.sent).toEqual([]);
     expect(old.alarms).toEqual([]);

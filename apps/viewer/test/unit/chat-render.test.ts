@@ -516,3 +516,223 @@ describe('ChatList: highlighted messages and the pinned bar', () => {
     expect(nick.dataset.c).toBe('#0090ff');
   });
 });
+
+describe('ChatList: replies and mentions (docs/CHAT.md "Replies and mentions")', () => {
+  const bia: ChatAuthor = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' };
+  const me: ChatAuthor = { a: 'me', n: 'Eu', c: '#0090ff', r: 'viewer' };
+  type Msg = Extract<ChatEntry, { kind: 'msg' }>;
+  const reply = (s: number, text: string, r: Msg['reply'], extra: Partial<Msg> = {}): ChatEntry => ({ kind: 'msg', s, at: 1_700_000_000_000 + s, author: bia, text, reply: r, ...extra });
+
+  /** A list with Reply buttons; `replied` has the entries the viewer chose Reply on. */
+  function withReplies() {
+    document.body.replaceChildren();
+    const root = document.createElement('div');
+    document.body.append(root);
+    const frames: Array<() => void> = [];
+    const replied: Msg[] = [];
+    const later: Array<() => void> = [];
+    const list = new ChatList(root, {
+      emotes: () => new Map(),
+      nickColor: (c) => c,
+      showTimes: () => false,
+      visible: () => true,
+      raf: (cb) => frames.push(cb),
+      later: (cb) => {
+        later.push(cb);
+        return () => {};
+      },
+      onReply: (e) => replied.push(e),
+      me: () => 'me',
+    });
+    const show = (entries: ChatEntry[]): void => {
+      list.append(entries);
+      while (frames.length) frames.shift()!();
+    };
+    return { list, show, replied, later };
+  }
+
+  it('a reply starts with one line: ↩, the name and the quote, each in its own <bdi>, as text; the quote says what it is for screen readers', () => {
+    // Arrange
+    const { list, show } = withReplies();
+
+    // Act
+    show([m(1, HOSTILE), reply(2, 'é golpe', { s: 1, author: ana, quote: HOSTILE.slice(0, 30), cut: true })]);
+
+    // Assert
+    const q = list.list.querySelector<HTMLButtonElement>('li[data-seq="2"] .reply-quote')!;
+    expect(q.tagName).toBe('BUTTON');
+    expect(q.tabIndex).toBe(-1);
+    expect(q.querySelector('bdi.q-nick')!.textContent).toBe('Ana');
+    expect(q.querySelector('bdi.q-text')!.textContent).toBe(`${HOSTILE.slice(0, 30)}…`);
+    expect(q.querySelector('bdi.q-text')!.getAttribute('dir')).toBe('auto');
+    expect(q.querySelectorAll('img, script, a')).toHaveLength(0);
+    expect(q.getAttribute('aria-label')).toBe(`In reply to Ana: ${HOSTILE.slice(0, 30)}…`);
+    expect(list.list.querySelector('li[data-seq="2"]')!.classList.contains('is-reply')).toBe(true);
+  });
+
+  it('a deleted message, a GIF, a quote left out by the server, and an unsafe quote', () => {
+    // Arrange
+    const { list, show } = withReplies();
+
+    // Act
+    show([reply(2, 'a', { s: 1, author: ana, gone: true }), reply(3, 'b', { s: 1, author: ana, gif: true }), reply(4, 'c', { s: 1, author: ana }), reply(5, 'd', { s: 1, author: ana, quote: 'abc\u{202E}fdp' })]);
+
+    // Assert
+    const text = (s: number) => list.list.querySelector(`li[data-seq="${s}"] .reply-quote`)!.textContent;
+    expect(text(2)).toBe('Ana: Original message deleted');
+    expect(list.list.querySelector('li[data-seq="2"] .reply-quote')!.classList.contains('gone')).toBe(true);
+    expect(text(3)).toBe('Ana: GIF');
+    expect(text(4)).toBe('Ana');
+    expect(list.list.querySelector('li[data-seq="4"] .reply-quote')!.getAttribute('aria-label')).toBe('In reply to Ana');
+    expect(text(5)).toBe('Ana: Message hidden');
+    expect(list.list.querySelector('li[data-seq="5"] .text')!.textContent).toBe('d');
+  });
+
+  it('deleting the quoted message wipes the quote of the replies on screen and of those still waiting for a frame', () => {
+    // Arrange
+    const { list, show } = withReplies();
+    show([m(1, 'segredo'), reply(2, 'a', { s: 1, author: ana, quote: 'segredo' })]);
+    list.append([reply(3, 'b', { s: 1, author: ana, quote: 'segredo' })]);
+
+    // Act
+    list.remove([1]);
+    show([]);
+    list.append([m(9, 'x')]);
+    show([]);
+
+    // Assert
+    expect(list.list.textContent).not.toContain('segredo');
+    expect([...list.list.querySelectorAll('.reply-quote')].map((q) => q.textContent)).toEqual(['Ana: Original message deleted', 'Ana: Original message deleted']);
+  });
+
+  it('a click on a quote scrolls to the message it answers, marks it for a moment and focuses its Reply button; nothing when it left the list', () => {
+    // Arrange
+    const { list, show, later } = withReplies();
+    show([m(1, 'pergunta'), reply(2, 'resposta', { s: 1, author: ana, quote: 'pergunta' }), reply(3, 'outra', { s: 77, author: ana, quote: 'velha' })]);
+    const original = list.list.querySelector<HTMLLIElement>('li[data-seq="1"]')!;
+    let scrolled = 0;
+    original.scrollIntoView = () => void scrolled++;
+
+    // Act
+    list.list.querySelector<HTMLButtonElement>('li[data-seq="2"] .reply-quote')!.click();
+    const flashed = original.classList.contains('flash');
+    const focused = document.activeElement;
+    for (const cb of later.splice(0)) cb();
+    list.list.querySelector<HTMLButtonElement>('li[data-seq="3"] .reply-quote')!.click();
+
+    // Assert
+    expect(scrolled).toBe(1);
+    expect(flashed).toBe(true);
+    expect(focused).toBe(original.querySelector('button.msg-reply'));
+    expect(original.classList.contains('flash')).toBe(false);
+    expect(list.list.querySelector('.flash')).toBeNull();
+  });
+
+  it('every message has a Reply button out of the Tab order, named for its author; not on pending, hidden or system rows', () => {
+    // Arrange
+    const { list, show, replied } = withReplies();
+    show([m(1, 'oi'), { kind: 'sys', s: 2, at: 2, code: 'chat.sys.cleared' }, m(3, 'abc\u{202E}x'), m(4, 'tchau', lucas)]);
+    list.addPending(7, 'enviando', me);
+
+    // Act
+    const buttons = [...list.list.querySelectorAll<HTMLButtonElement>('button.msg-reply')];
+    buttons[1]!.click();
+
+    // Assert
+    expect(buttons.map((b) => b.closest('li')!.dataset.seq)).toEqual(['1', '4']);
+    expect(buttons.map((b) => b.getAttribute('aria-label'))).toEqual(['Reply to Ana', 'Reply to Lucas']);
+    expect(buttons.every((b) => b.tabIndex === -1)).toBe(true);
+    expect(replied.map((e) => e.s)).toEqual([4]);
+    expect(list.list.querySelector('li.pending button.msg-reply')).toBeNull();
+  });
+
+  it('keyboard: the arrow keys go from Reply button to Reply button (from the list too), Home and End to the ends, Escape back to the list', () => {
+    // Arrange
+    const { list, show } = withReplies();
+    show(many(4));
+    const buttons = [...list.list.querySelectorAll<HTMLButtonElement>('button.msg-reply')];
+    const press = (key: string) => (document.activeElement ?? list.list).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }));
+    list.list.focus();
+
+    // Act
+    const steps: Array<number | 'list'> = [];
+    const where = () => (document.activeElement === list.list ? 'list' : buttons.indexOf(document.activeElement as HTMLButtonElement));
+    for (const key of ['ArrowUp', 'ArrowUp', 'ArrowDown', 'Home', 'ArrowUp', 'End', 'ArrowDown', 'Escape']) {
+      press(key);
+      steps.push(where());
+    }
+
+    // Assert: happy-dom has no layout, so from the list ArrowUp starts at the last message.
+    expect(steps).toEqual([3, 2, 3, 0, 0, 3, 3, 'list']);
+  });
+
+  it('a tap on a row shows its actions, a tap on another moves them, a second tap hides them; taps on buttons do not', () => {
+    // Arrange
+    const { list, show } = withReplies();
+    show(many(2));
+    const [one, two] = rows(list);
+
+    // Act
+    one!.querySelector<HTMLElement>('.text')!.click();
+    const first = [one!.classList.contains('actions'), two!.classList.contains('actions')];
+    two!.click();
+    const moved = [one!.classList.contains('actions'), two!.classList.contains('actions')];
+    two!.click();
+    const hidden = two!.classList.contains('actions');
+
+    // Assert
+    expect(first).toEqual([true, false]);
+    expect(moved).toEqual([false, true]);
+    expect(hidden).toBe(false);
+  });
+
+  it('mentions: "@Name" of each confirmed person is a span; a message that mentions me is marked and says so, only while the setting is on', () => {
+    // Arrange
+    const { list, show } = withReplies();
+
+    // Act
+    show([m(1, '@Eu e @Bia, olhem: @Ana'), { ...(m(2, '@Eu oi @Eu') as Msg), mentions: [me], mentionsMe: true }, { ...(m(3, '@Bia @Eu <b>x</b>') as Msg), mentions: [bia, me], mentionsMe: true }]);
+    list.setMentionHighlight(false);
+    const off = list.list.classList.contains('mention-highlight');
+    list.setMentionHighlight(true);
+
+    // Assert
+    const row = (s: number) => list.list.querySelector<HTMLLIElement>(`li[data-seq="${s}"]`)!;
+    expect(row(1).querySelectorAll('.mention')).toHaveLength(0);
+    expect([...row(2).querySelectorAll('.mention')].map((x) => [x.textContent, x.classList.contains('me')])).toEqual([
+      ['@Eu', true],
+      ['@Eu', true],
+    ]);
+    expect([...row(3).querySelectorAll('.mention')].map((x) => x.textContent)).toEqual(['@Bia', '@Eu']);
+    expect(row(3).querySelector('.text')!.textContent).toBe('@Bia @Eu <b>x</b>');
+    expect(row(3).querySelectorAll('b')).toHaveLength(0);
+    expect(row(2).classList.contains('mentions-me')).toBe(true);
+    expect(row(2).querySelector('.mention-note')!.textContent).toBe('Mentions you: ');
+    expect(row(1).classList.contains('mentions-me')).toBe(false);
+    expect(off).toBe(false);
+    expect(list.list.classList.contains('mention-highlight')).toBe(true);
+  });
+
+  it('a streamer without a name is mentioned as "Streamer" or "Transmissão"', () => {
+    // Arrange
+    const { list, show } = withReplies();
+    const nameless: ChatAuthor = { a: 'k0', n: '', c: '', r: 'streamer' };
+
+    // Act
+    show([{ ...(m(1, '@Streamer e @Transmissão') as Msg), mentions: [nameless] }]);
+
+    // Assert
+    expect([...list.list.querySelectorAll('.mention')].map((x) => x.textContent)).toEqual(['@Streamer', '@Transmissão']);
+  });
+
+  it('my own reply while it is sending shows the quote too', () => {
+    // Arrange
+    const { list } = withReplies();
+
+    // Act
+    list.addPending(1, 'sim!', me, undefined, { s: 4, author: ana, quote: 'vamos?' });
+
+    // Assert
+    expect(list.list.querySelector('li.pending .reply-quote')!.textContent).toBe('Ana: vamos?');
+  });
+});

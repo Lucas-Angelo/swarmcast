@@ -721,12 +721,18 @@ export class ScriptedViewer {
     return this.messages.filter((m): m is Extract<ServerMessage, { t: 'chat.you' }> => m.t === 'chat.you').at(-1)?.you;
   }
 
-  /** Sends a chat message; returns its nonce. */
-  send(text: string): number {
+  /** Sends a chat message (a reply to `extra.re`, mentioning the author keys `extra.mn`); returns its nonce. */
+  send(text: string, extra: { re?: number; mn?: string[] } = {}): number {
     const n = ++this.nonce;
     // `t` first: the server's cheap pre-parse check expects it.
-    this.ws.send(JSON.stringify({ t: 'chat.send', n, text }));
+    this.ws.send(JSON.stringify({ t: 'chat.send', n, text, ...extra }));
     return n;
+  }
+
+  /** This viewer's author key in the chat (from its hello, or a later `chat.you`). */
+  get authorKey(): string | undefined {
+    const hello = this.messages.find((m): m is Extract<ServerMessage, { t: 'hello' }> => m.t === 'hello');
+    return this.you()?.a ?? hello?.chat?.you.a;
   }
 
   /** The server's answer to a nonce: the ack's seq, or the reject code. */

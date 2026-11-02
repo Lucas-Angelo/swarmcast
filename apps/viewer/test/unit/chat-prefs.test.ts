@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createPrefsStore, RECENT_MAX } from '../../src/chat/prefs.js';
 
 const KEY = 'swarmcast.chat';
-const DEFAULTS = { hidden: false, times: false, large: false, tone: 0, recent: [], gifs: false, animate: null };
+const DEFAULTS = { hidden: false, times: false, large: false, tone: 0, recent: [], gifs: false, animate: null, mentions: true };
 
 /** An in-memory stand-in for localStorage. */
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -55,6 +55,19 @@ describe('chat prefs store', () => {
     expect(prefs.recent).toHaveLength(RECENT_MAX);
     expect(prefs.recent[0]).toBe('😀');
     expect(prefs.recent).not.toContain(7);
+  });
+
+  it('"Highlight messages that mention me" is on unless the viewer turned it off (also for prefs saved before it existed)', () => {
+    // Arrange
+    const older = createPrefsStore(() => memoryStorage({ [KEY]: JSON.stringify({ times: true }) }));
+    const off = createPrefsStore(() => memoryStorage({ [KEY]: JSON.stringify({ mentions: false }) }));
+    const odd = createPrefsStore(() => memoryStorage({ [KEY]: JSON.stringify({ mentions: 'no' }) }));
+
+    // Act
+    const prefs = [older.load(), off.load(), odd.load()];
+
+    // Assert
+    expect(prefs.map((p) => p.mentions)).toEqual([true, false, true]);
   });
 
   it('bad JSON in storage gives the defaults', () => {

@@ -10,6 +10,7 @@ import {
   CHAT_DUPLICATE_WINDOW_MAX_S,
   CHAT_HISTORY_ON_JOIN_DEFAULT,
   CHAT_HISTORY_ON_JOIN_MAX,
+  CHAT_MENTIONS_MAX,
   CHAT_MAX_EMOJI_DEFAULT,
   CHAT_MAX_EMOJI_MAX,
   CHAT_MAX_EMOJI_MIN,
@@ -74,12 +75,22 @@ export const chatNonceSchema = z
  * zod 4 keeps on the object, so the schema still works inside clientMessageSchema's
  * discriminated union (protocol.test.ts checks it).
  */
+/** The message a reply answers, by its seq (docs/CHAT.md, "Replies and mentions"). */
+export const chatReplyToSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+
+/** Author keys a message mentions (base36 counters, at most CHAT_MENTIONS_MAX); the server checks each one. */
+export const chatMentionKeysSchema = z
+  .array(z.string().regex(/^[0-9a-z]{1,10}$/))
+  .max(CHAT_MENTIONS_MAX);
+
 export const chatSendSchema = z
   .object({
     t: z.literal('chat.send'),
     n: chatNonceSchema,
     text: z.string().max(CHAT_TEXT_MAX_UNITS).optional(),
     gif: gifRefSchema.optional(),
+    re: chatReplyToSchema.optional(),
+    mn: chatMentionKeysSchema.optional(),
   })
   .refine((m) => (m.text === undefined) !== (m.gif === undefined), 'exactly one of text or gif');
 
@@ -171,7 +182,7 @@ export function defaultChatSettings(): ChatSettings {
 // ---------------------------------------------------------------------------
 
 export const chatAdminSendSchema = z
-  .object({ text: z.string().max(CHAT_TEXT_MAX_UNITS).optional(), gif: gifRefSchema.optional() })
+  .object({ text: z.string().max(CHAT_TEXT_MAX_UNITS).optional(), gif: gifRefSchema.optional(), re: chatReplyToSchema.optional(), mn: chatMentionKeysSchema.optional() })
   .refine((m) => (m.text === undefined) !== (m.gif === undefined), 'exactly one of text or gif');
 
 export const chatDeleteSchema = z.object({ seqs: z.array(z.number().int().min(1)).min(1).max(CHAT_DELETE_MAX) });
