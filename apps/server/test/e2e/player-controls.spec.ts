@@ -104,14 +104,14 @@ test('full screen is the player container: the controls and the delay behind liv
   expect(await cspViolations(page)).toEqual([]);
 });
 
-test('picture-in-picture: the button where the engine has the API, none where it has not', { tag: '@ui' }, async ({ viewers }) => {
+test('picture-in-picture: the button opens and closes the floating window where the engine has it, and is gone where it has not', { tag: '@ui' }, async ({ viewers, browserName }) => {
   // Arrange
   const { page } = await viewers.join(uid('pip'));
   await waitPlaying(page);
-  const supported = await page.evaluate(() => document.pictureInPictureEnabled === true || typeof (document.querySelector('video') as HTMLVideoElement & { webkitSetPresentationMode?: unknown }).webkitSetPresentationMode === 'function');
+  const announced = await page.evaluate(() => document.pictureInPictureEnabled === true || (document.querySelector('video') as HTMLVideoElement & { webkitSupportsPresentationMode?: (m: string) => boolean }).webkitSupportsPresentationMode?.('picture-in-picture') === true);
   const button = page.getByTestId('pip');
-  if (!supported) {
-    // Assert
+  if (!announced) {
+    // Assert: no API (Firefox before 153), no button
     await expect(button).toBeHidden();
     return;
   }
@@ -126,8 +126,11 @@ test('picture-in-picture: the button where the engine has the API, none where it
   // Act
   await button.click();
 
-  // Assert
-  await expect.poll(inWindow).toBe(true);
+  // Assert: in the window; or, where the engine announces the API but refuses it as not supported
+  // (Playwright's WebKit build: NotSupportedError), the button that cannot work has gone.
+  await expect.poll(async () => ((await inWindow()) ? 'window' : (await button.isHidden()) ? 'gone' : 'waiting')).not.toBe('waiting');
+  if (browserName === 'chromium') expect(await inWindow()).toBe(true);
+  if (!(await inWindow())) return;
   await expect(button).toHaveAccessibleName('Exit picture-in-picture');
 
   // Act
@@ -175,23 +178,23 @@ test('the keyboard reaches every control in order and presses it; the focus hold
   await waitPlaying(page);
   await page.mouse.move(1, 1);
   await expect.poll(() => faded(page)).toBe(true);
-  // Safari moves the focus with Tab only to fields unless the viewer turns on "Press Tab to
-  // highlight each item" (WebKit's tabsToLinks); Playwright's WebKit has it on, like that setting.
-  void browserName;
+  // Safari's Tab moves only between text fields unless the viewer turns on "Press Tab to highlight
+  // each item"; Option+Tab reaches every control, as a Safari keyboard user presses it.
+  const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
   const focused = (): Promise<string | null> => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.testid ?? document.activeElement?.id ?? null);
   // The control before the bar in the page's order is the last one of the header: Tab from the
   // start of the page until the focus enters the bar (a bounded walk, not a retry).
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   let steps = 0;
   while (!(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="controls"]'))) && steps < 40) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(tab);
     steps += 1;
   }
 
   // Act: through the bar
   const order: Array<string | null> = [await focused()];
   for (let i = 0; i < 7; i++) {
-    await page.keyboard.press('Tab');
+    await page.keyboard.press(tab);
     if (!(await page.evaluate(() => !!document.activeElement?.closest('[data-testid="controls"]')))) break;
     order.push(await focused());
   }
@@ -200,7 +203,7 @@ test('the keyboard reaches every control in order and presses it; the focus hold
   expect(order.filter((id) => id !== 'pip')).toEqual(['play', 'mute', 'volume', 'go-live', 'quality', 'theater', 'fullscreen']);
   expect(await faded(page)).toBe(false);
 
-  // Act: Shift+Tab back to Play, Enter pauses
+  // Act: back on Play, Enter pauses
   await page.getByTestId('play').focus();
   await page.keyboard.press('Enter');
 
@@ -208,7 +211,7 @@ test('the keyboard reaches every control in order and presses it; the focus hold
   await expect.poll(async () => (await videoState(page)).paused).toBe(true);
 
   // Act: Space on Mute turns the sound on
-  await page.keyboard.press('Tab');
+  await page.keyboard.press(tab);
   await page.keyboard.press(' ');
 
   // Assert

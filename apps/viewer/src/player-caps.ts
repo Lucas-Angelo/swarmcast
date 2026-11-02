@@ -60,7 +60,7 @@ export function isFullscreen(video: HTMLVideoElement, doc: Document): boolean {
 }
 
 /** Handles a refusal of a call that may return a promise (old engines return nothing). */
-const onRefusal = (p: unknown, fallback: () => void = () => {}): void => {
+const onRefusal = (p: unknown, fallback: (e?: unknown) => void = () => {}): void => {
   if (p && typeof (p as Promise<unknown>).catch === 'function') (p as Promise<unknown>).catch(fallback);
 };
 
@@ -126,12 +126,20 @@ export function inPip(video: HTMLVideoElement, doc: Document): boolean {
   return (!!doc.pictureInPictureElement && doc.pictureInPictureElement === video) || (video as WebkitVideo).webkitPresentationMode === 'picture-in-picture';
 }
 
-export function togglePip(video: HTMLVideoElement, doc: Document): boolean {
+/**
+ * Into the floating window or back. `onUnsupported` runs when the browser announced the API but
+ * then refuses it as not supported (NotSupportedError: some builds and webviews report
+ * pictureInPictureEnabled without the feature), so the page can take its button away.
+ */
+export function togglePip(video: HTMLVideoElement, doc: Document, onUnsupported?: () => void): boolean {
   const v = video as WebkitVideo;
   switch (pipMode(video, doc)) {
     case 'standard':
       if (doc.pictureInPictureElement) onRefusal(doc.exitPictureInPicture());
-      else onRefusal(v.requestPictureInPicture());
+      else
+        onRefusal(v.requestPictureInPicture(), (e?: unknown) => {
+          if ((e as { name?: string } | undefined)?.name === 'NotSupportedError') onUnsupported?.();
+        });
       return true;
     case 'webkit':
       v.webkitSetPresentationMode!(v.webkitPresentationMode === 'picture-in-picture' ? 'inline' : 'picture-in-picture');

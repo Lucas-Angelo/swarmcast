@@ -269,7 +269,12 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     video.volume = v;
     video.muted = v === 0;
   });
-  pipBtn.addEventListener('click', () => togglePip(video, doc));
+  let pipGone = false;
+  const dropPip = (): void => {
+    pipGone = true;
+    pipBtn.hidden = true;
+  };
+  pipBtn.addEventListener('click', () => togglePip(video, doc, dropPip));
   fsBtn.addEventListener('click', () => toggleFullscreen(player, video, doc));
 
   for (const ev of ['play', 'pause', 'playing', 'waiting', 'ended', 'volumechange', 'loadeddata', 'emptied', 'enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged', 'webkitbeginfullscreen', 'webkitendfullscreen']) {
@@ -371,7 +376,7 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
       visibility.activity();
       return done;
     },
-    togglePip: () => (pip === 'none' ? false : togglePip(video, doc)),
+    togglePip: () => (pip === 'none' || pipGone ? false : togglePip(video, doc, dropPip)),
     reveal: () => visibility.activity(),
     menuOpen: (open) => visibility.pin('menu', open),
     setDelay: (text) => {

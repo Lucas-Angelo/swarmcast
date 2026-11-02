@@ -331,6 +331,30 @@ describe('full screen and picture-in-picture', () => {
     expect(requestPictureInPicture).toHaveBeenCalledTimes(1);
   });
 
+  it('a browser that announces picture-in-picture but refuses it as not supported loses the button', async () => {
+    // Arrange
+    const { byTestId, video, controls } = setup({ pip: true });
+    video.requestPictureInPicture = vi.fn(() => Promise.reject(new DOMException('no', 'NotSupportedError')));
+    // Act
+    byTestId('pip').click();
+    // Assert
+    await vi.waitFor(() => expect(byTestId('pip').hidden).toBe(true));
+    expect(controls.togglePip()).toBe(false);
+  });
+
+  it('a refusal for another reason (no user gesture) keeps the button', async () => {
+    // Arrange
+    const { byTestId, video } = setup({ pip: true });
+    const request = vi.fn(() => Promise.reject(new DOMException('no', 'NotAllowedError')));
+    video.requestPictureInPicture = request;
+    // Act
+    byTestId('pip').click();
+    await vi.waitFor(() => expect(request).toHaveBeenCalled());
+    await Promise.resolve();
+    // Assert
+    expect(byTestId('pip').hidden).toBe(false);
+  });
+
   it('the delay behind live shows in the bar on request (full screen hides the status line)', () => {
     // Arrange
     const { byTestId, controls } = setup();
