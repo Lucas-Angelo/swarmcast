@@ -351,6 +351,57 @@ export function ownMessage(phone: Phone, text: string): Promise<'pending' | 'fai
   }, text);
 }
 
+/**
+ * Taps one of the player's own controls (viewer player-controls.ts). They fade while the video
+ * plays, and a touch on a faded control only brings them back (its press is dropped, as in video
+ * apps), so a tap timed by a slow simulator could land on them faded. The keyboard focus holds
+ * them shown: the control is focused first, then tapped with a finger, which presses it.
+ */
+export async function tapControl(phone: Phone, selector: string): Promise<void> {
+  await phone.evaluate((s) => (document.querySelector(s) as HTMLElement).focus(), selector);
+  await expect.poll(() => phone.evaluate(() => !document.querySelector('.player')!.classList.contains('pc-idle')), { message: `the controls show, ${selector} focused` }).toBe(true);
+  await phone.tap(selector);
+}
+
+/** What the player's own controls show and what the page may do with the video here. */
+export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: boolean; volumeSlider: boolean; volumeApi: boolean; pipButton: boolean; pipApi: boolean; play: string }> {
+  return phone.evaluate(() => {
+    const v = document.querySelector('video') as HTMLVideoElement & { webkitSupportsPresentationMode?: (m: string) => boolean };
+    const shown = (sel: string): boolean => {
+      const el = document.querySelector<HTMLElement>(sel);
+      return !!el && !el.hidden && el.getClientRects().length > 0;
+    };
+    // Whether this browser lets a page set the volume: set it, read it back, put it back. Apple's
+    // guide says iOS keeps it read-only (always 1); the iOS 26 Simulator accepts it (Devices run
+    // 41507746407), so the check asks the browser, as the page does.
+    const before = v.volume;
+    const probe = before > 0.5 ? before - 0.25 : before + 0.25;
+    v.volume = probe;
+    const volumeApi = Math.abs(v.volume - probe) < 0.01;
+    v.volume = before;
+    return {
+      volumeApi,
+      nativeControls: v.hasAttribute('controls'),
+      bar: shown('[data-testid="controls"]'),
+      // The slider's own switch (hidden where the page cannot set the volume), not the narrow-screen CSS.
+      volumeSlider: !document.querySelector<HTMLElement>('[data-testid="volume"]')!.hidden,
+      pipButton: !document.querySelector<HTMLElement>('[data-testid="pip"]')!.hidden,
+      pipApi: document.pictureInPictureEnabled === true || v.webkitSupportsPresentationMode?.('picture-in-picture') === true,
+      play: document.querySelector('[data-testid="play"] .pc-sr')?.textContent ?? '',
+    };
+  });
+}
+
+/** What is full screen: the player container, iOS's own player (the video alone), or nothing. */
+export function fullScreenState(phone: Phone): Promise<'player' | 'ios-player' | 'other' | null> {
+  return phone.evaluate(() => {
+    const v = document.querySelector('video') as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean };
+    const el = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ?? null;
+    if (el) return el === document.querySelector('.player') ? 'player' : 'other';
+    return v.webkitDisplayingFullscreen === true ? 'ios-player' : null;
+  });
+}
+
 /** The "Go live" button: its text and how many seconds behind the live point it says the viewer is. */
 export function goLive(phone: Phone): Promise<{ text: string; behind: number | null }> {
   return phone.evaluate(() => {

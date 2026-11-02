@@ -58,6 +58,10 @@ test.describe('theater mode', () => {
     expect(Math.round(chat.height)).toBe(720);
     // The info row is a scroll away.
     expect((await box(page, '[data-testid="info"]')).y).toBeGreaterThanOrEqual(720 - 1);
+    // The player's own controls stay over the bottom of the video.
+    const controls = await box(page, '[data-testid="controls"]');
+    expect(Math.round(controls.y + controls.height)).toBe(Math.round(player.y + player.height));
+    expect(Math.round(controls.width)).toBe(Math.round(player.width));
 
     // Act
     await page.reload();

@@ -14,25 +14,32 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o vídeo da largura da janela ao lado do chat, que ocupa todo o lado direito; embaixo do vídeo o nome de quem transmite com Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), 4 Compartilhar, e o menu Configurações aberto, com Reprodução Estável ou Menos atraso e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![A página de quem assiste no computador: o vídeo da largura da janela ao lado do chat, que ocupa todo o lado direito, com a barra de controles do player na parte de baixo (2 o menu de qualidade, Auto); embaixo do vídeo o nome de quem transmite com Ao vivo e quantos estão assistindo, 1 Ativar som, 4 Compartilhar, e o menu Configurações aberto, com Reprodução Estável ou Menos atraso e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
+Uma barra na parte de baixo do vídeo tem os botões do player. Ela é igual em todos os navegadores e some enquanto a live toca: passe o mouse sobre o vídeo, toque no vídeo ou aperte Tab para ela voltar. (Se você pediu **menos movimento** nas configurações do aparelho, ela fica sempre.) Da esquerda para a direita:
+
+- **Reproduzir / Pausar** (com o vídeo pausado, aparece também um botão grande de **Reproduzir** no meio) e **Desativar som / Ativar som** com o controle de **volume**. No celular não há o controle: use os botões de volume do aparelho.
 - **● AO VIVO / Ir para o ao vivo:** você fica de 10 a 30 segundos atrás de quem transmite, o que é normal. Ao lado, "~14 s atrás do ao vivo" mostra o seu atraso: ele se ajusta sozinho à sua conexão (mais perto do ao vivo com internet firme, mais para trás quando ela oscila, para o vídeo não travar). Se ficou mais para trás, clique em **Ir para o ao vivo**.
-- **Qualidade:** **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
+- **Qualidade** (à direita na barra): **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
 - **Só o áudio (economiza dados):** a última opção do menu de qualidade. Você ouve a live sem a imagem, e ela gasta muito menos dados: cerca de 85% menos que 360p (mais ou menos 50 a 70 MB por hora). Bom no plano de dados do celular, ou quando você só quer ouvir. No lugar do vídeo aparecem a foto e o nome de quem transmite, ou "Só o áudio". Escolha uma qualidade (ou **Auto**) para ver a imagem de novo. O navegador lembra a escolha na próxima vez.
 - **Configurações** (a engrenagem embaixo do vídeo): Reprodução, Ajudar a transmissão (P2P), o seu apelido, Atalhos de teclado e Estatísticas para nerds. Esc, um clique fora ou × fecha.
 - **Reprodução: Estável ou Menos atraso** (em **Configurações**). **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P)** (em **Configurações**): vem desligada por padrão; você pode ligar (veja abaixo).
 - **Compartilhar:** envia o link desta live para um amigo. No celular, abre o seu menu de compartilhar (WhatsApp, Mensagens…); no computador, copia o link e mostra **Link copiado**, para você colar numa mensagem. O seu amigo abre o link e escolhe um apelido, como você fez. O botão só aparece se quem transmite permitir, e some quando quem transmite gera um link novo.
 
+- **Picture-in-picture** (só onde o navegador tem, como Chrome, Edge e Safari): o vídeo numa janela pequena que fica por cima enquanto você usa outros apps ou abas.
 - **Modo cinema** (no computador): o vídeo ocupa também toda a altura da janela, com preto em volta e o chat ainda ao lado; o nome de quem transmite e o resto ficam logo abaixo, rolando a página. Clique de novo para voltar; o navegador lembra a escolha.
+- **Tela cheia:** o vídeo ocupa a tela toda, com a mesma barra (e quanto você está atrás do ao vivo) por cima. Aperte de novo, ou Esc, para voltar. **No iPhone** o navegador só deixa o próprio vídeo ir para a tela cheia: abre o player do iPhone, com os botões dele no lugar dos do SwarmCast (sem Ir para o ao vivo nem qualidade). Feche esse player e os botões da página voltam. No iPad, no Android e no computador, a barra da página continua na tela cheia.
+
+O menu de qualidade, Ir para o ao vivo e Ativar som também funcionam pelo teclado e com leitores de tela: todo botão tem nome, e o menu abre com Enter e anda com as setas.
 
 Enquanto a live toca, o celular ou o computador **mantém a tela ligada**, para ela não apagar nem bloquear no meio da transmissão (se você pausar, ela pode apagar de novo). Com o som ligado, a **tela de bloqueio** e as notificações do celular mostram o nome e a foto de quem transmite, com um botão de tocar / pausar.
 
-No celular, o vídeo fica no alto, os mesmos controles embaixo dele, e o chat ocupa o resto da tela:
+No celular, o vídeo fica no alto com a barra sobre a parte de baixo dele, os outros controles embaixo, e o chat ocupa o resto da tela:
 
-![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade, 3 Configurações, onde fica a chave Ajudar a transmissão (P2P), 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade na barra sobre o vídeo, 3 Configurações, onde fica a chave Ajudar a transmissão (P2P), 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ### Atalhos de teclado
 
@@ -42,7 +49,7 @@ No computador, dá para controlar a live pelo teclado:
 | --- | --- |
 | Espaço ou K | Reproduzir ou pausar |
 | M | Ligar ou desligar o som |
-| F | Tela cheia (Esc sai) |
+| F | Tela cheia, com os controles (Esc sai) |
 | T | Modo cinema |
 | G | Ir para o ao vivo |
 | I | Picture-in-picture (o vídeo numa janela pequena), se o seu navegador tiver |

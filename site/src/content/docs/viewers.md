@@ -14,25 +14,32 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video as wide as the window beside the chat, which runs down the whole right side; under the video the streamer's name with Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), 4 Share, and the Settings menu opened, with Playback Stable or Lower delay and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video as wide as the window beside the chat, which runs down the whole right side, with the player's control bar over its bottom (2 the quality menu, Auto); under the video the streamer's name with Live and how many are watching, 1 Unmute, 4 Share, and the Settings menu opened, with Playback Stable or Lower delay and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
+A bar along the bottom of the video has the player's buttons. It looks the same in every browser, and it fades out while the live plays: move the mouse over the video, tap the video, or press Tab to bring it back. (If you asked your device for **reduced motion**, it stays.) From left to right:
+
+- **Play / Pause** (a big **Play** button also shows in the middle while the video is paused), and **Mute / Unmute** with the **volume** slider. Phones have no slider: use the volume buttons of the phone.
 - **● LIVE / Go live:** you are 10 to 30 seconds behind the streamer, which is normal. Next to it, "~14 s behind live" shows your delay: it adjusts itself to your connection (closer to live on steady internet, further back when it wobbles, so the video does not pause). If you fell behind, click **Go live**.
-- **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
+- **Quality** (on the right of the bar): **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.
 - **Settings** (the gear under the video): Playback, Help the stream (P2P), your nickname, Keyboard shortcuts and Stats for nerds. Esc, a click outside or × closes it.
 - **Playback: Stable or Lower delay** (in **Settings**). **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P)** (in **Settings**): off by default; you can turn it on (see below).
 - **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.
 
+- **Picture-in-picture** (only where your browser has it, such as Chrome, Edge and Safari): the video in a small window that stays on top while you use other apps or tabs.
 - **Theater mode** (on a computer): the video takes the whole height of the window too, with black around it and the chat still next to it; the streamer's name and the rest are a scroll away. Click it again to go back; your browser remembers the choice.
+- **Full screen:** the video fills the screen, with the same bar (and how far behind live you are) on top of it. Press it again, or Esc, to go back. **On an iPhone** the browser only lets the video itself go full screen: the iPhone's own player opens, with its own buttons instead of SwarmCast's (no Go live or quality there). Close that player and the page's buttons are back. On an iPad, Android and computers, the page's bar stays in full screen.
+
+The quality menu, Go live and Unmute work with the keyboard and screen readers too: every button has a name, and the menu opens with Enter and moves with the arrow keys.
 
 While the live plays, your phone or computer **keeps the screen on**, so it does not dim or lock in the middle of the stream (pause and it can sleep again). With the sound on, your phone's **lock screen** and notifications show the streamer's name and picture with a play / pause button.
 
-On a phone the video is at the top, the same controls under it, and the chat fills the rest of the screen:
+On a phone the video is at the top with the bar over its bottom, the other controls under it, and the chat fills the rest of the screen:
 
-![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 Settings, where the Help the stream (P2P) switch is, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu in the bar over the video, 3 Settings, where the Help the stream (P2P) switch is, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ### Keyboard shortcuts
 
@@ -42,7 +49,7 @@ On a computer you can control the live from the keyboard:
 | --- | --- |
 | Space or K | Play or pause |
 | M | Sound on or off |
-| F | Full screen (Esc leaves it) |
+| F | Full screen, with the controls (Esc leaves it) |
 | T | Theater mode |
 | G | Go live |
 | I | Picture-in-picture (the video in a small window), where your browser has it |
