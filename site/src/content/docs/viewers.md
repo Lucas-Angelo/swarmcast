@@ -60,6 +60,7 @@ Curious about what the player is doing? **Stats for nerds**, under the video, op
 Under the video (next to it on a computer) is the live's chat. Type a message and press Enter. Everyone in the live sees your nickname and your messages; the streamer's messages have a **Streamer** badge.
 
 - **Reply** to a message with the button that shows when you point at it (tap it on a phone; from the keyboard, the arrow keys go through the messages): your answer shows a short quote of it. Type **@** to mention someone who wrote in the chat; a message that mentions you is marked for you only, without any sound (you can turn the mark off in **Chat settings**).
+- **Polls and predictions** from the streamer show above the chat messages: tap an answer to vote. Your vote is final and anonymous (one per browser), and the results show live. On a phone the poll starts folded to one line: tap it to open it. Type **/help** in the chat box for a short list of what you can do.
 - **Hide chat** hides it on this device (your choice is remembered); **Show chat** brings it back.
 - **Chat settings** lets you pick your name colour, show the times and make the text larger. Your colour is always shown readable for everyone.
 - If a message is refused, a short note says why (slow mode, muted, too long…). The streamer can delete messages and mute people.

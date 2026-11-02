@@ -34,7 +34,7 @@ permissions:
 env:
   FORCE_COLOR: '1'
   MEDIA_WITH_UI: 'adaptive-delay\.spec'
-  CHAT_FILES: '(chat|chat-flood|chat-moderation|chat-moderation-api|chat-privacy|nickname|browser-check)\.spec'
+  CHAT_FILES: '(chat|chat-flood|chat-moderation|chat-moderation-api|chat-polls|chat-privacy|nickname|browser-check)\.spec'
 
 jobs:
   e2e:

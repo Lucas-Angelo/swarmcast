@@ -159,6 +159,8 @@ export class PollCard {
     const p = next && prev?.id === next.id && next.mine === undefined && prev.mine !== undefined ? { ...next, mine: prev.mine } : next;
     const fresh = p !== null && prev?.id !== p.id;
     this.poll = p;
+    // The server's time left, when an update carries it (a new poll, a snapshot); updates without it
+    // (this device's vote) keep the countdown where it is.
     if (p?.st === 'open' && typeof p.endsIn === 'number') this.deadline = this.now() + p.endsIn;
     if (fresh || p === null) {
       this.clearPending();

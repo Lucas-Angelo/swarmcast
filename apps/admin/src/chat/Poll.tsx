@@ -183,7 +183,8 @@ export function PollCard({ poll, until, viewers }: { poll: ChatPollPublic; until
             {t('chat.poll.timeLeft', { time: clock(until - Date.now()) })}
           </span>
         )}
-        <span class="spacer" />
+      </div>
+      <div class="row tight chat-poll-actions-row">
         {poll.st === 'open' && (
           <button type="button" class="small" data-testid="chat-poll-end" disabled={busy} title={t(prediction ? 'admin.chat.poll.endGuesses.tip' : 'admin.chat.poll.end.tip')} onClick={() => void run(() => chatApi.endPoll())}>
             {t(prediction ? 'admin.chat.poll.endGuesses' : 'admin.chat.poll.end')}
@@ -199,45 +200,47 @@ export function PollCard({ poll, until, viewers }: { poll: ChatPollPublic; until
           </button>
         )}
       </div>
-      <p class="chat-poll-q">
-        {textsOk ? (
-          <bdi dir="auto" data-testid="chat-poll-question-text">
-            {poll.q}
-          </bdi>
-        ) : (
-          <span class="muted">{t('chat.poll.hidden')}</span>
+      <div class="chat-poll-body">
+        <p class="chat-poll-q">
+          {textsOk ? (
+            <bdi dir="auto" data-testid="chat-poll-question-text">
+              {poll.q}
+            </bdi>
+          ) : (
+            <span class="muted">{t('chat.poll.hidden')}</span>
+          )}
+        </p>
+        {textsOk && (
+          <ol class="chat-poll-options">
+            {poll.o.map((o, i) => (
+              <li key={i} class={`chat-poll-row${poll.st === 'resolved' && poll.win === i ? ' win' : ''}`} data-testid="chat-poll-row">
+                <span class="chat-poll-bar" aria-hidden="true" style={{ '--p': String(total > 0 ? (poll.c[i] ?? 0) / total : 0) }} />
+                <bdi class="chat-poll-text" dir="auto">
+                  {o}
+                </bdi>
+                {poll.st === 'resolved' && poll.win === i && <span class="chat-mark">{t('chat.poll.winner')}</span>}
+                <span class="chat-poll-count small" data-testid="chat-poll-count">
+                  {poll.c[i] ?? 0} · {pct[i] ?? 0}%
+                </span>
+                {poll.st === 'locked' && (
+                  <button type="button" class="small" data-testid="chat-poll-answer" disabled={busy} aria-label={t('admin.chat.poll.answer.for', { option: o })} onClick={() => void run(() => chatApi.resolvePoll(i))}>
+                    {t('admin.chat.poll.answer')}
+                  </button>
+                )}
+              </li>
+            ))}
+          </ol>
         )}
-      </p>
-      {textsOk && (
-        <ol class="chat-poll-options">
-          {poll.o.map((o, i) => (
-            <li key={i} class={`chat-poll-row${poll.st === 'resolved' && poll.win === i ? ' win' : ''}`} data-testid="chat-poll-row">
-              <span class="chat-poll-bar" aria-hidden="true" style={{ '--p': String(total > 0 ? (poll.c[i] ?? 0) / total : 0) }} />
-              <bdi class="chat-poll-text" dir="auto">
-                {o}
-              </bdi>
-              {poll.st === 'resolved' && poll.win === i && <span class="chat-mark">{t('chat.poll.winner')}</span>}
-              <span class="chat-poll-count small" data-testid="chat-poll-count">
-                {poll.c[i] ?? 0} · {pct[i] ?? 0}%
-              </span>
-              {poll.st === 'locked' && (
-                <button type="button" class="small" data-testid="chat-poll-answer" disabled={busy} aria-label={t('admin.chat.poll.answer.for', { option: o })} onClick={() => void run(() => chatApi.resolvePoll(i))}>
-                  {t('admin.chat.poll.answer')}
-                </button>
-              )}
-            </li>
-          ))}
-        </ol>
-      )}
-      <div class="muted small" data-testid="chat-poll-voters">
-        {poll.st === 'resolved' ? `${t('chat.prediction.gotIt', { count: poll.c[poll.win ?? -1] ?? 0 })} · ` : ''}
-        {t('admin.chat.poll.voters', { count: total, viewers })}
-      </div>
-      {(poll.rn ?? 0) > 0 && (
-        <div class="warn small" data-testid="chat-poll-refused">
-          {t('admin.chat.poll.refused', { count: poll.rn ?? 0 })}
+        <div class="muted small" data-testid="chat-poll-voters">
+          {poll.st === 'resolved' ? `${t('chat.prediction.gotIt', { count: poll.c[poll.win ?? -1] ?? 0 })} · ` : ''}
+          {t('admin.chat.poll.voters', { count: total, viewers })}
         </div>
-      )}
+        {(poll.rn ?? 0) > 0 && (
+          <div class="warn small" data-testid="chat-poll-refused">
+            {t('admin.chat.poll.refused', { count: poll.rn ?? 0 })}
+          </div>
+        )}
+      </div>
       {err !== null && <div class="err small">{errorText(err)}</div>}
     </section>
   );

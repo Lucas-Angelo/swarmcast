@@ -358,6 +358,63 @@ const CHAT_LINES = {
   },
 };
 
+/** The poll in the pictures of the "Chat" guide (made up, both languages). */
+const POLL_LINES = {
+  en: { question: 'Which game next Friday?', options: ['Hollow Knight', 'Stardew Valley', 'Celeste again'] },
+  'pt-BR': { question: 'Qual jogo na próxima sexta?', options: ['Hollow Knight', 'Stardew Valley', 'Celeste de novo'] },
+};
+
+/**
+ * A poll for the "Chat" guide: the streamer asks (panel API), Pedro, Alex and Maria vote from their
+ * pages (Pedro's phone shows it folded to one line: he taps it open). Then Maria's card above her
+ * messages (1 the time left, 2 the answers with the live results and her vote, 3 how many voted), the
+ * card in the panel's live chat (1 the time left, 2 the live results, 3 the votes out of the people
+ * watching, 4 End now and Cancel) and the command list (? next to Send). The poll is removed afterwards, so no
+ * later picture shows it.
+ */
+async function capturePoll(browser, lang, desktop, phone, third) {
+  if ((await desktop.getByTestId('chat').count()) === 0) return;
+  const lines = POLL_LINES[lang];
+  await adminApi('POST', '/api/chat/poll', { kind: 'poll', question: lines.question, options: lines.options, seconds: 300 });
+  for (const [page, option] of [
+    [phone, 0],
+    [third, 1],
+    [desktop, 0],
+  ]) {
+    const card = page.getByTestId('chat-poll');
+    await card.waitFor({ timeout: 15_000 });
+    if (await card.getByTestId('chat-poll-peek').isVisible()) await card.getByTestId('chat-poll-peek').click();
+    await card.getByTestId('chat-poll-option').nth(option).click();
+    await poll('the vote counted', async () => (await card.getByTestId('chat-poll-option').nth(option).getAttribute('aria-pressed')) === 'true', 15_000, 200);
+  }
+  // "3 votes" / "3 votos" (the viewer's line, and the panel's "3 votes from 3 watching").
+  const counted = (text) => /\b3 vot/.test(text ?? '');
+  const viewerCard = desktop.getByTestId('chat-poll');
+  await poll('the counts on the viewer page', async () => counted(await viewerCard.getByTestId('chat-poll-status').textContent()), 15_000, 200);
+  await desktop.mouse.move(0, 0);
+  await guideShot(desktop, viewerCard, 'live', lang, 'chat-poll-viewer', {
+    pad: 12,
+    callouts: [viewerCard.getByTestId('chat-poll-time'), viewerCard.locator('.poll-options'), viewerCard.getByTestId('chat-poll-status')],
+  });
+
+  const ctx = await browser.newContext({ ...APP_WINDOW, locale: lang });
+  const panel = await openPanel(ctx);
+  const live = panel.getByTestId('chat-live');
+  const card = live.getByTestId('chat-poll');
+  await card.waitFor({ timeout: 15_000 });
+  await poll('the counts in the panel', async () => counted(await card.getByTestId('chat-poll-voters').textContent()), 15_000, 200);
+  await guideShot(panel, card, 'live', lang, 'chat-poll-panel', {
+    pad: 12,
+    callouts: [card.getByTestId('chat-poll-time'), card.locator('.chat-poll-options'), card.getByTestId('chat-poll-voters'), [card.getByTestId('chat-poll-end'), card.getByTestId('chat-poll-cancel')]],
+  });
+  await live.getByTestId('chat-cmd-help-button').click();
+  const help = live.getByTestId('chat-cmd-help');
+  await help.waitFor({ timeout: 5_000 });
+  await guideShot(panel, help, 'live', lang, 'chat-commands', { pad: 12 });
+  await adminApi('POST', '/api/chat/poll/cancel', {});
+  await ctx.close();
+}
+
 /**
  * A short, made-up conversation (streamer and the three viewers), before any panel picture: the
  * live chat is on the panel's main screen during a live. Alex replies to Maria and mentions her
@@ -870,6 +927,7 @@ async function captureLocale(browser, lang) {
     await guideShot(desktop.page, desktop.page.getByTestId('chat-settings'), 'live', lang, 'chat-viewer-settings', { pad: 12 });
     await desktop.page.keyboard.press('Escape');
     await desktop.page.getByTestId('chat-input').fill('');
+    await capturePoll(browser, lang, desktop.page, phone.page, third.page);
   }
 
   // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,

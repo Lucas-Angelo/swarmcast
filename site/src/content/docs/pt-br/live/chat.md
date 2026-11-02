@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: 'Converse com quem assiste embaixo do vídeo: respostas, @menções, destacar e fixar, e um chat tranquilo com apagar, silenciar, modo lento e proteção contra flood.'
+description: 'Converse com quem assiste embaixo do vídeo: enquetes, palpites, respostas, @menções, fixar e atalhos, com apagar, silenciar, modo lento e proteção contra flood.'
 ---
 
 A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e responde no **Chat ao vivo** do painel, e todo mundo vê as mensagens em menos de um segundo. Ele vem **ligado por padrão**: não precisa configurar nada.
@@ -60,6 +60,54 @@ Só você destaca e fixa. Um espectador que escreve "📌 Fixada" numa mensagem 
 
 Para ninguém conseguir perseguir uma pessoa com menções, o SwarmCast conta quantas vezes alguém menciona os outros e quantas vezes uma pessoa é mencionada. Passando disso, a mensagem aparece do mesmo jeito, só sem a marca. Nomes parecidos (um "А" cirílico no lugar do "A", por exemplo) nunca mencionam ninguém. Quem não quiser a marca pode desligar **Destacar mensagens que me mencionam** nas configurações do chat.
 
+## Enquetes e palpites
+
+Faça uma pergunta para todo mundo que está assistindo. Clique em **Enquete** embaixo da sua caixa de mensagem no Chat ao vivo:
+
+1. Escolha **Enquete** (as pessoas votam e veem o resultado) ou **Palpite** (as pessoas chutam, e você diz a resposta certa quando os palpites terminam).
+2. Escreva a pergunta e de 2 a 5 respostas (**+ Adicionar opção**), e escolha quanto tempo as pessoas têm para votar: de 30 segundos a 10 minutos.
+3. Clique em **Começar**.
+
+![Uma enquete no Chat ao vivo: 1 o tempo que falta, 2 o resultado ao vivo de cada resposta, 3 quantos votaram de quantos estão assistindo, 4 Encerrar agora e Cancelar.](../../../../assets/guides/live/pt-br/chat-poll-panel.webp)
+
+- Quem assiste vê a enquete acima das mensagens do chat e toca numa resposta. **O resultado aparece ao vivo** enquanto as pessoas votam, para todo mundo.
+- Quando o tempo acaba, ou quando você clica em **Encerrar agora**, a enquete mostra o resultado por um minuto e depois sai (**Remover** tira na hora). **Cancelar** remove sem resultado.
+- Um **palpite** para de receber chutes no fim (**Encerrar palpites**). Depois clique em **Resposta certa** ao lado da certa: todo mundo vê a resposta, com quantas pessoas acertaram, e cada pessoa vê se acertou. Só aparecem números, nunca nomes.
+- **Uma de cada vez.** Abra a próxima quando a anterior terminar.
+
+Como os votos contam:
+
+- **Um voto por navegador, definitivo e anônimo.** Outras abas ou janelas do mesmo navegador não votam de novo, e não dá para mudar o voto. Ninguém, nem você, vê quem votou em quê.
+- **No máximo 10 votos por conexão de internet.** Uma casa inteira ou um escritório ainda votam, mas quem abre um monte de janelas anônimas não consegue encher a enquete. A enquete mostra quantos votos não contaram por isso.
+- **Só quem já está assistindo** (ligado por padrão nos palpites, uma marcação no formulário): quem chega depois que começou não vota, então uma visita nova feita só para votar de novo não conta. Também liga sozinho enquanto a **Proteção contra flood** está ligada.
+- Quem está **silenciado** não vota. Expulsar alguém tira o voto da pessoa. **Limpar chat** não mexe na enquete; **Desligar tudo** remove.
+
+Não tem pontos nem prêmios: a enquete é só um jeito divertido de perguntar ao chat.
+
+![A enquete na página de quem assiste, acima das mensagens: 1 o tempo que falta, 2 cada resposta com o resultado ao vivo (o voto da pessoa marcado), 3 quantos votaram.](../../../../assets/guides/live/pt-br/chat-poll-viewer.webp)
+
+## Atalhos: digite / na caixa
+
+A caixa do Chat ao vivo também aceita comandos curtos. Digite **/** e aparece uma lista dos que combinam, com o jeito de escrever cada um; o **?** ao lado de **Enviar** mostra todos. Os nomes em português e em inglês funcionam, com ou sem acento. Os botões continuam: o comando é só um jeito mais rápido.
+
+| Comando | O que faz |
+|---|---|
+| `/enquete 2m Pizza ou hambúrguer? \| Pizza \| Hambúrguer` | Abre uma enquete: um tempo opcional primeiro (`30s`, `2m`), depois a pergunta e de 2 a 5 respostas separadas por **\|**. `/enquete` sozinho abre o formulário |
+| `/palpite Quem ganha? \| Azul \| Verde` | O mesmo para um palpite |
+| `/encerrar`, `/resposta 2`, `/cancelar` | Encerra a votação, dá a resposta certa de um palpite (o número dela), remove a enquete |
+| `/fixar Bem-vindos!` | Manda a mensagem e fixa. `/fixar` sozinho fixa a mensagem que você está respondendo. `/desafixar` tira |
+| `/lento 10`, `/lento desligar` | Modo lento: segundos entre duas mensagens da mesma pessoa |
+| `/silenciar Ana 10`, `/silenciar Ana live`, `/dessilenciar Ana` | Silencia alguém que está assistindo (10 minutos se você não disser o tempo; **live**: até o fim da transmissão). Duas pessoas com nomes parecidos: inclua a etiqueta que a lista mostra, como `Ana#K3QF` |
+| `/proteger lento`, `/proteger bloqueio`, `/proteger desligado` | Proteção contra flood na mão |
+| `/limpar` | Limpa o chat, depois de perguntar |
+| `/ajuda` | A lista de comandos |
+
+A resposta aparece embaixo da caixa ("Enquete aberta.", ou o que corrigir). Uma linha que não começa com o nome de um comando vai como mensagem normal; para mandar uma mensagem que começa com "/", digite duas vezes: `//assim`.
+
+![A lista de comandos, aberta pelo ? ao lado de Enviar: cada um com o jeito de escrever, no seu idioma e no outro.](../../../../assets/guides/live/pt-br/chat-commands.webp)
+
+Quem assiste também pode digitar **/ajuda**: aparece uma lista curta do que dá para fazer no chat, só na tela da pessoa. Nada que ela digite como comando chega ao chat, então ninguém consegue fingir que abriu uma enquete.
+
 ## Proteção contra flood
 
 Quando o chat fica movimentado demais para o tamanho da sua audiência, ou alguém inunda o chat, o SwarmCast protege **sozinho** (**Proteção automática contra flood**, ligada por padrão):
@@ -103,6 +151,7 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat (1). A
 - **Mensagens destacadas** com uma barra colorida (6), legíveis no tema claro e no escuro.
 - **Respostas** com um trecho curto da mensagem respondida; um clique no trecho leva até ela enquanto ainda está no chat. Uma mensagem que **menciona a pessoa** tem uma barra cor de mel e o nome dela marcado (7); com o chat oculto, **Mostrar chat** conta essas menções.
 - **Responder** em cada mensagem (apontando para ela, tocando nela no celular ou com as setas a partir do chat) e **@** na caixa de mensagem para mencionar alguém que escreveu.
+- **Enquetes e palpites** acima das mensagens, com o resultado ao vivo e o próprio voto. No celular a enquete começa recolhida numa linha, para o chat não perder espaço: um toque abre. Com o chat oculto, **Mostrar chat** diz **Enquete**.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
 - **Configurações do chat** para a cor do próprio nome, horários, **Destacar mensagens que me mencionam** e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
 

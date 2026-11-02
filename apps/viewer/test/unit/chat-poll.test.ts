@@ -204,6 +204,18 @@ describe('poll card', () => {
     expect(q('[data-testid="chat-poll-time"]').hidden).toBe(true);
   });
 
+  it('this device\'s vote (an update without the time left) keeps the countdown where it is', () => {
+    // Arrange
+    const { card, advance, q } = makeCard();
+    card.set({ ...POLL, endsIn: 61_500 });
+    advance(30_000);
+    // Act
+    const { endsIn: _e, ...noTime } = POLL;
+    card.set({ ...noTime, c: [1, 0], mine: 0 });
+    // Assert
+    expect(q('[data-testid="chat-poll-time"]').textContent).toBe('0:32 left');
+  });
+
   it('the countdown follows the clock while open', () => {
     // Arrange
     const { card, advance, q } = makeCard();

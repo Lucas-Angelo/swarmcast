@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: 'Talk with your viewers under the video: replies, @mentions, highlight and pin, and a friendly chat with delete, mute, slow mode and flood protection.'
+description: 'Talk with your viewers under the video: polls, predictions, replies, @mentions, pins and shortcuts, with delete, mute, slow mode and flood protection.'
 ---
 
 Your live has a chat. Viewers write under the video, you read and answer in the panel's **Live chat**, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
@@ -60,6 +60,54 @@ Only you can highlight or pin. A viewer who types "📌 Pinned" in a message onl
 
 So nobody can harass one person with mentions, SwarmCast counts how often someone mentions people, and how often one person gets mentioned. Past that, the message still shows, just without the mark. Look-alike names (a Cyrillic "А" instead of "A", say) never mention anybody. Viewers who do not want the mark can turn off **Highlight messages that mention me** in their chat settings.
 
+## Polls and predictions
+
+Ask everyone watching a question. Click **Poll** under your message box in the Live chat:
+
+1. Choose **Poll** (people vote and see the results) or **Prediction** (people guess, and you say the right answer when the guesses end).
+2. Type the question and 2 to 5 answers (**+ Add an option**), and choose how long people have to vote: 30 seconds to 10 minutes.
+3. Click **Start**.
+
+![A poll in the Live chat: 1 the time left, 2 the live results of each answer, 3 how many voted out of how many are watching, 4 End now and Cancel.](../../../assets/guides/live/en/chat-poll-panel.webp)
+
+- Viewers see it above the chat messages and tap an answer. **The results show live** while people vote, for everyone.
+- When the time is up, or when you click **End now**, a poll shows its results for a minute and then goes away (**Remove** takes it away at once). **Cancel** removes it without results.
+- A **prediction** stops taking guesses at the end (**End guesses**). Then click **Right answer** next to the right one: everyone sees it, with how many people got it right, and each viewer sees whether they did. Only counts are shown, never names.
+- **One at a time.** Start the next one when the last one has ended.
+
+How votes are counted:
+
+- **One vote per browser, final and anonymous.** Other tabs or windows of the same browser do not vote again, and a vote cannot be changed. Nobody, you included, sees who voted for what.
+- **At most 10 votes from one internet connection.** A whole house or an office can still vote, but someone opening lots of private windows cannot stuff the poll. The poll tells you how many votes were not counted for that reason.
+- **Only people already watching** (on by default for predictions, a tick in the form): people who arrive after it started cannot vote, so a new visit made just to vote again does not count. It is also on by itself while **Flood protection** is on.
+- **Muted** people cannot vote. Kicking someone takes their vote out. **Clear chat** does not touch the poll; **Stop everything** removes it.
+
+There are no points or prizes: a poll is just a friendly way to ask the chat.
+
+![The poll on the viewer page, above the messages: 1 the time left, 2 each answer with its live result (their vote marked), 3 how many voted.](../../../assets/guides/live/en/chat-poll-viewer.webp)
+
+## Shortcuts: type / in the box
+
+The Live chat box also takes short commands. Type **/** and a list of the matching ones shows, with how to write each one; **?** next to **Send** lists them all. English and Portuguese names both work, with or without accents. The buttons stay: a command is only a faster way.
+
+| Command | What it does |
+|---|---|
+| `/poll 2m Pizza or burger? \| Pizza \| Burger` | Starts a poll: an optional time first (`30s`, `2m`), then the question and 2 to 5 answers separated by **\|**. `/poll` alone opens the form |
+| `/prediction Who wins? \| Blue \| Green` | The same for a prediction |
+| `/end`, `/answer 2`, `/cancel` | Ends the voting, gives the right answer of a prediction (its number), removes the poll |
+| `/pin Welcome!` | Sends the message and pins it. `/pin` alone pins the message you are replying to. `/unpin` takes it down |
+| `/slow 10`, `/slow off` | Slow mode: seconds between two messages from one viewer |
+| `/mute Ana 10`, `/mute Ana live`, `/unmute Ana` | Mutes someone watching (10 minutes if you leave the time out; **live**: until the stream ends). Two people with look-alike names: add the tag the list shows, like `Ana#K3QF` |
+| `/protect slow`, `/protect lockdown`, `/protect off` | Flood protection by hand |
+| `/clear` | Clears the chat, after asking you first |
+| `/help` | The list of commands |
+
+The answer shows under the box ("Poll started.", or what to fix). A line that does not start with a command name is sent as a normal message; to send a message that starts with "/", type it twice: `//like this`.
+
+![The list of commands, opened with ? next to Send: each one with how to write it, in your language and the other one.](../../../assets/guides/live/en/chat-commands.webp)
+
+Viewers can type **/help** too: they get a short list of what they can do in the chat, on their own screen. Nothing they type as a command reaches the chat, so nobody can make it look like they started a poll.
+
 ## Flood protection
 
 When the chat gets too busy for your audience, or someone floods it, SwarmCast protects it **by itself** (**Automatic flood protection**, on by default):
@@ -103,6 +151,7 @@ To turn the chat off for everyone, use the switch at the top of the Chat card (1
 - **Highlighted messages** with a coloured bar (6), readable in light and dark themes.
 - **Replies** with a short quote of the message they answer; a click on the quote jumps to it while it is still in the chat. A message that **mentions them** has a honey-coloured bar and their name marked (7); while the chat is hidden, **Show chat** counts those mentions.
 - **Reply** on each message (pointing at it, tapping it on a phone, or with the arrow keys from the chat) and **@** in the message box to mention someone who wrote.
+- **Polls and predictions** above the messages, with the live results and their own vote. On a phone the poll starts folded to one line, so the chat keeps its room: a tap opens it. While the chat is hidden, **Show chat** says **Poll**.
 - **Hide chat** hides it on that device (remembered); **Show chat** brings it back.
 - **Chat settings** for their own name colour, times, **Highlight messages that mention me** and text size. SwarmCast keeps every colour readable on light and dark screens.
 

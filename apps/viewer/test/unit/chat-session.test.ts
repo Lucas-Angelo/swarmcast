@@ -600,10 +600,13 @@ describe('ChatSession: polls and predictions', () => {
     const { session, calls } = setup({ poll: POLL });
     // Act
     session.frame({ t: 'chat.voted', id: 'p1', o: 1, c: [0, 1] });
+    const afterVote = session.poll;
     session.frame({ t: 'chat.voted', n: 5, id: 'p9', o: 0, c: [1, 0] });
     session.frame(batch({ k: 'poll', p: { ...POLL, st: 'closed', c: [2, 1] } }));
     // Assert
     expect(calls.filter((c) => c.startsWith('poll') || c.startsWith('voted'))).toEqual(['poll p1 open 0,0', 'poll p1 open 0,1 mine 1', 'voted undefined p1 1', 'poll p1 closed 2,1 mine 1']);
+    // The vote carries no time left (the page keeps counting down from when the poll came).
+    expect(afterVote).not.toHaveProperty('endsIn');
   });
 
   it('a new poll forgets the vote of the last one; a reconnect delta brings the poll too', () => {

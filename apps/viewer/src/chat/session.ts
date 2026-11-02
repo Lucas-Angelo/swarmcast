@@ -176,7 +176,9 @@ export class ChatSession {
       case 'chat.voted': {
         const p = this.poll;
         if (!p || msg.id !== p.id || !Number.isInteger(msg.o) || msg.o < 0 || msg.o >= p.o.length) break;
-        this.poll = { ...p, mine: msg.o, ...(isCounts(msg.c, p.o.length) ? { c: msg.c } : {}) };
+        // Without `endsIn`: the time left came with the poll, and the page counts down from then on.
+        const { endsIn: _endsIn, ...rest } = p;
+        this.poll = { ...rest, mine: msg.o, ...(isCounts(msg.c, p.o.length) ? { c: msg.c } : {}) };
         this.view.poll?.(this.poll);
         this.view.voted?.(typeof msg.n === 'number' ? msg.n : undefined, p.id, msg.o);
         break;
