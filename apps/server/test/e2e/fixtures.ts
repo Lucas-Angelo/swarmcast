@@ -433,6 +433,39 @@ export async function unmute(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.querySelector('video')!.muted)).toBe(false);
 }
 
+/**
+ * The quality menu in the player's control bar (viewer quality-menu.ts, a WAI-ARIA menu button):
+ * its entries (`[role=menuitemradio]`, readable while the menu is closed), the one in use, and a
+ * pick made as a viewer makes it (open the menu, click the entry; the menu closes).
+ */
+export const qualityMenu = {
+  button: (page: Page): Locator => page.getByTestId('quality'),
+  entries: (page: Page): Locator => page.locator('[data-testid="quality-menu"] [role="menuitemradio"]'),
+  checked: (page: Page): Locator => page.locator('[data-testid="quality-menu"] [role="menuitemradio"][aria-checked="true"]'),
+  async pick(page: Page, label: string): Promise<void> {
+    await qualityMenu.button(page).click();
+    await page.getByTestId('quality-menu').getByRole('menuitemradio', { name: label, exact: true }).click();
+    await expect(page.getByTestId('quality-menu')).toBeHidden();
+  },
+};
+
+/**
+ * Records in the page, from its first script on, every refusal of its Content Security Policy
+ * (`securitypolicyviolation`: directive, blocked URI, source line). Add it to the context before
+ * the page loads (`setup: (c) => c.addInitScript(recordCsp)`); read it with cspViolations().
+ * Playwright's own screenshots inject a style element WebKit's CSP refuses: no screenshot before
+ * reading it.
+ */
+export const recordCsp = (): void => {
+  const w = window as unknown as { __cspViolations: string[] };
+  w.__cspViolations = [];
+  document.addEventListener('securitypolicyviolation', (e) => {
+    w.__cspViolations.push(`${e.effectiveDirective} ${e.blockedURI} ${e.sourceFile}:${e.lineNumber}`);
+  });
+};
+
+export const cspViolations = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __cspViolations?: string[] }).__cspViolations ?? ['recordCsp was not installed']);
+
 export async function currentTime(page: Page): Promise<number> {
   return page.evaluate(() => document.querySelector('video')!.currentTime);
 }
