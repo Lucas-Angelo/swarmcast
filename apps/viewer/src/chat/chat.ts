@@ -3,7 +3,7 @@
 // and wires the session (protocol state), the list, the input, the picker and the settings.
 import './chat.css';
 import { t } from '@swarmcast/shared/i18n';
-import { GIF_KEY_RE, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+import { cutQuote, GIF_KEY_RE, mentionKeys, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { GifConfig } from './gif-api.js';
 import { createGifPicker } from './gif-picker.js';
 import { backgroundOf, onThemeChange, NameColors, tokenColorAt } from './color-ui.js';
@@ -12,8 +12,8 @@ import { loadEmojiData } from './emoji-load.js';
 import { ChatInput } from './input.js';
 import { createPicker, type EmojiData } from './picker.js';
 import { animateGifs, loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
-import { ChatList, GIF_PROVIDER_NAMES } from './render.js';
-import { ChatSession, type ClientFrame } from './session.js';
+import { ChatList, GIF_PROVIDER_NAMES, mentionCandidates, type MessageEntry } from './render.js';
+import { ChatSession, type ChatEntry, type ClientFrame, type ReplyEntry } from './session.js';
 import { createSettingsPopover } from './settings-popover.js';
 
 export interface MountOptions {
@@ -39,6 +39,16 @@ function nonce(): number {
   const a = new Uint32Array(1);
   crypto.getRandomValues(a);
   return ((a[0] ?? 1) % 0x7ffffffe) + 1;
+}
+
+/** Authors remembered for the @ list (only people whose messages this page got: never everyone watching). */
+const MENTIONABLE_MAX = 500;
+
+/** What a reply shows of the message it answers, cut as the server will cut it. */
+function replyTo(e: MessageEntry): ReplyEntry {
+  if (e.gif) return { s: e.s, author: e.author, gif: true };
+  const { q, cut } = cutQuote(e.text ?? '');
+  return { s: e.s, author: e.author, ...(q ? { quote: q } : {}), ...(cut ? { cut } : {}) };
 }
 
 const button = (cls: string, label: string, text: string): HTMLButtonElement => {
@@ -92,22 +102,48 @@ export function mountChat(opts: MountOptions): ChatController {
     visible,
     gifs: () => ({ consented: prefs.gifs, animate: animateGifs(prefs) }),
     onGifConsent: () => consentGifs(),
+    onReply: (e) => input.setReply(replyTo(e)),
+    me: () => session?.you?.a ?? null,
   });
+
+  /** Authors of the messages this page got, oldest first (the @ list shows the newest first). */
+  const writers = new Map<string, true>();
+  const noteWriters = (entries: readonly ChatEntry[]): void => {
+    for (const e of entries) {
+      if (e.kind !== 'msg') continue;
+      writers.delete(e.author.a);
+      writers.set(e.author.a, true);
+    }
+    while (writers.size > MENTIONABLE_MAX) writers.delete(writers.keys().next().value as string);
+  };
+  /** The people the @ list may offer: who wrote, newest first, never this viewer. */
+  const mentionable = (): ChatAuthor[] => {
+    const me = session?.you?.a;
+    const out: ChatAuthor[] = [];
+    for (const a of [...writers.keys()].reverse()) {
+      const au = session?.roster.get(a);
+      if (au && a !== me) out.push(au);
+    }
+    return out;
+  };
 
   let connected = false;
   const input = new ChatInput({
     settings: () => session?.settings ?? null,
     you: () => session?.you ?? null,
     connected: () => connected,
-    send: (text) => {
+    send: (text, reply) => {
       const you = session?.you;
       if (!session || !you) return null;
       const n = nonce();
-      if (!session.send({ t: 'chat.send', n, text })) return null;
+      // The people this text mentions, by author key; the server checks every one of them again.
+      const mn = mentionKeys(text, mentionCandidates(mentionable()), you.a);
+      if (!session.send({ t: 'chat.send', n, text, ...(reply ? { re: reply.s } : {}), ...(mn.length ? { mn } : {}) })) return null;
       const me: ChatAuthor = session.roster.get(you.a) ?? { a: you.a, n: opts.nickname, c: you.color, r: 'viewer' };
-      list.addPending(n, text, me);
+      list.addPending(n, text, me, undefined, reply ?? undefined);
       return n;
     },
+    mentionable,
   });
 
   const pickerButton = document.createElement('button');
@@ -134,9 +170,11 @@ export function mountChat(opts: MountOptions): ChatController {
     const author = me();
     if (!session || !author) return;
     const n = nonce();
-    if (!session.send({ t: 'chat.send', n, gif })) return;
+    const reply = input.replyingTo;
+    if (!session.send({ t: 'chat.send', n, gif, ...(reply ? { re: reply.s } : {}) })) return;
     input.noteSent(n);
-    list.addPending(n, '', author, gif);
+    input.setReply(null, false);
+    list.addPending(n, '', author, gif, reply ?? undefined);
   };
   const consentGifs = (): void => {
     prefs = savePrefs({ gifs: true });
@@ -177,6 +215,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
+    list.setMentionHighlight(prefs.mentions);
     root.classList.toggle('times', prefs.times);
     const hidden = prefs.hidden;
     document.body.classList.toggle('chat-hidden', hidden);
@@ -211,10 +250,23 @@ export function mountChat(opts: MountOptions): ChatController {
 
   const chatSession: ChatSession = new ChatSession(
     {
-      reset: (entries) => list.reset(entries),
-      append: (entries) => list.append(entries),
-      remove: (seqs) => list.remove(seqs),
-      clearUpTo: (s) => list.clearUpTo(s),
+      reset: (entries) => {
+        writers.clear();
+        noteWriters(entries);
+        list.reset(entries);
+      },
+      append: (entries) => {
+        noteWriters(entries);
+        list.append(entries);
+      },
+      remove: (seqs) => {
+        input.dropReply((s) => seqs.includes(s));
+        list.remove(seqs);
+      },
+      clearUpTo: (s) => {
+        input.dropReply((r) => r <= s);
+        list.clearUpTo(s);
+      },
       highlight: (s, on) => list.highlight(s, on),
       pin: (p) => list.setPin(p),
       author: (a) => {
@@ -262,6 +314,7 @@ export function mountChat(opts: MountOptions): ChatController {
   showButton.addEventListener('click', () => {
     prefs = savePrefs({ hidden: false });
     unseen = 0;
+    mentionsUnseen = 0;
     pinUnseen = false;
     updateShowLabel();
     applyPrefs();
@@ -270,6 +323,8 @@ export function mountChat(opts: MountOptions): ChatController {
   });
   list.onUnread = () => updateShowLabel();
   let unseen = 0;
+  /** Messages that mention this viewer, come while the chat was hidden (no sound: only this count). */
+  let mentionsUnseen = 0;
   /** A new pin came while the chat was hidden: "Show chat" says so until the chat is shown. */
   let pinUnseen = false;
   list.onPin = (p, fresh) => {
@@ -284,6 +339,13 @@ export function mountChat(opts: MountOptions): ChatController {
       badge.className = 'chat-unread';
       badge.dataset.testid = 'chat-show-pinned';
       badge.textContent = t('chat.viewer.pinned.badge');
+      showButton.append(' ', badge);
+    }
+    if (prefs.hidden && mentionsUnseen > 0 && prefs.mentions) {
+      const badge = document.createElement('span');
+      badge.className = 'chat-unread';
+      badge.dataset.testid = 'chat-show-mentions';
+      badge.textContent = t('chat.viewer.mentions', { count: mentionsUnseen > 99 ? 99 : mentionsUnseen });
       showButton.append(' ', badge);
     }
     if (prefs.hidden && unseen > 0) {
@@ -312,7 +374,9 @@ export function mountChat(opts: MountOptions): ChatController {
     lastSeq: () => chatSession.lastSeq,
     frame: (msg) => {
       if (msg.t === 'chat.batch' && prefs.hidden) {
+        const me = chatSession.you?.a;
         unseen += msg.items.filter((i) => i.k === 'm').length;
+        mentionsUnseen += msg.items.filter((i) => i.k === 'm' && me !== undefined && Array.isArray(i.mn) && i.mn.includes(me)).length;
         updateShowLabel();
       }
       chatSession.frame(msg);

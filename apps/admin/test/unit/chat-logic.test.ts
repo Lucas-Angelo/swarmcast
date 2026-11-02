@@ -9,6 +9,9 @@ import {
   draftLength,
   feedBackground,
   isMuted,
+  mentionableAuthors,
+  mentionCandidates,
+  messageParts,
   messageTokens,
   mutedText,
   parseBlockedWords,
@@ -16,7 +19,9 @@ import {
   presetNeedsGifs,
   presetOf,
   readableName,
+  replyPreview,
   sameSettings,
+  streamerKey,
   systemText,
 } from '../../src/chat/logic.js';
 
@@ -229,5 +234,46 @@ describe('pin choices', () => {
     expect(PIN_CHOICES.every((c) => c.minutes === null || (c.minutes >= 1 && c.minutes <= CHAT_PIN_MAX_MIN))).toBe(true);
     expect(en).toEqual(['Until I unpin it', 'For 5 min', 'For 15 min', 'For 1 hour']);
     expect(pt).toEqual(['Até eu desafixar', 'Por 5 min', 'Por 15 min', 'Por 1 hora']);
+  });
+});
+
+describe('replies and mentions in the panel (docs/CHAT.md "Replies and mentions")', () => {
+  const ana = { a: 'k1', n: 'Ana', c: '#e5484d', r: 'viewer' as const, tag: 'abcd' };
+  const bia = { a: 'k2', n: 'Bia', c: '#46a758', r: 'viewer' as const };
+  const lu = { a: 'k0', n: '', c: '#12a594', r: 'streamer' as const };
+  const roster = new Map([ana, bia, lu].map((p) => [p.a, p]));
+  const m = (s: number, a: string, x = 'oi') => ({ k: 'm' as const, s, at: s, a, x });
+
+  it('the @ list offers the people who wrote, newest first, never the streamer; the streamer key comes from the role', () => {
+    // Act
+    const people = mentionableAuthors([m(1, 'k1'), m(2, 'k2'), m(3, 'k0'), m(4, 'k1'), { k: 'sys', s: 5, at: 5, code: 'chat.sys.cleared' }], roster);
+
+    // Assert
+    expect(people.map((p) => p.n)).toEqual(['Ana', 'Bia']);
+    expect(streamerKey(roster)).toBe('k0');
+    expect(streamerKey(new Map([[ana.a, ana]]))).toBeUndefined();
+  });
+
+  it('the reply box previews the quote the server will cut (or a GIF)', () => {
+    // Act
+    const short = replyPreview({ x: 'qual a música?' });
+    const long = replyPreview({ x: 'a'.repeat(50) });
+    const gif = replyPreview({ g: { p: 'klipy', id: 'x', w: 20, h: 20, m: '/ii/a' } });
+
+    // Assert
+    expect(short).toEqual({ text: 'qual a música?', gif: false });
+    expect(long).toEqual({ text: `${'a'.repeat(40)}…`, gif: false });
+    expect(gif).toEqual({ text: '', gif: true });
+  });
+
+  it('a message in parts: plain tokens and the "@Name" of each person it mentions; unsafe text gives null', () => {
+    // Act
+    const parts = messageParts('oi @Ana e @Streamer :love:', [ana, lu]);
+    const unsafe = messageParts('a\u{202E}b', [ana]);
+
+    // Assert
+    expect(parts?.map((p) => (p.mention ? `[${p.mention}]` : p.tokens.map((t) => (t.k === 'e' ? `:${t.code}:` : t.v)).join('')))).toEqual(['oi ', '[k1]', ' e ', '[k0]', ' :love:']);
+    expect(unsafe).toBeNull();
+    expect(mentionCandidates([lu]).map((c) => c.n)).toEqual(['Streamer', 'Transmissão']);
   });
 });

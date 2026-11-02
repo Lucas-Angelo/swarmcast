@@ -2,14 +2,17 @@
 // ("sending…" until the server's copy), slow mode waiting on the client and a server reject
 // translated with the text kept (EN and pt-BR), "hide chat" remembered across a reload, a chosen
 // name colour that reaches every viewer readable on both themes (set through the CSSOM, under the
-// real CSP), the streamer's badge, links never clickable, and still one WebSocket per viewer.
+// real CSP), the streamer's badge, links never clickable, still one WebSocket per viewer, and
+// replies and @mentions between real pages (the quote, the @ list of people who wrote, the mark for
+// the mentioned viewer only, the quote wiped when the original is deleted).
 // The same UI flows run without a server in apps/viewer/test/chat/chat-ui.spec.ts (mock hub);
 // panel-side moderation is chat-moderation.spec.ts and chat-moderation-api.spec.ts.
 //
 // Chat history outlives a test (and the other browsers' runs): every text is unique (uid). Slow
 // mode is 2 s by default: after a send, Send waits and says so while the box keeps working.
 import type { Page } from '@playwright/test';
-import { admin, chatMessage, chatReady, expect, say, test, uid, webSockets } from './fixtures.js';
+import type { ChatMessageItem } from '@swarmcast/shared';
+import { admin, adminApi, chatMessage, chatReady, expect, FAST_CHAT, say, sees, test, uid, webSockets } from './fixtures.js';
 
 /** WCAG contrast of a chat nickname against the chat list's background, as the page renders them. */
 function nickContrast(page: Page, text: string): Promise<number> {
@@ -141,4 +144,55 @@ test('the chat adds no WebSocket: still one socket per viewer', { tag: '@ui' }, 
 
   // Assert
   expect(new Set(sockets)).toEqual(new Set(['/control']));
+});
+
+test('a reply with a mention between real pages: the quote for everyone, the mark for the mentioned viewer only; deleting the original wipes the quote', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const a = await viewers.join(uid('repA'));
+  const b = await viewers.join(uid('repB'));
+  const c = await viewers.join(uid('repC'));
+  await chatReady(a.page, b.page, c.page);
+  const question = `qual a música? ${uid('q')}`;
+  await say(a.page, question);
+  await sees(b.page, question);
+  await sees(c.page, question);
+  const answer = `é a do começo ${uid('r')}`;
+
+  // Act: B replies from the row's Reply button and mentions A from the @ list.
+  const asked = chatMessage(b.page, question);
+  await asked.hover();
+  await asked.getByTestId('chat-reply').click();
+  await expect(b.page.getByTestId('chat-replying')).toContainText(a.nickname);
+  await b.page.getByTestId('chat-input').pressSequentially(`@${a.nickname.slice(0, 4)}`);
+  await expect(b.page.getByTestId('chat-mention-option').filter({ hasText: a.nickname })).toBeVisible();
+  await b.page.getByTestId('chat-mention-option').filter({ hasText: a.nickname }).click();
+  await expect(b.page.getByTestId('chat-input')).toHaveValue(`@${a.nickname} `);
+  await say(b.page, `@${a.nickname} ${answer}`, answer);
+
+  // Assert
+  for (const p of [a.page, b.page, c.page]) {
+    await sees(p, answer);
+    await expect(chatMessage(p, answer).getByTestId('chat-reply-quote')).toContainText(question);
+    await expect(chatMessage(p, answer).getByTestId('chat-reply-quote')).toContainText(a.nickname);
+    await expect(chatMessage(p, answer).locator('.mention')).toHaveText(`@${a.nickname}`);
+  }
+  await expect(chatMessage(a.page, answer)).toHaveClass(/mentions-me/);
+  await expect(chatMessage(a.page, answer).locator('.mention.me')).toHaveCount(1);
+  await expect(chatMessage(b.page, answer)).not.toHaveClass(/mentions-me/);
+  await expect(chatMessage(c.page, answer)).not.toHaveClass(/mentions-me/);
+
+  // Act
+  const seq = (await adminApi<{ items: ChatMessageItem[] }>('GET', '/api/chat')).items.find((i) => i.k === 'm' && i.x === question)!.s;
+  await admin('/api/chat/delete', { seqs: [seq] });
+
+  // Assert
+  for (const p of [a.page, b.page, c.page]) {
+    await expect(chatMessage(p, question)).toHaveCount(0, { timeout: 5_000 });
+    await expect(chatMessage(p, answer).getByTestId('chat-reply-quote')).toContainText('Original message deleted');
+  }
+  const d = await viewers.join(uid('repD'));
+  await chatReady(d.page);
+  await expect(chatMessage(d.page, answer).getByTestId('chat-reply-quote')).toContainText('Original message deleted');
+  await expect(d.page.getByTestId('chat-list')).not.toContainText(question);
 });

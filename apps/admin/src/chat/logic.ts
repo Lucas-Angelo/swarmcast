@@ -8,17 +8,23 @@ import {
   CHAT_BLOCKED_WORDS_MAX,
   checkChatInvariants,
   countGraphemes,
+  cutQuote,
+  findMentionSpans,
   tokenizeChat,
+  type ChatAuthor,
   type ChatCounters,
+  type ChatMessageItem,
+  type ChatRingItem,
   type ChatPublicSettings,
   type ChatSettings,
   type ChatSystemItem,
   type ChatToken,
   type LivePhase,
+  type MentionCandidate,
   type MessageKey,
   type MessageParams,
 } from '@swarmcast/shared';
-import { translateWire } from '@swarmcast/shared/i18n';
+import { translate, translateWire } from '@swarmcast/shared/i18n';
 
 /** Pure helpers of the chat card (unit tested in apps/admin/test/unit/chat-logic.test.ts). */
 
@@ -146,6 +152,65 @@ const EMOTES = new Set(BUILTIN_EMOTE_CODES);
 export function messageTokens(text: string): ChatToken[] | null {
   if (!checkChatInvariants(text, { maxGraphemes: 500, maxEmoji: 100 })) return null;
   return tokenizeChat(text, EMOTES);
+}
+
+/**
+ * The people the streamer's @ list offers (docs/CHAT.md, "Replies and mentions"): authors of the
+ * messages in the feed, newest first, never the streamer; like the viewers' list, only people who
+ * already wrote in the chat.
+ */
+export function mentionableAuthors(items: readonly ChatRingItem[], roster: ReadonlyMap<string, ChatAuthor>): ChatAuthor[] {
+  const seen = new Set<string>();
+  const out: ChatAuthor[] = [];
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i]!;
+    if (it.k !== 'm' || seen.has(it.a)) continue;
+    seen.add(it.a);
+    const au = roster.get(it.a);
+    if (au && au.r !== 'streamer') out.push(au);
+  }
+  return out;
+}
+
+/** The streamer's author key in the feed (their messages have role streamer), if they wrote. */
+export function streamerKey(roster: ReadonlyMap<string, ChatAuthor>): string | undefined {
+  for (const au of roster.values()) if (au.r === 'streamer') return au.a;
+  return undefined;
+}
+
+/** What the reply box shows of the message it answers: the quote the server will cut, or a GIF mark. */
+export function replyPreview(item: Pick<ChatMessageItem, 'x' | 'g'>): { text: string; gif: boolean } {
+  if (item.g || item.x === undefined) return { text: '', gif: !!item.g };
+  const { q, cut } = cutQuote(item.x);
+  return { text: `${q}${cut ? '…' : ''}`, gif: false };
+}
+
+/** The names a mention of these people can have (the streamer without a name: "Streamer" in either language). */
+export function mentionCandidates(people: readonly ChatAuthor[]): MentionCandidate[] {
+  const out: MentionCandidate[] = [];
+  for (const p of people) {
+    if (p.n) out.push({ a: p.a, n: p.n });
+    else if (p.r === 'streamer') for (const lang of ['en', 'pt-BR'] as const) out.push({ a: p.a, n: translate(lang, 'chat.streamer') });
+  }
+  return out;
+}
+
+/**
+ * A message's text in parts: plain runs and the "@Name" of each person it mentions (`mn`, checked by
+ * the server), so the feed can mark them; null when the text fails the shared invariants.
+ */
+export function messageParts(text: string, mentioned: readonly ChatAuthor[]): Array<{ mention?: string; tokens: ChatToken[] }> | null {
+  if (!checkChatInvariants(text, { maxGraphemes: 500, maxEmoji: 100 })) return null;
+  const spans = mentioned.length ? findMentionSpans(text, mentionCandidates(mentioned)) : [];
+  const out: Array<{ mention?: string; tokens: ChatToken[] }> = [];
+  let at = 0;
+  for (const sp of spans) {
+    if (sp.start > at) out.push({ tokens: tokenizeChat(text.slice(at, sp.start), EMOTES) });
+    out.push({ mention: sp.a, tokens: [{ k: 't', v: text.slice(sp.start, sp.end) }] });
+    at = sp.end;
+  }
+  if (at < text.length) out.push({ tokens: tokenizeChat(at === 0 ? text : text.slice(at), EMOTES) });
+  return out;
 }
 
 /** Grapheme count of the streamer's draft and whether it fits. */
