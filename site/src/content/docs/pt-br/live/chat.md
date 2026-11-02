@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Converse com quem assiste embaixo do vídeo: respostas, @menções, destacar e fixar, e um chat tranquilo com apagar, silenciar, modo lento e proteção contra flood.
+description: 'Converse com quem assiste embaixo do vídeo: respostas, @menções, destacar e fixar, e um chat tranquilo com apagar, silenciar, modo lento e proteção contra flood.'
 ---
 
 A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e responde no **Chat ao vivo** do painel, e todo mundo vê as mensagens em menos de um segundo. Ele vem **ligado por padrão**: não precisa configurar nada.

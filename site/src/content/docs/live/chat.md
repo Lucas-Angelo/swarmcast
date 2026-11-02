@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Talk with your viewers under the video: replies, @mentions, highlight and pin, and a friendly chat with delete, mute, slow mode and flood protection.
+description: 'Talk with your viewers under the video: replies, @mentions, highlight and pin, and a friendly chat with delete, mute, slow mode and flood protection.'
 ---
 
 Your live has a chat. Viewers write under the video, you read and answer in the panel's **Live chat**, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
