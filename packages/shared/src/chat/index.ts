@@ -15,3 +15,4 @@ export { AhoCorasick } from './ahocorasick.js';
 export * from './gif.js';
 export * from './quote.js';
 export * from './mentions.js';
+export * from './commands.js';

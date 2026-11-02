@@ -264,6 +264,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
     this.access.on('kicked', (s) => {
       this.activity.action('log.kicked', { nickname: s.nickname });
+      // A kicked viewer's poll vote no longer counts (docs/CHAT.md, "Polls and predictions").
+      this.chat.kicked(s);
       this.viewerCountChanged();
       this.control.kick(s.id);
       this.tracker.disconnectSession(s.id);

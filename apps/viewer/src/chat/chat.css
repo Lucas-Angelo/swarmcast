@@ -252,6 +252,202 @@ button.pinned-more[hidden] {
   display: none;
 }
 
+/* ---- Polls and predictions (docs/CHAT.md "Polls and predictions") ----------------------------
+ * The card sits under the pinned bar and above the list (never over the list or the input). Options
+ * are full-width buttons with a bar behind the text: its length is a transform (scaleX of --p, set
+ * through the CSSOM), so a new count never relayouts the column. The body scrolls on its own when
+ * the column is short (a phone), and folds with ▾ to the header line. */
+.chat-poll {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  border-bottom: 1px solid var(--sc-border);
+  border-top: 3px solid var(--sc-secondary);
+  background: var(--sc-surface);
+}
+.chat-poll[hidden] {
+  display: none;
+}
+.poll-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding-left: var(--sp-1);
+  color: var(--sc-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--sc-weight-semibold);
+}
+.poll-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--sc-ink);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.poll-time {
+  font-variant-numeric: tabular-nums;
+}
+.poll-time[hidden] {
+  display: none;
+}
+.poll-head button.poll-toggle {
+  min-height: 28px;
+  min-width: 28px;
+  font-size: var(--fs-sm);
+}
+.poll-body {
+  max-height: min(45vh, 22rem);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--sp-1);
+}
+.poll-body[hidden] {
+  display: none;
+}
+.poll-q {
+  margin: var(--sp-1) 0 var(--sp-2);
+  overflow: hidden;
+  overflow: clip;
+  overflow-wrap: anywhere;
+  font-weight: var(--sc-weight-semibold);
+  color: var(--sc-ink);
+  line-height: var(--chat-lh);
+}
+.poll-q bdi {
+  unicode-bidi: isolate;
+}
+.poll-q.poll-hidden {
+  color: var(--sc-muted);
+  font-style: italic;
+  font-weight: var(--sc-weight-regular);
+}
+.poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+button.poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  min-height: 40px;
+  padding: var(--sp-1) var(--sp-3);
+  overflow: hidden;
+  overflow: clip;
+  border: 1px solid var(--sc-border-strong);
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-surface);
+  color: var(--sc-text);
+  font-size: var(--chat-fs);
+  font-weight: var(--sc-weight-regular);
+  text-align: left;
+  white-space: normal;
+  isolation: isolate;
+}
+button.poll-option:hover:not([aria-disabled='true']) {
+  border-color: var(--sc-accent);
+  background: var(--hover);
+}
+button.poll-option[aria-disabled='true'] {
+  cursor: default;
+}
+button.poll-option.mine,
+button.poll-option.win {
+  border-width: 2px;
+  padding: calc(var(--sp-1) - 1px) calc(var(--sp-3) - 1px);
+  border-color: var(--sc-accent);
+}
+button.poll-option.win {
+  border-color: var(--sc-success);
+}
+.poll-bar {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--sc-accent-soft);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left center;
+  transition: transform 0.3s ease-out;
+}
+[dir='rtl'] .poll-bar {
+  transform-origin: right center;
+}
+button.poll-option.win .poll-bar {
+  background: var(--tint-success);
+}
+.poll-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  unicode-bidi: isolate;
+  overflow-wrap: anywhere;
+}
+.poll-pct {
+  flex: none;
+  min-width: 3ch;
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.poll-foot {
+  margin: var(--sp-2) 0 0;
+  color: var(--sc-muted);
+  font-size: var(--fs-sm);
+}
+.poll-foot.error {
+  color: var(--sc-danger);
+}
+@media (max-width: 720px) {
+  .poll-body {
+    max-height: 40vh;
+  }
+  button.poll-option {
+    min-height: 36px;
+  }
+}
+/* /help (docs/CHAT.md "Slash commands"): a short box above the message box, never sent. */
+.chat-help {
+  margin: 0 0 var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2) var(--sp-3);
+  border: 1px solid var(--sc-border);
+  border-left: 3px solid var(--sc-accent);
+  border-radius: var(--sc-radius-sm);
+  background: var(--sc-surface-2);
+  font-size: var(--fs-sm);
+}
+.chat-help[hidden] {
+  display: none;
+}
+.chat-help-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.chat-help-head strong {
+  flex: 1 1 auto;
+  color: var(--sc-ink);
+}
+.chat-help-head button.chat-help-close {
+  min-height: 28px;
+  min-width: 28px;
+  font-size: var(--fs-sm);
+}
+.chat-help ul {
+  margin: 0;
+  padding-left: var(--sp-4);
+}
+@media (prefers-reduced-motion: reduce) {
+  .poll-bar {
+    transition: none;
+  }
+}
+
 /* ---- Replies and mentions (docs/CHAT.md "Replies and mentions") ------------------------------
  * A reply starts with one clipped line: ↩, the name and the quote, each isolated, so neither can
  * spill into the other or into the reply. Every row has a Reply button in its top right corner,

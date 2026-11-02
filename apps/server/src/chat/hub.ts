@@ -4,6 +4,7 @@ import {
   CHAT_BUDGET_MAX_KBPS,
   CHAT_BUDGET_MIN_KBPS,
   CHAT_BURST_CAPACITY,
+  CHAT_BATCH_LARGE_AUDIENCE,
   CHAT_BURST_REFILL_PER_S,
   CHAT_BYTES_PER_MESSAGE,
   CHAT_GIF_INTERVAL_S,
@@ -13,6 +14,10 @@ import {
   CHAT_MENTION_SAME_TARGET_S,
   CHAT_MENTIONS_PER_MIN,
   CHAT_MENTIONS_TO_TARGET_PER_MIN,
+  CHAT_POLL_OPTION_MAX_GRAPHEMES,
+  CHAT_POLL_QUESTION_MAX_GRAPHEMES,
+  CHAT_POLL_TALLY_MS,
+  CHAT_POLL_TALLY_MS_LARGE,
   CHAT_PROTOCOL_VERSION,
   CHAT_REACT_FRAME_PREFIX,
   CHAT_RING_MAX_BYTES,
@@ -21,6 +26,7 @@ import {
   chatColorSchema,
   chatResumeSchema,
   chatSendSchema,
+  chatVoteSchema,
   containsLink,
   contentOf,
   countGraphemes,
@@ -35,6 +41,9 @@ import {
   type ChatMessageItem,
   type ChatPin,
   type ChatPinItem,
+  type ChatPollCreate,
+  type ChatPollItem,
+  type ChatPollPublic,
   type ChatProtect,
   type ChatRejectCode,
   type ChatReplyRef,
@@ -48,6 +57,7 @@ import {
 import { comparisonKey } from '@swarmcast/shared/chat/skeleton';
 import { translate, type MessageKey, type MessageParams } from '@swarmcast/shared/i18n';
 import type { AccessControl, Session } from '../access/access.js';
+import { networkKey } from '../access/network.js';
 import type { ActivityLog } from '../core/activity.js';
 import type { Logger } from '../core/logger.js';
 import { ChatBatcher, type ChatSocket } from './batcher.js';
@@ -55,6 +65,7 @@ import { KeyedBuckets, RateWindow, TokenBucket, type ViewerPace } from './bucket
 import { AdaptiveSlowMode, ChatDetector, protectState, type ChatThreat } from './detector.js';
 import { EventLoopGuard, type GuardOptions, type GuardState } from './guard.js';
 import { ChatModeration, type ChatMember } from './moderation.js';
+import { ChatPolls } from './polls.js';
 import { Coalescer, effectiveChat, type EffectiveChat } from './settings.js';
 
 /** What the hub needs of the control channel. */
@@ -94,6 +105,15 @@ type Reject = { code: ChatRejectCode; params?: MessageParams; retryMs?: number }
 
 /** The answer to a streamer action on a message (highlight, pin). */
 export type MessageActionResult = { ok: true } | { ok: false; code: 'admin.chat.err.gone' | 'admin.chat.err.disabled' };
+
+/** The answer to a streamer action on the poll (docs/CHAT.md, "Polls and predictions"). */
+export type PollActionResult =
+  | { ok: true; id: string }
+  | {
+      ok: false;
+      code: 'admin.chat.err.disabled' | 'admin.chat.err.pollOpen' | 'admin.chat.err.noPoll' | 'admin.chat.err.pollState' | 'admin.chat.err.pollQuestion' | 'admin.chat.err.pollOption' | 'admin.chat.err.pollDuplicate' | 'admin.chat.err.pollAnswer';
+      params?: MessageParams;
+    };
 
 interface RingEntry {
   item: ChatRingItem;
@@ -186,6 +206,11 @@ export class ChatHub {
   private ticks = 0;
   /** The pinned message (a copy, so it outlives its place in the ring) and when a timed pin ends. */
   private pinned: { p: ChatPin; endsAt: number | null } | null = null;
+  /** The poll or prediction of this live (docs/CHAT.md, "Polls and predictions"), its next timer and when its counts last went out. */
+  private readonly polls = new ChatPolls();
+  private pollTimer: NodeJS.Timeout | null = null;
+  private pollTimerAt: number | null = null;
+  private lastTallyAt = -Infinity;
   private adminQueue: ChatItem[] = [];
   private adminTimer: NodeJS.Timeout | null = null;
   private readonly settingsPush: Coalescer;
@@ -248,6 +273,11 @@ export class ChatHub {
     this.seq = 0;
     this.modSeq = 0;
     this.pinned = null;
+    this.polls.reset();
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    this.pollTimerAt = null;
+    this.lastTallyAt = -Infinity;
     this.announced.clear();
     this.paces.clear();
     this.ipBuckets.clear();
@@ -310,6 +340,7 @@ export class ChatHub {
   private tick(): void {
     const now = this.now();
     this.expirePin(now);
+    this.pollTick();
     const viewers = this.d.viewers();
     const changed = this.detector.tick(now, viewers);
     this.d.onTick?.(this.detector.level, this.egressBitsPerS(), this.budgetBps() * 8);
@@ -416,6 +447,7 @@ export class ChatHub {
     const now = this.now();
     this.detector.frame(now);
     if (text.startsWith('{"t":"chat.send"')) return this.onSend(session, socket, text, now);
+    if (text.startsWith('{"t":"chat.vote"')) return this.onVote(session, socket, text, now);
     // Reaction frames (reserved for 0.5.0) have their own budget on /control and no handler yet.
     if (text.startsWith(CHAT_REACT_FRAME_PREFIX)) return;
     if (!this.eff.enabled) return;
@@ -437,8 +469,7 @@ export class ChatHub {
   }
 
   /** The nonce, read without parsing (`{"t":"chat.send","n":123,…}`), for early rejects. */
-  private static nonceOf(text: string): number | undefined {
-    const head = '{"t":"chat.send","n":';
+  private static nonceOf(text: string, head = '{"t":"chat.send","n":'): number | undefined {
     if (!text.startsWith(head)) return undefined;
     let n = 0;
     let i = head.length;
@@ -504,6 +535,22 @@ export class ChatHub {
 
   /** O(1) checks before any bucket: chat on, mute, lockdown, new-viewer wait, guard pause, slow mode. */
   private precheck(session: Session, now: number): Reject | null {
+    const base = this.mayTakePart(session, now);
+    if (base) return base;
+    const pace = this.paces.peek(session.deviceId);
+    if (pace && this.eff.slowS > 0) {
+      const left = pace.lastAt + this.eff.slowS * 1000 - now;
+      if (left > 0) return { code: 'chat.err.slow', params: { count: Math.ceil(left / 1000) }, retryMs: left };
+    }
+    return null;
+  }
+
+  /**
+   * What writing and voting share (O(1)): the chat is on, the viewer is not muted (a mute is "no
+   * taking part": no messages, no votes), lockdown lets them in (only people who were watching
+   * before the alert), the new-viewer wait is over, and the event-loop guard has not paused the chat.
+   */
+  private mayTakePart(session: Session, now: number): Reject | null {
     if (!this.eff.enabled) return { code: 'chat.err.off' };
     const muted = this.moderation.mutedUntil(session);
     if (muted === 'live') return { code: 'chat.err.mutedLive' };
@@ -512,12 +559,37 @@ export class ChatHub {
     const waitMs = session.joinedAt + this.eff.newViewerWaitS * 1000 - now;
     if (waitMs > 0) return { code: 'chat.err.newViewer', params: { count: Math.ceil(waitMs / 1000) }, retryMs: waitMs };
     if (this.guard.state === 'pause') return { code: 'chat.err.busy', retryMs: 3000 };
-    const pace = this.paces.peek(session.deviceId);
-    if (pace && this.eff.slowS > 0) {
-      const left = pace.lastAt + this.eff.slowS * 1000 - now;
-      if (left > 0) return { code: 'chat.err.slow', params: { count: Math.ceil(left / 1000) }, retryMs: left };
-    }
     return null;
+  }
+
+  /**
+   * A vote (docs/CHAT.md, "Polls and predictions"). It costs one chat frame (the control channel's
+   * budget) and none of the message buckets: one vote per device and poll is its own limit, and
+   * every check is O(1). Counted votes are answered with `chat.voted` to every socket of every
+   * session of that device (its other tabs show the vote at once); everyone else gets the counts
+   * with the next tally (pollTick).
+   */
+  private onVote(session: Session, socket: ChatSocket, text: string, now: number): void {
+    const n = ChatHub.nonceOf(text, '{"t":"chat.vote","n":');
+    const early = this.mayTakePart(session, now);
+    if (early) return this.reject(socket, n, early, now);
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return this.reject(socket, n, { code: 'text.invalid' }, now);
+    }
+    const parsed = chatVoteSchema.safeParse(raw);
+    if (!parsed.success) return this.reject(socket, n, { code: 'text.invalid' }, now);
+    const v = parsed.data;
+    this.pollTick();
+    const r = this.polls.vote({ deviceId: session.deviceId, net: networkKey(session.ip), joinedAt: session.joinedAt }, v.id, v.o, now, this.protect !== 'off');
+    if (!r.ok) return this.reject(socket, v.n, { code: r.code, ...(r.mine !== undefined ? { params: { o: r.mine } } : {}) }, now);
+    const msg = JSON.stringify({ t: 'chat.voted', n: v.n, id: v.id, o: r.o, c: r.c } satisfies ChatServerMessage);
+    for (const s of this.d.access.sessions.values()) {
+      if (s.deviceId !== session.deviceId) continue;
+      for (const sock of this.d.host.socketsOf(s.id)) this.batcher.sendDirect(sock, msg);
+    }
   }
 
   /** Per-IP bucket: 2 msg/s × min(sessions behind that IP, 10), burst 10 (CGNAT-friendly). */
@@ -669,7 +741,7 @@ export class ChatHub {
     const roster = this.rosterFor(entries, this.pinAuthors());
     // The pin's current state goes with it: a page that asks after the chat was turned back on
     // (it had no snapshot) learns what is pinned too. Older pages ignore the item.
-    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items, this.pinItem(now)] } satisfies ChatServerMessage));
+    this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.batch', items: [...roster.map((au): ChatItem => ({ k: 'u', au })), ...items, this.pollItem(now, session.deviceId), this.pinItem(now)] } satisfies ChatServerMessage));
     this.batcher.markKnown(socket, roster.map((r) => r.a));
   }
 
@@ -802,7 +874,10 @@ export class ChatHub {
       // The pin is the streamer's own choice: it goes in full snapshots and deltas alike, also
       // under lockdown (no history), and costs at most ~1.2 KB per hello.
       const pin = this.currentPin(this.now());
-      const base = { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, lastSeq: this.seq, ...(pin ? { pin } : {}) };
+      // The poll too (with this device's vote), in every snapshot, also under lockdown: it is the streamer's.
+      this.pollTick();
+      const poll = this.polls.view(this.now(), { deviceId: session.deviceId });
+      const base = { v: CHAT_PROTOCOL_VERSION, settings: this.eff.public, you, lastSeq: this.seq, ...(pin ? { pin } : {}), ...(poll ? { poll } : {}) };
       const extra = [you.a, ...this.pinAuthors()];
       // Reconnect: the viewer already has everything up to `after`. Send only what came since, when
       // the ring still holds it, nothing was deleted or cleared meanwhile, and it is not longer than
@@ -1041,6 +1116,7 @@ export class ChatHub {
 
   /** The current item of a state key (batcher.ts `pushState`), for a socket that missed it while slow. */
   private stateOf(key: string): { item: ChatItem; refs?: readonly string[] } | null {
+    if (key === 'poll') return { item: this.pollItem(this.now()) };
     if (key === 'pin') {
       const item = this.pinItem(this.now());
       return { item, ...(item.p ? { refs: [item.p.a] } : {}) };
@@ -1051,6 +1127,153 @@ export class ChatHub {
       return e ? { item: { k: 'hl', s: e.item.s, on: e.item.h === 1 } } : null;
     }
     return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Polls and predictions (docs/CHAT.md, "Polls and predictions")
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Start a poll or a prediction (panel only). Question and options go through the chat's Unicode
+   * pipeline (CHAT_POLL_QUESTION_MAX_GRAPHEMES, CHAT_POLL_OPTION_MAX_GRAPHEMES; blocked words do not
+   * apply: it is the streamer's text, as for sendAsStreamer), options must differ by comparison key.
+   * `newOnly` absent: on for a prediction, off for a poll. No `sys` line: a page older than 0.5.0
+   * would not know it (docs/CHAT.md, "Item classes and frame budgets").
+   */
+  startPoll(body: ChatPollCreate): PollActionResult {
+    if (!this.eff.enabled) return { ok: false, code: 'admin.chat.err.disabled' };
+    const now = this.now();
+    this.pollTick();
+    if (this.polls.state === 'open' || this.polls.state === 'locked') return { ok: false, code: 'admin.chat.err.pollOpen' };
+    const q = canonicalizeChatText(body.question, { maxGraphemes: CHAT_POLL_QUESTION_MAX_GRAPHEMES, maxEmoji: CHAT_POLL_QUESTION_MAX_GRAPHEMES });
+    if (!q.ok) return { ok: false, code: 'admin.chat.err.pollQuestion', params: { max: CHAT_POLL_QUESTION_MAX_GRAPHEMES } };
+    const options: string[] = [];
+    const keys = new Set<string>();
+    for (const [i, raw] of body.options.entries()) {
+      const r = canonicalizeChatText(raw, { maxGraphemes: CHAT_POLL_OPTION_MAX_GRAPHEMES, maxEmoji: CHAT_POLL_OPTION_MAX_GRAPHEMES });
+      if (!r.ok) return { ok: false, code: 'admin.chat.err.pollOption', params: { n: i + 1, max: CHAT_POLL_OPTION_MAX_GRAPHEMES } };
+      // Look-alikes, case and spacing do not make two options different ("Sim" and "sim ").
+      const key = comparisonKey(r.text) || r.text;
+      if (keys.has(key)) return { ok: false, code: 'admin.chat.err.pollDuplicate' };
+      keys.add(key);
+      options.push(r.text);
+    }
+    const newOnly = body.newOnly ?? body.kind === 'prediction';
+    if (!this.polls.open({ kind: body.kind, q: q.text, o: options, seconds: body.seconds, newOnly }, now)) return { ok: false, code: 'admin.chat.err.pollOpen' };
+    this.lastTallyAt = now;
+    this.pushPoll(now);
+    this.d.activity.action(body.kind === 'poll' ? 'log.chat.pollOpened' : 'log.chat.predictionOpened');
+    this.d.log.info({ kind: body.kind, options: options.length, seconds: body.seconds, newOnly }, 'chat poll opened');
+    return { ok: true, id: this.polls.id! };
+  }
+
+  /** End the voting now (a poll shows its results; a prediction waits for the right answer). */
+  endPoll(): PollActionResult {
+    const now = this.now();
+    this.pollTick();
+    if (!this.polls.id) return { ok: false, code: 'admin.chat.err.noPoll' };
+    if (!this.polls.end(now)) return { ok: false, code: 'admin.chat.err.pollState' };
+    this.pollEnded(now);
+    return { ok: true, id: this.polls.id };
+  }
+
+  /** The right answer of a prediction whose guesses ended. */
+  resolvePoll(option: number): PollActionResult {
+    const now = this.now();
+    this.pollTick();
+    const r = this.polls.resolve(option, now);
+    if (r === 'none') return { ok: false, code: 'admin.chat.err.noPoll' };
+    if (r === 'state') return { ok: false, code: 'admin.chat.err.pollState' };
+    if (r === 'option') return { ok: false, code: 'admin.chat.err.pollAnswer', params: { n: option + 1 } };
+    const right = this.polls.view(now)?.c[option] ?? 0;
+    this.pushPoll(now);
+    this.d.activity.action('log.chat.predictionResolved', { count: right });
+    this.d.log.info({ votes: this.polls.votes }, 'chat prediction resolved');
+    return { ok: true, id: this.polls.id! };
+  }
+
+  /** Remove the poll or prediction for everyone, in any state (also the results card). */
+  cancelPoll(): PollActionResult {
+    const id = this.polls.id;
+    if (!id || !this.polls.cancel()) return { ok: false, code: 'admin.chat.err.noPoll' };
+    this.pushPoll(this.now());
+    this.d.activity.action('log.chat.pollCanceled');
+    this.d.log.info('chat poll canceled');
+    return { ok: true, id };
+  }
+
+  /** A kicked viewer's vote no longer counts (docs/CHAT.md, "Polls and predictions"). */
+  kicked(session: Pick<Session, 'deviceId'>): void {
+    this.safe(() => {
+      if (this.polls.kicked(session.deviceId)) this.pollTick();
+    });
+  }
+
+  /**
+   * The poll's timers and counts: voting time up, results over, a prediction left without an answer,
+   * then the counts when they changed, at most one `pt` per CHAT_POLL_TALLY_MS (CHAT_POLL_TALLY_MS_LARGE
+   * above CHAT_BATCH_LARGE_AUDIENCE viewers or under pressure). Called by the one-second tick, by the
+   * poll's own timer at its next deadline, and before the poll is read or voted on.
+   */
+  pollTick(): void {
+    const now = this.now();
+    const due = this.polls.due(now);
+    if (due === 'ended') this.pollEnded(now);
+    else if (due !== null) {
+      if (due === 'expired') this.d.activity.action('log.chat.pollExpired');
+      this.pushPoll(now);
+    }
+    const large = this.d.viewers() > CHAT_BATCH_LARGE_AUDIENCE || this.guard.state !== 'ok' || this.protect !== 'off' || this.batcher.inDebt();
+    if (now - this.lastTallyAt >= (large ? CHAT_POLL_TALLY_MS_LARGE : CHAT_POLL_TALLY_MS)) {
+      const t = this.polls.takeTally();
+      if (t) {
+        this.lastTallyAt = now;
+        this.batcher.pushLatest('pt', { k: 'pt', id: t.id, c: t.c });
+        this.toAdmin({ k: 'pt', id: t.id, c: t.c, rn: t.rn });
+      }
+    }
+    this.schedulePoll(now);
+  }
+
+  private pollEnded(now: number): void {
+    const kind = this.polls.kind;
+    // The final counts go with the new state (pushPoll carries them), so a pending count is dropped.
+    this.polls.takeTally();
+    this.pushPoll(now);
+    this.d.activity.action(kind === 'prediction' ? 'log.chat.predictionLocked' : 'log.chat.pollEnded', { count: this.polls.votes });
+    this.d.log.info({ votes: this.polls.votes }, 'chat poll ended');
+  }
+
+  /** The poll item viewers get (with this device's vote when `deviceId` is given), or `p: null`. */
+  private pollItem(now: number, deviceId?: string): ChatPollItem {
+    return { k: 'poll', p: this.polls.view(now, deviceId === undefined ? {} : { deviceId }) };
+  }
+
+  private pushPoll(now: number): void {
+    this.batcher.pushState('poll', this.pollItem(now));
+    const admin: ChatPollPublic | null = this.polls.view(now, { admin: true });
+    this.toAdmin({ k: 'poll', p: admin });
+    this.schedulePoll(now);
+  }
+
+  /** One timer at the poll's next deadline (unref: it never keeps the process alive); the tick is the backstop. */
+  private schedulePoll(now: number): void {
+    const at = this.running ? this.polls.nextDeadline() : null;
+    if (this.pollTimer && at === this.pollTimerAt) return;
+    if (this.pollTimer) clearTimeout(this.pollTimer);
+    this.pollTimer = null;
+    this.pollTimerAt = at;
+    if (at === null) return;
+    this.pollTimer = setTimeout(() => {
+      this.pollTimer = null;
+      this.safe(() => this.pollTick());
+    }, Math.max(0, at - now));
+    this.pollTimer.unref?.();
+  }
+
+  /** The poll as the panel shows it (with `rn`), or null. */
+  get poll(): ChatPollPublic | null {
+    return this.polls.view(this.now(), { admin: true });
   }
 
   /** Manual protection from the panel; "off" also resets the detector ("Back to normal"). */
@@ -1086,11 +1309,13 @@ export class ChatHub {
   adminState(): AdminChatState {
     const items = this.ring.map((e) => e.item);
     const pin = this.currentPin(this.now());
+    this.pollTick();
+    const poll = this.polls.view(this.now(), { admin: true });
     const sessions = [...this.d.access.sessions.values()].map((s) => {
       const m = this.moderation.member(s);
       return { sessionId: s.id, a: m.a, nickname: s.nickname, color: m.color, colorLocked: m.colorLocked, mutedUntil: this.moderation.mutedUntil(s), tag: m.tag };
     });
-    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(this.ring, this.pinAuthors()), items, lastSeq: this.seq, sessions, counters: this.counters(), ...(pin ? { pin } : {}) };
+    return { settings: this.d.settings(), effective: this.eff.public, roster: this.rosterFor(this.ring, this.pinAuthors()), items, lastSeq: this.seq, sessions, counters: this.counters(), ...(pin ? { pin } : {}), ...(poll ? { poll } : {}) };
   }
 
   /** Author key → session id of every author in the ring and of the pinned message (the panel acts on sessions). */
