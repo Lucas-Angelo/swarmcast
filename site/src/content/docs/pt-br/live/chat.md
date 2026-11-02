@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: Converse com quem assiste embaixo do vídeo, destaque e fixe mensagens e mantenha o chat tranquilo - apagar, silenciar, modo lento e proteção contra flood.
+description: Converse com quem assiste embaixo do vídeo: respostas, @menções, destacar e fixar, e um chat tranquilo com apagar, silenciar, modo lento e proteção contra flood.
 ---
 
 A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e responde no **Chat ao vivo** do painel, e todo mundo vê as mensagens em menos de um segundo. Ele vem **ligado por padrão**: não precisa configurar nada.
@@ -11,7 +11,7 @@ Durante a live, o **Chat ao vivo** fica na tela principal do painel, sem precisa
 Todo mundo que está assistindo vê os apelidos no chat. A página de entrada avisa isso antes de a pessoa digitar o dela.
 :::
 
-![O Chat ao vivo à direita do painel: 1 as mensagens, com o selo Transmissão nas suas, uma pergunta destacada e a sua resposta fixada, que também aparece no topo com Desafixar, 2 Enviar como …, para escrever como transmissão, 3 Proteção contra flood, 4 Limpar chat, 5 Configurações (a chave para ligar e desligar o chat e as configurações do chat).](../../../../assets/guides/live/pt-br/chat-panel.webp)
+![O Chat ao vivo à direita do painel: 1 as mensagens, com o selo Transmissão nas suas, uma pergunta destacada e a sua resposta a ela fixada (uma resposta que menciona o Pedro), que também aparece no topo com Desafixar, 2 Enviar como …, para escrever como transmissão, 3 Proteção contra flood, 4 Limpar chat, 5 Configurações (a chave para ligar e desligar o chat e as configurações do chat).](../../../../assets/guides/live/pt-br/chat-panel.webp)
 
 ## O que dá para mandar
 
@@ -25,13 +25,14 @@ As suas mensagens, enviadas pela caixa **Enviar como …** no fim do Chat ao viv
 
 Cada mensagem no Chat ao vivo tem um menu **Ações** (o botão **⋯**):
 
+- **Responder:** responde àquela mensagem pela sua caixa (veja [Respostas e menções](#respostas-e-menções)).
 - **Apagar:** some com a mensagem para todo mundo.
 - **Destacar:** faz a mensagem se destacar para todo mundo (veja [Destacar e fixar](#destacar-e-fixar)). **Tirar destaque** volta ao normal.
 - **Fixar no topo:** deixa a mensagem no topo do chat de todo mundo, **até eu desafixar** ou por 5 min, 15 min ou 1 hora. **Desafixar** tira do topo.
 - **Silenciar:** por 1 min, 10 min, 1 hora ou **até o fim da live**. A pessoa continua assistindo, mas não consegue escrever. **Tirar silêncio** libera na hora. Sair e entrar de novo não desfaz o silêncio.
 - **Mudar cor…:** muda a cor do nome da pessoa para todo mundo. Marque **Travar** para ela não conseguir trocar.
 
-![O menu da mensagem destacada de um espectador: 1 Apagar, Tirar destaque, Fixar no topo até eu desafixar, por 5 min, 15 min ou 1 hora, Silenciar por 1 min, 10 min, 1 hora ou até o fim da live, e Mudar cor… com Travar, Aplicar e Voltar à cor da pessoa.](../../../../assets/guides/live/pt-br/chat-moderation.webp)
+![O menu da mensagem destacada de um espectador: 1 Responder, Apagar, Tirar destaque, Fixar no topo até eu desafixar, por 5 min, 15 min ou 1 hora, Silenciar por 1 min, 10 min, 1 hora ou até o fim da live, e Mudar cor… com Travar, Aplicar e Voltar à cor da pessoa.](../../../../assets/guides/live/pt-br/chat-moderation.webp)
 
 Também dá para silenciar alguém pelo cartão **Espectadores**.
 
@@ -49,6 +50,15 @@ Não existem contas, então na sua próxima live o SwarmCast não reconhece essa
 - **Apagar** a mensagem fixada ou **Limpar chat** desafixa. Silenciar ou expulsar quem escreveu não. **Parar tudo** tira junto com o resto do chat.
 
 Só você destaca e fixa. Um espectador que escreve "📌 Fixada" numa mensagem só escreve texto na própria linha, com o próprio nome: a mensagem fixada de verdade tem um lugar só dela, acima do chat, com o aviso "Fixada por quem transmite".
+
+## Respostas e menções
+
+- **Responda** a uma mensagem: todo mundo vê a sua resposta com um trecho curto da mensagem acima dela, para o chat saber o que você está respondendo, inclusive quem entra depois. Quem assiste responde pelo botão **Responder** que aparece ao apontar para uma mensagem (ou tocar nela no celular); você responde pelo menu **⋯**. Enquanto você escreve, "Respondendo a …" aparece acima da caixa: **✕** ou Esc cancela.
+- **Mencione** alguém com **@**: digite **@** e escolha um nome da lista (ou continue digitando para filtrar). A lista só tem quem já escreveu no chat, nunca todo mundo que está assistindo. A pessoa mencionada vê a sua mensagem marcada para ela; ninguém mais vê, e não há som nem notificação. Uma mensagem que menciona você aparece marcada no seu Chat ao vivo com **Menciona você**.
+- **Apagar** uma mensagem também tira o trecho dela das respostas: elas passam a dizer "Mensagem original apagada". Depois de **Limpar chat** não sobra nada para responder.
+- Uma resposta é uma mensagem como outra qualquer: modo lento, palavras bloqueadas, o que dá para mandar e silenciar valem igual. Em **Só emotes**, uma menção (é texto) é recusada.
+
+Para ninguém conseguir perseguir uma pessoa com menções, o SwarmCast conta quantas vezes alguém menciona os outros e quantas vezes uma pessoa é mencionada. Passando disso, a mensagem aparece do mesmo jeito, só sem a marca. Nomes parecidos (um "А" cirílico no lugar do "A", por exemplo) nunca mencionam ninguém. Quem não quiser a marca pode desligar **Destacar mensagens que me mencionam** nas configurações do chat.
 
 ## Proteção contra flood
 
@@ -86,15 +96,17 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat (1). A
 
 ## O que quem assiste vê
 
-![O chat na página de quem assiste: mensagens da transmissão com o selo, mensagens de espectadores com emotes e a caixa de mensagem. 1 Configurações do chat, 2 Ocultar chat, 3 emojis e emotes, 4 Enviar, 5 a mensagem fixada, 6 uma mensagem destacada.](../../../../assets/guides/live/pt-br/chat-viewer.webp)
+![O chat na página de quem assiste: mensagens da transmissão com o selo, mensagens de espectadores com emotes e a caixa de mensagem. 1 Configurações do chat, 2 Ocultar chat, 3 emojis e emotes, 4 Enviar, 5 a mensagem fixada, 6 uma mensagem destacada, 7 uma resposta que menciona quem assiste, com o trecho da mensagem respondida.](../../../../assets/guides/live/pt-br/chat-viewer.webp)
 
 - O chat ao lado do vídeo no computador, embaixo dele no celular.
 - A **mensagem fixada** acima das mensagens, com o aviso "Fixada por quem transmite" (5). Uma longa abre com **Mostrar mais**; o **✕** esconde naquele aparelho até você fixar outra. Com o chat oculto, **Mostrar chat** avisa **Fixada** quando você fixa algo.
 - **Mensagens destacadas** com uma barra colorida (6), legíveis no tema claro e no escuro.
+- **Respostas** com um trecho curto da mensagem respondida; um clique no trecho leva até ela enquanto ainda está no chat. Uma mensagem que **menciona a pessoa** tem uma barra cor de mel e o nome dela marcado (7); com o chat oculto, **Mostrar chat** conta essas menções.
+- **Responder** em cada mensagem (apontando para ela, tocando nela no celular ou com as setas a partir do chat) e **@** na caixa de mensagem para mencionar alguém que escreveu.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
-- **Configurações do chat** para a cor do próprio nome, horários e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
+- **Configurações do chat** para a cor do próprio nome, horários, **Destacar mensagens que me mencionam** e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
 
-  ![As configurações do chat de quem assiste: Cor do seu nome com doze cores e Outra cor…, uma prévia do nome no tema claro e no escuro, Mostrar horários e Tamanho do texto.](../../../../assets/guides/live/pt-br/chat-viewer-settings.webp)
+  ![As configurações do chat de quem assiste: Cor do seu nome com doze cores e Outra cor…, uma prévia do nome no tema claro e no escuro, Mostrar horários, Destacar mensagens que me mencionam e Tamanho do texto.](../../../../assets/guides/live/pt-br/chat-viewer-settings.webp)
 
 - "enviando…" até a mensagem entrar, e um motivo curto no idioma da pessoa quando ela é recusada (modo lento, silenciado, longa demais, palavra bloqueada…).
 

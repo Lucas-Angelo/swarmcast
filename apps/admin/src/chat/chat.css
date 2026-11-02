@@ -238,6 +238,11 @@
   text-overflow: ellipsis;
   font-weight: var(--sc-weight-semibold);
 }
+/* ": " sits right after the name, as in a message (the flex gap would open a space before it). */
+.chat-quote-sep {
+  margin-left: -4px;
+  white-space: pre;
+}
 .chat-quote-text,
 .chat-replying-quote {
   min-width: 0;

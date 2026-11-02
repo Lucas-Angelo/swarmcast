@@ -187,7 +187,7 @@ function ReplyQuote({ re, author }: { re: ChatReplyRef; author: ChatAuthor | und
       <bdi class="chat-quote-nick">{nickname}</bdi>
       {quote !== null && (
         <>
-          <span>: </span>
+          <span class="chat-quote-sep">: </span>
           <bdi class="chat-quote-text" dir="auto">
             {quote}
           </bdi>
