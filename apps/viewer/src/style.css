@@ -493,15 +493,36 @@ button.settings-btn[aria-expanded='true'] {
 .settings-menu > * + * {
   border-top: 1px solid var(--sc-border);
 }
-.settings-menu > .settings-title {
-  padding-bottom: 0;
+.settings-menu > .settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-2);
+  padding: var(--sp-2) 0 0;
+}
+.settings-title {
+  margin: 0;
   font-size: var(--fs-sm);
   font-weight: var(--sc-weight-semibold);
   color: var(--sc-muted);
   letter-spacing: 0.02em;
 }
-.settings-menu > .settings-title + * {
+.settings-menu > .settings-head + * {
   border-top: 0;
+}
+button.settings-close {
+  width: 36px;
+  min-height: 36px;
+  margin-right: calc(-1 * var(--sp-2));
+  padding: 0;
+  font-size: 1.25rem;
+  background: none;
+  color: var(--sc-muted);
+  border-color: transparent;
+}
+button.settings-close:hover {
+  background: var(--hover);
+  color: var(--sc-ink);
 }
 .settings-menu > .info-row + .info-row,
 .settings-menu > #p2p-stats-row {

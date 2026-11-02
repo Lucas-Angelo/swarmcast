@@ -14,24 +14,25 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o vídeo, Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), Reprodução Estável ou Menos atraso, 3 a chave Ajudar a transmissão (P2P), ligada aqui, 4 Compartilhar, e o chat à direita.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![A página de quem assiste no computador: o vídeo da largura da janela ao lado do chat, que ocupa todo o lado direito; embaixo do vídeo o nome de quem transmite com Ao vivo e quantos estão assistindo, 1 Ativar som, 2 o menu de qualidade (Auto), 4 Compartilhar, e o menu Configurações aberto, com Reprodução Estável ou Menos atraso e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
 - **● AO VIVO / Ir para o ao vivo:** você fica de 10 a 30 segundos atrás de quem transmite, o que é normal. Ao lado, "~14 s atrás do ao vivo" mostra o seu atraso: ele se ajusta sozinho à sua conexão (mais perto do ao vivo com internet firme, mais para trás quando ela oscila, para o vídeo não travar). Se ficou mais para trás, clique em **Ir para o ao vivo**.
 - **Qualidade:** **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
 - **Só o áudio (economiza dados):** a última opção do menu de qualidade. Você ouve a live sem a imagem, e ela gasta muito menos dados: cerca de 85% menos que 360p (mais ou menos 50 a 70 MB por hora). Bom no plano de dados do celular, ou quando você só quer ouvir. No lugar do vídeo aparecem a foto e o nome de quem transmite, ou "Só o áudio". Escolha uma qualidade (ou **Auto**) para ver a imagem de novo. O navegador lembra a escolha na próxima vez.
-- **Reprodução: Estável ou Menos atraso.** **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
-- **Ajudar a transmissão (P2P):** vem desligada por padrão; você pode ligar (veja abaixo).
+- **Configurações** (a engrenagem embaixo do vídeo): Reprodução, Ajudar a transmissão (P2P), o seu apelido, Atalhos de teclado e Estatísticas para nerds. Esc, um clique fora ou × fecha.
+- **Reprodução: Estável ou Menos atraso** (em **Configurações**). **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
+- **Ajudar a transmissão (P2P)** (em **Configurações**): vem desligada por padrão; você pode ligar (veja abaixo).
 - **Compartilhar:** envia o link desta live para um amigo. No celular, abre o seu menu de compartilhar (WhatsApp, Mensagens…); no computador, copia o link e mostra **Link copiado**, para você colar numa mensagem. O seu amigo abre o link e escolhe um apelido, como você fez. O botão só aparece se quem transmite permitir, e some quando quem transmite gera um link novo.
 
-- **Modo cinema** (no computador): deixa o vídeo do maior tamanho que a janela permite. O chat fica ao lado numa tela larga e vai para baixo do vídeo numa menor. Clique de novo para voltar; o navegador lembra a escolha.
+- **Modo cinema** (no computador): o vídeo ocupa também toda a altura da janela, com preto em volta e o chat ainda ao lado; o nome de quem transmite e o resto ficam logo abaixo, rolando a página. Clique de novo para voltar; o navegador lembra a escolha.
 
 Enquanto a live toca, o celular ou o computador **mantém a tela ligada**, para ela não apagar nem bloquear no meio da transmissão (se você pausar, ela pode apagar de novo). Com o som ligado, a **tela de bloqueio** e as notificações do celular mostram o nome e a foto de quem transmite, com um botão de tocar / pausar.
 
-No celular, os mesmos controles ficam embaixo do vídeo:
+No celular, o vídeo fica no alto, os mesmos controles embaixo dele, e o chat ocupa o resto da tela:
 
-![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui, 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
+![A página de quem assiste no celular, com o chat escondido (Mostrar chat traz de volta): 1 Ativar som, 2 o menu de qualidade, 3 Configurações, onde fica a chave Ajudar a transmissão (P2P), 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-phone.webp)
 
 ### Atalhos de teclado
 
@@ -49,15 +50,15 @@ No computador, dá para controlar a live pelo teclado:
 | S | Estatísticas para nerds |
 | ? | A lista de atalhos |
 
-Eles não fazem nada enquanto você digita, então escrever no chat é seguro. **Atalhos de teclado**, embaixo do vídeo, mostra a lista e uma chave para desligar os atalhos (por exemplo, se você usa controle por voz); o navegador lembra a escolha.
+Eles não fazem nada enquanto você digita, então escrever no chat é seguro. **Atalhos de teclado**, em **Configurações** embaixo do vídeo, mostra a lista e uma chave para desligar os atalhos (por exemplo, se você usa controle por voz); o navegador lembra a escolha.
 
 ### Estatísticas para nerds
 
-Curioso para saber o que o player está fazendo? **Estatísticas para nerds**, embaixo do vídeo, abre um painel pequeno em cima do vídeo: a resolução e a qualidade, a velocidade de internet que o player mede, quantos segundos de vídeo já estão carregados, quanto você está atrás do ao vivo, quadros perdidos, quanto vídeo veio de outros espectadores (P2P) e quanto você mandou para eles, e o tipo da sua conexão quando o navegador informa. Os números se atualizam a cada segundo. Aperte Esc ou × para fechar; **Copiar** copia as linhas, por exemplo para mandar para quem transmite quando algo der errado. Ele nunca mostra o seu endereço nem o de ninguém.
+Curioso para saber o que o player está fazendo? **Estatísticas para nerds**, em **Configurações** embaixo do vídeo, abre um painel pequeno em cima do vídeo: a resolução e a qualidade, a velocidade de internet que o player mede, quantos segundos de vídeo já estão carregados, quanto você está atrás do ao vivo, quadros perdidos, quanto vídeo veio de outros espectadores (P2P) e quanto você mandou para eles, e o tipo da sua conexão quando o navegador informa. Os números se atualizam a cada segundo. Aperte Esc ou × para fechar; **Copiar** copia as linhas, por exemplo para mandar para quem transmite quando algo der errado. Ele nunca mostra o seu endereço nem o de ninguém.
 
 ## O chat
 
-Embaixo do vídeo (ao lado dele no computador) fica o chat da live. Digite uma mensagem e aperte Enter. Todo mundo na live vê o seu apelido e as suas mensagens; as mensagens de quem transmite têm o selo **Transmissão**.
+Ao lado do vídeo no computador (uma coluna da altura da janela) e embaixo dele no celular fica o chat da live. Digite uma mensagem e aperte Enter. Todo mundo na live vê o seu apelido e as suas mensagens; as mensagens de quem transmite têm o selo **Transmissão**.
 
 - **Ocultar chat** esconde o chat neste aparelho (a escolha fica lembrada); **Mostrar chat** traz de volta.
 - **Configurações do chat** deixa escolher a cor do seu nome, mostrar os horários e aumentar o texto. A sua cor sempre aparece legível para todo mundo.

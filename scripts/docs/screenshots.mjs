@@ -259,6 +259,15 @@ async function waitPlaying(page, seconds = 2) {
   );
 }
 
+/** Turns a viewer's P2P switch on or off, in the Settings menu under the video (closed again after). */
+async function setP2P(page, on) {
+  await page.getByTestId('settings-open').click();
+  await page.getByTestId('settings-menu').waitFor();
+  await (on ? page.check('#p2p') : page.uncheck('#p2p'));
+  await page.keyboard.press('Escape');
+  await page.getByTestId('settings-menu').waitFor({ state: 'hidden' });
+}
+
 async function joinViewer(browser, locale, nickname, contextOptions) {
   const context = await browser.newContext({ ...contextOptions, locale });
   const page = await context.newPage();
@@ -758,11 +767,11 @@ async function fitViewport(page) {
 async function captureLocale(browser, lang) {
   log(`--- ${lang} ---`);
   const desktop = await joinViewer(browser, lang, 'Maria', DESKTOP);
-  await desktop.page.check('#p2p');
+  await setP2P(desktop.page, true);
   const phone = await joinViewer(browser, lang, 'Pedro', PHONE);
-  await phone.page.check('#p2p');
+  await setP2P(phone.page, true);
   const third = await joinViewer(browser, lang, 'Alex', DESKTOP);
-  await third.page.uncheck('#p2p');
+  await setP2P(third.page, false);
   await poll('3 viewers in the panel', async () => (await state()).viewers.length === 3, 30_000);
   // Give P2P a moment to connect, so "helping" and the peer stats have numbers.
   await poll('P2P helpers', async () => (await state()).stats.viewersHelping >= 1, 30_000).catch(() => log('no P2P helper yet'));
@@ -857,12 +866,14 @@ async function captureLocale(browser, lang) {
   }
 
   // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,
-  // 3 Help the stream (P2P), 4 Share. On the phone the chat (40 % of the screen) is hidden, as a viewer
-  // can, so the page fits.
+  // 3 Help the stream (P2P) (on the computer in the Settings menu, opened for the picture; on the
+  // phone the Settings button, where it is), 4 Share. On the phone the chat (the rest of the screen
+  // under the video) is hidden, as a viewer can, so the page fits.
   if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
     await phone.page.getByTestId('chat-hide').click();
-    // The video moves up under the pointer; away from it, its controls fade out.
-    await phone.page.mouse.move(0, 0);
+    // The video moves up under the pointer; away from it (under the video), its controls fade out.
+    const player = await phone.page.locator('.player').boundingBox();
+    await phone.page.mouse.move(player.x + 8, player.y + player.height + 8);
     await sleep(4000);
   }
   for (const [page, name] of [
@@ -870,10 +881,17 @@ async function captureLocale(browser, lang) {
     [phone.page, 'watch-phone'],
   ]) {
     await fitViewport(page);
+    const onPhone = page === phone.page;
+    if (!onPhone) {
+      await page.getByTestId('settings-open').click();
+      await page.getByTestId('settings-menu').waitFor();
+    }
+    const p2p = onPhone ? page.getByTestId('settings-open') : page.locator('label.toggle', { has: page.locator('#p2p') });
     await guideShot(page, page.locator('body'), 'viewers', lang, name, {
       pad: 0,
-      callouts: [page.locator('#unmute'), page.locator('.quality-menu'), page.locator('label.toggle', { has: page.locator('#p2p') }), page.locator('#share')],
+      callouts: [page.locator('#unmute'), page.getByTestId('quality'), p2p, page.locator('#share')],
     });
+    if (!onPhone) await page.keyboard.press('Escape');
   }
 
   // (6d) The panel's cards and the app's window with the setup tutorial (guide pictures).

@@ -1,10 +1,11 @@
-// The streamer's banner above the player (branding/brand.ts banner(), brand.css): its 4:1 slot
-// shows as soon as the branding is known, and the picture, which waits for the first fragment so
-// it never delays the first frame, fills that slot. It used to appear only with the picture, after
-// the first fragment, and push the player down while the viewer was about to use it.
+// The streamer's banner under the info row, at the top of their About (branding/brand.ts banner(),
+// brand.css): its 4:1 slot shows as soon as the branding is known, and the picture, which waits
+// for the first fragment so it never delays the first frame, fills that slot. It used to sit above
+// the player, where it took the video's height and, before the slot, pushed the player down while
+// the viewer was about to use it.
 //
 // The page runs its branding alone (openBrandedStage): the test calls the page's firstFrame() the
-// way the player does on its first fragment. Window sizes where the 25vh cap and where the 4:1
+// way the player does on its first fragment. Window sizes where the 200 px cap and where the 4:1
 // ratio decide the slot's height.
 import { expect, test, type Page } from './fixtures.js';
 import { openBrandedStage, requireBuild } from './watch-page.js';
@@ -12,6 +13,8 @@ import { openBrandedStage, requireBuild } from './watch-page.js';
 test.beforeAll(requireBuild);
 
 const picture = (c: string) => `/brand/${c.repeat(64)}.webp`;
+/** The banner's tallest (brand.css). */
+const BANNER_MAX_H = 200;
 const BRANDING = {
   rev: 3,
   name: 'Ana Plays',
@@ -33,7 +36,7 @@ async function settledBox(page: Page, selector: string) {
 
 for (const viewport of [
   { width: 1280, height: 900 },
-  { width: 1280, height: 560 },
+  { width: 640, height: 560 },
   { width: 390, height: 844 },
 ]) {
   test.describe(`banner at ${viewport.width}×${viewport.height}`, () => {
@@ -46,8 +49,11 @@ for (const viewport of [
       // Assert
       await expect(page.locator('#brand-banner')).toBeVisible();
       await expect(page.locator('#brand-banner img')).toHaveCount(0);
-      const slot = await page.locator('#brand-banner').boundingBox();
-      expect(slot!.height).toBeCloseTo(Math.min(slot!.width / 4, viewport.height / 4), 0);
+      const slot = (await page.locator('#brand-banner').boundingBox())!;
+      expect(slot.height).toBeCloseTo(Math.min(slot.width / 4, BANNER_MAX_H), 0);
+      // Under the player and its info row, never above the video.
+      const info = (await page.getByTestId('info').boundingBox())!;
+      expect(slot.y).toBeGreaterThanOrEqual(info.y + info.height - 1);
     });
 
     test('the picture comes after the first fragment and moves neither the player nor its slot', async ({ page }) => {

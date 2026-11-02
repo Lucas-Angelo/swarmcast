@@ -25,8 +25,14 @@ async function focusPage(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
 }
 
+/** Opens the Settings menu under the video (the shortcuts and stats links are in it). */
+async function openSettings(page: Page): Promise<void> {
+  await page.getByTestId('settings-open').click();
+  await expect(page.getByTestId('settings-menu')).toBeVisible();
+}
+
 test.describe('theater mode', () => {
-  test('a laptop (1280 px): the player takes the whole width, the chat goes under it; remembered', async ({ page }) => {
+  test('a laptop (1280×720): the player takes the whole height of the window, the chat stays beside it; remembered', async ({ page }) => {
     // Arrange
     await page.setViewportSize({ width: 1280, height: 720 });
     await openWatch(page, new MockHub('Bia'));
@@ -34,23 +40,24 @@ test.describe('theater mode', () => {
     await expect(button).toBeVisible();
     await expect(button).toHaveAttribute('aria-pressed', 'false');
     const before = await box(page, '.player');
-    expect((await box(page, '[data-testid="chat"]')).x).toBeGreaterThanOrEqual(before.x + before.width - 1);
+    // Not in theater mode the info row is in view under the video.
+    expect((await box(page, '[data-testid="info"]')).y + (await box(page, '[data-testid="info"]')).height).toBeLessThanOrEqual(720);
 
     // Act
     await button.click();
 
     // Assert
     await expect(button).toHaveAttribute('aria-pressed', 'true');
-    await expect.poll(async () => (await box(page, '.player')).width).toBeGreaterThan(before.width + 200);
+    await expect.poll(async () => Math.round((await box(page, '.player')).height)).toBe(720);
     const player = await box(page, '.player');
-    const bar = await box(page, '.bar');
-    // The bar stays right under the video and in view; the video keeps its own controls; the
-    // chat is under the bar.
-    expect(player.x + player.width).toBeLessThanOrEqual(1280);
-    expect(bar.y).toBeGreaterThanOrEqual(player.y + player.height - 1);
-    expect(bar.y + bar.height).toBeLessThanOrEqual(720);
-    expect((await box(page, '[data-testid="chat"]')).y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
-    expect(await page.locator('video').getAttribute('controls')).not.toBeNull();
+    const chat = await box(page, '[data-testid="chat"]');
+    // As wide as before (the chat keeps its column), from the top of the window to its bottom.
+    expect(Math.round(player.width)).toBe(Math.round(before.width));
+    expect(player.y).toBe(0);
+    expect(chat.x).toBeGreaterThanOrEqual(player.x + player.width - 1);
+    expect(Math.round(chat.height)).toBe(720);
+    // The info row is a scroll away.
+    expect((await box(page, '[data-testid="info"]')).y).toBeGreaterThanOrEqual(720 - 1);
 
     // Act
     await page.reload();
@@ -64,10 +71,10 @@ test.describe('theater mode', () => {
 
     // Assert
     await expect(page.getByTestId('theater')).toHaveAttribute('aria-pressed', 'false');
-    await expect.poll(async () => Math.round((await box(page, '.player')).width)).toBe(Math.round(before.width));
+    await expect.poll(async () => Math.round((await box(page, '.player')).height)).toBe(Math.round(before.height));
   });
 
-  test('a wide screen (1800 px): a wider player with the chat still beside it', async ({ page }) => {
+  test('a wide screen (1800×1000): a taller player, the chat still beside it', async ({ page }) => {
     // Arrange
     await page.setViewportSize({ width: 1800, height: 1000 });
     await openWatch(page, new MockHub('Bia'));
@@ -77,31 +84,44 @@ test.describe('theater mode', () => {
     await page.getByTestId('theater').click();
 
     // Assert
-    await expect.poll(async () => (await box(page, '.player')).width).toBeGreaterThan(before.width + 100);
+    await expect.poll(async () => Math.round((await box(page, '.player')).height)).toBe(1000);
     const player = await box(page, '.player');
     const chat = await box(page, '[data-testid="chat"]');
-    const bar = await box(page, '.bar');
+    expect(player.height).toBeGreaterThan(before.height + 100);
     expect(chat.x).toBeGreaterThanOrEqual(player.x + player.width - 1);
     expect(chat.x + chat.width).toBeLessThanOrEqual(1800);
-    expect(Math.round(chat.height)).toBe(Math.round(player.height));
-    expect(bar.y + bar.height).toBeLessThanOrEqual(1000);
+    expect(Math.round(chat.height)).toBe(1000);
   });
 
-  test('works with the chat hidden: the player takes the width the chat had, and more', async ({ page }) => {
+  test('works with the chat hidden: the player takes the whole window', async ({ page }) => {
     // Arrange
+    await page.setViewportSize({ width: 1280, height: 720 });
     await openWatch(page, new MockHub('Bia'));
     await page.getByTestId('chat-hide').click();
     await expect(page.getByTestId('chat')).toBeHidden();
     const before = await box(page, '.player');
+    expect(Math.round(before.width)).toBe(1280);
 
     // Act
     await page.getByTestId('theater').click();
 
     // Assert
-    await expect.poll(async () => (await box(page, '.player')).width).toBeGreaterThan(before.width + 40);
+    await expect.poll(async () => Math.round((await box(page, '.player')).height)).toBe(720);
     const player = await box(page, '.player');
-    expect(player.x + player.width).toBeLessThanOrEqual(page.viewportSize()!.width);
-    await expect(page.getByTestId('chat-show')).toBeVisible();
+    expect(player.height).toBeGreaterThan(before.height);
+    expect(Math.round(player.width)).toBe(1280);
+    await expect(page.getByTestId('chat-show')).toBeAttached();
+  });
+
+  test('a narrow window (chat under the video) has no theater button', async ({ page }) => {
+    // Arrange
+    await page.setViewportSize({ width: 900, height: 1000 });
+
+    // Act
+    await openWatch(page, new MockHub('Bia'));
+
+    // Assert
+    await expect(page.getByTestId('theater')).toBeHidden();
   });
 
   test('a phone has no theater button and its layout does not change @mobile', async ({ page }) => {
@@ -195,7 +215,8 @@ test.describe('keyboard shortcuts', () => {
     expect(await muted(page)).toBe(true);
     await expect(help).toBeHidden();
 
-    // Act: the link is the way back
+    // Act: the link in the Settings menu is the way back
+    await openSettings(page);
     await page.getByTestId('keys-open').click();
 
     // Assert
@@ -218,6 +239,7 @@ test.describe('keyboard shortcuts', () => {
     await openWatch(page, new MockHub('Bia'), { lang: 'pt-BR' });
 
     // Act
+    await page.getByTestId('settings-open').click();
     await page.getByTestId('keys-open').click();
 
     // Assert
@@ -227,6 +249,7 @@ test.describe('keyboard shortcuts', () => {
     await expect(help.getByLabel('Usar atalhos de teclado')).toBeChecked();
     await expect(page.getByTestId('theater')).toHaveText('Modo cinema');
     await expect(page.getByTestId('stats-open')).toHaveText('Estatísticas para nerds');
+    await expect(page.getByTestId('settings-open')).toHaveText('Configurações');
   });
 });
 
@@ -247,6 +270,7 @@ test.describe('stats for nerds', () => {
     expect(statsChunks).toEqual([]);
 
     // Act
+    await openSettings(page);
     await link.click();
 
     // Assert
@@ -257,8 +281,8 @@ test.describe('stats for nerds', () => {
     await expect(panel.locator('[data-stat="p2p"] dd')).toHaveText('Off');
     await expect(page.getByRole('button', { name: 'Close stats for nerds' })).toBeFocused();
     expect(statsChunks.some((u) => u.endsWith('.js'))).toBe(true);
-    // It sits over the top of the video, in view (the link is further down the page), and
-    // leaves the bottom of the video (the controls) free.
+    // It sits over the top of the video, in view, and leaves the bottom of the video (the
+    // controls) free.
     await expect(panel).toBeInViewport();
     const player = await box(page, '.player');
     const over = await box(page, '[data-testid="stats"]');
@@ -268,9 +292,10 @@ test.describe('stats for nerds', () => {
     // Act
     await page.keyboard.press('Escape');
 
-    // Assert
+    // Assert: the Settings menu closed when the panel opened; the focus goes back to its button
     await expect(panel).toBeHidden();
-    await expect(link).toBeFocused();
+    await expect(page.getByTestId('settings-menu')).toBeHidden();
+    await expect(page.getByTestId('settings-open')).toBeFocused();
     await expect(link).toHaveAttribute('aria-expanded', 'false');
 
     // Act
@@ -292,6 +317,7 @@ test.describe('stats for nerds', () => {
     await openWatch(page, new MockHub('Bia'));
 
     // Act
+    await openSettings(page);
     await page.getByTestId('stats-open').click();
 
     // Assert

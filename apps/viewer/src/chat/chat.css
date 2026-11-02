@@ -566,7 +566,7 @@ button.pick img {
   text-decoration: underline;
 }
 
-/* "Show chat (3 new)" in the bar under the player. */
+/* "Show chat (3 new)" in the info row under the player. */
 button.chat-show {
   min-height: 32px;
   padding: 0 var(--sp-3);

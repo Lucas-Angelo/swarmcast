@@ -14,24 +14,25 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video, Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), Playback Stable or Lower delay, 3 the Help the stream (P2P) switch, turned on here, 4 Share, and the chat on the right.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video as wide as the window beside the chat, which runs down the whole right side; under the video the streamer's name with Live and how many are watching, 1 Unmute, 2 the quality menu (Auto), 4 Share, and the Settings menu opened, with Playback Stable or Lower delay and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
 - **● LIVE / Go live:** you are 10 to 30 seconds behind the streamer, which is normal. Next to it, "~14 s behind live" shows your delay: it adjusts itself to your connection (closer to live on steady internet, further back when it wobbles, so the video does not pause). If you fell behind, click **Go live**.
 - **Quality:** **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.
-- **Playback: Stable or Lower delay.** **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
-- **Help the stream (P2P):** off by default; you can turn it on (see below).
+- **Settings** (the gear under the video): Playback, Help the stream (P2P), your nickname, Keyboard shortcuts and Stats for nerds. Esc, a click outside or × closes it.
+- **Playback: Stable or Lower delay** (in **Settings**). **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
+- **Help the stream (P2P)** (in **Settings**): off by default; you can turn it on (see below).
 - **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.
 
-- **Theater mode** (on a computer): makes the video as big as the window allows. The chat stays next to it on a wide screen and moves under it on a smaller one. Click it again to go back; your browser remembers the choice.
+- **Theater mode** (on a computer): the video takes the whole height of the window too, with black around it and the chat still next to it; the streamer's name and the rest are a scroll away. Click it again to go back; your browser remembers the choice.
 
 While the live plays, your phone or computer **keeps the screen on**, so it does not dim or lock in the middle of the stream (pause and it can sleep again). With the sound on, your phone's **lock screen** and notifications show the streamer's name and picture with a play / pause button.
 
-On a phone the same controls sit under the video:
+On a phone the video is at the top, the same controls under it, and the chat fills the rest of the screen:
 
-![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a phone, with the chat hidden (Show chat brings it back): 1 Unmute, 2 the quality menu, 3 Settings, where the Help the stream (P2P) switch is, 4 Share.](../../assets/guides/viewers/en/watch-phone.webp)
 
 ### Keyboard shortcuts
 
@@ -49,15 +50,15 @@ On a computer you can control the live from the keyboard:
 | S | Stats for nerds |
 | ? | The list of shortcuts |
 
-They do nothing while you type, so writing in the chat is safe. **Keyboard shortcuts**, under the video, shows the list and a switch to turn them off (for example if you use voice control); your browser remembers it.
+They do nothing while you type, so writing in the chat is safe. **Keyboard shortcuts**, in **Settings** under the video, shows the list and a switch to turn them off (for example if you use voice control); your browser remembers it.
 
 ### Stats for nerds
 
-Curious about what the player is doing? **Stats for nerds**, under the video, opens a small panel on top of the video: the resolution and quality, the internet speed the player measures, how many seconds of video are loaded ahead, how far behind live you are, dropped frames, how much video came from other viewers (P2P) and what you sent them, and your connection type when the browser tells it. The numbers update every second. Press Esc or × to close it; **Copy** copies the lines, for example to send them to the streamer when something goes wrong. It never shows your address or anyone else's.
+Curious about what the player is doing? **Stats for nerds**, in **Settings** under the video, opens a small panel on top of the video: the resolution and quality, the internet speed the player measures, how many seconds of video are loaded ahead, how far behind live you are, dropped frames, how much video came from other viewers (P2P) and what you sent them, and your connection type when the browser tells it. The numbers update every second. Press Esc or × to close it; **Copy** copies the lines, for example to send them to the streamer when something goes wrong. It never shows your address or anyone else's.
 
 ## The chat
 
-Under the video (next to it on a computer) is the live's chat. Type a message and press Enter. Everyone in the live sees your nickname and your messages; the streamer's messages have a **Streamer** badge.
+Next to the video on a computer (a column as tall as the window) and under it on a phone is the live's chat. Type a message and press Enter. Everyone in the live sees your nickname and your messages; the streamer's messages have a **Streamer** badge.
 
 - **Hide chat** hides it on this device (your choice is remembered); **Show chat** brings it back.
 - **Chat settings** lets you pick your name colour, show the times and make the text larger. Your colour is always shown readable for everyone.

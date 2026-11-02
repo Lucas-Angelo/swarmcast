@@ -437,6 +437,7 @@ export const ptBR: Messages = {
   'watch.theater.tip': 'O vídeo do tamanho da janela: ele ocupa toda a altura da janela. Clique de novo (ou aperte T) para voltar.',
   'watch.settings': 'Configurações',
   'watch.settings.tip': 'Reprodução, Ajudar a transmissão (P2P), atalhos de teclado e estatísticas.',
+  'watch.settings.close': 'Fechar as configurações',
   'watch.keys.open': 'Atalhos de teclado',
   'watch.keys.title': 'Atalhos de teclado',
   'watch.keys.close': 'Fechar',

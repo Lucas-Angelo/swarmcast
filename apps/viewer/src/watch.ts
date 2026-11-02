@@ -208,10 +208,10 @@ function tip(text: string): HTMLSpanElement {
 
 /**
  * The quality menu (Auto/1080p/720p/480p/360p/Audio only) in the player's control bar, and the
- * Stable / Lower-delay switch under the player, with its tooltip.
+ * Stable / Lower-delay switch in the Settings menu under the player, with its tooltip.
  */
 function mountSettings(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void, source: AudioOnlySwitch): void {
-  // Without the bar (it failed to build), the menu sits in the settings card as before.
+  // Without the bar (it failed to build), the menu sits in the Settings menu, next to Playback.
   const qualityHost = controls?.qualitySlot ?? playerControls.appendChild(Object.assign(document.createElement('div'), { className: 'control-group quality-group' }));
   createQualityMenu(
     hls,
@@ -372,7 +372,13 @@ installPlayerExtras({
 
 // Settings (settings-menu.ts): playback, P2P, the nickname, shortcuts and stats, in a menu under
 // the gear of the info row.
-createSettingsMenu({ doc: document, button: $<HTMLButtonElement>('settings-open'), menu: $<HTMLElement>('settings-menu') });
+createSettingsMenu({
+  doc: document,
+  button: $<HTMLButtonElement>('settings-open'),
+  menu: $<HTMLElement>('settings-menu'),
+  closeButton: $<HTMLButtonElement>('settings-close'),
+  closers: [$<HTMLElement>('stats-open')],
+});
 
 // The "Unmute" button goes once the sound is on, whichever control turned it on, and comes back
 // when the viewer mutes again (as after the muted autoplay).

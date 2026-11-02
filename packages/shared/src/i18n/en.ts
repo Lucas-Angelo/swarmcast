@@ -441,6 +441,7 @@ export const en = {
   'watch.theater.tip': 'The video as big as the window: it takes the whole height of the window. Click again (or press T) to go back.',
   'watch.settings': 'Settings',
   'watch.settings.tip': 'Playback, Help the stream (P2P), keyboard shortcuts and stats.',
+  'watch.settings.close': 'Close settings',
   'watch.keys.open': 'Keyboard shortcuts',
   'watch.keys.title': 'Keyboard shortcuts',
   'watch.keys.close': 'Close',

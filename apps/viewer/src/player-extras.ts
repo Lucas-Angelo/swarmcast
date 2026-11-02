@@ -47,6 +47,7 @@ export function installPlayerExtras(d: PlayerExtrasDeps): PlayerExtras {
   const theater = createTheater({ body: doc.body, button: byId<HTMLButtonElement>('theater'), storage: d.storage });
   const stats = createStatsToggle({
     button: byId<HTMLButtonElement>('stats-open'),
+    fallbackFocus: doc.getElementById('settings-open'),
     host: byId<HTMLElement>('stats'),
     source: d.stats,
     ...(d.clipboard ? { clipboard: d.clipboard } : {}),

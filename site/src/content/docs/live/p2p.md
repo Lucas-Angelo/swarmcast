@@ -3,9 +3,9 @@ title: Help the stream (P2P)
 description: How viewers help each other with P2P, what it shows about them (an approximate location), and how to turn it on or off.
 ---
 
-**Help the stream (P2P)** is a switch on the viewer page. It is **off by default**: each viewer decides whether to turn it on. Viewers who have it on pass pieces of the video to each other, so your computer sends less and the live runs smoother for everyone. P2P means "peer to peer": from one viewer to another.
+**Help the stream (P2P)** is a switch in the viewer page's **Settings** menu (the gear under the video). It is **off by default**: each viewer decides whether to turn it on. Viewers who have it on pass pieces of the video to each other, so your computer sends less and the live runs smoother for everyone. P2P means "peer to peer": from one viewer to another.
 
-![The viewer page on a phone: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here by this viewer, with how many peers help and how much video came from them, 4 Share.](../../../assets/guides/viewers/en/watch-phone.webp)
+![The viewer page on a computer with its Settings menu open: 1 Unmute, 2 the quality menu, 3 the Help the stream (P2P) switch, turned on here by this viewer, with how many peers help and how much video came from them, 4 Share.](../../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## What it shows, honestly
 

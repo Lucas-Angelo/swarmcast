@@ -73,7 +73,10 @@
           <div class="settings">
             <button id="settings-open" type="button" class="secondary settings-btn sc-ico-settings" data-testid="settings-open" aria-expanded="false" aria-controls="settings-menu" title="Playback, Help the stream (P2P), keyboard shortcuts and stats." data-i18n-title="watch.settings.tip"><span class="btn-label" data-i18n="watch.settings">Settings</span></button>
             <div id="settings-menu" class="settings-menu" data-testid="settings-menu" role="group" aria-labelledby="settings-title" hidden>
-              <h2 id="settings-title" class="settings-title" data-i18n="watch.settings">Settings</h2>
+              <div class="settings-head">
+                <h2 id="settings-title" class="settings-title" data-i18n="watch.settings">Settings</h2>
+                <button id="settings-close" type="button" class="settings-close" data-testid="settings-close" aria-label="Close settings" data-i18n-aria-label="watch.settings.close">×</button>
+              </div>
               <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
               <div class="toggle-row">
                 <label class="toggle">
