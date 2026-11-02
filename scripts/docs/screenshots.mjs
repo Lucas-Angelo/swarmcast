@@ -823,13 +823,15 @@ async function captureLocale(browser, lang) {
 
   // (5) Viewer page on a desktop: LIVE badge, viewer count, quality menu, P2P switch.
   await desktop.page.waitForSelector('#viewer-count-wrap:not([hidden])', { timeout: 15_000 }).catch(() => {});
-  await desktop.page.waitForSelector('.quality-menu', { timeout: 15_000 }).catch(() => log('no quality menu'));
+  await desktop.page.waitForSelector('[data-testid="quality"]', { timeout: 15_000 }).catch(() => log('no quality menu'));
   await waitPlaying(desktop.page, 6);
+  await showPlayerControls(desktop.page);
   await desktop.page.screenshot({ path: path.join(OUT_DIR, `viewer-desktop-${lang}.png`), fullPage: true, animations: 'disabled', caret: 'hide' });
   log(`captured viewer-desktop-${lang}.png`);
 
   // (6) Viewer page on a phone (portrait).
   await waitPlaying(phone.page, 6);
+  await showPlayerControls(phone.page);
   await shot(phone.page, `viewer-phone-${lang}.png`);
 
   // (6b) The chat on the viewer page, for the "Chat" guide: the column with the messages of
@@ -861,18 +863,17 @@ async function captureLocale(browser, lang) {
   // can, so the page fits.
   if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
     await phone.page.getByTestId('chat-hide').click();
-    // The video moves up under the pointer; away from it, its controls fade out.
-    await phone.page.mouse.move(0, 0);
-    await sleep(4000);
   }
   for (const [page, name] of [
     [desktop.page, 'watch-desktop'],
     [phone.page, 'watch-phone'],
   ]) {
     await fitViewport(page);
+    // The player's controls fade while the live plays: the pointer rests on their bar for the picture.
+    await showPlayerControls(page);
     await guideShot(page, page.locator('body'), 'viewers', lang, name, {
       pad: 0,
-      callouts: [page.locator('#unmute'), page.locator('.quality-menu'), page.locator('label.toggle', { has: page.locator('#p2p') }), page.locator('#share')],
+      callouts: [page.locator('#unmute'), page.getByTestId('quality'), page.locator('label.toggle', { has: page.locator('#p2p') }), page.locator('#share')],
     });
   }
 
@@ -928,6 +929,17 @@ async function captureLocale(browser, lang) {
   // (11) After "Stop everything", and the app's splash (guide pictures).
   await captureStopped(browser, lang);
   await captureSplash(browser, lang);
+}
+
+/**
+ * The player's own controls (viewer player-controls.ts) fade while the live plays; the pointer
+ * resting on their bar holds them, as a viewer reaching for a control sees them.
+ */
+async function showPlayerControls(page) {
+  const bar = await page.getByTestId('controls').boundingBox();
+  if (!bar) return log('no player controls');
+  await page.mouse.move(bar.x + bar.width / 2, bar.y + bar.height / 2);
+  await page.waitForFunction(() => !document.querySelector('.player')?.classList.contains('pc-idle'), null, { timeout: 5000 }).catch(() => log('the player controls stayed faded'));
 }
 
 // ---- PNG size ---------------------------------------------------------------------------

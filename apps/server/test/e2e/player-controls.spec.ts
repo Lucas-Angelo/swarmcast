@@ -178,9 +178,10 @@ test('the keyboard reaches every control in order and presses it; the focus hold
   await waitPlaying(page);
   await page.mouse.move(1, 1);
   await expect.poll(() => faded(page)).toBe(true);
-  // Safari's Tab moves only between text fields unless the viewer turns on "Press Tab to highlight
-  // each item"; Option+Tab reaches every control, as a Safari keyboard user presses it.
-  const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
+  // WebKit on macOS (Safari) moves Tab only between text fields unless the viewer turns on "Press
+  // Tab to highlight each item"; Option+Tab reaches every control, as a Safari keyboard user
+  // presses it. WebKit on Linux and the other engines (Firefox: playwright.config.ts) tab to all.
+  const tab = browserName === 'webkit' && process.platform === 'darwin' ? 'Alt+Tab' : 'Tab';
   const focused = (): Promise<string | null> => page.evaluate(() => (document.activeElement as HTMLElement | null)?.dataset.testid ?? document.activeElement?.id ?? null);
   // The control before the bar in the page's order is the last one of the header: Tab from the
   // start of the page until the focus enters the bar (a bounded walk, not a retry).
