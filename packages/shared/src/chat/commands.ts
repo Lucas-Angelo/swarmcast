@@ -249,7 +249,8 @@ function parsePoll(def: ChatCommandDef, rest: string): ParsedCommand {
   const first = rest.slice(0, end);
   const after = trim(rest.slice(end));
   const len = parseCommandDuration(first, null);
-  if (len !== null && after !== '') {
+  // A time needs a question after it: "/poll 2m | a | b" asks "2m".
+  if (len !== null && after !== '' && after[0] !== '|' && after[0] !== ';') {
     seconds = len;
     body = after;
   }

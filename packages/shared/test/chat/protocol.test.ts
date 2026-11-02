@@ -6,7 +6,10 @@ import {
   CHAT_SEQ_KINDS,
   chatHighlightSchema,
   chatPinSchema,
+  chatPollCreateSchema,
+  chatPollResolveSchema,
   chatSettingsSchema,
+  chatVoteSchema,
   isChatSeqItem,
   clientMessageSchema,
   defaultChatSettings,
@@ -233,6 +236,96 @@ describe('highlight and pin: wire shapes', () => {
   it('no viewer frame can pin or highlight: such frames are not in the client schema', () => {
     // Act
     const frames = ['{"t":"chat.pin","s":1}', '{"t":"chat.hl","s":1,"on":true}', '{"t":"chat.highlight","s":1,"on":true}'].map((f) => clientMessageSchema.safeParse(JSON.parse(f)).success);
+    // Assert
+    expect(frames).toEqual([false, false, false]);
+  });
+});
+
+describe('polls and predictions: wire shapes', () => {
+  it('poll and count items are seq-less, and a batch with them survives JSON', () => {
+    // Arrange
+    const items: ChatItem[] = [
+      { k: 'poll', p: { id: 'p1', kind: 'poll', q: 'Pizza?', o: ['Sim', 'Não'], st: 'open', c: [0, 0], endsIn: 120_000 } },
+      { k: 'pt', id: 'p1', c: [3, 1] },
+      { k: 'poll', p: { id: 'p1', kind: 'prediction', q: 'Quem ganha?', o: ['Ana', 'Bia', 'Caio'], st: 'resolved', c: [4, 2, 0], win: 1, newOnly: true } },
+      { k: 'poll', p: null },
+    ];
+    const msg: ChatServerMessage = { t: 'chat.batch', items };
+    const voted: ChatServerMessage = { t: 'chat.voted', n: 7, id: 'p1', o: 1, c: [3, 2] };
+    // Act
+    const seqItems = items.filter(isChatSeqItem);
+    // Assert
+    expect(seqItems).toEqual([]);
+    expect(JSON.parse(JSON.stringify(msg))).toEqual(msg);
+    expect(JSON.parse(JSON.stringify(voted))).toEqual(voted);
+  });
+
+  it.each([
+    ['{"t":"chat.vote","n":1,"id":"p1","o":0}', true],
+    ['{"t":"chat.vote","n":2147483647,"id":"pzz9","o":4}', true],
+    ['{"t":"chat.vote","n":1,"id":"p1","o":5}', false],
+    ['{"t":"chat.vote","n":1,"id":"p1","o":-1}', false],
+    ['{"t":"chat.vote","n":1,"id":"p1","o":1.5}', false],
+    ['{"t":"chat.vote","n":0,"id":"p1","o":0}', false],
+    ['{"t":"chat.vote","n":1,"id":"q1","o":0}', false],
+    ['{"t":"chat.vote","n":1,"id":"p","o":0}', false],
+    ['{"t":"chat.vote","n":1,"id":"p12345678901","o":0}', false],
+    ['{"t":"chat.vote","n":1,"id":"P1","o":0}', false],
+    ['{"t":"chat.vote","n":1,"id":"p1","o":"0"}', false],
+    ['{"t":"chat.vote","n":1,"id":"p1"}', false],
+    ['{"t":"chat.vote","n":1,"id":"p1","o":0,"x":1}', false],
+    ['{"t":"chat.vote","n":1,"id":["p1"],"o":0}', false],
+  ])('vote frame %s accepted: %s', (frame, ok) => {
+    // Act
+    const direct = chatVoteSchema.safeParse(JSON.parse(frame)).success;
+    const union = clientMessageSchema.safeParse(JSON.parse(frame)).success;
+    // Assert
+    expect(direct).toBe(ok);
+    expect(union).toBe(ok);
+  });
+
+  it('a vote frame starts with the chat prefix', () => {
+    // Act
+    const frame = JSON.stringify({ t: 'chat.vote', n: 1, id: 'p1', o: 0 });
+    // Assert
+    expect(frame.startsWith(CHAT_FRAME_PREFIX)).toBe(true);
+  });
+
+  it.each([
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 15 }, true],
+    [{ kind: 'prediction', question: 'Q?', options: ['a', 'b', 'c', 'd', 'e'], seconds: 600, newOnly: false }, true],
+    [{ kind: 'poll', question: 'Q?', options: ['a'], seconds: 60 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b', 'c', 'd', 'e', 'f'], seconds: 60 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 14 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 601 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 30.5 }, false],
+    [{ kind: 'quiz', question: 'Q?', options: ['a', 'b'], seconds: 60 }, false],
+    [{ kind: 'poll', question: 'x'.repeat(501), options: ['a', 'b'], seconds: 60 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'x'.repeat(201)], seconds: 60 }, false],
+    [{ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 60, extra: 1 }, false],
+  ])('poll body %j accepted: %s', (body, ok) => {
+    // Act
+    const r = chatPollCreateSchema.safeParse(body);
+    // Assert
+    expect(r.success).toBe(ok);
+  });
+
+  it.each([
+    [{ option: 0 }, true],
+    [{ option: 4 }, true],
+    [{ option: 5 }, false],
+    [{ option: -1 }, false],
+    [{}, false],
+  ])('resolve body %j accepted: %s', (body, ok) => {
+    // Act
+    const r = chatPollResolveSchema.safeParse(body);
+    // Assert
+    expect(r.success).toBe(ok);
+  });
+
+  it('no viewer frame can start, end or answer a poll', () => {
+    // Act
+    const frames = ['{"t":"chat.poll","q":"x","o":["a","b"]}', '{"t":"chat.poll.end"}', '{"t":"chat.resolve","option":0}'].map((f) => clientMessageSchema.safeParse(JSON.parse(f)).success);
     // Assert
     expect(frames).toEqual([false, false, false]);
   });

@@ -40,6 +40,9 @@ function recordingView() {
     clearUpTo: (s) => calls.push(`clr ${s}`),
     highlight: (s, on) => calls.push(`hl ${s} ${on}`),
     pin: (p) => calls.push(p ? `pin ${p.s} ${p.author.n} ${p.text ?? 'gif'}` : 'pin null'),
+    poll: (p) => calls.push(p ? `poll ${p.id} ${p.st} ${p.c.join(',')}${p.mine !== undefined ? ` mine ${p.mine}` : ''}` : 'poll null'),
+    tally: (id, c) => calls.push(`tally ${id} ${c.join(',')}`),
+    voted: (n, id, o) => calls.push(`voted ${n} ${id} ${o}`),
     author: (a) => calls.push(`author ${a.a} ${a.c}`),
     settings: (s) => calls.push(`settings ${s ? s.enabled : 'null'}`),
     you: () => calls.push('you'),
@@ -564,5 +567,90 @@ describe('ChatSession: replies and mentions (docs/CHAT.md "Replies and mentions"
     // Assert
     expect(shown).toEqual([1, 2, 3]);
     expect(sent).toEqual([]);
+  });
+});
+
+describe('ChatSession: polls and predictions', () => {
+  const POLL = { id: 'p1', kind: 'poll' as const, q: 'Pizza?', o: ['Sim', 'Não'], st: 'open' as const, c: [0, 0], endsIn: 60_000 };
+
+  it('the poll comes with the hello (with this device\'s vote), as a state item, and goes with p: null; never as a seq', () => {
+    // Arrange
+    const { session, calls, sent } = setup({ poll: { ...POLL, c: [2, 1], mine: 0 } });
+    // Act
+    session.frame(batch({ k: 'poll', p: { ...POLL, st: 'closed', c: [3, 1] } }, msg(3)));
+    session.frame(batch({ k: 'poll', p: null }));
+    // Assert
+    expect(calls.filter((c) => c.startsWith('poll'))).toEqual(['poll p1 open 2,1 mine 0', 'poll p1 closed 3,1 mine 0', 'poll null']);
+    expect(session.lastSeq).toBe(3);
+    expect(sent).toEqual([]);
+  });
+
+  it('counts (`pt`) update the poll on screen; counts for another poll, or of the wrong shape, are ignored', () => {
+    // Arrange
+    const { session, calls } = setup({ poll: POLL });
+    // Act
+    session.frame(batch({ k: 'pt', id: 'p1', c: [4, 2] }, { k: 'pt', id: 'p9', c: [9, 9] }, { k: 'pt', id: 'p1', c: [1] }, { k: 'pt', id: 'p1', c: [1, -1] }, { k: 'pt', id: 'p1', c: [1.5, 0] }));
+    // Assert
+    expect(calls.filter((c) => c.startsWith('tally'))).toEqual(['tally p1 4,2']);
+    expect(session.poll?.c).toEqual([4, 2]);
+  });
+
+  it('chat.voted marks this device\'s vote (also from another tab), with the counts; it is kept when the poll changes later', () => {
+    // Arrange
+    const { session, calls } = setup({ poll: POLL });
+    // Act
+    session.frame({ t: 'chat.voted', id: 'p1', o: 1, c: [0, 1] });
+    session.frame({ t: 'chat.voted', n: 5, id: 'p9', o: 0, c: [1, 0] });
+    session.frame(batch({ k: 'poll', p: { ...POLL, st: 'closed', c: [2, 1] } }));
+    // Assert
+    expect(calls.filter((c) => c.startsWith('poll') || c.startsWith('voted'))).toEqual(['poll p1 open 0,0', 'poll p1 open 0,1 mine 1', 'voted undefined p1 1', 'poll p1 closed 2,1 mine 1']);
+  });
+
+  it('a new poll forgets the vote of the last one; a reconnect delta brings the poll too', () => {
+    // Arrange
+    const { session, calls } = setup({ poll: { ...POLL, mine: 1 } });
+    // Act
+    session.frame(batch({ k: 'poll', p: { ...POLL, id: 'p2' } }));
+    session.hello({ v: 1, settings: settings(), you, roster: [], items: [], lastSeq: 2, delta: true, poll: { ...POLL, id: 'p2', c: [1, 0], mine: 0 } });
+    session.hello({ v: 1, settings: settings(), you, roster: [], items: [], lastSeq: 2, delta: true });
+    // Assert
+    expect(calls.filter((c) => c.startsWith('poll'))).toEqual(['poll p1 open 0,0 mine 1', 'poll p2 open 0,0', 'poll p2 open 1,0 mine 0', 'poll null']);
+  });
+
+  it.each([
+    [{ ...POLL, o: ['só uma'], c: [0] }],
+    [{ ...POLL, o: ['a', 'b', 'c', 'd', 'e', 'f'], c: [0, 0, 0, 0, 0, 0] }],
+    [{ ...POLL, st: 'weird' }],
+    [{ ...POLL, kind: 'quiz' }],
+    [{ ...POLL, c: [0] }],
+    [{ ...POLL, q: 7 }],
+    [{ ...POLL, id: 1 }],
+    ['nope'],
+  ])('a malformed poll %j counts as none, and the items after it still come', (bad) => {
+    // Arrange
+    const { session, calls, shown } = setup({ poll: POLL });
+    // Act
+    session.frame(batch({ k: 'poll', p: bad } as unknown as ChatItem, msg(3)));
+    // Assert
+    expect(calls.at(-1)).toBe('poll null');
+    expect(shown).toEqual([1, 2, 3]);
+    expect(session.poll).toBeNull();
+  });
+
+  it('poll items behind a gap wait with the rest for the resume answer, and never ask for a resume of their own', () => {
+    // Arrange
+    const { session, calls, sent, shown } = setup();
+    // Act
+    session.frame(batch({ k: 'poll', p: POLL }, { k: 'pt', id: 'p1', c: [1, 0] }));
+    const alone = [...sent];
+    session.frame(batch(msg(4), { k: 'pt', id: 'p1', c: [2, 0] }));
+    const held = calls.filter((c) => c.startsWith('tally')).length;
+    session.frame(batch(msg(3)));
+    // Assert
+    expect(alone).toEqual([]);
+    expect(sent).toEqual([{ t: 'chat.resume', after: 2 }]);
+    expect(held).toBe(1);
+    expect(calls.filter((c) => c.startsWith('poll') || c.startsWith('tally'))).toEqual(['poll p1 open 0,0', 'tally p1 1,0', 'tally p1 2,0']);
+    expect(shown).toEqual([1, 2, 3, 4]);
   });
 });
