@@ -7,6 +7,10 @@
 // (aria-disabled) so the keyboard and screen readers keep their place. Announcements go through a
 // polite live region, only on changes of state (opened, ended, answered, your vote, a refusal) and at
 // most one per ANNOUNCE_MIN_MS; counts are never announced as they change.
+//
+// On a phone the chat under the player has room for a few lines only, so a new poll starts folded
+// to its header (the label, the question on one line, the time left): a tap on the question or on ▸
+// opens it, and the list keeps its room until the viewer does.
 import { t, tc, type MessageKey, type MessageParams } from '@swarmcast/shared/i18n';
 import { checkChatInvariants, CHAT_POLL_OPTION_MAX_GRAPHEMES, CHAT_POLL_QUESTION_MAX_GRAPHEMES, type ChatYou } from './core/index.js';
 import type { PollEntry } from './session.js';
@@ -25,6 +29,8 @@ export interface PollCardDeps {
   later?: (cb: () => void, ms: number) => () => void;
   /** Run `cb` every `ms`; returns its cancel (setInterval). */
   every?: (cb: () => void, ms: number) => () => void;
+  /** A small screen (a phone): a new poll starts folded. */
+  compact?: () => boolean;
 }
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
@@ -59,6 +65,8 @@ export class PollCard {
   /** Called when a poll starts, changes state or goes away (the "Show chat" badge). */
   onChange: (p: PollEntry | null, fresh: boolean) => void = () => {};
   private readonly label: HTMLSpanElement;
+  /** The question on one line while folded (a button: a tap opens the card). */
+  private readonly peek: HTMLButtonElement;
   private readonly time: HTMLSpanElement;
   private readonly toggle: HTMLButtonElement;
   private readonly body: HTMLDivElement;
@@ -116,10 +124,21 @@ export class PollCard {
       else this.folded.add(p.id);
       this.render();
     });
-    head.append(this.label, this.time, this.toggle);
+    this.peek = el('button', 'poll-peek');
+    this.peek.type = 'button';
+    this.peek.dataset.testid = 'chat-poll-peek';
+    this.peek.addEventListener('click', () => {
+      const p = this.poll;
+      if (!p) return;
+      this.folded.delete(p.id);
+      this.render();
+      this.rows[0]?.button.focus();
+    });
+    head.append(this.label, this.peek, this.time, this.toggle);
     this.body = el('div', 'poll-body');
     this.body.id = `${this.qid}-body`;
     this.toggle.setAttribute('aria-controls', this.body.id);
+    this.peek.setAttribute('aria-controls', this.body.id);
     this.question = el('p', 'poll-q');
     this.question.id = this.qid;
     this.list = el('ul', 'poll-options');
@@ -144,6 +163,7 @@ export class PollCard {
     if (fresh || p === null) {
       this.clearPending();
       this.error = null;
+      if (p && this.deps.compact?.()) this.folded.add(p.id);
       this.build();
     }
     if (p && (fresh || prev?.st !== p.st)) this.announceState(p, fresh);
@@ -293,6 +313,16 @@ export class PollCard {
     this.label.textContent = t(p.kind === 'prediction' ? 'chat.prediction.title' : 'chat.poll.title');
     const folded = this.folded.has(p.id);
     this.body.hidden = folded;
+    this.root.classList.toggle('folded', folded);
+    this.peek.hidden = !folded;
+    this.peek.replaceChildren();
+    if (folded) {
+      const q = el('bdi');
+      q.setAttribute('dir', 'auto');
+      q.textContent = this.textsOk(p) ? p.q : t('chat.poll.hidden');
+      this.peek.append(q);
+      this.peek.setAttribute('aria-label', `${t('chat.poll.expand')}: ${q.textContent}`);
+    }
     this.toggle.textContent = folded ? '▸' : '▾';
     this.toggle.setAttribute('aria-expanded', String(!folded));
     const tip = t(folded ? 'chat.poll.expand' : 'chat.poll.collapse');

@@ -219,6 +219,8 @@ export function mountChat(opts: MountOptions): ChatController {
       return session.send({ t: 'chat.vote', n, id, o }) ? n : null;
     },
     you: () => session?.you ?? null,
+    // The same width as chat.css's phone rules: the chat under the player has room for a few lines.
+    compact: () => typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches,
   });
 
   // The pinned bar sits between the header and the list, never over the list or the input; the

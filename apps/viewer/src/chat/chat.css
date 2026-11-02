@@ -285,6 +285,33 @@ button.pinned-more[hidden] {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+.chat-poll.folded .poll-label {
+  flex: none;
+}
+button.poll-peek {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 var(--sp-1);
+  overflow: hidden;
+  background: transparent;
+  border-color: transparent;
+  color: var(--sc-ink);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+button.poll-peek:hover {
+  background: var(--hover);
+}
+button.poll-peek[hidden] {
+  display: none;
+}
+.poll-peek bdi {
+  unicode-bidi: isolate;
+}
 .poll-time {
   font-variant-numeric: tabular-nums;
 }
