@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
+import zlib from 'node:zlib';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { defaultConfig } from '../../src/core/config.js';
@@ -108,13 +109,16 @@ describe('upload order', () => {
 
 describe('page scripts', () => {
   /** GET `p` without decoding the body: status, headers and the bytes on the wire. */
-  function rawGet(base: string, p: string, headers: Record<string, string>): Promise<{ status: number; headers: http.IncomingHttpHeaders; bytes: number }> {
+  function rawGet(base: string, p: string, headers: Record<string, string>): Promise<{ status: number; headers: http.IncomingHttpHeaders; bytes: number; body: Buffer }> {
     return new Promise((resolve, reject) => {
       http
         .get(`${base}${p}`, { headers }, (res) => {
-          let bytes = 0;
-          res.on('data', (c: Buffer) => (bytes += c.length));
-          res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, bytes }));
+          const parts: Buffer[] = [];
+          res.on('data', (c: Buffer) => parts.push(c));
+          res.on('end', () => {
+            const body = Buffer.concat(parts);
+            resolve({ status: res.statusCode ?? 0, headers: res.headers, bytes: body.length, body });
+          });
         })
         .on('error', reject);
     });
@@ -145,5 +149,9 @@ describe('page scripts', () => {
     expect(gz.bytes).toBeLessThan(raw * 0.4);
     expect(plain.headers['content-encoding']).toBeUndefined();
     expect(plain.bytes).toBe(raw);
+    // Decoded, both copies are the very script: built from the final chunk (a copy made before
+    // Vite's last rewrites decoded to a script that did not run, so the watch page never started).
+    expect(zlib.brotliDecompressSync(br.body).equals(plain.body)).toBe(true);
+    expect(zlib.gunzipSync(gz.body).equals(plain.body)).toBe(true);
   });
 });

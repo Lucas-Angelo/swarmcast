@@ -30,15 +30,20 @@ export function precompress() {
     name: 'swarmcast-precompress',
     apply: 'build',
     enforce: 'post',
-    generateBundle(_options, bundle) {
-      for (const [fileName, item] of Object.entries(bundle)) {
-        if (!fileName.startsWith('assets/') || !COMPRESSIBLE.test(fileName)) continue;
-        const data = Buffer.from(item.type === 'chunk' ? item.code : item.source);
-        if (data.length < MIN_BYTES) continue;
-        const { br, gz } = compressedCopies(data);
-        this.emitFile({ type: 'asset', fileName: `${fileName}.br`, source: br });
-        this.emitFile({ type: 'asset', fileName: `${fileName}.gz`, source: gz });
-      }
+    // Last of all: Vite's own build plugins still rewrite chunks in generateBundle (the preload
+    // markers of dynamic imports); a copy made before them decodes to a script that does not run.
+    generateBundle: {
+      order: 'post',
+      handler(_options, bundle) {
+        for (const [fileName, item] of Object.entries(bundle)) {
+          if (!fileName.startsWith('assets/') || !COMPRESSIBLE.test(fileName)) continue;
+          const data = Buffer.from(item.type === 'chunk' ? item.code : item.source);
+          if (data.length < MIN_BYTES) continue;
+          const { br, gz } = compressedCopies(data);
+          this.emitFile({ type: 'asset', fileName: `${fileName}.br`, source: br });
+          this.emitFile({ type: 'asset', fileName: `${fileName}.gz`, source: gz });
+        }
+      },
     },
   };
 }
