@@ -44,13 +44,15 @@ test.describe('theater mode', () => {
     await expect.poll(async () => (await box(page, '.player')).width).toBeGreaterThan(before.width + 200);
     const player = await box(page, '.player');
     const bar = await box(page, '.bar');
-    // The bar stays right under the video and in view; the video keeps its own controls; the
-    // chat is under the bar.
+    // The bar stays right under the video and in view; the player's own controls stay over the
+    // bottom of the video; the chat is under the bar.
     expect(player.x + player.width).toBeLessThanOrEqual(1280);
     expect(bar.y).toBeGreaterThanOrEqual(player.y + player.height - 1);
     expect(bar.y + bar.height).toBeLessThanOrEqual(720);
     expect((await box(page, '[data-testid="chat"]')).y).toBeGreaterThanOrEqual(bar.y + bar.height - 1);
-    expect(await page.locator('video').getAttribute('controls')).not.toBeNull();
+    const controls = await box(page, '[data-testid="controls"]');
+    expect(Math.round(controls.y + controls.height)).toBe(Math.round(player.y + player.height));
+    expect(Math.round(controls.width)).toBe(Math.round(player.width));
 
     // Act
     await page.reload();

@@ -9,7 +9,8 @@ import { chatMessage, chatReady, expect, test, uid, waitPlaying } from './fixtur
 const video = (page: Page) =>
   page.evaluate(() => {
     const v = document.querySelector('video')!;
-    return { paused: v.paused, muted: v.muted, fullscreen: document.fullscreenElement === v };
+    // Full screen is the player container's (the video with its controls), not the video's alone.
+    return { paused: v.paused, muted: v.muted, fullscreen: document.fullscreenElement === document.querySelector('.player') };
   });
 
 /** Gives the focus to the page itself (nothing in particular), as after a click on an empty spot. */
@@ -18,7 +19,7 @@ async function focusPage(page: Page): Promise<void> {
   await expect.poll(() => page.evaluate(() => document.activeElement === document.body)).toBe(true);
 }
 
-test('K pauses and plays the live, M turns the sound on, F puts the video in full screen and takes it out', { tag: '@ui' }, async ({ viewers }) => {
+test('K pauses and plays the live, M turns the sound on, F puts the player (video and controls) in full screen and takes it out', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
   const { page } = await viewers.join(uid('keys'));
   await waitPlaying(page);
@@ -49,8 +50,10 @@ test('K pauses and plays the live, M turns the sound on, F puts the video in ful
   // Act
   await page.keyboard.press('f');
 
-  // Assert
+  // Assert: the player's own controls are there in full screen, across the bottom of the screen
   await expect.poll(async () => (await video(page)).fullscreen).toBe(true);
+  await expect(page.getByTestId('controls')).toBeInViewport({ ratio: 1 });
+  await expect(page.getByTestId('fullscreen')).toHaveAccessibleName('Exit full screen');
 
   // Act
   await page.keyboard.press('f');

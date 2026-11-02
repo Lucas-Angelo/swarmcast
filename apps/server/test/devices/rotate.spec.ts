@@ -1,16 +1,15 @@
 // The phone turned sideways while the live plays, and back upright. Sideways, style.css takes the
 // header away and makes the player as tall as the screen ("Phone held sideways"); upright, the
 // phone layout comes back with the chat under the player. The video plays on through every turn.
-// The browsers answer the turn differently, so each has its own test:
-// - Chrome on an Android phone first shows the video full screen ("rotate to fullscreen":
-//   Chrome turns it on for phones, slow_web_preference_cache.cc; Blink acts when the video plays
-//   with native controls, is 200 px or more and three quarters in view, and the device reports
-//   its orientation, media_controls_rotate_to_fullscreen_delegate.cc), holding landscape until the
-//   viewer leaves full screen with Back; then the page shows its sideways layout.
-// - Mobile Safari keeps the video in the page (playsinline): the sideways layout at once.
+// The browsers used to answer the turn differently: Chrome on an Android phone showed the video
+// full screen by itself ("rotate to fullscreen", which Blink does only for a video with the
+// browser's own controls, media_controls_rotate_to_fullscreen_delegate.cc). The page has its own
+// controls now (viewer player-controls.ts), so both browsers show the sideways layout at once;
+// on Android the viewer's full-screen button then fills the screen with the player and its
+// controls, and Back leaves it. Mobile Safari keeps the video in the page (playsinline).
 import { liveLink, uid } from '../e2e/fixtures.js';
 import { expect, test } from './fixtures.js';
-import { box, isShown, joinOnPhone, playedSince, videoState, viewport, type Phone } from './phone.js';
+import { box, fullScreenState, isShown, joinOnPhone, playedSince, tapControl, videoState, viewport, type Phone } from './phone.js';
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
 const WATCHING_S = 1.5;
@@ -43,22 +42,25 @@ async function playsOn(phone: Phone): Promise<void> {
   await expect.poll(() => playedSince(phone, from)).toBeGreaterThan(PLAYS_ON_S);
 }
 
-function fullScreen(phone: Phone): Promise<string | null> {
-  return phone.evaluate(() => document.fullscreenElement?.id ?? null);
-}
-
-test('Chrome: turned sideways the live goes full screen and plays on; after Back the page is sideways; upright the chat is under the player', { tag: '@android' }, async ({ phone }) => {
+test('Chrome: turned sideways the page lays the player across the screen and plays on; its full-screen button fills the screen with the player, Back leaves it; upright the chat is under the player', { tag: '@android' }, async ({ phone }) => {
   // Arrange
   await watching(phone);
   // Act
   await phone.rotate('landscape');
+  // Assert: no full screen by itself, the sideways layout
+  await expect.poll(() => sidewaysLayout(phone)).toBe(true);
+  expect(await fullScreenState(phone)).toBeNull();
+  await playsOn(phone);
+  // Act
+  await tapControl(phone, '[data-testid="fullscreen"]');
   // Assert
-  await expect.poll(() => fullScreen(phone)).toBe('video');
+  await expect.poll(() => fullScreenState(phone)).toBe('player');
+  expect(await isShown(phone, '[data-testid="controls"]')).toBe(true);
   await playsOn(phone);
   // Act
   await phone.back();
   // Assert
-  await expect.poll(() => fullScreen(phone)).toBeNull();
+  await expect.poll(() => fullScreenState(phone)).toBeNull();
   await expect.poll(() => sidewaysLayout(phone)).toBe(true);
   await playsOn(phone);
   // Act
@@ -76,7 +78,7 @@ test('Safari: turned sideways the page lays the player across the screen and pla
   await phone.rotate('landscape');
   // Assert
   await expect.poll(() => sidewaysLayout(phone)).toBe(true);
-  expect(await fullScreen(phone)).toBeNull();
+  expect(await fullScreenState(phone)).toBeNull();
   await playsOn(phone);
   // Act
   await phone.rotate('portrait');

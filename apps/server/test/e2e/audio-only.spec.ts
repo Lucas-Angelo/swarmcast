@@ -30,6 +30,7 @@ import {
   ladderUpdate,
   measuredWindow,
   playsOn,
+  qualityMenu,
   reconnectObs,
   startStallMonitor,
   stallReport,
@@ -69,7 +70,7 @@ async function playingAudioOnly(page: Page): Promise<void> {
   }).toEqual({ source: '/hls/audio-only.m3u8', heights: [0], videoWidth: 0 });
   await expect(page.getByTestId('audio-only')).toBeVisible();
   await expect(page.getByTestId('audio-only')).toContainText('Audio only');
-  await expect(page.locator('.quality-menu option:checked')).toHaveText(AUDIO_ONLY);
+  await expect(qualityMenu.checked(page)).toHaveText(AUDIO_ONLY);
   // No screen to keep on while only the sound plays: the wake lock lets go (or the browser has none).
   await expect.poll(() => page.evaluate(() => (window as unknown as { __swarmcast: { wakeLock: string } }).__swarmcast.wakeLock)).toMatch(/^(off|unsupported)$/);
 }
@@ -138,12 +139,11 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   const { page } = await viewers.join(uid('audio'));
   const received = hlsBytes(page);
   await waitPlaying(page);
-  const menu = page.locator('.quality-menu');
-  await expect(menu.locator('option').last()).toHaveText(AUDIO_ONLY);
+  await expect(qualityMenu.entries(page).last()).toHaveText(AUDIO_ONLY);
   const videoBytes = await bytesDuring(page, received, MEASURE_MS);
 
   // Act
-  await menu.selectOption({ label: AUDIO_ONLY });
+  await qualityMenu.pick(page, AUDIO_ONLY);
 
   // Assert
   await playingAudioOnly(page);
@@ -174,7 +174,7 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await playingAudioOnly(page);
 
   // Act
-  await page.locator('.quality-menu').selectOption({ label: 'Auto' });
+  await qualityMenu.pick(page, 'Auto');
 
   // Assert
   await expect.poll(async () => (await player(page)).source).toBe('/hls/index.m3u8');
@@ -184,8 +184,8 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await atLive(page);
   expect(await savedChoice(page)).toBeNull();
   // Automatic quality (the one quality of the default feed, by its name: nothing else to choose).
-  await expect(page.locator('.quality-menu')).toHaveValue('-1');
-  await expect(page.locator('.quality-menu option')).toHaveText(['360p', AUDIO_ONLY]);
+  await expect(qualityMenu.checked(page)).toHaveAttribute('data-value', '-1');
+  await expect(qualityMenu.entries(page)).toHaveText(['360p', AUDIO_ONLY]);
 });
 
 test('audio-only and video viewers share the audio over P2P, verified by hash', { tag: '@media' }, async ({ viewers, browserName }) => {
@@ -243,7 +243,7 @@ test('with the sound on, audio only plays where the device has a sound output; w
     expect((await stats(page)).lastReload).toBe('audio only cannot play here');
     await expect.poll(async () => (await player(page)).videoWidth).toBeGreaterThan(0);
     await expect(page.getByTestId('audio-only')).toBeHidden();
-    await expect(page.locator('.quality-menu option', { hasText: AUDIO_ONLY })).toHaveCount(0);
+    await expect(qualityMenu.entries(page).filter({ hasText: AUDIO_ONLY })).toHaveCount(0);
     await playsOn(page, 2);
     expect(await savedChoice(page)).toBe('on');
   }
