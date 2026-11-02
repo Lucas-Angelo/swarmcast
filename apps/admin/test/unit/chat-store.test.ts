@@ -170,3 +170,84 @@ describe('panel chat store', () => {
     expect(fn).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('panel chat store: highlight and pin', () => {
+  const pin = (s: number, o: Partial<{ endsIn: number; at: number }> = {}) => ({ s, a: 'k1', x: `msg ${s}`, at: o.at ?? 9000, ...(o.endsIn !== undefined ? { endsIn: o.endsIn } : {}) });
+
+  it('hl items mark and unmark a message with a new item object (the row re-renders); unknown seqs change nothing', () => {
+    // Arrange
+    const st = new ChatStore();
+    st.apply(msg([{ k: 'u', au: ana }, m(1), m(2)]));
+    const before = st.view().items[0];
+    // Act
+    st.apply(msg([{ k: 'hl', s: 1, on: true }, { k: 'hl', s: 9, on: true }]));
+    const lit = st.view().items[0];
+    st.apply(msg([{ k: 'hl', s: 1, on: false }]));
+    // Assert
+    expect(lit).toMatchObject({ s: 1, h: 1 });
+    expect(lit).not.toBe(before);
+    expect(st.view().items[0]).not.toHaveProperty('h');
+    expect(seqs(st)).toEqual([1, 2]);
+  });
+
+  it('a pin item sets the pin and, for a timed one, when it comes down on this clock; null unpins', () => {
+    // Arrange
+    const st = new ChatStore(500, () => 1_000);
+    st.apply(msg([{ k: 'u', au: ana }, m(1), m(2)]));
+    // Act
+    st.apply(msg([{ k: 'pin', p: pin(2, { endsIn: 60_000 }) }]));
+    const timed = { pin: st.view().pin, until: st.view().pinUntil };
+    st.apply(msg([{ k: 'pin', p: pin(1) }]));
+    const forever = { pin: st.view().pin?.s, until: st.view().pinUntil };
+    st.apply(msg([{ k: 'pin', p: null }]));
+    // Assert
+    expect(timed).toEqual({ pin: pin(2, { endsIn: 60_000 }), until: 61_000 });
+    expect(forever).toEqual({ pin: 1, until: null });
+    expect(st.view().pin).toBeNull();
+  });
+
+  it('deleting or clearing the pinned message unpins it; a reset unpins until the pin comes again', () => {
+    // Arrange
+    const st = new ChatStore();
+    st.apply(msg([{ k: 'u', au: ana }, m(1), m(2), { k: 'pin', p: pin(2) }]));
+    // Act
+    st.apply(msg([{ k: 'd', s: [1] }]));
+    const afterOther = st.view().pin?.s;
+    st.apply(msg([{ k: 'd', s: [2] }]));
+    const afterDelete = st.view().pin;
+    st.apply(msg([m(3), { k: 'pin', p: pin(3) }, { k: 'clr', s: 3 }]));
+    const afterClear = st.view().pin;
+    st.apply(msg([m(4), { k: 'pin', p: pin(4) }]));
+    st.apply(msg([{ k: 'u', au: ana }, m(4)], { reset: true }));
+    // Assert
+    expect(afterOther).toBe(2);
+    expect(afterDelete).toBeNull();
+    expect(afterClear).toBeNull();
+    expect(st.view().pin).toBeNull();
+  });
+
+  it('GET /api/chat brings the pin (or none)', () => {
+    // Arrange
+    const st = new ChatStore(500, () => 0);
+    const state = (p?: ReturnType<typeof pin>): AdminChatState => ({ settings: {} as AdminChatState['settings'], effective: {} as AdminChatState['effective'], roster: [ana], items: [m(1)], lastSeq: 1, sessions: [], counters, ...(p ? { pin: p } : {}) });
+    // Act
+    st.applyState(state(pin(1, { endsIn: 5000 })));
+    const withPin = { s: st.view().pin?.s, until: st.view().pinUntil };
+    st.applyState(state());
+    // Assert
+    expect(withPin).toEqual({ s: 1, until: 5000 });
+    expect(st.view().pin).toBeNull();
+  });
+
+  it('a malformed pin or hl item counts as no pin / is skipped, and never stops the items after it', () => {
+    // Arrange
+    const st = new ChatStore();
+    st.apply(msg([{ k: 'u', au: ana }, m(1), { k: 'pin', p: pin(1) }]));
+    // Act
+    st.apply(msg([{ k: 'pin', p: { s: 'x' } } as unknown as ChatItem, { k: 'hl', s: 1, on: 'yes' } as unknown as ChatItem, m(2)]));
+    // Assert
+    expect(st.view().pin).toBeNull();
+    expect(st.view().items[0]).not.toHaveProperty('h');
+    expect(seqs(st)).toEqual([1, 2]);
+  });
+});

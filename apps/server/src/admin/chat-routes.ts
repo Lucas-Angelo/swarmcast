@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { chatAdminSendSchema, chatDeleteSchema, chatMuteSchema, chatProtectRequestSchema, chatSetColorSchema, chatUnmuteSchema, type MessageKey } from '@swarmcast/shared';
+import { chatAdminSendSchema, chatDeleteSchema, chatHighlightSchema, chatMuteSchema, chatPinSchema, chatProtectRequestSchema, chatSetColorSchema, chatUnmuteSchema, type MessageKey } from '@swarmcast/shared';
+import type { MessageActionResult } from '../chat/hub.js';
 import type { LiveController } from '../core/live.js';
 import { CodedError } from '../core/messages.js';
 
@@ -17,6 +18,10 @@ type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
  *   POST /api/chat/unmute    {sessionId}
  *   PUT  /api/chat/color     {sessionId, color | null, lock}
  *   POST /api/chat/protect   {mode: off | slow | lockdown}
+ *   POST /api/chat/highlight {s, on}: highlight a message for everyone, or take it off
+ *   POST /api/chat/pin       {s, minutes?: 1…120 | null}: pin a message at the top (replaces any other pin)
+ *   POST /api/chat/unpin
+ * Only the panel can highlight or pin: no viewer frame can (docs/CHAT.md, "Highlight and pin").
  */
 export function registerChatRoutes(
   app: FastifyInstance,
@@ -28,6 +33,10 @@ export function registerChatRoutes(
   const need = (ok: boolean): { ok: true } => {
     if (!ok) throw new CodedError('admin.chat.err.noSession');
     return { ok: true };
+  };
+  const done = (r: MessageActionResult): { ok: true } => {
+    if (!r.ok) throw new CodedError(r.code);
+    return r;
   };
   app.get('/api/chat', { preHandler: auth }, async () => chat.adminState());
   app.put('/api/chat/settings', { preHandler: auth }, wrap((req) => {
@@ -56,5 +65,17 @@ export function registerChatRoutes(
   app.post('/api/chat/protect', { preHandler: auth }, wrap((req) => {
     chat.setProtect(chatProtectRequestSchema.parse(req.body).mode);
     return { ok: true, protect: chat.protection };
+  }));
+  app.post('/api/chat/highlight', { preHandler: auth }, wrap((req) => {
+    const b = chatHighlightSchema.parse(req.body);
+    return done(chat.highlight(b.s, b.on));
+  }));
+  app.post('/api/chat/pin', { preHandler: auth }, wrap((req) => {
+    const b = chatPinSchema.parse(req.body);
+    return done(chat.pin(b.s, b.minutes ?? null));
+  }));
+  app.post('/api/chat/unpin', { preHandler: auth }, wrap(() => {
+    chat.unpin();
+    return { ok: true };
   }));
 }

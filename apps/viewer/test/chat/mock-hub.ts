@@ -4,8 +4,9 @@
 // a stream. Behaviour kept close to plan §4: ack at once, the message comes back in a batch right
 // after (held back while `holdEchoes()` is on, so a test can see the page's "sending…" state for
 // as long as it needs), slow mode rejects with retryMs, colour changes come back as a roster upsert
-// plus chat.you.
-import type { ChatAuthor, ChatItem, ChatPublicSettings, ChatRejectCode, ChatServerMessage, ChatSnapshot, ChatYou } from '@swarmcast/shared/chat';
+// plus chat.you. The streamer's highlight and pin work as on the server: `hl` and `pin` items, the
+// flag on the message and the pin in every snapshot; deleting the pinned message or clearing unpins.
+import type { ChatAuthor, ChatItem, ChatPin, ChatPublicSettings, ChatRejectCode, ChatServerMessage, ChatSnapshot, ChatYou } from '@swarmcast/shared/chat';
 import type { ServerMessage } from '@swarmcast/shared';
 
 export function defaultSettings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
@@ -35,6 +36,8 @@ export class MockHub {
   roster = new Map<string, ChatAuthor>();
   items: ChatItem[] = [];
   seq = 0;
+  /** The pinned message (null: none). */
+  pinned: ChatPin | null = null;
   /** Frames the page sent (parsed). */
   received: Array<Record<string, unknown>> = [];
   /** The frames of type `t` the page sent, in order. */
@@ -58,7 +61,7 @@ export class MockHub {
   }
 
   snapshot(): ChatSnapshot {
-    return { v: 1, settings: this.settings, you: this.you, roster: [...this.roster.values()], items: this.items.slice(-50), lastSeq: this.seq };
+    return { v: 1, settings: this.settings, you: this.you, roster: [...this.roster.values()], items: this.items.slice(-50), lastSeq: this.seq, ...(this.pinned ? { pin: this.pinned } : {}) };
   }
 
   hello(sessionId = 's1'): ServerMessage {
@@ -104,12 +107,31 @@ export class MockHub {
 
   remove(seqs: number[]): void {
     this.items = this.items.filter((i) => !('s' in i && typeof i.s === 'number' && seqs.includes(i.s)));
-    this.broadcast({ t: 'chat.batch', items: [{ k: 'd', s: seqs }] });
+    const unpin: ChatItem[] = this.pinned && seqs.includes(this.pinned.s) ? [{ k: 'pin', p: (this.pinned = null) }] : [];
+    this.broadcast({ t: 'chat.batch', items: [...unpin, { k: 'd', s: seqs }] });
   }
 
   clear(): void {
     this.items = [];
-    this.broadcast({ t: 'chat.batch', items: [{ k: 'clr', s: this.seq }] });
+    const unpin: ChatItem[] = this.pinned ? [{ k: 'pin', p: (this.pinned = null) }] : [];
+    this.broadcast({ t: 'chat.batch', items: [...unpin, { k: 'clr', s: this.seq }] });
+  }
+
+  /** The streamer highlights message `s` (`on`) or takes the highlight off. */
+  highlight(s: number, on: boolean): void {
+    this.items = this.items.map((i): ChatItem => {
+      if (i.k !== 'm' || i.s !== s) return i;
+      const { h: _h, ...rest } = i;
+      return on ? { ...rest, h: 1 } : rest;
+    });
+    this.broadcast({ t: 'chat.batch', items: [{ k: 'hl', s, on }] });
+  }
+
+  /** The streamer pins message `s` (null: unpins). */
+  pin(s: number | null): void {
+    const m = this.items.find((i) => i.k === 'm' && i.s === s);
+    this.pinned = m?.k === 'm' ? { s: m.s, a: m.a, ...(m.x !== undefined ? { x: m.x } : {}), ...(m.g ? { g: m.g } : {}), at: Date.now() } : null;
+    this.broadcast({ t: 'chat.batch', items: [{ k: 'pin', p: this.pinned }] });
   }
 
   setSettings(over: Partial<ChatPublicSettings>): void {

@@ -89,6 +89,23 @@ export const CHAT_MUTE_MAX_MIN = 1440;
 export const CHAT_DELETE_MAX = 100;
 
 /**
+ * Highlighted messages at once (docs/CHAT.md, "Highlight and pin"): highlighting one more takes the
+ * highlight off the oldest, so a highlight keeps standing out.
+ */
+export const CHAT_HIGHLIGHTS_MAX = 20;
+
+/** A pinned message may be unpinned automatically after 1 to this many minutes (or stay until unpinned). */
+export const CHAT_PIN_MAX_MIN = 120;
+/** Pin lengths offered by the panel, in minutes (null = until the streamer unpins it). */
+export const CHAT_PIN_PRESETS_MIN = [5, 15, 60] as const;
+
+/**
+ * State items (a pin, a highlight) a socket too slow to receive them may owe before it gets a fresh
+ * snapshot instead of their current state when it catches up (batcher.ts).
+ */
+export const CHAT_STATE_MISSED_MAX = 64;
+
+/**
  * Share of the upload cap chat may use, and its clamp in kbps (plan §6.1, raised from 4 % and
  * 768 kbps: a lively chat of 3 msg/s to 120 viewers needs about 408 kbps on a 10 Mbps cap).
  */

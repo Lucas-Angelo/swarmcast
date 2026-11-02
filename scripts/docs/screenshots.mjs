@@ -358,8 +358,9 @@ const CHAT_LINES = {
 
 /**
  * A short, made-up conversation (streamer and the three viewers), before any panel picture: the
- * live chat is on the panel's main screen during a live. Maria's next line stays typed, unsent,
- * for the viewer's chat picture.
+ * live chat is on the panel's main screen during a live. The streamer highlights Pedro's question
+ * and pins her answer (the "Chat" guide shows both). Maria's next line stays typed, unsent, for the
+ * viewer's chat picture.
  */
 async function fillChat(lang, desktop, phone, third) {
   if ((await desktop.getByTestId('chat').count()) === 0) return;
@@ -369,8 +370,12 @@ async function fillChat(lang, desktop, phone, third) {
   await say(third, lines.alex);
   await say(desktop, lines.mariaHello);
   await say(phone, lines.pedroAsks);
-  await adminApi('POST', '/api/chat/send', { text: lines.answer });
+  const answer = await adminApi('POST', '/api/chat/send', { text: lines.answer });
   await desktop.getByTestId('chat-list').getByText(lines.answer).waitFor({ timeout: 15_000 });
+  const asked = (await adminApi('GET', '/api/chat')).items.find((i) => i.k === 'm' && i.x === lines.pedroAsks);
+  if (asked) await adminApi('POST', '/api/chat/highlight', { s: asked.s, on: true });
+  await adminApi('POST', '/api/chat/pin', { s: answer.s });
+  await desktop.getByTestId('chat-pinned').getByText(lines.answer).waitFor({ timeout: 15_000 });
 }
 
 async function say(page, text) {
@@ -768,7 +773,7 @@ async function captureLocale(browser, lang) {
   const adminCtx = await browser.newContext({ ...DESKTOP, locale: lang });
   const panel = await openPanel(adminCtx);
   await panel.waitForSelector('[data-testid="live-link"]');
-  await panel.getByTestId('chat-live').getByText(CHAT_LINES[lang].answer).waitFor({ timeout: 15_000 }).catch(() => log('no live chat in the panel'));
+  await panel.getByTestId('chat-live').getByTestId('chat-feed').getByText(CHAT_LINES[lang].answer).waitFor({ timeout: 15_000 }).catch(() => log('no live chat in the panel'));
   await panel.waitForSelector('[data-testid="viewers"] tbody tr:nth-child(3)');
   await panel.waitForSelector('[data-testid="quality-pc"]', { timeout: 30_000 }).catch(() => {});
   await sleep(2500);
@@ -833,9 +838,17 @@ async function captureLocale(browser, lang) {
     const lines = CHAT_LINES[lang];
     await desktop.page.getByTestId('chat-input').fill(lines.maria);
     const chat = desktop.page.getByTestId('chat');
+    // 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send, 5 the pinned message, 6 a highlighted one.
     await guideShot(desktop.page, chat, 'live', lang, 'chat-viewer', {
       pad: 12,
-      callouts: [desktop.page.getByTestId('chat-settings-button'), desktop.page.getByTestId('chat-hide'), desktop.page.getByTestId('chat-picker-button'), desktop.page.getByTestId('chat-send')],
+      callouts: [
+        desktop.page.getByTestId('chat-settings-button'),
+        desktop.page.getByTestId('chat-hide'),
+        desktop.page.getByTestId('chat-picker-button'),
+        desktop.page.getByTestId('chat-send'),
+        desktop.page.getByTestId('chat-pinned'),
+        desktop.page.getByTestId('chat-list').locator('li.highlighted'),
+      ],
     });
     await desktop.page.getByTestId('chat-settings-button').click();
     await guideShot(desktop.page, desktop.page.getByTestId('chat-settings'), 'live', lang, 'chat-viewer-settings', { pad: 12 });

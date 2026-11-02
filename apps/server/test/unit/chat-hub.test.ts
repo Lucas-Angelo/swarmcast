@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { defaultChatSettings, type ChatItem, type ChatServerMessage, type ChatSettings } from '@swarmcast/shared';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { CHAT_HIGHLIGHTS_MAX, defaultChatSettings, type ChatItem, type ChatServerMessage, type ChatSettings } from '@swarmcast/shared';
 import { AccessControl, type Session } from '../../src/access/access.js';
 import { ChatHub, ringAuthors, type ChatHost } from '../../src/chat/hub.js';
 import { ActivityLog } from '../../src/core/activity.js';
@@ -745,5 +745,352 @@ describe('ChatHub: limits and protection', () => {
     for (let i = 0; i < 20; i++) hub.frame(a.s, a.sock, '{"t":"chat.send","n":1,"text":{}}');
     // Assert
     expect(a.sock.messages().filter((m) => m.t === 'chat.reject').length).toBeLessThanOrEqual(3);
+  });
+});
+
+describe('ChatHub: highlight and pin (docs/CHAT.md "Highlight and pin")', () => {
+  const pins = (sock: FakeSocket) => sock.items().filter((i) => i.k === 'pin');
+  const hls = (sock: FakeSocket) => sock.items().filter((i) => i.k === 'hl');
+
+  it('pin: everyone gets the pinned message (a copy of its text and author) as a seq-less item; it is logged', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join, now, activity } = env;
+    const a = join('Ana');
+    const b = join('Bia');
+    chatter(env, a, 2);
+    hub.flush();
+    const seqBefore = hub.lastSeq;
+    // Act
+    const r = hub.pin(2, null);
+    hub.flush();
+    // Assert
+    expect(r).toEqual({ ok: true });
+    const author = b.sock.items().find((i) => i.k === 'm')!;
+    expect(pins(b.sock)).toEqual([{ k: 'pin', p: { s: 2, a: author.k === 'm' ? author.a : '', x: 'm2', at: now() } }]);
+    expect(hub.lastSeq).toBe(seqBefore);
+    expect(activity.list().some((e) => e.code === 'log.chat.pinned')).toBe(true);
+  });
+
+  it('pinning another message replaces the pin; unpin sends null, and unpinning nothing is a no-op', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    hub.pin(1, null);
+    hub.flush();
+    a.sock.clear();
+    // Act
+    hub.pin(2, null);
+    const unpinned = hub.unpin();
+    const again = hub.unpin();
+    hub.flush();
+    // Assert
+    expect(pins(a.sock).map((i) => (i.k === 'pin' ? (i.p?.s ?? null) : 0))).toEqual([2, null]);
+    expect([unpinned, again]).toEqual([true, false]);
+  });
+
+  it('a message that is not in the ring (never was, a system line, deleted) cannot be pinned or highlighted', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    hub.clear();
+    chatter(env, a, 1, (i) => `x${i}`, 3);
+    const sysSeq = hub.lastSeq - 1;
+    hub.delete([hub.lastSeq]);
+    // Act
+    const results = [hub.pin(99, null), hub.pin(1, null), hub.pin(sysSeq, null), hub.pin(hub.lastSeq, null), hub.highlight(99, true), hub.highlight(sysSeq, true)];
+    // Assert
+    for (const r of results) expect(r).toEqual({ ok: false, code: 'admin.chat.err.gone' });
+  });
+
+  it('with the chat off, pin and highlight are refused; turning it off keeps a pin for when it comes back', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join, settings } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    hub.pin(1, null);
+    // Act
+    settings.enabled = false;
+    hub.refresh();
+    const refused = [hub.pin(2, null), hub.highlight(2, true)];
+    settings.enabled = true;
+    hub.refresh();
+    // Assert
+    expect(refused).toEqual([
+      { ok: false, code: 'admin.chat.err.disabled' },
+      { ok: false, code: 'admin.chat.err.disabled' },
+    ]);
+    expect(hub.snapshot(a.s)?.pin?.s).toBe(1);
+  });
+
+  it('a new joiner gets the pin in the hello with its author, even with no history (lockdown) and after the message left the ring', () => {
+    // Arrange
+    const env = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const { hub, join, advance } = env;
+    const a = join('Ana');
+    chatter(env, a, 1);
+    hub.pin(1, null);
+    const b = join('Bia');
+    for (let i = 0; i < 210; i++) {
+      advance(2100);
+      hub.frame(b.s, b.sock, JSON.stringify({ t: 'chat.send', n: i + 2, text: `b${i}` }));
+    }
+    hub.setProtect('lockdown');
+    const late = join('Cris');
+    // Act
+    const snap = hub.snapshot(late.s)!;
+    // Assert
+    expect(hub.adminState().items.some((i) => i.k === 'm' && i.s === 1)).toBe(false);
+    expect(snap.items).toEqual([]);
+    expect(snap.pin).toMatchObject({ s: 1, x: 'm1' });
+    expect(snap.roster.find((r) => r.a === snap.pin!.a)?.n).toBe('Ana');
+  });
+
+  it('the pinned author outlives leaving and the ring: the periodic prune keeps the roster entry', () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const env = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const { hub, join, access, advance } = env;
+    const a = join('Ana');
+    chatter(env, a, 1);
+    hub.pin(1, null);
+    access.sessions.delete(a.s.id);
+    const b = join('Bia');
+    for (let i = 0; i < 205; i++) {
+      advance(2100);
+      hub.frame(b.s, b.sock, JSON.stringify({ t: 'chat.send', n: i + 2, text: `b${i}` }));
+    }
+    // Act: a minute of ticks, so the roster prune runs.
+    vi.advanceTimersByTime(61_000);
+    const late = join('Cris');
+    // Assert
+    const snap = hub.snapshot(late.s)!;
+    expect(hub.adminState().items.some((i) => i.k === 'm' && i.s === 1)).toBe(false);
+    expect(snap.pin).toMatchObject({ s: 1, x: 'm1' });
+    expect(snap.roster.find((r) => r.a === snap.pin!.a)?.n).toBe('Ana');
+  });
+
+  it('deleting the pinned message unpins it; deleting another one does not', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 3);
+    hub.pin(2, null);
+    hub.flush();
+    a.sock.clear();
+    // Act
+    hub.delete([1]);
+    hub.flush();
+    const afterOther = pins(a.sock).length;
+    hub.delete([2, 3]);
+    hub.flush();
+    // Assert
+    expect(afterOther).toBe(0);
+    expect(pins(a.sock)).toEqual([{ k: 'pin', p: null }]);
+    expect(hub.snapshot(a.s)?.pin).toBeUndefined();
+  });
+
+  it('clearing the chat unpins; Stop wipes the pin; muting or kicking the author does not', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join, access } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    hub.pin(1, null);
+    // Act
+    hub.mute(a.s.id, null);
+    access.kick(a.s.id);
+    const afterModeration = hub.snapshot(join('Bia').s)?.pin?.s;
+    hub.clear();
+    const afterClear = hub.adminState().pin;
+    chatter(env, join('Cris'), 1, (i) => `c${i}`, 9);
+    hub.pin(hub.lastSeq, null);
+    hub.reset();
+    hub.begin();
+    // Assert
+    expect(afterModeration).toBe(1);
+    expect(afterClear).toBeUndefined();
+    expect(hub.adminState().pin).toBeUndefined();
+  });
+
+  it('a timed pin says how long it has left and comes down by itself, on the tick or when it is next read', () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const env = setup();
+    const { hub, join, advance, activity } = env;
+    const a = join('Ana');
+    const b = join('Bia');
+    chatter(env, a, 2);
+    // Act
+    hub.pin(1, 5);
+    hub.flush();
+    const sent = pins(b.sock).at(-1);
+    advance(2 * 60_000);
+    const later = hub.snapshot(b.s)?.pin?.endsIn;
+    advance(3 * 60_000);
+    const expired = hub.snapshot(b.s)?.pin;
+    hub.pin(2, 1);
+    hub.flush();
+    advance(60_000);
+    b.sock.clear();
+    vi.advanceTimersByTime(1000);
+    hub.flush();
+    // Assert
+    expect(sent).toMatchObject({ k: 'pin', p: { s: 1, endsIn: 5 * 60_000 } });
+    expect(later).toBe(3 * 60_000);
+    expect(expired).toBeUndefined();
+    expect(pins(b.sock)).toEqual([{ k: 'pin', p: null }]);
+    expect(activity.list().filter((e) => e.code === 'log.chat.unpinned')).toHaveLength(2);
+  });
+
+  it('highlight: an hl item goes to everyone, the ring keeps the flag (snapshots carry it), off removes it; nothing takes a seq', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    hub.flush();
+    a.sock.clear();
+    const seq = hub.lastSeq;
+    // Act
+    hub.highlight(1, true);
+    hub.highlight(1, true);
+    hub.flush();
+    const lit = hub.snapshot(a.s)!.items.find((i) => i.k === 'm' && i.s === 1);
+    hub.highlight(1, false);
+    hub.flush();
+    const unlit = hub.snapshot(a.s)!.items.find((i) => i.k === 'm' && i.s === 1);
+    // Assert
+    expect(hls(a.sock)).toEqual([
+      { k: 'hl', s: 1, on: true },
+      { k: 'hl', s: 1, on: false },
+    ]);
+    expect(lit).toMatchObject({ h: 1 });
+    expect(unlit).not.toHaveProperty('h');
+    expect(hub.lastSeq).toBe(seq);
+  });
+
+  it(`at most ${CHAT_HIGHLIGHTS_MAX} highlighted: one more takes the highlight off the oldest`, () => {
+    // Arrange
+    const env = setup({ slowModeS: 0, duplicateWindowS: 0 });
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, CHAT_HIGHLIGHTS_MAX + 1);
+    for (let s = 1; s <= CHAT_HIGHLIGHTS_MAX; s++) hub.highlight(s, true);
+    hub.flush();
+    a.sock.clear();
+    // Act
+    hub.highlight(CHAT_HIGHLIGHTS_MAX + 1, true);
+    hub.flush();
+    // Assert
+    expect(hls(a.sock)).toEqual([
+      { k: 'hl', s: 1, on: false },
+      { k: 'hl', s: CHAT_HIGHLIGHTS_MAX + 1, on: true },
+    ]);
+    expect(hub.adminState().items.filter((i) => i.k === 'm' && i.h === 1)).toHaveLength(CHAT_HIGHLIGHTS_MAX);
+  });
+
+  it('a reconnect delta from before a highlight is not served (it would miss it): the viewer gets a full snapshot', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 3);
+    const after = hub.lastSeq;
+    // Act
+    const before = hub.snapshot(a.s, { after: 2 })?.delta;
+    hub.highlight(2, true);
+    const snap = hub.snapshot(a.s, { after })!;
+    // Assert
+    expect(before).toBe(true);
+    expect(snap.delta).toBeUndefined();
+    expect(snap.items.find((i) => i.k === 'm' && i.s === 2)).toMatchObject({ h: 1 });
+  });
+
+  it('a slow socket that missed a pin and a highlight gets their current state when it catches up, not a snapshot', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    const b = join('Bia');
+    chatter(env, a, 2);
+    hub.flush();
+    b.sock.bufferedAmount = 100_000;
+    hub.pin(1, null);
+    hub.highlight(2, true);
+    hub.flush();
+    hub.pin(2, null);
+    hub.flush();
+    // Act
+    b.sock.bufferedAmount = 0;
+    b.sock.clear();
+    hub.highlight(1, true);
+    hub.flush();
+    // Assert
+    const msgs = b.sock.messages();
+    expect(msgs.some((m) => m.t === 'chat.reset')).toBe(false);
+    expect(b.sock.items()).toEqual([{ k: 'pin', p: expect.objectContaining({ s: 2 }) }, { k: 'hl', s: 2, on: true }, { k: 'hl', s: 1, on: true }]);
+  });
+
+  it('a resume answer carries the pin as it is now', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 3);
+    hub.pin(3, null);
+    a.sock.clear();
+    // Act
+    hub.frame(a.s, a.sock, JSON.stringify({ t: 'chat.resume', after: 1 }));
+    // Assert
+    const items = a.sock.items();
+    expect(items.filter((i) => i.k === 'm').map((i) => (i.k === 'm' ? i.s : 0))).toEqual([2, 3]);
+    expect(items.at(-1)).toMatchObject({ k: 'pin', p: { s: 3 } });
+  });
+
+  it('the panel gets hl and pin items, the pin in its state, and the session of the pinned author', () => {
+    // Arrange
+    vi.useFakeTimers();
+    onTestFinished(() => void vi.useRealTimers());
+    const env = setup();
+    const { hub, join, admin } = env;
+    const a = join('Ana');
+    chatter(env, a, 2);
+    // Act
+    hub.highlight(1, true);
+    hub.pin(2, 15);
+    // The panel's items go out in one message every 250 ms.
+    vi.advanceTimersByTime(250);
+    // Assert
+    const items = (admin as Array<{ items: ChatItem[] }>).flatMap((m) => m.items);
+    expect(items).toContainEqual({ k: 'hl', s: 1, on: true });
+    expect(items.find((i) => i.k === 'pin')).toMatchObject({ p: { s: 2, endsIn: 15 * 60_000 } });
+    const state = hub.adminState();
+    expect(state.pin).toMatchObject({ s: 2 });
+    expect(Object.values(hub.adminSessions())).toContain(a.s.id);
+  });
+
+  it('no viewer frame can pin or highlight: look-alike frames are ignored', () => {
+    // Arrange
+    const env = setup();
+    const { hub, join } = env;
+    const a = join('Ana');
+    chatter(env, a, 1);
+    hub.flush();
+    a.sock.clear();
+    // Act
+    for (const f of ['{"t":"chat.pin","s":1}', '{"t":"chat.hl","s":1,"on":true}', '{"t":"chat.highlight","s":1,"on":true}', '{"t":"chat.send","n":5,"text":"x","pin":true}']) hub.frame(a.s, a.sock, f);
+    hub.flush();
+    // Assert
+    expect(a.sock.items().filter((i) => i.k === 'pin' || i.k === 'hl')).toEqual([]);
+    expect(hub.adminState().pin).toBeUndefined();
   });
 });

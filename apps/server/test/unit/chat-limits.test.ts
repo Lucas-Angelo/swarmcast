@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { CHAT_EPHEMERAL_PENDING_MAX, defaultChatSettings } from '@swarmcast/shared';
+import { CHAT_EPHEMERAL_PENDING_MAX, CHAT_STATE_MISSED_MAX, defaultChatSettings } from '@swarmcast/shared';
 import { ChatBatcher, type ChatSocket } from '../../src/chat/batcher.js';
 import { KeyedBuckets, RateWindow, TokenBucket } from '../../src/chat/buckets.js';
 import { AdaptiveSlowMode, ChatDetector, protectState } from '../../src/chat/detector.js';
@@ -720,5 +720,110 @@ describe('batcher', () => {
     for (let i = 0; i < 700; i++) b.push({ k: 'm', s: i + 1, at: 0, a: 'k', x: 'x' }, false);
     // Assert
     expect(b.pending).toBeLessThanOrEqual(501);
+  });
+
+  describe('state items (pin, highlight)', () => {
+    type Item = { k: string; s?: number; on?: boolean; p?: { s: number; a: string } | null; au?: { a: string } };
+    const frames = (sock: Sock): Item[][] => sock.sent.map((x) => (JSON.parse(x) as { items: Item[] }).items);
+    const author = (a: string) => ({ a, n: a.toUpperCase(), c: '#46a758', r: 'viewer' as const });
+
+    it('are durable: never dropped under budget pressure, sent like any priority item', () => {
+      // Arrange
+      const socks = Array.from({ length: 20 }, () => new Sock());
+      let t = 0;
+      const b = new ChatBatcher({ transport: { sockets: () => socks }, budgetBps: () => 1_000, slow: () => false, resync: () => {}, now: () => t });
+      b.charge(10_000);
+      // Act
+      for (let i = 1; i <= 30; i++) b.push({ k: 'm', s: i, at: 0, a: 'k', x: 'x'.repeat(50) }, false);
+      b.pushState('pin', { k: 'pin', p: { s: 3, a: 'k', x: 'xx', at: 0 } });
+      b.pushState('hl:4', { k: 'hl', s: 4, on: true });
+      t = 2000;
+      b.flush();
+      // Assert
+      const items = itemsOf(socks[0]!);
+      expect(items.filter((i) => i.k === 'pin' || i.k === 'hl')).toHaveLength(2);
+      expect(items.some((i) => i.k === 'skip')).toBe(true);
+    });
+
+    it('a slow socket that missed some gets their current state when it catches up: no snapshot, after the roster entries they name', () => {
+      // Arrange
+      const fast = new Sock();
+      const slow = new Sock();
+      const state = new Map<string, { item: Item; refs?: string[] }>();
+      const resynced: ChatSocket[] = [];
+      const b = new ChatBatcher({
+        transport: { sockets: () => [fast, slow] },
+        budgetBps: () => 1e9,
+        slow: () => false,
+        resync: (s) => resynced.push(s),
+        authorOf: (a) => author(a),
+        stateOf: (key) => (state.get(key) as never) ?? null,
+        now: () => 5000,
+      });
+      b.markKnown(slow, ['k1']);
+      slow.bufferedAmount = 100_000;
+      // Act: two pins and two highlight changes while it is slow; the state ends at the last of each.
+      b.pushState('pin', { k: 'pin', p: { s: 1, a: 'k1', x: 'a', at: 1 } }, ['k1']);
+      b.pushState('hl:1', { k: 'hl', s: 1, on: true });
+      b.push({ k: 'm', s: 2, at: 5000, a: 'k1', x: 'b' }, false);
+      b.flush();
+      b.pushState('pin', { k: 'pin', p: { s: 2, a: 'k2', x: 'b', at: 2 } }, ['k2']);
+      b.pushState('hl:1', { k: 'hl', s: 1, on: false });
+      b.flush();
+      state.set('pin', { item: { k: 'pin', p: { s: 2, a: 'k2' } }, refs: ['k2'] });
+      state.set('hl:1', { item: { k: 'hl', s: 1, on: false } });
+      slow.bufferedAmount = 0;
+      b.push({ k: 'm', s: 3, at: 5000, a: 'k1', x: 'c' }, false);
+      b.flush();
+      // Assert
+      expect(resynced).toEqual([]);
+      const got = frames(slow);
+      expect(got[0]).toEqual([{ k: 'skip', n: 1 }]);
+      expect(got[1]).toEqual([{ k: 'u', au: author('k2') }]);
+      expect(got[2]).toEqual(expect.arrayContaining([{ k: 'pin', p: { s: 2, a: 'k2' } }, { k: 'hl', s: 1, on: false }]));
+      expect(got[2]).toHaveLength(2);
+      expect(got[3]!.map((i) => i.k)).toEqual(['m']);
+    });
+
+    it('a state that no longer has anything to say (stateOf null) is not sent', () => {
+      // Arrange
+      const slow = new Sock();
+      const b = new ChatBatcher({ transport: { sockets: () => [slow] }, budgetBps: () => 1e9, slow: () => false, resync: () => {}, stateOf: () => null, now: () => 5000 });
+      slow.bufferedAmount = 100_000;
+      b.pushState('hl:9', { k: 'hl', s: 9, on: true });
+      b.flush();
+      // Act
+      slow.bufferedAmount = 0;
+      b.push({ k: 'm', s: 10, at: 5000, a: 'k', x: 'c' }, false);
+      b.flush();
+      // Assert
+      expect(frames(slow)).toEqual([[{ k: 'm', s: 10, at: 5000, a: 'k', x: 'c' }]]);
+    });
+
+    it('missing a durable item as well, or owing more states than CHAT_STATE_MISSED_MAX, means a snapshot instead', () => {
+      // Arrange
+      const withDelete = new Sock();
+      const many = new Sock();
+      const resynced: ChatSocket[] = [];
+      const b1 = new ChatBatcher({ transport: { sockets: () => [withDelete] }, budgetBps: () => 1e9, slow: () => false, resync: (s) => resynced.push(s), stateOf: () => null, now: () => 5000 });
+      const b2 = new ChatBatcher({ transport: { sockets: () => [many] }, budgetBps: () => 1e9, slow: () => false, resync: (s) => resynced.push(s), stateOf: () => null, now: () => 5000 });
+      withDelete.bufferedAmount = 100_000;
+      many.bufferedAmount = 100_000;
+      // Act
+      b1.pushState('pin', { k: 'pin', p: null });
+      b1.flush();
+      b1.push({ k: 'd', s: [1] }, true);
+      b1.flush();
+      for (let i = 1; i <= CHAT_STATE_MISSED_MAX + 1; i++) b2.pushState(`hl:${i}`, { k: 'hl', s: i, on: true });
+      b2.flush();
+      withDelete.bufferedAmount = 0;
+      many.bufferedAmount = 0;
+      b1.push({ k: 'm', s: 2, at: 5000, a: 'k', x: 'c' }, false);
+      b2.push({ k: 'm', s: 2, at: 5000, a: 'k', x: 'c' }, false);
+      b1.flush();
+      b2.flush();
+      // Assert
+      expect(resynced).toEqual([withDelete, many]);
+    });
   });
 });

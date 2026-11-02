@@ -167,6 +167,91 @@ button.chat-tool[aria-expanded='true'] {
   color: var(--sc-muted);
   font-size: var(--fs-xs);
 }
+/* ---- Highlight and pin (docs/CHAT.md "Highlight and pin") ------------------------------------
+ * A highlighted row: a bar in the accent colour and the soft accent fill (names on it are checked
+ * against that fill, chat.ts). The pinned bar sits between the header and the list (never over the
+ * list or the input), folded to two lines in the side column and to one where the chat is only
+ * 40 % of the screen (under 1100 px, style.css); "Show more" opens it up to the usual clamp. */
+.msg.highlighted {
+  background: var(--sc-accent-soft);
+  border-left: 3px solid var(--sc-accent);
+  padding-left: calc(var(--sp-4) - 3px);
+}
+.chat-pinned {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  padding: 2px var(--sp-1) var(--sp-1);
+  border-bottom: 1px solid var(--sc-border);
+  border-top: 3px solid var(--sc-accent);
+  background: var(--sc-surface);
+}
+.chat-pinned[hidden] {
+  display: none;
+}
+.pinned-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding-left: var(--sp-2);
+  color: var(--sc-muted);
+  font-size: var(--fs-xs);
+  font-weight: var(--sc-weight-semibold);
+}
+.pinned-head .sc-ico-pin {
+  color: var(--sc-accent-strong);
+}
+/* Scoped, so it wins over brand.css's `mask` shorthand whatever order the two files load in. */
+.pinned-head .sc-ico-pin::before {
+  -webkit-mask-image: url('../../../../packages/shared/web/icons/pin.svg');
+  mask-image: url('../../../../packages/shared/web/icons/pin.svg');
+}
+.pinned-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pinned-head button.pinned-hide {
+  min-height: 28px;
+  min-width: 28px;
+  font-size: var(--fs-sm);
+}
+.chat-pinned .msg {
+  padding: 0 var(--sp-2);
+}
+.chat-pinned .msg:hover {
+  background: transparent;
+}
+.chat-pinned .msg.clamped {
+  --pin-lines: 1;
+  /* + 4px, as for every row: emotes reach a little above and below the line. */
+  max-height: calc(1em * var(--chat-lh) * var(--pin-lines) + 4px);
+}
+.chat-pinned .msg.clamped img.gif-img {
+  width: auto;
+  max-height: calc(1em * var(--chat-lh) * var(--pin-lines));
+}
+@media (min-width: 1100px) {
+  .chat-pinned .msg.clamped {
+    --pin-lines: 2;
+  }
+}
+button.pinned-more {
+  flex: none;
+  min-height: 28px;
+  padding: 0 var(--sp-1);
+  background: transparent;
+  border-color: transparent;
+  color: var(--sc-accent-strong);
+  font-size: var(--fs-sm);
+  text-decoration: underline;
+}
+button.pinned-more[hidden] {
+  display: none;
+}
+
 button.chat-pill {
   position: absolute;
   left: 50%;
