@@ -380,6 +380,16 @@ createSettingsMenu({
   closers: [$<HTMLElement>('stats-open')],
 });
 
+// The info row's real height (on a phone it wraps to two or three lines, with the buttons the live
+// shows): the chat under it fills the rest of the screen exactly, its message box in sight
+// (style.css "Chat"; without ResizeObserver the CSS estimate --info-h stays).
+{
+  const infoRow = document.querySelector<HTMLElement>('.info');
+  if (infoRow && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => document.body.style.setProperty('--info-row-h', `${Math.ceil(infoRow.getBoundingClientRect().height)}px`)).observe(infoRow);
+  }
+}
+
 // The "Unmute" button goes once the sound is on, whichever control turned it on, and comes back
 // when the viewer mutes again (as after the muted autoplay).
 video.addEventListener('volumechange', () => {

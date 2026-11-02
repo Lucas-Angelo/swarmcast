@@ -184,8 +184,17 @@ test('pt-BR in a narrow computer window: the info row wraps, nothing is cut or s
 });
 
 test('a phone: the video, the info row, then the chat down to the bottom of the screen @mobile', async ({ page }) => {
+  // Arrange: the streamer's name and picture, and the buttons a live shows (Unmute after the muted
+  // autoplay, Share when the streamer allows it; no stream or server behind the mock to show them),
+  // so the info row takes the lines it takes on a real phone.
+  await openWatch(page, new MockHub('Bia'), { brand: BRANDING, lang: 'pt-BR' });
+  await expect(page.locator('#brand-head .sc-brand-name')).toBeVisible();
+
   // Act
-  await openWatch(page, new MockHub('Bia'));
+  await page.evaluate(() => {
+    for (const id of ['unmute', 'share']) document.getElementById(id)!.hidden = false;
+  });
+  await expect(page.locator('#share')).toBeVisible();
 
   // Assert
   const view = page.viewportSize()!;
@@ -197,8 +206,10 @@ test('a phone: the video, the info row, then the chat down to the bottom of the 
   expect(info.y).toBeGreaterThanOrEqual(player.y + player.height - 1);
   expect(chat.y).toBeGreaterThanOrEqual(info.y + info.height - 1);
   expect(Math.round(chat.width)).toBe(view.width);
-  // The chat reaches the bottom of the screen (or further, when the info row wraps).
-  expect(chat.y + chat.height).toBeGreaterThanOrEqual(view.height - 1);
+  // The chat ends at the bottom of the screen, its message box in sight without scrolling
+  // (however many lines the info row takes).
+  expect(Math.abs(chat.y + chat.height - view.height)).toBeLessThan(1);
+  await expect(page.getByTestId('chat-input')).toBeInViewport({ ratio: 1 });
   await expect(page.getByTestId('theater')).toBeHidden();
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(view.width);
 });

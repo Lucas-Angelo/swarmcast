@@ -611,10 +611,11 @@ button.settings-close:hover {
 
 /* ---- Chat (chat/chat.css styles the column itself) ---------------------------------------- */
 /* Under the info row (phones, tablets upright, narrow windows): the rest of the screen under
-   the video, and never less than room for a few messages. */
+   the video (the info row's real height comes from watch.ts as --info-row-h), so its message box
+   is in sight without scrolling, and never less than room for a few messages. */
 .stage > .chat {
-  height: max(320px, calc(100vh - 56.25vw - var(--info-h)));
-  height: max(320px, calc(100dvh - 56.25vw - var(--info-h)));
+  height: max(240px, calc(100vh - 56.25vw - var(--info-row-h, var(--info-h))));
+  height: max(240px, calc(100dvh - 56.25vw - var(--info-row-h, var(--info-h))));
   border-width: 1px 0;
   border-radius: 0;
 }
