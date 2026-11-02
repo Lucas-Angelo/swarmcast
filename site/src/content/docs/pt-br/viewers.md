@@ -14,7 +14,7 @@ Alguém mandou um link do SwarmCast para você? Dá para assistir no navegador. 
 
 3. A live começa **sem som**, porque os navegadores bloqueiam o som até você clicar. Clique em **Ativar som**.
 
-![A página de quem assiste no computador: o vídeo da largura da janela ao lado do chat, que ocupa todo o lado direito, com a barra de controles do player na parte de baixo (2 o menu de qualidade, Auto); embaixo do vídeo o nome de quem transmite com Ao vivo e quantos estão assistindo, 1 Ativar som, 4 Compartilhar, e o menu Configurações aberto, com Reprodução Estável ou Menos atraso e 3 a chave Ajudar a transmissão (P2P), ligada aqui.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![A página de quem assiste no computador: o vídeo da largura da janela ao lado do chat, que ocupa todo o lado direito, com a barra de controles do player na parte de baixo (2 o menu de qualidade, Auto); embaixo do vídeo o nome de quem transmite com Ao vivo e quantos estão assistindo, 1 Ativar som, 3 Configurações e 4 Compartilhar.](../../../assets/guides/viewers/pt-br/watch-desktop.webp)
 
 ## Os controles
 
@@ -25,6 +25,9 @@ Uma barra na parte de baixo do vídeo tem os botões do player. Ela é igual em 
 - **Qualidade** (à direita na barra): **Auto** escolhe a melhor qualidade que a sua internet aguenta sem travar. Você também pode escolher uma.
 - **Só o áudio (economiza dados):** a última opção do menu de qualidade. Você ouve a live sem a imagem, e ela gasta muito menos dados: cerca de 85% menos que 360p (mais ou menos 50 a 70 MB por hora). Bom no plano de dados do celular, ou quando você só quer ouvir. No lugar do vídeo aparecem a foto e o nome de quem transmite, ou "Só o áudio". Escolha uma qualidade (ou **Auto**) para ver a imagem de novo. O navegador lembra a escolha na próxima vez.
 - **Configurações** (a engrenagem embaixo do vídeo): Reprodução, Ajudar a transmissão (P2P), o seu apelido, Atalhos de teclado e Estatísticas para nerds. Esc, um clique fora ou × fecha.
+
+  ![O menu Configurações: Reprodução Estável ou Menos atraso, 1 a chave Ajudar a transmissão (P2P), ligada aqui, com quantos peers ajudam, o seu apelido, Atalhos de teclado e Estatísticas para nerds.](../../../assets/guides/viewers/pt-br/watch-settings.webp)
+
 - **Reprodução: Estável ou Menos atraso** (em **Configurações**). **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P)** (em **Configurações**): vem desligada por padrão; você pode ligar (veja abaixo).
 - **Compartilhar:** envia o link desta live para um amigo. No celular, abre o seu menu de compartilhar (WhatsApp, Mensagens…); no computador, copia o link e mostra **Link copiado**, para você colar numa mensagem. O seu amigo abre o link e escolhe um apelido, como você fez. O botão só aparece se quem transmite permitir, e some quando quem transmite gera um link novo.

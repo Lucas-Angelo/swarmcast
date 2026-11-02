@@ -458,7 +458,7 @@ async function captureBranding(browser, lang) {
     await guideShot(joinPage, joinPage.locator('main.card'), 'live', lang, 'your-page-join', { pad: 130 });
     await joinCtx.close();
 
-    // Watch page: header (1), support button (2), banner (3), About card with links (4).
+    // Watch page: the streamer's picture and name (1), support button (2), banner (3), About card with links (4).
     const v = await joinViewer(browser, lang, 'Bia', { viewport: { width: 1280, height: 1500 }, deviceScaleFactor: 1 });
     const p = v.page;
     await p.locator('#brand-head .sc-brand-name').waitFor({ timeout: 15_000 });
@@ -470,7 +470,8 @@ async function captureBranding(browser, lang) {
     await sleep(800);
     await guideShot(p, p.locator('body'), 'live', lang, 'your-page-watch', {
       pad: 0,
-      callouts: [p.locator('#brand-head'), p.getByTestId('brand-support'), p.locator('#brand-banner'), p.getByTestId('brand-about')],
+      // The header's box is `display: contents` (its picture and name are laid out by the info row): one outline around both.
+      callouts: [[p.locator('#brand-head .sc-brand-avatar'), p.locator('#brand-head .sc-brand-name')], p.getByTestId('brand-support'), p.locator('#brand-banner'), p.getByTestId('brand-about')],
     });
     // The GIF placeholder (nothing loads before the viewer agrees) and the GIF button.
     await guideShot(p, p.getByTestId('chat'), 'live', lang, 'gif-consent', {
@@ -868,9 +869,9 @@ async function captureLocale(browser, lang) {
   }
 
   // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,
-  // 3 Help the stream (P2P) (on the computer in the Settings menu, opened for the picture; on the
-  // phone the Settings button, where it is), 4 Share. On the phone the chat (the rest of the screen
-  // under the video) is hidden, as a viewer can, so the page fits.
+  // 3 Settings (Help the stream (P2P) is in it), 4 Share; then the Settings menu itself, open, with
+  // 1 the P2P switch (the "Watching" and P2P guides). On the phone the chat (the rest of the
+  // screen under the video) is hidden, as a viewer can, so the page fits.
   if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
     await phone.page.getByTestId('chat-hide').click();
   }
@@ -879,20 +880,20 @@ async function captureLocale(browser, lang) {
     [phone.page, 'watch-phone'],
   ]) {
     await fitViewport(page);
-    const onPhone = page === phone.page;
-    if (!onPhone) {
-      await page.getByTestId('settings-open').click();
-      await page.getByTestId('settings-menu').waitFor();
-    }
     // The player's controls fade while the live plays: the pointer rests on their bar for the picture.
     await showPlayerControls(page);
-    const p2p = onPhone ? page.getByTestId('settings-open') : page.locator('label.toggle', { has: page.locator('#p2p') });
     await guideShot(page, page.locator('body'), 'viewers', lang, name, {
       pad: 0,
-      callouts: [page.locator('#unmute'), page.getByTestId('quality'), p2p, page.locator('#share')],
+      callouts: [page.locator('#unmute'), page.getByTestId('quality'), page.getByTestId('settings-open'), page.locator('#share')],
     });
-    if (!onPhone) await page.keyboard.press('Escape');
   }
+  await desktop.page.getByTestId('settings-open').click();
+  await desktop.page.getByTestId('settings-menu').waitFor();
+  await guideShot(desktop.page, desktop.page.getByTestId('settings-menu'), 'viewers', lang, 'watch-settings', {
+    pad: 12,
+    callouts: [desktop.page.locator('label.toggle', { has: desktop.page.locator('#p2p') })],
+  });
+  await desktop.page.keyboard.press('Escape');
 
   // (6d) The panel's cards and the app's window with the setup tutorial (guide pictures).
   await capturePanelCards(browser, lang);

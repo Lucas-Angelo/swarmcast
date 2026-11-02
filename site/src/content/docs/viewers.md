@@ -14,7 +14,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 3. The live starts **muted**, because browsers block sound until you click. Click **Unmute**.
 
-![The viewer page on a computer: the video as wide as the window beside the chat, which runs down the whole right side, with the player's control bar over its bottom (2 the quality menu, Auto); under the video the streamer's name with Live and how many are watching, 1 Unmute, 4 Share, and the Settings menu opened, with Playback Stable or Lower delay and 3 the Help the stream (P2P) switch, turned on here.](../../assets/guides/viewers/en/watch-desktop.webp)
+![The viewer page on a computer: the video as wide as the window beside the chat, which runs down the whole right side, with the player's control bar over its bottom (2 the quality menu, Auto); under the video the streamer's name with Live and how many are watching, 1 Unmute, 3 Settings and 4 Share.](../../assets/guides/viewers/en/watch-desktop.webp)
 
 ## The controls
 
@@ -25,6 +25,9 @@ A bar along the bottom of the video has the player's buttons. It looks the same 
 - **Quality** (on the right of the bar): **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.
 - **Settings** (the gear under the video): Playback, Help the stream (P2P), your nickname, Keyboard shortcuts and Stats for nerds. Esc, a click outside or × closes it.
+
+  ![The Settings menu: Playback Stable or Lower delay, 1 the Help the stream (P2P) switch, turned on here, with how many peers help, your nickname, Keyboard shortcuts and Stats for nerds.](../../assets/guides/viewers/en/watch-settings.webp)
+
 - **Playback: Stable or Lower delay** (in **Settings**). **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P)** (in **Settings**): off by default; you can turn it on (see below).
 - **Share:** sends the link of this live to a friend. On a phone it opens your share menu (WhatsApp, Messages…); on a computer it copies the link and says **Link copied**, so you can paste it in a message. Your friend opens the link and picks a nickname, like you did. The button is there only if the streamer allows it, and it goes away when the streamer makes a new link.

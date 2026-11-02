@@ -5,7 +5,7 @@ description: Como os espectadores se ajudam com o P2P, o que isso mostra sobre e
 
 **Ajudar a transmissão (P2P)** é uma chave no menu **Configurações** da página de quem assiste (a engrenagem embaixo do vídeo). Ela vem **desligada** por padrão: cada espectador decide se quer ligar. Quem deixa ligada passa pedaços do vídeo para os outros espectadores, então o seu computador manda menos e a live fica mais lisa para todo mundo. P2P quer dizer "peer to peer": de um espectador para outro.
 
-![A página de quem assiste no computador, com o menu Configurações aberto: 1 Ativar som, 2 o menu de qualidade, 3 a chave Ajudar a transmissão (P2P), ligada aqui por este espectador, com quantos peers ajudam e quanto do vídeo veio deles, 4 Compartilhar.](../../../../assets/guides/viewers/pt-br/watch-desktop.webp)
+![O menu Configurações da página de quem assiste: 1 a chave Ajudar a transmissão (P2P), ligada aqui por este espectador, com quantos peers ajudam e quanto do vídeo veio deles.](../../../../assets/guides/viewers/pt-br/watch-settings.webp)
 
 ## O que isso mostra, sem rodeios
 
