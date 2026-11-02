@@ -1,6 +1,6 @@
 /**
  * What the browser lets the watch page do with the player, found by capability (never by user
- * agent), and the calls that do it. Research: .claude/handoff/research-0.5.0-player.md §1.
+ * agent), and the calls that do it.
  *
  * - Full screen: the player CONTAINER (`.player`: video, our controls, the status and stats
  *   overlays, later the chat over the video) wherever elements can go full screen: computers,
