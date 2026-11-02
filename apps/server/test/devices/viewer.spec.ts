@@ -18,10 +18,14 @@
 // that the tap reached the field as a finger's, and the text is put in the field as the keyboard would.
 // The trip to the background runs on Android: under safaridriver the session ends as Safari leaves
 // the screen (ios.ts IosPhone.background has the evidence).
+// - the player's own controls instead of the browser's: no volume slider on a phone (and none
+//   wherever the page cannot set the volume), picture-in-picture only where the browser has it, and full screen: the player
+//   with its controls where an element can go full screen (Android, iOS 26), else iOS's own
+//   player, after which the page's controls are back and the video plays on.
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, recordLifecycle, tapToType, videoState, viewport } from './phone.js';
+import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, viewport } from './phone.js';
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
 const WATCHING_S = 1.5;
@@ -110,9 +114,47 @@ test('back from the background the video plays again, behind the live; Go live r
   await expect.poll(() => playedSince(phone, back)).toBeGreaterThan(PLAYS_ON_S);
   await expect.poll(async () => (await goLive(phone)).text).toMatch(/^Go live/);
   // Act
-  await phone.tap('#golive');
+  await tapControl(phone, '#golive');
   // Assert
   await expect.poll(async () => (await goLive(phone)).text).toBe('LIVE');
   expect((await goLive(phone)).behind).toBeLessThan(AT_LIVE_S);
   expect((await videoState(phone)).paused).toBe(false);
+});
+
+test("the player's own controls: full screen is the player with them where the browser lets an element go full screen, else iOS's own player (then they are back); no volume slider on a phone", async ({ phone }) => {
+  // Arrange
+  await joinOnPhone(phone, uid('controls'), await liveLink());
+  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  const ui = await playerUi(phone);
+  // Assert
+  expect(ui).toMatchObject({ nativeControls: false, bar: true, play: 'Pause' });
+  expect(ui.volumeSlider, 'a volume slider only where the page can set the volume').toBe(ui.volumeApi);
+  // On a phone's narrow screen the slider never shows: the device's buttons set the volume.
+  expect(await isShown(phone, '[data-testid="volume"]')).toBe(false);
+  expect(ui.pipButton, 'picture-in-picture only where the browser has it').toBe(ui.pipApi);
+  // Android, and the iPhone from the iOS 26 runtime on, let an element go full screen (Devices
+  // run 41510799608); older iPhones only the video, in iOS's own player.
+  const expected = ui.elementFullscreen ? 'player' : 'ios-player';
+  if (phone.platform === 'android') expect(expected).toBe('player');
+  // Act
+  await tapControl(phone, '[data-testid="fullscreen"]');
+  // Assert
+  await expect.poll(() => fullScreenState(phone)).toBe(expected);
+  if (expected === 'player') {
+    expect(await isShown(phone, '[data-testid="controls"]')).toBe(true);
+    expect(await inSight(phone, '[data-testid="controls"]')).toBe(true);
+  }
+  const inFull = await videoState(phone);
+  await expect.poll(() => playedSince(phone, inFull)).toBeGreaterThan(PLAYS_ON_S);
+  // Act: out again: Android's system Back; on iOS, which has no Back, the page's own button (the
+  // container) or the page leaving iOS's player (as its close button does)
+  if (phone.platform === 'android') await phone.back();
+  else if (expected === 'player') await tapControl(phone, '[data-testid="fullscreen"]');
+  else await phone.evaluate(() => (document.querySelector('video') as HTMLVideoElement & { webkitExitFullscreen(): void }).webkitExitFullscreen());
+  // Assert: the page's controls again, playing on, Go live there
+  await expect.poll(() => fullScreenState(phone)).toBeNull();
+  const back = await videoState(phone);
+  await expect.poll(() => playedSince(phone, back)).toBeGreaterThan(PLAYS_ON_S);
+  expect(await playerUi(phone)).toMatchObject({ bar: true, play: 'Pause' });
+  expect(await isShown(phone, '#golive')).toBe(true);
 });

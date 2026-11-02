@@ -29,13 +29,14 @@ const INPUT_RESPONSE_BUDGET_MS = 1000;
 
 /**
  * Console errors of the page, except the expected ones: there is no stream behind the mock, so the
- * player's 404s are expected; WebKit also logs its media controls' placard icons and one refused
- * stylesheet on the watch page with the chat off as well (not from the chat; the page's own styles
- * all come from files). Anything else is collected.
+ * player's 404s are expected; WebKit also logs the placard icons of its own media controls, which
+ * the video shows until the player's own controls replace them. Anything else is collected: the
+ * refused inline style WebKit's own parts of a <select> caused is gone with the <select> (the quality
+ * menu is a menu button now).
  */
 function consoleErrors(page: Page, browserName: string): string[] {
   const errors: string[] = [];
-  const noise = browserName === 'webkit' ? /^Failed to load resource|^Button failed to load|^Refused to apply a stylesheet because its hash/ : /^Failed to load resource/;
+  const noise = browserName === 'webkit' ? /^Failed to load resource|^Button failed to load/ : /^Failed to load resource/;
   page.on('console', (m) => {
     if (m.type() === 'error' && !noise.test(m.text())) errors.push(m.text());
   });

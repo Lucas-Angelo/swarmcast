@@ -25,7 +25,7 @@
 // The server goes back to one quality and the default feed at the next test's gate.
 import type { BrowserContext, Page } from '@playwright/test';
 import { ADAPTIVE_DELAY, type QualityState } from '@swarmcast/shared';
-import { adminApi, adminState, dropRendition, expect, ladderUpdate, playsOn, reconnectObs, startStallMonitor, stallReport, stats, test, uid, waitPlaying } from './fixtures.js';
+import { adminApi, adminState, dropRendition, expect, ladderUpdate, playsOn, qualityMenu, reconnectObs, startStallMonitor, stallReport, stats, test, uid, waitPlaying } from './fixtures.js';
 
 test.skip(({ browserName }) => browserName !== 'chromium', 'checked on Chromium');
 
@@ -80,14 +80,14 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   await waitPlaying(page);
 
   // Assert
-  const menu = page.locator('.quality-menu');
-  await expect(menu).toBeVisible();
-  await expect.poll(async () => (await menu.locator('option').allTextContents()).slice(1)).toEqual(['720p', '480p', '360p', 'Audio only (saves data)']);
-  await expect(menu.locator('option').first()).toContainText('Auto');
-  await expect(page.locator('.quality-group .tip-btn')).toHaveCount(1);
+  await expect(qualityMenu.button(page)).toBeVisible();
+  await expect.poll(async () => (await qualityMenu.entries(page).allTextContents()).slice(1)).toEqual(['720p', '480p', '360p', 'Audio only (saves data)']);
+  await expect(qualityMenu.entries(page).first()).toContainText('Auto');
+  // What the choices mean, under them (it was a tooltip next to the old list).
+  await expect(page.getByTestId('quality-menu')).toHaveAccessibleDescription(/^Auto picks the best quality/);
 
   // Act
-  await menu.selectOption({ label: '360p' });
+  await qualityMenu.pick(page, '360p');
 
   // Assert
   await playing360(page);
@@ -97,7 +97,8 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
 
   // Assert
   await playing360(page);
-  await expect(menu.locator('option:checked')).toHaveText('360p');
+  await expect(qualityMenu.checked(page)).toHaveText('360p');
+  await expect(qualityMenu.button(page)).toHaveAccessibleName('Video quality: 360p');
 
   // Act
   await page.check('.latency-toggle input[value="low-delay"]');

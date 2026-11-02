@@ -1,4 +1,5 @@
-/* Quality menu and Stable / Lower-delay switch (quality-menu.ts, latency-toggle.ts).
+/* Stable / Lower-delay switch (latency-toggle.ts) in the settings card under the player; the
+ * quality menu is in the player's control bar (player-controls.css).
  * Tokens only (mapping: packages/shared/web/brand.css). */
 .player-controls {
   display: flex;
@@ -15,31 +16,8 @@
   align-items: center;
   gap: var(--sp-2);
 }
-/* The menu hides itself when there is only one quality; hide its tooltip too. */
-.control-group:has(select[hidden]) {
-  display: none;
-}
-.quality-group {
-  order: 2;
-}
 .latency-group {
-  order: 1;
   flex: 1 1 18rem;
-}
-.quality-menu {
-  height: 36px;
-  padding: 0 var(--sp-3);
-  font: inherit;
-  font-size: var(--fs-md);
-  font-weight: var(--sc-weight-medium);
-  color: var(--sc-ink);
-  background: var(--sc-surface);
-  border: 1px solid var(--sc-border);
-  border-radius: var(--sc-radius-md);
-  cursor: pointer;
-}
-.quality-menu:hover {
-  border-color: var(--sc-border-strong);
 }
 
 .latency-toggle {

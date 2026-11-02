@@ -77,6 +77,10 @@ export default defineConfig({
             'media.autoplay.default': 0,
             'media.peerconnection.ice.obfuscate_host_addresses': false,
             'media.peerconnection.ice.loopback': true,
+            // Tab reaches every control, as on Linux and Windows. On macOS Firefox otherwise
+            // follows the system's "Keyboard navigation" setting, off on the runners, and Tab
+            // then skips buttons (player-controls.spec.ts walks the player's bar with Tab).
+            'accessibility.tabfocus': 7,
           }),
         },
       },
