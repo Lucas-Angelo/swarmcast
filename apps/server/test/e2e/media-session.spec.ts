@@ -1,11 +1,12 @@
 // Lock-screen and notification controls in real browsers (viewer: media-session.ts): the title is
 // the streamer's name ("Live" without one), the picture their avatar as a data: URL read by the
 // page itself (SwarmCast's own icon without one, from the page's origin), the playback state
-// follows play and pause, and nothing breaks the page's CSP. Every engine of the suite has the
+// follows play and pause, and the page's CSP refuses nothing at all (any directive: the picture's
+// way in, and the player's own controls). Every engine of the suite has the
 // Media Session API (Chrome 73, Firefox 82, Safari 15); the first assertion of each test says so,
 // so an engine without it fails here instead of passing for nothing.
 import type { Page } from '@playwright/test';
-import { expect, makePng, test, uid, waitPlaying, type BrandingControl } from './fixtures.js';
+import { cspViolations, expect, makePng, recordCsp, test, uid, waitPlaying, type BrandingControl } from './fixtures.js';
 
 interface SessionState {
   available: boolean;
@@ -28,20 +29,6 @@ function mediaSession(page: Page): Promise<SessionState> {
     };
   });
 }
-
-/**
- * Records in `__cspViolations`, from the page's first script on, what the CSP refused to load
- * (img-src, connect-src, media-src): the picture's way in. (WebKit also reports a style-src-attr
- * refusal of its own when the quality menu adds an <option>, which has nothing to do with this.)
- */
-const recordCsp = (): void => {
-  const w = window as unknown as { __cspViolations: string[] };
-  w.__cspViolations = [];
-  document.addEventListener('securitypolicyviolation', (e) => {
-    if (/^(img|connect|media)-src/.test(e.effectiveDirective)) w.__cspViolations.push(`${e.effectiveDirective} ${e.blockedURI}`);
-  });
-};
-const cspViolations = (page: Page): Promise<string[]> => page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations);
 
 const NAME = 'Ophelia Brightwater';
 

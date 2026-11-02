@@ -1,11 +1,11 @@
 // @vitest-environment happy-dom
 // The watch page's theater mode, shortcuts and stats link wired together (player-extras.ts): what
 // each shortcut does to the player (play / pause, sound and the "Unmute" button, go live, the chat
-// box, full screen through whichever API the browser has, picture-in-picture only where it
-// exists), the list of shortcuts with its on / off switch, and T and S driving the theater mode
+// box, full screen of the player container, picture-in-picture only where it exists; the
+// capability checks themselves are in player-caps.test.ts), the list of shortcuts with its on / off switch, and T and S driving the theater mode
 // and the stats panel like their buttons.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { installPlayerExtras, pipSupported, toggleFullscreen, togglePip } from '../../src/player-extras.js';
+import { installPlayerExtras } from '../../src/player-extras.js';
 import type { PrefStorage } from '../../src/shortcuts.js';
 import type { StatsSource } from '../../src/stats-overlay.js';
 
@@ -58,13 +58,14 @@ function setup(storage = new MemoryStorage()) {
   video.play = play;
   video.pause = pause;
   video.muted = true;
-  const extras = installPlayerExtras({ doc: document, video, goLive: $('golive'), unmute: $('unmute'), chatRoot: $('chat'), storage, stats: statsSource(video) });
+  const onAction = vi.fn();
+  const extras = installPlayerExtras({ doc: document, video, player: document.querySelector<HTMLElement>('.player')!, goLive: $('golive'), unmute: $('unmute'), chatRoot: $('chat'), storage, stats: statsSource(video), onAction });
   const press = (key: string, target: Element = document.body): KeyboardEvent => {
     const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
     target.dispatchEvent(e);
     return e;
   };
-  return { $, video, play, pause, extras, press, storage };
+  return { $, video, play, pause, extras, press, storage, onAction };
 }
 
 // Each test installs the page's listeners on the one document: they go again after it, as on a
@@ -115,6 +116,33 @@ describe('what the shortcuts do', () => {
     // Assert
     expect(video.muted).toBe(true);
     expect($('unmute').hidden).toBe(false);
+  });
+
+  it('F puts the player container (video and its controls) in full screen, not the video alone; the controls are told', () => {
+    // Arrange
+    const { video, press, onAction } = setup();
+    const player = document.querySelector<HTMLElement>('.player')!;
+    const containerRequest = vi.fn(async () => {});
+    const videoRequest = vi.fn(async () => {});
+    player.requestFullscreen = containerRequest;
+    video.requestFullscreen = videoRequest;
+    // Act
+    const e = press('f');
+    // Assert
+    expect(e.defaultPrevented).toBe(true);
+    expect(containerRequest).toHaveBeenCalledTimes(1);
+    expect(videoRequest).not.toHaveBeenCalled();
+    expect(onAction).toHaveBeenCalledWith('fullscreen');
+  });
+
+  it('a shortcut that does nothing (I without picture-in-picture) is not reported to the controls', () => {
+    // Arrange
+    const { press, onAction } = setup();
+    // Act
+    const e = press('i');
+    // Assert
+    expect(e.defaultPrevented).toBe(false);
+    expect(onAction).not.toHaveBeenCalled();
   });
 
   it('G clicks "Go live" when it shows, and leaves the key alone when it does not', () => {
@@ -226,58 +254,5 @@ describe('the list of shortcuts', () => {
     const { $ } = setup();
     // Assert
     expect($('keys-help').querySelector('[data-key="pip"]')?.hasAttribute('hidden')).toBe(true);
-  });
-});
-
-describe('full screen and picture-in-picture', () => {
-  const doc = (o: Record<string, unknown> = {}): Document => ({ fullscreenElement: null, pictureInPictureEnabled: false, pictureInPictureElement: null, ...o }) as unknown as Document;
-
-  it('full screen: the standard API, else the WebKit ones (iPhone: the native player)', () => {
-    // Arrange
-    const standard = { requestFullscreen: vi.fn(async () => {}) } as unknown as HTMLVideoElement;
-    const iphone = { webkitEnterFullscreen: vi.fn() } as unknown as HTMLVideoElement;
-    const oldSafari = { webkitRequestFullscreen: vi.fn() } as unknown as HTMLVideoElement;
-    // Act / Assert
-    expect(toggleFullscreen(standard, doc())).toBe(true);
-    expect((standard as unknown as { requestFullscreen: ReturnType<typeof vi.fn> }).requestFullscreen).toHaveBeenCalled();
-    expect(toggleFullscreen(iphone, doc())).toBe(true);
-    expect((iphone as unknown as { webkitEnterFullscreen: ReturnType<typeof vi.fn> }).webkitEnterFullscreen).toHaveBeenCalled();
-    expect(toggleFullscreen(oldSafari, doc())).toBe(true);
-    expect((oldSafari as unknown as { webkitRequestFullscreen: ReturnType<typeof vi.fn> }).webkitRequestFullscreen).toHaveBeenCalled();
-    expect(toggleFullscreen({} as HTMLVideoElement, doc())).toBe(false);
-  });
-
-  it('full screen already: F leaves it; a refused request is swallowed', async () => {
-    // Arrange
-    const exitFullscreen = vi.fn(async () => {});
-    const refused = { requestFullscreen: vi.fn(() => Promise.reject(new Error('NotAllowedError'))) } as unknown as HTMLVideoElement;
-    // Act / Assert
-    expect(toggleFullscreen({} as HTMLVideoElement, doc({ fullscreenElement: {}, exitFullscreen }))).toBe(true);
-    expect(exitFullscreen).toHaveBeenCalled();
-    const webkitExitFullscreen = vi.fn();
-    expect(toggleFullscreen({} as HTMLVideoElement, doc({ fullscreenElement: undefined, webkitFullscreenElement: {}, webkitExitFullscreen }))).toBe(true);
-    expect(webkitExitFullscreen).toHaveBeenCalled();
-    expect(toggleFullscreen(refused, doc())).toBe(true);
-    await Promise.resolve();
-  });
-
-  it('picture-in-picture: the standard API or Safari presentation mode; nothing elsewhere', () => {
-    // Arrange
-    const requestPictureInPicture = vi.fn(async () => {});
-    const exitPictureInPicture = vi.fn(async () => {});
-    const chrome = { requestPictureInPicture } as unknown as HTMLVideoElement;
-    const safari = { webkitSupportsPresentationMode: () => true, webkitSetPresentationMode: vi.fn(), webkitPresentationMode: 'inline' } as unknown as HTMLVideoElement & { webkitSetPresentationMode: ReturnType<typeof vi.fn> };
-    // Act / Assert
-    expect(pipSupported(chrome, doc({ pictureInPictureEnabled: true }))).toBe(true);
-    expect(pipSupported(chrome, doc())).toBe(false);
-    expect(pipSupported(safari, doc())).toBe(true);
-    expect(pipSupported({} as HTMLVideoElement, doc())).toBe(false);
-    expect(togglePip(chrome, doc({ pictureInPictureEnabled: true }))).toBe(true);
-    expect(requestPictureInPicture).toHaveBeenCalled();
-    expect(togglePip(chrome, doc({ pictureInPictureEnabled: true, pictureInPictureElement: {}, exitPictureInPicture }))).toBe(true);
-    expect(exitPictureInPicture).toHaveBeenCalled();
-    expect(togglePip(safari, doc())).toBe(true);
-    expect(safari.webkitSetPresentationMode).toHaveBeenCalledWith('picture-in-picture');
-    expect(togglePip({} as HTMLVideoElement, doc())).toBe(false);
   });
 });
