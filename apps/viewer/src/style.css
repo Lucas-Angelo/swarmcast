@@ -60,12 +60,6 @@ body:not(.watch):not(.brand-known) link[data-brand-theme] ~ :is(.site-head, main
   }
 }
 /* ---- end branding ---- */
-/* Watch: the brand lines up with the player's left edge. */
-.watch .site-head {
-  width: var(--stage-w);
-  margin: 0 auto;
-  padding: 0;
-}
 
 /* ---- Buttons and inputs -------------------------------------------------------------------- */
 button {
@@ -204,21 +198,55 @@ form button[type='submit'] {
   border-radius: var(--sc-radius-pill);
 }
 
-/* ---- Watch page: the player is the hero ---------------------------------------------------- */
-/* Width that keeps the 16:9 player plus the status bar inside the window on a laptop. */
+/* ---- Watch page: one grid, the video as large as the window allows ------------------------- */
+/*
+ * The patterns of the big streaming sites, in SwarmCast's look: the player edge to edge at the
+ * top, as wide as the page and as tall as leaves the info row under it in view (black bands when
+ * the window is wider than 16:9); the info row (the streamer, the status, Share, Settings); the
+ * chat as a column fixed on the right, the window's height, where the window is wide, under the
+ * info row elsewhere; then the streamer's banner, About and the credit. The DOM order is the
+ * phone's (player, info, chat, banner, about, credit).
+ */
 .watch {
-  --stage-w: min(calc(100% - 48px), 1200px, max(560px, calc((100dvh - 210px) * 16 / 9)));
+  /* The info row's height under the player on a computer (one 56 px picture + padding): the
+     player leaves that much of the window to it. */
+  --info-h: 88px;
+  /* Space at the sides of everything but the player and the chat. */
+  --gutter: var(--sp-6);
 }
 .stage {
-  width: var(--stage-w);
-  margin: 0 auto var(--sp-12);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: 'player' 'info' 'chat' 'banner' 'about' 'credit';
+  align-content: start;
 }
+.stage > .player {
+  grid-area: player;
+}
+.stage > .info {
+  grid-area: info;
+}
+.stage > .chat {
+  grid-area: chat;
+}
+/* ---- branding: grid areas ---- */
+.stage > .brand-banner {
+  grid-area: banner;
+}
+.stage > .brand-about {
+  grid-area: about;
+}
+.stage > .brand-credit {
+  grid-area: credit;
+}
+/* ---- end branding: grid areas ---- */
 .player {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
+  max-height: calc(100vh - var(--info-h));
+  max-height: calc(100dvh - var(--info-h));
   background: var(--video-bg);
-  border-radius: var(--sc-radius-lg);
   overflow: hidden;
 }
 .player video {
@@ -243,23 +271,80 @@ form button[type='submit'] {
   pointer-events: none;
 }
 
-/* Status line under the player: state + viewers on the left, live / sound on the right. */
-.bar {
+/* ---- Info row under the player: who is live, how it is going, and the actions -------------- */
+.info {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-3) var(--sp-4);
-  padding: var(--sp-4) 0;
+  min-height: var(--info-h);
+  padding: var(--sp-3) var(--gutter);
 }
+/*
+ * Left: the streamer's picture over two lines, their name, and the status line under the name.
+ * The header boxes (stock mark, branding/brand.ts header) are `display: contents`, so the
+ * picture, the name and the status are laid out by this one grid.
+ */
+.info-id {
+  flex: 1 1 18rem;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  column-gap: var(--sp-3);
+  row-gap: 2px;
+}
+.info-id .site-head,
+.info-id .brand-head,
+.info-id .sc-brand-header {
+  display: contents;
+}
+.info-id .sc-brand-avatar {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 56px;
+  height: 56px;
+}
+.info-id .sc-brand-titles {
+  grid-column: 2;
+  grid-row: 1;
+  align-self: end;
+}
+.info-id .sc-brand-name {
+  font-size: var(--fs-xl);
+  line-height: 1.25;
+}
+/* The stock SwarmCast mark (no "Your page"): on the name's line. */
+.info-id .site-head > .sc-brand {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  align-self: end;
+  font-size: var(--fs-lg);
+}
+.info-id .status {
+  grid-column: 2;
+  grid-row: 2;
+  align-self: start;
+}
+/* Without a picture the status starts under the name, not indented. */
+.info-id:not(:has(.sc-brand-avatar)) {
+  column-gap: 0;
+}
+.info-id:not(:has(.sc-brand-avatar)) .status {
+  grid-column: 1 / -1;
+}
+
+/* The status line: state, delay and viewers, quieter than the name. */
 .status {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--sp-2);
-  font-weight: var(--sc-weight-semibold);
-  font-size: var(--fs-base);
+  gap: var(--sp-1) var(--sp-2);
   min-width: 0;
+  font-weight: var(--sc-weight-semibold);
+  font-size: var(--fs-md);
+  color: var(--sc-ink);
 }
 /* Dot: live = --sc-live, connecting/buffering = honey, paused/ended = muted. */
 .dot {
@@ -275,14 +360,16 @@ form button[type='submit'] {
 .dot[data-state='off'] {
   background: var(--sc-muted);
 }
-.tip.viewers {
+.tip.viewers,
+.tip.delay {
   align-items: center;
   gap: var(--sp-2);
-  margin-left: var(--sp-3);
-  padding-left: var(--sp-4);
+  margin-left: var(--sp-2);
+  padding-left: var(--sp-3);
   border-left: 1px solid var(--sc-border);
 }
-.viewers-badge {
+.viewers-badge,
+.delay-badge {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -292,22 +379,22 @@ form button[type='submit'] {
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
-/* "~14 s behind live": the viewer's own delay, which adapts to the connection. */
-.tip.delay {
-  align-items: center;
-  gap: var(--sp-2);
-}
-.delay-badge {
-  font-weight: var(--sc-weight-medium);
-  font-size: var(--fs-md);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
-.bar-actions {
+
+/* Right: the actions, wrapping under the name before anything is cut. */
+.info-actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: var(--sp-2);
+  margin-left: auto;
+}
+.info .info-actions > button,
+.info .info-actions .settings > button,
+.info .sc-brand-support {
+  min-height: 36px;
+  padding: 0 var(--sp-4);
+  font-size: var(--fs-md);
 }
 /* "LIVE" while at the live edge (solid --sc-live), "Go live −12 s" after falling behind. */
 button.golive {
@@ -345,13 +432,6 @@ button.golive .behind {
   font-weight: var(--sc-weight-medium);
   color: var(--sc-muted);
 }
-button#unmute,
-button#share,
-button#theater {
-  min-height: 32px;
-  padding: 0 var(--sp-3);
-  font-size: var(--fs-sm);
-}
 /* "Link copied" next to Share (a polite live region; empty the rest of the time). */
 .share-status {
   font-size: var(--fs-sm);
@@ -361,7 +441,7 @@ button#theater {
 .share-status:empty {
   display: none;
 }
-/* The link to copy by hand when the browser refused the clipboard: a full row under the bar. */
+/* The link to copy by hand when the browser refused the clipboard: a full row under the info. */
 .share-fallback {
   flex-basis: 100%;
 }
@@ -380,23 +460,56 @@ button#theater {
   color: var(--sc-ink);
 }
 
-/* Settings card under the player. */
-.panel {
+/* ---- Settings menu (settings-menu.ts) ------------------------------------------------------ */
+.settings {
+  position: relative;
+}
+button.settings-btn[aria-expanded='true'] {
+  border-color: var(--sc-accent);
+  background: var(--sc-accent-soft);
+}
+/* Over the video (the info row is right under it on a computer): it opens upwards. */
+.settings-menu {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + var(--sp-2));
+  z-index: 5;
+  width: min(380px, calc(100vw - 2 * var(--sp-4)));
+  max-height: calc(100vh - var(--info-h));
+  max-height: calc(100dvh - var(--info-h));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--sp-1) var(--sp-5) var(--sp-2);
+  text-align: left;
   background: var(--sc-surface);
   border: 1px solid var(--sc-border);
   border-radius: var(--sc-radius-lg);
-  padding: 0 var(--sp-5);
+  box-shadow: var(--sc-shadow-float);
 }
-.panel > * {
-  padding: var(--sp-4) 0;
+.settings-menu > * {
   margin: 0;
+  padding: var(--sp-3) 0;
 }
-.panel > * + * {
+.settings-menu > * + * {
   border-top: 1px solid var(--sc-border);
 }
-.panel > .info-row + .info-row {
+.settings-menu > .settings-title {
+  padding-bottom: 0;
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  color: var(--sc-muted);
+  letter-spacing: 0.02em;
+}
+.settings-menu > .settings-title + * {
+  border-top: 0;
+}
+.settings-menu > .info-row + .info-row,
+.settings-menu > #p2p-stats-row {
   border-top: 0;
   padding-top: 0;
+}
+.settings-menu .player-controls:empty {
+  display: none;
 }
 .toggle-row,
 .info-row {
@@ -451,11 +564,6 @@ button#theater {
   outline: 2px solid var(--sc-focus);
   outline-offset: 2px;
 }
-#p2p-stats-row {
-  padding-top: 0;
-  border-top: 0;
-  margin-top: calc(-1 * var(--sp-2));
-}
 
 /* "The stream has ended" / "You were removed": full-page empty state with the mascot. */
 .ended {
@@ -481,94 +589,74 @@ button#theater {
 }
 
 /* ---- Chat (chat/chat.css styles the column itself) ---------------------------------------- */
-/* Under 1100 px the chat sits between the bar and the settings card, 40% of the screen tall. */
+/* Under the info row (phones, tablets upright, narrow windows): the rest of the screen under
+   the video, and never less than room for a few messages. */
 .stage > .chat {
-  height: 40vh;
-  height: 40dvh;
-  min-height: 260px;
-  margin-bottom: var(--sp-4);
+  height: max(320px, calc(100vh - 56.25vw - var(--info-h)));
+  height: max(320px, calc(100dvh - 56.25vw - var(--info-h)));
+  border-width: 1px 0;
+  border-radius: 0;
 }
-/* From 1100 px: a column right of the player, as tall as it; the stage widens to fit it. */
-@media (min-width: 1100px) {
-  .watch.has-chat:not(.chat-hidden) {
-    --chat-w: 340px;
-    --stage-w: min(calc(100% - 48px), calc(1200px + var(--chat-w) + var(--sp-4)), calc(max(560px, calc((100dvh - 210px) * 16 / 9)) + var(--chat-w) + var(--sp-4)));
+/*
+ * Wide windows (a computer from 1100 px, or a landscape window from 768 px that is not a phone
+ * held sideways): the chat is a column locked on the right, the window's height, and the page
+ * (player, info, About) scrolls beside it.
+ */
+@media (min-width: 1100px) and (min-height: 501px), (min-width: 768px) and (min-height: 501px) and (min-aspect-ratio: 5/4) {
+  .watch {
+    --chat-w: 320px;
   }
   .watch.has-chat:not(.chat-hidden) .stage {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--chat-w);
-    grid-template-areas:
-      'banner banner'
-      'player chat'
-      'bar .'
-      'about .'
-      'panel .';
-    column-gap: var(--sp-4);
+    padding-right: var(--chat-w);
   }
-  .watch.has-chat .stage > .player {
-    grid-area: player;
+  .stage > .chat {
+    position: fixed;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: var(--chat-w);
+    height: auto;
+    border-width: 0 0 0 1px;
   }
-  .watch.has-chat .stage > .bar {
-    grid-area: bar;
+}
+@media (min-width: 1100px) and (min-height: 501px) {
+  .watch {
+    --chat-w: 340px;
   }
-  .watch.has-chat .stage > .panel {
-    grid-area: panel;
-  }
-  /* ---- branding: grid areas ---- */
-  .watch.has-chat .stage > .brand-banner {
-    grid-area: banner;
-  }
-  .watch.has-chat .stage > .brand-about {
-    grid-area: about;
-  }
-  /* ---- end branding: grid areas ---- */
-  .watch.has-chat .stage > .chat {
-    grid-area: chat;
-    height: 0;
-    min-height: 100%;
-    margin: 0;
+}
+@media (min-width: 1600px) and (min-height: 501px) {
+  .watch {
+    --chat-w: 360px;
+    --gutter: var(--sp-8);
   }
 }
 
-/* ---- Theater mode (theater.ts): a wider player on a computer ------------------------------- */
-/* The stage takes the window's width; the video as much height as leaves the header and the
-   status bar in view (black bands at the sides when the window is wider than 16:9). The chat
-   stays beside the player on a wide screen (from 1600 px) and goes under it below that, where
-   beside it would leave the video no wider than without theater mode. Phones: no change. */
+/* ---- Theater mode (theater.ts) ------------------------------------------------------------- */
+/* On a wide window: the player takes the whole height of the window (the video centred in black,
+   nothing else in sight but the chat beside it); the info row and the rest are below, a scroll
+   away. Elsewhere the video already takes the whole width: no theater button there. */
+button#theater {
+  display: none;
+}
 button#theater[aria-pressed='true'] {
   border-color: var(--sc-accent);
   color: var(--sc-accent-strong);
   background: color-mix(in srgb, var(--sc-accent) 10%, var(--sc-surface));
 }
-@media (min-width: 641px) and (min-height: 501px) {
-  .watch.theater {
-    --stage-w: calc(100% - 48px);
+@media (min-width: 1100px) and (min-height: 501px), (min-width: 768px) and (min-height: 501px) and (min-aspect-ratio: 5/4) {
+  button#theater {
+    display: inline-flex;
   }
   .watch.theater .stage > .player {
-    max-height: max(320px, calc(100dvh - 140px));
-  }
-}
-@media (min-width: 1100px) and (max-width: 1599px) and (min-height: 501px) {
-  .watch.theater.has-chat:not(.chat-hidden) {
-    --stage-w: calc(100% - 48px);
-  }
-  .watch.theater.has-chat:not(.chat-hidden) .stage {
-    display: block;
-  }
-  .watch.theater.has-chat .stage > .chat {
-    height: 40vh;
-    height: 40dvh;
-    min-height: 260px;
-    margin: 0 0 var(--sp-4);
-  }
-}
-@media (min-width: 1600px) and (min-height: 501px) {
-  .watch.theater.has-chat:not(.chat-hidden) {
-    --stage-w: calc(100% - 48px);
+    height: 100vh;
+    height: 100dvh;
+    max-height: none;
+    aspect-ratio: auto;
   }
 }
 
-/* ---- Keyboard shortcuts and "Stats for nerds" links (settings card) ------------------------- */
+/* ---- Keyboard shortcuts and "Stats for nerds" links (settings menu) ------------------------- */
 .extras-row {
   display: flex;
   flex-wrap: wrap;
@@ -673,25 +761,11 @@ button.keys-close:hover {
   opacity: 0.55;
 }
 
-/* ---- branding: header with the streamer's name and support button ---- */
-.watch .site-head {
-  gap: var(--sp-3);
-}
-@media (max-height: 500px) and (orientation: landscape) {
-  .brand-banner {
-    display: none;
-  }
-}
-/* ---- end branding ---- */
-
 /* ---- Phones -------------------------------------------------------------------------------- */
 @media (max-width: 640px) {
   .watch {
-    --stage-w: 100%;
-  }
-  .watch .site-head {
-    height: 52px;
-    padding: 0 var(--sp-4);
+    --info-h: 72px;
+    --gutter: var(--sp-4);
   }
   body:not(.watch) .site-head {
     padding-top: var(--sp-8);
@@ -700,46 +774,88 @@ button.keys-close:hover {
     margin-top: var(--sp-6);
     padding: var(--sp-6);
   }
-  .stage {
-    margin-bottom: var(--sp-8);
+  .info {
+    gap: var(--sp-2) var(--sp-3);
+    padding-top: var(--sp-2);
+    padding-bottom: var(--sp-2);
   }
-  .player {
-    border-radius: 0;
+  .info-id {
+    flex-basis: 12rem;
   }
-  .bar {
-    padding: var(--sp-3) var(--sp-4);
+  .info-id .sc-brand-avatar {
+    width: 40px;
+    height: 40px;
   }
-  .panel {
-    margin: 0 var(--sp-4);
-    padding: 0 var(--sp-4);
+  .info-id .sc-brand-name {
+    font-size: var(--fs-lg);
   }
-  .stage > .chat {
-    margin: 0 var(--sp-4) var(--sp-4);
+  .status,
+  .viewers-badge,
+  .delay-badge {
+    font-size: var(--fs-sm);
   }
-  button.golive,
-  button#unmute,
-  button#share {
-    min-height: 36px;
+  .tip.viewers,
+  .tip.delay {
+    margin-left: var(--sp-1);
+    padding-left: 0;
+    border-left: 0;
   }
-  /* Phones already show the video across the whole width: no theater mode there. */
-  button#theater {
-    display: none;
+  /* Icon buttons: the name stays in the button for screen readers and voice control. */
+  .info-actions .settings-btn .btn-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .info-actions .settings-btn {
+    width: 40px;
+    padding: 0;
+  }
+  .info .info-actions > button,
+  .info .info-actions .settings > button,
+  .info .sc-brand-support {
+    min-height: 40px;
+  }
+  /* The menu as a sheet at the bottom of the screen (there is no room over a phone's video). */
+  .settings-menu {
+    position: fixed;
+    left: var(--sp-4);
+    right: var(--sp-4);
+    top: auto;
+    bottom: var(--sp-4);
+    width: auto;
+    max-height: min(70vh, calc(100dvh - 2 * var(--sp-4)));
   }
 }
+/* Phone held sideways: the video takes the whole height; the identity, the info and the chat
+   are under it, a scroll away. */
 @media (max-height: 500px) and (orientation: landscape) {
-  button#theater {
-    display: none;
+  .watch {
+    --info-h: 0px;
   }
-}
-/* Phone held sideways: the video takes the whole height. */
-@media (max-height: 500px) and (orientation: landscape) {
   .watch .site-head {
     display: none;
   }
-  .watch {
-    --stage-w: min(100%, calc(100dvh * 16 / 9));
-  }
   .player {
-    border-radius: 0;
+    width: min(100%, calc(100dvh * 16 / 9));
+    max-height: 100dvh;
+    justify-self: center;
+  }
+  .brand-banner {
+    display: none;
+  }
+  .stage > .chat {
+    height: 100dvh;
+  }
+  /* A phone sideways: the menu as a sheet at the right of the screen. */
+  .settings-menu {
+    position: fixed;
+    left: auto;
+    right: var(--sp-4);
+    top: var(--sp-4);
+    bottom: var(--sp-4);
+    max-height: none;
   }
 }
