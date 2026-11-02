@@ -17,6 +17,7 @@ This page records the decisions behind the quality options (1080p/720p/480p with
 | P2P | **One swarm per rendition** (`swarmcast-<live>-main-<height>`). The tracker allowlists exactly the served heights. |
 | Audio only (v0.5.0) | A viewer's choice in the quality menu: the player loads `/hls/audio-only.m3u8` (the stream's own audio rendition alone, written by the origin for both the original and the ladder) instead of `index.m3u8`. About 0.1–0.16 Mbps instead of 0.9 (360p): roughly 85 % less. Audio-only viewers share in the video viewers' audio swarm. See [Audio only](#audio-only). |
 | Upload budget | **AIMD controller.** It raises the cap while the uplink is healthy and viewers want more, and cuts it by 30 % on congestion. Congestion means the ping to Cloudflare grows, or obs-websocket reports congestion or dropped frames on her main OBS output. It never goes above *measured upload × (1 − headroom) − other stream × 1.25*, where "other stream" is what she sends at the same time to another platform (Twitch, YouTube, Kick…), or 0 if none. |
+| Many people at once (v0.5.0) | **Soonest-needed bytes first.** When the upload cap is the bottleneck, the limiter sends first the chunk whose viewer needs it soonest (`X-SC-Need`, earliest deadline first), keeps every other download moving and bounds each viewer's urgent claims; the pages' scripts are served pre-compressed. A join queue, a P2P queue and a peer quality check were measured or examined and **not** shipped. See [Many people at once](#5-many-people-at-once). |
 | Manual override | Every automatic choice has a manual setting: rendition list and encoder, fixed upload limit, other-platform bitrate, headroom. |
 
 ## 1. Stability vs latency
@@ -239,7 +240,53 @@ Raw output, including latency to the edge, the share of time per rendition and l
 - **720p rather than 1080p on fast links.** That comes from `capLevelToPlayerSize`: the bench player is 1280×720 CSS px at DPR 1. On a Retina screen (DPR 2) or in fullscreen, hls.js lifts the cap and picks 1080p. On a phone it saves the viewer's data and our upload.
 - **Packet loss.** Chrome accepted CDP's `packetLoss` parameter (1 %) for the fluctuating profile. CDP emulation shapes at the request level, not at the TCP level, so real-network jitter and loss can be harsher than this.
 
-## 5. Not verified
+## 5. Many people at once
+
+The question (2026-11-02): "when many people join at the same time, or turn P2P on at the same time, it seems to lag". The streamer's home uplink (often 10–100 Mbps) carries everything behind a quick tunnel. Measured, not guessed, with the surge bench ([TESTING.md](TESTING.md#surge-bench), `scripts/test/surge/`): the real public server behind an emulated quick tunnel (200 in flight, WebSockets included, 60 ms round trip) and uplink (the cap is 85 % of it; the pages share it with the video), a synthetic 1080p/720p/480p/360p ladder (6 / 3 / 1.4 / 0.8 Mbps, 2 s segments), and protocol-level viewers that join like the browser (link, join page and its assets, browser check, `/api/join`, watch page, `/api/config`, manifest, `/control`) and play like hls.js' Stable profile (20 s behind live, one fragment at a time, its ABR, p2p-media-loader's 3 s no-bytes abort). Real time, on a Mac (18 cores); runs vary, so each variant ran several times.
+
+### What lagged
+- **The upload limiter shared the cap equally among every download in progress** (one 16 KB chunk each in turn). A newcomer downloads up to ten segments back to back to fill its 20 s buffer; each competed equally with the one segment a watching viewer needed next. The watching viewers' segments slowed down (p50 1.4 → 3.2–3.7 s), their ABR stepped down too late, and they stalled: 57 s of stalls on average per burst of 30 newcomers next to 15 viewers (8.5 % of their time), up to 79 s.
+- **The pages' scripts are not under the cap** and were 1.1 MB per newcomer: in a burst they queued with the video on the uplink (watch page p95 3.5 s, 9.9 s on a 30 Mbps cap). Newcomers saw their first picture after 7–9 s.
+- **The attack shield took the burst for an attack.** One suspicious signal plus a full upload counted as an attack; 30 joins in 3 s raise the joins signal and fill the upload by themselves. In 7 of 9 burst runs it escalated to "attack": admission frozen at 1.25 × the audience + 10 (7–8 people refused as "stream full" on a 30 Mbps cap, 32 of 80 in a burst onto 40 watching) and the stronger browser check for everyone else.
+- **Not the server's CPU or the P2P signalling.** Server CPU stayed at 6–9 % of a core during bursts, its own event-loop delay p99 under 15 ms. 50 viewers turning P2P on within 2 s (5 offers each, every offer answered): first tracker answer 1–3 ms, at most 24 frames per 10 s on one viewer's socket (limits: 200 per socket, 60 per tracker channel), no socket closed, no stall attributable to it. Playlists (in-memory strings, not under the cap) stayed at p95 34 ms calm.
+
+### Upload order (shipped)
+- Each segment request says how soon it is needed: `X-SC-Need: <seconds>` = the segment's start minus the playhead, 0 before the first picture and for init segments (`apps/viewer/src/need-header.ts`; p2p-media-loader's `httpRequestSetup` and hls.js' `xhrSetup`, so both the P2P core's HTTP downloads and the HTTP fallback send it).
+- The limiter (`hls/throttle.ts`) serves the earliest deadline first, aiming `NEED_MARGIN_S` (6 s) before the need, so the viewers it defers keep about 6 s of video. Measured on join-burst, 3 runs each: at 0 s the watching viewers had a few dozen stalls of 0.1 s (bytes sent exactly at the deadline arrive a moment late); at 2 s they hovered at 2 s of buffer and one hiccup stalled them (0 / 0 / 75 s of stalls); at 6 s, 0 / 0 / 0. Without the header a request counts as needed in 8 s; needs are clamped to 0–30 s.
+- No chunk waits more than 1 s while others go first, so a low-priority download keeps receiving bytes and p2p-media-loader never drops it for silence (3 s): 0 aborted downloads in every run.
+- A viewer can lie, but only about its own requests: urgent claims (< 4 s) count against a budget per viewer and 10 s (3 MB, or 3 fair shares of the cap), and past it the requests are scheduled like ones without the header (`hls/need.ts`, [THREAT_MODEL.md](THREAT_MODEL.md)).
+- The viewer build writes `.br` / `.gz` copies of the pages' scripts and styles (`apps/viewer/scripts/precompress.mjs`), served by `@fastify/static`'s `preCompressed`: 1.17 MB → 0.29 MB (Brotli) for the watch page.
+- The shield: a full upload confirms only signals an audience with the link does not raise (refused joins, our own 429s, TLS errors); joins alone still reach "attack" at their attack threshold (`security/detector.ts`).
+
+| Scenario (runs before / after) | | Before | After |
+|---|---|---|---|
+| **join-burst**: 15 watching, cap 60 Mbps, 30 join within 3 s (3 / 3) | watching viewers' stalls per burst | 57 s (26 / 67 / 79), 8.5 % of their time | **0 s** (0 / 0 / 0) |
+| | newcomers' first picture p50 / p95 | 7.6 / 9.2 s | **2.5 / 3.1 s** |
+| | newcomers' time without a picture (first picture + stalls) | 7.3 s | **2.2 s** |
+| | burst taken for an attack | 2 of 3 | **0 of 3** |
+| **join-burst-big**: 25 watching, cap 100 Mbps, 55 join within 5 s (2 / 2) | watching viewers' stalls per burst | 63 / 131 s | **0 / 0 s** |
+| | newcomers' first picture p50 | 7.9 s | **2.5 s** |
+| | burst taken for an attack | 1 of 2 | **0 of 2** |
+| **join-burst-tight**: 20 watching, cap 30 Mbps, 40 join: more than the uplink carries even at 360p (3 / 3) | watching viewers stalled | 34.6 % of their time | **14.6 %** |
+| | newcomers' first picture p50 | 18.2 s | **7.3 s** |
+| | newcomers refused ("stream full") | 7–8 per burst | **0** |
+| **p2p-burst**: 60 watching, cap 120 Mbps, 50 turn P2P on within 2 s (1 / 2) | first tracker answer; server CPU in the burst | 1–3 ms; 8 % | 1–3 ms; 10 % |
+
+Over capacity (join-burst-tight) no order creates bandwidth: everyone still stalls, less than half as much. What helps there is P2P, the quality ladder, or fewer viewers (the panel's capacity estimate warns).
+
+### Measured or examined, not shipped
+- **A join queue ("Joining… you are number N").** The upload order already gives every newcomer its first picture in about 2 s without making anyone wait; a queue only adds waiting. Its strongest form was measured (with a 2 s margin): newcomers lose their urgency while the upload misses deadlines (more than 20 % of chunks late over 5 s). Worse: in join-burst the late share reached 0.55–0.67 during every burst, newcomers waited 11 s for the first picture and spent 40 % of their time stalled, and in join-burst-tight the watching viewers gained nothing (219 s vs 214 s of stalls). Reverted.
+- **A P2P queue (admitting a few peers per interval, in request order).** The signalling of 50 viewers at once costs the server nothing measurable (above); a queue would only delay P2P. Each browser's own WebRTC work does not depend on how many others turn P2P on at the same time. The page now says "connecting to other viewers…" until its first peer, instead of "0 peers" (`apps/viewer/src/p2p-status.ts`).
+- **A connection quality check before a viewer may upload to others.** Not measurable here (local WebRTC is perfect; Chrome's network emulation does not apply to data channels), and already covered after the fact: every P2P segment is hash-checked, a peer that stops delivering is dropped (`PeerStrikes`), and a segment needed soon is fetched over HTTPS (`p2p-fallback.ts`). Holding uploads back would remove seeders exactly when many people arrive.
+- **Jitter on reconnects and announces.** The chat bench's reconnect storm (every socket at once) passes, and tracker answers take 1–3 ms: no thundering herd to spread.
+- **Playlist caching, segment cache headers.** Playlists are already in-memory strings served in milliseconds; segments must stay `Cache-Control: private` (members only, see [ARCHITECTURE.md](ARCHITECTURE.md#media-path)).
+
+### Not verified
+- Real browsers in a burst: the viewers are protocol-level models of hls.js and p2p-media-loader (their ABR and timeouts), and no media flows over P2P in the bench.
+- Whether Cloudflare's edge caches `/assets/*` for a quick tunnel (`public, immutable`): if it does, most newcomers never reach the streamer's uplink for the scripts and the compression matters less; it never hurts.
+- A real home uplink and router queue (emulated as one FIFO byte queue).
+
+## 6. Not verified
 - Hardware encoders other than VideoToolbox (NVENC, QSV, AMF, VAAPI): argument sets follow the ffmpeg docs but were not run here. The probe will mark them as not working if they fail.
 - The obs-websocket client against a real OBS: it was tested against a protocol-faithful fake server, and the auth vector matches protocol.md.
 - RTT-based congestion detection on a real saturated home uplink: only simulated.

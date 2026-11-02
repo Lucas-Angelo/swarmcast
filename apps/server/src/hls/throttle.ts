@@ -7,11 +7,13 @@ import { Readable } from 'node:stream';
  */
 export const DEFAULT_NEED_S = 8;
 /**
- * Bytes should be there this long before they are needed (one segment's worth): sent exactly at
- * their deadline they arrive a moment late, a short stall each time (surge bench: 26 stalls of
- * 0.1 s in one burst without it).
+ * Bytes should be there this long before they are needed: deferred viewers keep about this much
+ * video buffered while others go first. Surge bench, 30 joining next to 15 watching (3 runs each):
+ * at 0 s the watching viewers had 26 stalls of 0.1 s (sent exactly at the deadline, bytes arrive a
+ * moment late); at 2 s they hovered at 2 s of buffer and one hiccup stalled them (0 / 0 / 75 s of
+ * stalls); at 6 s, 0 / 0 / 0, and over capacity 15 % of their time stalled instead of 25 %.
  */
-export const NEED_MARGIN_S = 2;
+export const NEED_MARGIN_S = 6;
 /** The furthest ahead a need counts: past this, every response is "later" alike. */
 export const MAX_NEED_S = 30;
 /**

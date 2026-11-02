@@ -163,6 +163,6 @@ describe('BandwidthLimiter order (docs/QUALITY.md "Upload order")', () => {
     expect(lim.dueIn(Number.NaN)).toBe(due(DEFAULT_NEED_S));
     expect(lim.dueIn()).toBe(due(DEFAULT_NEED_S));
     now = 5_000;
-    expect(lim.dueIn(12)).toBe(15_000);
+    expect(lim.dueIn(12)).toBe(due(12));
   });
 });
