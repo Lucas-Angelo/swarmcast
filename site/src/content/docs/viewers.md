@@ -34,7 +34,7 @@ A bar along the bottom of the video has the player's buttons. It looks the same 
 
 - **Picture-in-picture** (only where your browser has it, such as Chrome, Edge and Safari): the video in a small window that stays on top while you use other apps or tabs.
 - **Theater mode** (on a computer): the video takes the whole height of the window too, with black around it and the chat still next to it; the streamer's name and the rest are a scroll away. Click it again to go back; your browser remembers the choice.
-- **Full screen:** the video fills the screen, with the same bar (and how far behind live you are) on top of it. Press it again, or Esc, to go back. **On an iPhone** the browser only lets the video itself go full screen: the iPhone's own player opens, with its own buttons instead of SwarmCast's (no Go live or quality there). Close that player and the page's buttons are back. On an iPad, Android and computers, the page's bar stays in full screen.
+- **Full screen:** the video fills the screen, with the same bar (and how far behind live you are) on top of it. Press it again, or Esc, to go back. On computers, Android, iPad and iPhones with a recent iOS, the page's bar stays in full screen. **On an iPhone with an older iOS** the browser only lets the video itself go full screen: the iPhone's own player opens, with its own buttons instead of SwarmCast's (no Go live or quality there). Close that player and the page's buttons are back.
 
 The quality menu, Go live and Unmute work with the keyboard and screen readers too: every button has a name, and the menu opens with Enter and moves with the arrow keys.
 

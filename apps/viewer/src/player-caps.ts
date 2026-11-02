@@ -4,10 +4,12 @@
  *
  * - Full screen: the player CONTAINER (`.player`: video, our controls, the status and stats
  *   overlays, later the chat over the video) wherever elements can go full screen: computers,
- *   Android, iPadOS (`requestFullscreen`, or `webkitRequestFullscreen` on older Safari). An iPhone
- *   has no element full screen at all (MDN BCD api.Element.requestFullscreen: "Only available on
- *   iPad, not on iPhone"); there only the video itself can, with `webkitEnterFullscreen()`, and
- *   iOS then shows its own player and controls instead of ours until the viewer leaves it.
+ *   Android, iPadOS (`requestFullscreen`, or `webkitRequestFullscreen` on older Safari), and the
+ *   iPhone from the iOS 26 runtime on (the Simulator does it, Devices run 41510799608). Older
+ *   iPhones have no element full screen at all (MDN BCD api.Element.requestFullscreen: "Only
+ *   available on iPad, not on iPhone"); there only the video itself can, with
+ *   `webkitEnterFullscreen()`, and iOS shows its own player and controls instead of ours until
+ *   the viewer leaves it.
  * - Picture-in-picture: `requestPictureInPicture` (Chrome, Edge, Safari, Firefox 153+ on
  *   computers) or Safari's `webkitSetPresentationMode`; nothing on Firefox for Android, Android
  *   WebView and Firefox before 153 (its own button over the video stays its own).
@@ -38,7 +40,7 @@ export interface WebkitDocument extends Document {
  * How this browser goes full screen:
  * - `element`: the container, standard API (our controls stay);
  * - `element-webkit`: the container, Safari's prefixed API (our controls stay);
- * - `video-native`: the video alone with the system's player (iPhone; our controls are gone until it ends);
+ * - `video-native`: the video alone with the system's player (older iPhones; our controls are gone until it ends);
  * - `none`: not at all (some in-app browsers).
  */
 export type FullscreenMode = 'element' | 'element-webkit' | 'video-native' | 'none';

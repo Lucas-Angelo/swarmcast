@@ -48,7 +48,7 @@ its area and add a row here in the same pull request.
 |---|---|---|
 | Pure dependency injection: constructor options wired in one composition root (`apps/server/src/app.ts`), no DI container | the object graph stays small and explicit; tests pass fakes through the same options | [ARCHITECTURE.md](ARCHITECTURE.md#components), [apps/server/README.md](../apps/server/README.md) |
 | Own typed i18n (`packages/shared/src/i18n`), not i18next or FormatJS | small, runs under the strict CSP, the key set is type-checked in both languages and shared by the server, viewer pages and panel | [packages/shared/README.md](../packages/shared/README.md) |
-| The watch page draws its own player controls (hybrid): the container goes full screen; iPhone gets iOS's own full-screen player; native controls only when the page's script did not run | one look in every browser, and the controls (later the chat) stay in full screen; an iPhone has no element full screen | [apps/viewer/README.md](../apps/viewer/README.md), `apps/viewer/src/player-caps.ts` |
+| The watch page draws its own player controls (hybrid): the container goes full screen (iPhones before iOS 26: iOS's own full-screen player); native controls only when the page's script did not run | one look in every browser, and the controls (later the chat) stay in full screen; older iPhones have no element full screen | [apps/viewer/README.md](../apps/viewer/README.md), `apps/viewer/src/player-caps.ts` |
 | The quality menu is a menu button, never a `<select>` | WebKit's own parts of every `<select>` carry an inline style the viewer CSP refuses (`style-src-attr`) | `apps/viewer/src/quality-menu.ts` |
 
 ## Security and privacy
