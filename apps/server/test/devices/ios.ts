@@ -42,6 +42,31 @@ const AUTOMATION_KEYS = [
   ['com.apple.mobilesafari', 'WebKitRemoteAutomationEnabled'],
 ] as const;
 
+/**
+ * Launchd jobs of the simulator left out of the suite's boot (`simctl boot --disabledJob`): daemons
+ * a page in Safari never needs, which kept the 3-core CI Mac saturated through the whole run (load
+ * average 300 to 550, no idle CPU, Devices runs 41537210138, 41544831758), where a tap reached the
+ * element and no click followed (runs 41184587941, 41190536745, 41518563555). apsd, the push
+ * daemon, logged 2,300 messages a second, and each one went through the simulator's diagnosticd and
+ * on to the Mac's (its .sim_diagnosticd_socket relay): apsd and the two diagnosticd took a third of
+ * the Mac's CPU. identityservicesd and StatusKitAgent are its clients; the rest are the Health,
+ * Fitness, Reminders, Siri and photo-analysis daemons and chronod, which keeps relaunching the
+ * home screen's widget extensions.
+ */
+const UNUSED_JOBS = [
+  'com.apple.apsd',
+  'com.apple.identityservicesd',
+  'com.apple.StatusKitAgent',
+  'com.apple.remindd',
+  'com.apple.healthd',
+  'com.apple.fitcore',
+  'com.apple.fitnessintelligenced',
+  'com.apple.finhealthd',
+  'com.apple.assistantd',
+  'com.apple.mediaanalysisd',
+  'com.apple.chronod',
+] as const;
+
 async function simctl(args: readonly string[]): Promise<string> {
   return (await run('xcrun', ['simctl', ...args], { maxBuffer: 64 * 1024 * 1024 })).stdout.trim();
 }
@@ -51,6 +76,17 @@ interface SimDevice {
   name: string;
   state: string;
   isAvailable: boolean;
+}
+
+/** Boots the simulator without UNUSED_JOBS. */
+async function boot(udid: string): Promise<void> {
+  await simctl(['boot', udid, ...UNUSED_JOBS.map((job) => `--disabledJob=${job}`)]);
+}
+
+/** Which of UNUSED_JOBS run all the same (a simulator booted before the suite, by hand), for device.log. */
+async function unusedJobsRunning(udid: string): Promise<string[]> {
+  const list = await simctl(['spawn', udid, 'launchctl', 'list']);
+  return UNUSED_JOBS.filter((job) => list.split('\n').some((line) => /^\d+\t/.test(line) && line.endsWith(`\t${job}`)));
 }
 
 async function findSimulator(): Promise<SimDevice> {
@@ -209,7 +245,7 @@ export class IosDevice {
     note(`simulator ${sim.udid} (${sim.state})`);
     let booted = false;
     if (sim.state !== 'Booted') {
-      await simctl(['boot', sim.udid]);
+      await boot(sim.udid);
       booted = true;
     }
     await simctl(['bootstatus', sim.udid, '-b']);
@@ -223,11 +259,13 @@ export class IosDevice {
       for (const [domain, key] of AUTOMATION_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
       // webinspectord and Safari read them at start.
       await simctl(['shutdown', sim.udid]);
-      await simctl(['boot', sim.udid]);
+      await boot(sim.udid);
       await simctl(['bootstatus', sim.udid, '-b']);
       booted = true;
       note(`automation settings written (${missing.join(', ')}), rebooted`);
     }
+    const running = await unusedJobsRunning(sim.udid);
+    note(running.length > 0 ? `unused jobs running all the same: ${running.join(', ')}` : 'unused jobs not running');
     // Safari running before the first session gives the Web Inspector an application to list
     // (without it a new simulator answered safaridriver with a timeout: the same source).
     await simctl(['launch', sim.udid, SAFARI]);
