@@ -4,7 +4,7 @@
  * what only it knows: the player's counters, the adaptive delay, hls.js once it exists.
  *
  * Full screen (F) is the player container's, with our own controls in it, wherever the browser
- * lets an element go full screen; on iPhone only the video can, in iOS's own player
+ * lets an element go full screen; on older iPhones only the video can, in iOS's own player
  * (player-caps.ts). The shortcuts work the same with or without the player's own controls
  * (player-controls.ts): a page whose controls failed to mount keeps them.
  */

@@ -30,7 +30,7 @@ Uma barra na parte de baixo do vídeo tem os botões do player. Ela é igual em 
 
 - **Picture-in-picture** (só onde o navegador tem, como Chrome, Edge e Safari): o vídeo numa janela pequena que fica por cima enquanto você usa outros apps ou abas.
 - **Modo cinema** (no computador): deixa o vídeo do maior tamanho que a janela permite. O chat fica ao lado numa tela larga e vai para baixo do vídeo numa menor. Clique de novo para voltar; o navegador lembra a escolha.
-- **Tela cheia:** o vídeo ocupa a tela toda, com a mesma barra (e quanto você está atrás do ao vivo) por cima. Aperte de novo, ou Esc, para voltar. **No iPhone** o navegador só deixa o próprio vídeo ir para a tela cheia: abre o player do iPhone, com os botões dele no lugar dos do SwarmCast (sem Ir para o ao vivo nem qualidade). Feche esse player e os botões da página voltam. No iPad, no Android e no computador, a barra da página continua na tela cheia.
+- **Tela cheia:** o vídeo ocupa a tela toda, com a mesma barra (e quanto você está atrás do ao vivo) por cima. Aperte de novo, ou Esc, para voltar. No computador, no Android, no iPad e no iPhone com iOS recente, a barra da página continua na tela cheia. **No iPhone com iOS mais antigo** o navegador só deixa o próprio vídeo ir para a tela cheia: abre o player do iPhone, com os botões dele no lugar dos do SwarmCast (sem Ir para o ao vivo nem qualidade). Feche esse player e os botões da página voltam.
 
 O menu de qualidade, Ir para o ao vivo e Ativar som também funcionam pelo teclado e com leitores de tela: todo botão tem nome, e o menu abre com Enter e anda com as setas.
 

@@ -364,7 +364,7 @@ export async function tapControl(phone: Phone, selector: string): Promise<void> 
 }
 
 /** What the player's own controls show and what the page may do with the video here. */
-export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: boolean; volumeSlider: boolean; volumeApi: boolean; pipButton: boolean; pipApi: boolean; play: string }> {
+export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: boolean; volumeSlider: boolean; volumeApi: boolean; elementFullscreen: boolean; pipButton: boolean; pipApi: boolean; play: string }> {
   return phone.evaluate(() => {
     const v = document.querySelector('video') as HTMLVideoElement & { webkitSupportsPresentationMode?: (m: string) => boolean };
     const shown = (sel: string): boolean => {
@@ -379,8 +379,11 @@ export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: 
     v.volume = probe;
     const volumeApi = Math.abs(v.volume - probe) < 0.01;
     v.volume = before;
+    const player = document.querySelector('.player') as HTMLElement & { webkitRequestFullscreen?: unknown };
     return {
       volumeApi,
+      // As player-caps.ts fullscreenMode decides: the container can go full screen.
+      elementFullscreen: (typeof player.requestFullscreen === 'function' && document.fullscreenEnabled !== false) || (typeof player.webkitRequestFullscreen === 'function' && (document as Document & { webkitFullscreenEnabled?: boolean }).webkitFullscreenEnabled !== false),
       nativeControls: v.hasAttribute('controls'),
       bar: shown('[data-testid="controls"]'),
       // The slider's own switch (hidden where the page cannot set the volume), not the narrow-screen CSS.

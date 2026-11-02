@@ -8,9 +8,9 @@
  * muted autoplay, and the viewer must have something to press).
  *
  * - Full screen is the player container (player-caps.ts), so these controls, the status and
- *   stats overlays (and later the chat over the video) stay in it. An iPhone can only show the
- *   video in iOS's own full-screen player: there the button opens that, and our controls come
- *   back when the viewer leaves it (state resynced on webkitendfullscreen).
+ *   stats overlays (and later the chat over the video) stay in it. An iPhone before iOS 26 can
+ *   only show the video in iOS's own full-screen player: there the button opens that, and our
+ *   controls come back when the viewer leaves it (state resynced on webkitendfullscreen).
  * - The controls fade out while the video plays and come back with the pointer, a touch, the
  *   keyboard focus or a shortcut (controls-visibility.ts has the rules). Faded, they stay in the
  *   page for screen readers and the Tab key; a touch on a faded control only shows the controls
