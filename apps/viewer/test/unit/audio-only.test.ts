@@ -18,16 +18,6 @@ import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, Aud
 import { createManifestReloader, loadAudioOnly, loadPreferredHeight, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
-// happy-dom has no `Option` constructor (browsers do): the menu builds its entries with it.
-if (typeof globalThis.Option === 'undefined') {
-  globalThis.Option = function Option(text = '', value = '') {
-    const op = document.createElement('option');
-    op.text = text;
-    op.value = value;
-    return op;
-  } as unknown as typeof Option;
-}
-
 const EVENTS = { MANIFEST_PARSED: 'hlsManifestParsed', LEVEL_SWITCHED: 'hlsLevelSwitched' } as const;
 
 type Level = { height?: number; bitrate?: number };
@@ -84,12 +74,19 @@ function mountMenu(hls: FakeHls, source: ReturnType<typeof setup>['source']) {
   const container = document.createElement('div');
   document.body.append(container);
   const menu = createQualityMenu(hls as never, container, EVENTS, DEFAULT_QUALITY_LABELS, source);
-  const options = (): string[] => [...menu.element.options].map((op) => op.text);
-  const pick = (value: string): void => {
-    menu.element.value = value;
-    menu.element.dispatchEvent(new Event('change'));
+  const entries = (): HTMLElement[] => [...menu.menu.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+  const options = (): string[] => entries().map((item) => item.textContent ?? '');
+  /** The entry the menu marks as in use (aria-checked). */
+  const checked = (): HTMLElement | undefined => entries().find((item) => item.getAttribute('aria-checked') === 'true');
+  const value = (): string | undefined => checked()?.dataset.value;
+  /** As a viewer does: open the menu, click the entry. */
+  const pick = (v: string): void => {
+    menu.button.click();
+    entries()
+      .find((item) => item.dataset.value === v)!
+      .click();
   };
-  return { menu, options, pick };
+  return { menu, options, pick, value, checked };
 }
 
 beforeEach(() => localStorage.clear());
@@ -346,10 +343,10 @@ describe('the quality menu with audio only', () => {
   it('with one video quality, shows it and "Audio only" (no "Auto" with nothing to choose), and hides when there is no audio either', () => {
     // Arrange
     const { hls, source } = setup();
-    const { menu, options } = mountMenu(hls, source);
+    const { menu, options, value } = mountMenu(hls, source);
     // Act
     hls.parsed([{ height: 1080 }], AUDIO_TRACK);
-    const withAudio = { options: options(), hidden: menu.element.hidden, value: menu.element.value };
+    const withAudio = { options: options(), hidden: menu.element.hidden, value: value() };
     hls.parsed([{ height: 1080 }]);
     // Assert
     expect(withAudio).toEqual({ options: ['1080p', 'Audio only (saves data)'], hidden: false, value: '-1' });
@@ -359,7 +356,7 @@ describe('the quality menu with audio only', () => {
   it('picking "Audio only" switches to it; the menu keeps the video qualities and shows "Audio only" picked', () => {
     // Arrange
     const { hls, source, load } = setup();
-    const { menu, options, pick } = mountMenu(hls, source);
+    const { menu, options, pick, value, checked } = mountMenu(hls, source);
     hls.parsed(VIDEO_LEVELS, AUDIO_TRACK);
     // Act
     pick(AUDIO_ONLY_OPTION);
@@ -367,15 +364,16 @@ describe('the quality menu with audio only', () => {
     // Assert
     expect(load).toHaveBeenCalledWith(AUDIO_ONLY_URL, 'audio only');
     expect(options()).toEqual(['Auto', '720p', '480p', '360p', 'Audio only (saves data)']);
-    expect(menu.element.value).toBe(AUDIO_ONLY_OPTION);
-    expect(menu.element.selectedOptions[0]?.text).toBe('Audio only (saves data)');
+    expect(value()).toBe(AUDIO_ONLY_OPTION);
+    expect(checked()?.textContent).toBe('Audio only (saves data)');
+    expect(menu.button.getAttribute('aria-label')).toBe('Video quality: Audio only (saves data)');
     expect(hls.loadLevel).toBe(-1);
   });
 
   it('picking a video quality while audio only plays goes back to video at that height', () => {
     // Arrange
     const { hls, source, load } = setup();
-    const { menu, pick } = mountMenu(hls, source);
+    const { pick, value } = mountMenu(hls, source);
     hls.parsed(VIDEO_LEVELS, AUDIO_TRACK);
     pick(AUDIO_ONLY_OPTION);
     hls.parsed(AUDIO_LEVEL);
@@ -387,14 +385,14 @@ describe('the quality menu with audio only', () => {
     expect(loadPreferredHeight()).toBe(480);
     expect(hls.loadLevel).toBe(1);
     expect(source.active).toBe(false);
-    expect(menu.element.value).toBe('1');
+    expect(value()).toBe('1');
   });
 
   it('picking "Auto" while audio only plays goes back to video on automatic quality', () => {
     // Arrange
     savePreferredHeight(360);
     const { hls, source } = setup();
-    const { menu, pick } = mountMenu(hls, source);
+    const { pick, value } = mountMenu(hls, source);
     hls.parsed(VIDEO_LEVELS, AUDIO_TRACK);
     pick(AUDIO_ONLY_OPTION);
     hls.parsed(AUDIO_LEVEL);
@@ -405,18 +403,18 @@ describe('the quality menu with audio only', () => {
     // Assert
     expect(loadPreferredHeight()).toBeNull();
     expect(hls.loadLevel).toBe(-1);
-    expect(menu.element.value).toBe('-1');
+    expect(value()).toBe('-1');
   });
 
   it('started on audio only (nothing known about the video yet): "Auto" and "Audio only", shown before the playlists load', () => {
     // Arrange
     const { hls, source } = setup({ saved: true });
     // Act
-    const { menu, options } = mountMenu(hls, source);
+    const { menu, options, value } = mountMenu(hls, source);
     // Assert
     expect(options()).toEqual(['Auto', 'Audio only (saves data)']);
     expect(menu.element.hidden).toBe(false);
-    expect(menu.element.value).toBe(AUDIO_ONLY_OPTION);
+    expect(value()).toBe(AUDIO_ONLY_OPTION);
   });
 
   it('never applies the remembered height to the audio-only level', () => {
