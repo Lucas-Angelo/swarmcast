@@ -29,6 +29,7 @@ import {
 } from './player-config.js';
 import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
+import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 import { createChatRouter } from './chat/loader.js';
@@ -392,8 +393,15 @@ async function main(): Promise<void> {
   // from peers (one random peer fetches each new segment over HTTPS and shares it); closer
   // ones are fetched over HTTPS directly. Latency buys P2P share.
   const profile = loadProfile();
+  // How soon each segment is needed, for the server's upload order (need-header.ts).
+  let needSource: NeedSource | null = null;
   const hls = new HlsWithP2P({
     ...hlsConfigFor(profile, { isMobile }),
+    xhrSetup: (xhr, url) => {
+      const headers = needSource ? Object.entries(needHeaders(needSource, url)) : [];
+      if (headers.length > 0 && !xhr.readyState) xhr.open('GET', url, true);
+      for (const [k, v] of headers) xhr.setRequestHeader(k, v);
+    },
     debug: debugMode,
     p2p: {
       core: {
@@ -409,10 +417,12 @@ async function main(): Promise<void> {
         segmentMemoryStorageLimit: isMobile ? 48 : 192,
         p2pMaxPeers: isMobile ? 6 : 15,
         simultaneousP2PDownloads: isMobile ? 2 : 3,
+        httpRequestSetup: needRequestSetup(() => needSource),
         ...p2pCoreConfigFor(profile),
       },
     },
   });
+  needSource = hls;
 
   const engine = hls.p2pEngine;
 
