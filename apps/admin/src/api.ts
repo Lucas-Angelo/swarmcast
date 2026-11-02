@@ -136,8 +136,9 @@ export const chatApi = {
   saveSettings(settings: ChatSettings): Promise<{ settings: ChatSettings; effective: ChatPublicSettings }> {
     return api('/api/chat/settings', 'PUT', settings);
   },
-  send(text: string): Promise<{ ok: true; s: number }> {
-    return post('/api/chat/send', { text });
+  /** A message as the streamer; `re`: the seq it replies to, `mn`: author keys it mentions (the server checks both). */
+  send(text: string, extras: { re?: number; mn?: string[] } = {}): Promise<{ ok: true; s: number }> {
+    return post('/api/chat/send', { text, ...(extras.re !== undefined ? { re: extras.re } : {}), ...(extras.mn?.length ? { mn: extras.mn } : {}) });
   },
   remove(seqs: number[]): Promise<unknown> {
     return post('/api/chat/delete', { seqs });

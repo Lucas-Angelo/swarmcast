@@ -6,7 +6,10 @@
 // as long as it needs), slow mode rejects with retryMs, colour changes come back as a roster upsert
 // plus chat.you. The streamer's highlight and pin work as on the server: `hl` and `pin` items, the
 // flag on the message and the pin in every snapshot; deleting the pinned message or clearing unpins.
-import type { ChatAuthor, ChatItem, ChatPin, ChatPublicSettings, ChatRejectCode, ChatServerMessage, ChatSnapshot, ChatYou } from '@swarmcast/shared/chat';
+// Replies and mentions too (docs/CHAT.md "Replies and mentions"): a `re` gets the server's quote (the
+// shared cutQuote), deleting a message wipes the quote of its replies, and a mention is kept only for
+// someone in the roster named "@" + nickname in the text (findMentionSpans).
+import { cutQuote, findMentionSpans, type ChatAuthor, type ChatItem, type ChatMessageItem, type ChatPin, type ChatPublicSettings, type ChatRejectCode, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou } from '@swarmcast/shared/chat';
 import type { ServerMessage } from '@swarmcast/shared';
 
 export function defaultSettings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
@@ -84,15 +87,36 @@ export class MockHub {
     send(JSON.stringify(msg));
   }
 
-  /** Someone else says something. */
-  say(author: ChatAuthor, text: string): number {
+  /** The reply of a message to `re` as the server builds it (undefined: that message is not here). */
+  private replyRef(re: unknown): ChatReplyRef | undefined {
+    const parent = this.items.find((i): i is ChatMessageItem => i.k === 'm' && i.s === re);
+    if (!parent) return undefined;
+    if (parent.g) return { s: parent.s, a: parent.a, gif: 1 };
+    const { q, cut } = cutQuote(parent.x ?? '');
+    return { s: parent.s, a: parent.a, q, ...(cut ? { cut: 1 as const } : {}) };
+  }
+
+  /** The keys of `mn` the server would keep: people in the roster, not the sender, named in the text. */
+  private mentionsOf(text: string, mn: unknown, sender: string): string[] {
+    if (!Array.isArray(mn)) return [];
+    const people = mn.flatMap((a) => {
+      const au = typeof a === 'string' && a !== sender ? this.roster.get(a) : undefined;
+      return au ? [{ a: au.a, n: au.n || 'Streamer' }] : [];
+    });
+    return [...new Set(findMentionSpans(text, people).map((sp) => sp.a))];
+  }
+
+  /** Someone else says something (a reply to `o.re`, mentioning `o.mn`). */
+  say(author: ChatAuthor, text: string, o: { re?: number; mn?: string[] } = {}): number {
     const items: ChatItem[] = [];
     const known = this.roster.get(author.a);
     if (!known || known.c !== author.c || known.n !== author.n) {
       this.roster.set(author.a, author);
       items.push({ k: 'u', au: author });
     }
-    const m: ChatItem = { k: 'm', s: ++this.seq, at: Date.now(), a: author.a, x: text };
+    const re = this.replyRef(o.re);
+    const mn = this.mentionsOf(text, o.mn, author.a);
+    const m: ChatItem = { k: 'm', s: ++this.seq, at: Date.now(), a: author.a, x: text, ...(re ? { re } : {}), ...(mn.length ? { mn } : {}) };
     this.items.push(m);
     items.push(m);
     this.broadcast({ t: 'chat.batch', items });
@@ -106,7 +130,9 @@ export class MockHub {
   }
 
   remove(seqs: number[]): void {
-    this.items = this.items.filter((i) => !('s' in i && typeof i.s === 'number' && seqs.includes(i.s)));
+    this.items = this.items
+      .filter((i) => !('s' in i && typeof i.s === 'number' && seqs.includes(i.s)))
+      .map((i) => (i.k === 'm' && i.re && seqs.includes(i.re.s) ? { ...i, re: { s: i.re.s, a: i.re.a, gone: 1 as const } } : i));
     const unpin: ChatItem[] = this.pinned && seqs.includes(this.pinned.s) ? [{ k: 'pin', p: (this.pinned = null) }] : [];
     this.broadcast({ t: 'chat.batch', items: [...unpin, { k: 'd', s: seqs }] });
   }
@@ -182,7 +208,10 @@ export class MockHub {
           return;
         }
         this.lastSendAt = now;
-        const m: ChatItem = { k: 'm', s: ++this.seq, at: now, a: this.you.a, x: String(msg.text) };
+        const text = String(msg.text);
+        const re = this.replyRef(msg.re);
+        const mn = this.mentionsOf(text, msg.mn, this.you.a);
+        const m: ChatItem = { k: 'm', s: ++this.seq, at: now, a: this.you.a, x: text, ...(re ? { re } : {}), ...(mn.length ? { mn } : {}) };
         this.items.push(m);
         this.reply(send, { t: 'chat.ack', n, s: m.s });
         if (this.held) this.held.push(m);

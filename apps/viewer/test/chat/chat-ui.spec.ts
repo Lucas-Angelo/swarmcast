@@ -703,6 +703,326 @@ test.describe('highlight and pin (mock hub)', () => {
   });
 });
 
+test.describe('replies and mentions (mock hub)', () => {
+  const rafa = { a: 'k5', n: 'Rafa', c: '#46a758', r: 'viewer' as const, tag: 'r4fa' };
+  /** The row of message `s` in the list. */
+  const row = (page: Page, s: number) => page.getByTestId('chat-list').locator(`li.msg[data-seq="${s}"]`);
+
+  test('Reply on hover: the bar above the box, the frame names the message, the reply shows the quote; a click on the quote goes back to it', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const asked = hub.say(ana, 'qual é a música de abertura?');
+    for (let i = 0; i < 30; i++) hub.say(rafa, `conversa ${i}`);
+    await openWatch(page, hub);
+    const list = page.getByTestId('chat-list');
+    await expect(list.locator('li.msg')).toHaveCount(31);
+    await row(page, asked).scrollIntoViewIfNeeded();
+
+    // Act
+    await row(page, asked).hover();
+    await row(page, asked).getByTestId('chat-reply').click();
+
+    // Assert
+    const bar = page.getByTestId('chat-replying');
+    await expect(bar).toBeVisible();
+    await expect(bar).toContainText('Replying to Ana');
+    await expect(bar).toContainText('qual é a música de abertura?');
+    await expect(page.getByTestId('chat-input')).toBeFocused();
+
+    // Act
+    await page.getByTestId('chat-input').fill('é a do começo do jogo');
+    await page.getByTestId('chat-input').press('Enter');
+
+    // Assert
+    await expect.poll(() => hub.framesOf('chat.send').at(-1)).toMatchObject({ t: 'chat.send', text: 'é a do começo do jogo', re: asked });
+    await expect(bar).toBeHidden();
+    const mine = list.locator('li.msg').last();
+    await expect(mine.locator('.text')).toHaveText('é a do começo do jogo');
+    await expect(mine.getByTestId('chat-reply-quote')).toHaveText('Ana: qual é a música de abertura?');
+    await expect(mine.getByTestId('chat-reply-quote')).toHaveAttribute('aria-label', 'In reply to Ana: qual é a música de abertura?');
+    await expect(row(page, asked)).not.toBeInViewport();
+
+    // Act
+    await mine.getByTestId('chat-reply-quote').click();
+
+    // Assert
+    await expect(row(page, asked)).toBeInViewport();
+    await expect(row(page, asked)).toHaveClass(/flash/);
+    await expect(row(page, asked).getByTestId('chat-reply')).toBeFocused();
+    await expect(row(page, asked)).not.toHaveClass(/flash/);
+  });
+
+  test('keyboard only: from the list the arrow keys reach each Reply button, Enter replies, Escape cancels; the quote line stays on one line', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const first = hub.say(ana, 'primeira mensagem');
+    const second = hub.say(rafa, 'segunda mensagem, '.repeat(20));
+    await openWatch(page, hub);
+    await expect(page.getByTestId('chat-list').locator('li.msg')).toHaveCount(2);
+    await page.getByTestId('chat-list').focus();
+
+    // Act
+    await page.keyboard.press('ArrowUp');
+
+    // Assert
+    await expect(row(page, second).getByTestId('chat-reply')).toBeFocused();
+    await expect(row(page, second).getByTestId('chat-reply')).toBeVisible();
+    await expect(row(page, second).getByTestId('chat-reply')).toHaveAttribute('aria-label', 'Reply to Rafa');
+
+    // Act
+    await page.keyboard.press('ArrowUp');
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(page.getByTestId('chat-replying')).toContainText('Replying to Ana');
+    await expect(page.getByTestId('chat-input')).toBeFocused();
+
+    // Act
+    await page.keyboard.press('Escape');
+
+    // Assert
+    await expect(page.getByTestId('chat-replying')).toBeHidden();
+
+    // Act: a reply to the long message; its quote is one line, clipped.
+    await page.getByTestId('chat-list').focus();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await page.keyboard.type('concordo');
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(page.getByTestId('chat-list').locator('li.pending')).toHaveCount(0);
+    const quote = page.getByTestId('chat-list').locator('li.msg').last().getByTestId('chat-reply-quote');
+    await expect(quote).toContainText('Rafa');
+    const box = await quote.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const text = el.querySelector('.q-text')!.getBoundingClientRect();
+      return { h: r.height, lh: parseFloat(getComputedStyle(el).lineHeight), right: r.right, textRight: text.right, rowRight: el.closest('li')!.getBoundingClientRect().right };
+    });
+    expect(box.h).toBeLessThanOrEqual(box.lh + 2);
+    expect(box.right).toBeLessThanOrEqual(box.rowRight + 0.5);
+    expect(box.textRight).toBeLessThanOrEqual(box.right + 0.5);
+    expect(first).toBe(1);
+  });
+
+  test('the quoted message is deleted: the quote says so, the reply stays; a message being answered that is deleted cancels the reply', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const asked = hub.say(ana, 'mensagem que vai sumir');
+    const answer = hub.say(rafa, 'respondendo', { re: asked });
+    const other = hub.say(ana, 'outra');
+    await openWatch(page, hub);
+    await expect(row(page, answer).getByTestId('chat-reply-quote')).toHaveText('Ana: mensagem que vai sumir');
+    await row(page, other).hover();
+    await row(page, other).getByTestId('chat-reply').click();
+    await expect(page.getByTestId('chat-replying')).toBeVisible();
+
+    // Act
+    hub.remove([asked]);
+    hub.remove([other]);
+
+    // Assert
+    await expect(row(page, answer).getByTestId('chat-reply-quote')).toHaveText('Ana: Original message deleted');
+    await expect(row(page, answer).locator('.text')).toHaveText('respondendo');
+    await expect(page.getByTestId('chat-list')).not.toContainText('mensagem que vai sumir');
+    await expect(page.getByTestId('chat-replying')).toBeHidden();
+
+    // Act: a page opened later gets the reply with the quote already wiped.
+    const later = await page.context().newPage();
+    await openWatch(later, hub);
+
+    // Assert
+    await expect(later.getByTestId('chat-list').locator(`li.msg[data-seq="${answer}"]`).getByTestId('chat-reply-quote')).toHaveText('Ana: Original message deleted');
+  });
+
+  test('@ lists only the people who wrote (newest first, with the tag); keys pick, the frame names them; a message mentioning me is marked for me only', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    hub.say(ana, 'oi');
+    hub.say(rafa, 'boa noite');
+    hub.roster.set('k9', { a: 'k9', n: 'Anônima', c: '#d6409f', r: 'viewer' });
+    await openWatch(page, hub);
+    const input = page.getByTestId('chat-input');
+    const options = page.getByTestId('chat-mention-option');
+
+    // Act
+    await input.fill('oi @');
+
+    // Assert
+    await expect(options).toHaveText(['Rafa #r4fa', 'Ana']);
+
+    // Act
+    await page.keyboard.press('ArrowDown');
+
+    // Assert
+    await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+    await expect(input).toHaveAttribute('aria-activedescendant', (await options.nth(1).getAttribute('id'))!);
+
+    // Act
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(input).toHaveValue('oi @Ana ');
+    await expect(page.getByTestId('chat-mentions')).toBeHidden();
+
+    // Act: typing narrows the list (case and accents ignored).
+    await input.pressSequentially('e @an');
+
+    // Assert
+    await expect(options).toHaveText(['Ana', 'Anônima'].slice(0, 1));
+
+    // Act
+    await page.keyboard.press('Escape');
+    await input.fill('oi @Ana ');
+
+    // Act
+    await input.pressSequentially('tudo bem?');
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect.poll(() => hub.framesOf('chat.send').at(-1)).toMatchObject({ text: 'oi @Ana tudo bem?', mn: ['k2'] });
+    const mine = page.getByTestId('chat-list').locator('li.msg').last();
+    await expect(mine.locator('.mention')).toHaveText('@Ana');
+    await expect(mine).not.toHaveClass(/mentions-me/);
+
+    // Act
+    const forMe = hub.say(rafa, '@Bia viu isso?', { mn: ['me1'] });
+    const forAna = hub.say(rafa, '@Ana e você?', { mn: ['k2'] });
+
+    // Assert
+    await expect(row(page, forMe)).toHaveClass(/mentions-me/);
+    await expect(row(page, forMe).locator('.mention.me')).toHaveText('@Bia');
+    await expect(row(page, forMe).locator('.mention-note')).toHaveText('Mentions you:');
+    await expect(row(page, forAna)).not.toHaveClass(/mentions-me/);
+    const look = await row(page, forMe).evaluate((el) => {
+      // As sRGB "rgb(r, g, b)": a color-mix() background reads back as color(srgb …) in some engines.
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+      const rgb = (css: string): string => {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return `rgb(${r}, ${g}, ${b})`;
+      };
+      const bar = getComputedStyle(el).borderLeftWidth;
+      const m = el.querySelector('.mention.me')!;
+      return { bar, bg: rgb(getComputedStyle(m).backgroundColor), fg: rgb(getComputedStyle(m).color) };
+    });
+    expect(look.bar).toBe('3px');
+    expect(contrast(look.fg, look.bg), `${look.fg} on ${look.bg}`).toBeGreaterThanOrEqual(4.5);
+
+    // Act: the dark theme.
+    await page.emulateMedia({ colorScheme: 'dark' });
+    const dark = await row(page, forMe).evaluate((el) => {
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+      const rgb = (css: string): string => {
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = css;
+        ctx.fillRect(0, 0, 1, 1);
+        const [r, g, b] = ctx.getImageData(0, 0, 1, 1).data;
+        return `rgb(${r}, ${g}, ${b})`;
+      };
+      const m = el.querySelector('.mention.me')!;
+      return { bg: rgb(getComputedStyle(m).backgroundColor), fg: rgb(getComputedStyle(m).color) };
+    });
+
+    // Assert
+    expect(dark.bg).not.toBe(look.bg);
+    expect(contrast(dark.fg, dark.bg), `${dark.fg} on ${dark.bg}`).toBeGreaterThanOrEqual(4.5);
+  });
+
+  test('"Highlight messages that mention me" off: no mark; chat hidden: "Show chat" counts the mentions, without a sound', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    hub.say(rafa, 'oi');
+    await openWatch(page, hub);
+    await page.getByTestId('chat-settings-button').click();
+    await page.getByTestId('chat-mention-highlight').uncheck();
+    await page.keyboard.press('Escape');
+
+    // Act
+    const s = hub.say(rafa, '@Bia oi', { mn: ['me1'] });
+
+    // Assert
+    await expect(row(page, s)).toBeVisible();
+    expect(await row(page, s).evaluate((el) => getComputedStyle(el).borderLeftWidth)).toBe('0px');
+    await expect(row(page, s).locator('.mention-note')).toBeHidden();
+
+    // Act
+    await page.getByTestId('chat-settings-button').click();
+    await page.getByTestId('chat-mention-highlight').check();
+    await page.keyboard.press('Escape');
+    await page.getByTestId('chat-hide').click();
+    hub.say(rafa, '@Bia volta', { mn: ['me1'] });
+    hub.say(rafa, '@Bia cadê?', { mn: ['me1'] });
+    hub.say(rafa, 'sem menção');
+
+    // Assert
+    await expect(page.getByTestId('chat-show-mentions')).toHaveText('2 mentions');
+    expect(await page.evaluate(() => document.querySelectorAll('audio').length)).toBe(0);
+  });
+
+  test('in Portuguese: Reply, the bar, a deleted quote and the @ list', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const asked = hub.say(ana, 'alguém aí?');
+    hub.say(streamer, 'boa noite');
+    await openWatch(page, hub, { lang: 'pt-BR' });
+
+    // Act
+    await row(page, asked).hover();
+    await row(page, asked).getByTestId('chat-reply').click();
+    await page.getByTestId('chat-input').fill('@');
+
+    // Assert
+    await expect(row(page, asked).getByTestId('chat-reply')).toHaveAttribute('aria-label', 'Responder a Ana');
+    await expect(page.getByTestId('chat-replying')).toContainText('Respondendo a Ana');
+    await expect(page.getByTestId('chat-reply-cancel')).toHaveAttribute('aria-label', 'Cancelar resposta');
+    await expect(page.getByTestId('chat-mentions')).toHaveAttribute('aria-label', 'Pessoas que escreveram no chat');
+    await expect(page.getByTestId('chat-mention-option')).toHaveText(['Lucas', 'Ana']);
+
+    // Act
+    await page.getByTestId('chat-input').fill('estou sim');
+    await page.getByTestId('chat-input').press('Enter');
+    await expect(page.getByTestId('chat-list').locator('li.msg').last().getByTestId('chat-reply-quote')).toHaveText('Ana: alguém aí?');
+    hub.remove([asked]);
+
+    // Assert
+    await expect(page.getByTestId('chat-list').locator('li.msg').last().getByTestId('chat-reply-quote')).toHaveText('Ana: Mensagem original apagada');
+  });
+
+  test('on a phone: a tap on a message shows Reply, the bar and the @ list stay inside the chat above the box @mobile', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    hub.say(rafa, 'oi do celular');
+    const asked = hub.say(ana, 'alguém joga hoje?');
+    await openWatch(page, hub);
+
+    // Act
+    await row(page, asked).locator('.text').tap();
+    await row(page, asked).getByTestId('chat-reply').tap();
+    await page.getByTestId('chat-input').fill('@');
+
+    // Assert
+    const chat = (await page.getByTestId('chat').boundingBox())!;
+    const bar = (await page.getByTestId('chat-replying').boundingBox())!;
+    const mentions = (await page.getByTestId('chat-mentions').boundingBox())!;
+    const input = (await page.getByTestId('chat-input').boundingBox())!;
+    expect(bar.y + bar.height).toBeLessThanOrEqual(input.y + 1);
+    expect(mentions.y + mentions.height).toBeLessThanOrEqual(input.y + 1);
+    expect(mentions.x).toBeGreaterThanOrEqual(chat.x);
+    expect(mentions.x + mentions.width).toBeLessThanOrEqual(chat.x + chat.width + 1);
+    expect(bar.x + bar.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+
+    // Act
+    await page.getByTestId('chat-mention-option').first().tap();
+    await page.getByTestId('chat-input').press('Enter');
+
+    // Assert
+    await expect.poll(() => hub.framesOf('chat.send').at(-1)).toMatchObject({ text: '@Ana', re: asked, mn: ['k2'] });
+  });
+});
+
 // Screenshots for review, not a check: set CHAT_SCREENSHOTS to a folder and run with -g screenshots.
 test('screenshots', async ({ page, browserName }, testInfo) => {
   // Arrange

@@ -341,6 +341,7 @@ const CHAT_LINES = {
     pedro: 'hi from my phone 👋',
     alex: 'great sound today :gg:',
     mariaHello: 'First time here, love the cosy vibe 😊',
+    alexWelcome: 'welcome! 👋',
     pedroAsks: 'what game is this?',
     answer: "It's Celeste! Chapter 3 tonight",
     maria: 'can you show the map again?',
@@ -350,6 +351,7 @@ const CHAT_LINES = {
     pedro: 'oi do celular 👋',
     alex: 'som tá ótimo hoje :gg:',
     mariaHello: 'Primeira vez aqui, adorei o clima 😊',
+    alexWelcome: 'bem-vinda! 👋',
     pedroAsks: 'que jogo é esse?',
     answer: 'É Celeste! Hoje tem o capítulo 3',
     maria: 'mostra o mapa de novo?',
@@ -358,9 +360,11 @@ const CHAT_LINES = {
 
 /**
  * A short, made-up conversation (streamer and the three viewers), before any panel picture: the
- * live chat is on the panel's main screen during a live. The streamer highlights Pedro's question
- * and pins her answer (the "Chat" guide shows both). Maria's next line stays typed, unsent, for the
- * viewer's chat picture.
+ * live chat is on the panel's main screen during a live. Alex replies to Maria and mentions her
+ * (from his page's Reply button, so Maria's page shows the reply's quote and the mark of a message
+ * that mentions her); the streamer answers Pedro's question as a reply that mentions him, highlights
+ * the question and pins her answer (the "Chat" guide shows all of it). Maria's next line stays typed,
+ * unsent, for the viewer's chat picture.
  */
 async function fillChat(lang, desktop, phone, third) {
   if ((await desktop.getByTestId('chat').count()) === 0) return;
@@ -369,13 +373,23 @@ async function fillChat(lang, desktop, phone, third) {
   await say(phone, lines.pedro);
   await say(third, lines.alex);
   await say(desktop, lines.mariaHello);
+  const hello = third.getByTestId('chat-list').locator('li.msg', { hasText: lines.mariaHello });
+  await hello.hover();
+  await hello.getByTestId('chat-reply').click();
+  await say(third, `@Maria ${lines.alexWelcome}`);
+  await desktop.getByTestId('chat-list').locator('li.mentions-me').waitFor({ timeout: 15_000 });
   await say(phone, lines.pedroAsks);
-  const answer = await adminApi('POST', '/api/chat/send', { text: lines.answer });
+  await phone.getByTestId('chat-list').getByText(lines.pedroAsks).waitFor({ timeout: 15_000 });
+  const state = await adminApi('GET', '/api/chat');
+  const asked = state.items.find((i) => i.k === 'm' && i.x === lines.pedroAsks);
+  const pedro = state.roster.find((a) => a.n === 'Pedro');
+  const answer = await adminApi('POST', '/api/chat/send', { text: `@Pedro ${lines.answer}`, ...(asked ? { re: asked.s } : {}), ...(pedro ? { mn: [pedro.a] } : {}) });
   await desktop.getByTestId('chat-list').getByText(lines.answer).waitFor({ timeout: 15_000 });
-  const asked = (await adminApi('GET', '/api/chat')).items.find((i) => i.k === 'm' && i.x === lines.pedroAsks);
   if (asked) await adminApi('POST', '/api/chat/highlight', { s: asked.s, on: true });
   await adminApi('POST', '/api/chat/pin', { s: answer.s });
   await desktop.getByTestId('chat-pinned').getByText(lines.answer).waitFor({ timeout: 15_000 });
+  // The pointer off the chat, so no row shows its Reply button in the pictures.
+  await third.mouse.move(0, 0);
 }
 
 async function say(page, text) {
@@ -840,7 +854,8 @@ async function captureLocale(browser, lang) {
     const lines = CHAT_LINES[lang];
     await desktop.page.getByTestId('chat-input').fill(lines.maria);
     const chat = desktop.page.getByTestId('chat');
-    // 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send, 5 the pinned message, 6 a highlighted one.
+    // 1 Chat settings, 2 Hide chat, 3 emoji and emotes, 4 Send, 5 the pinned message, 6 a highlighted
+    // one, 7 a reply that mentions Maria (its quote above it, the mark for her).
     await guideShot(desktop.page, chat, 'live', lang, 'chat-viewer', {
       pad: 12,
       callouts: [
@@ -850,6 +865,7 @@ async function captureLocale(browser, lang) {
         desktop.page.getByTestId('chat-send'),
         desktop.page.getByTestId('chat-pinned'),
         desktop.page.getByTestId('chat-list').locator('li.highlighted'),
+        desktop.page.getByTestId('chat-list').locator('li.mentions-me'),
       ],
     });
     await desktop.page.getByTestId('chat-settings-button').click();

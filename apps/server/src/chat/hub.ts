@@ -10,6 +10,9 @@ import {
   CHAT_GLOBAL_MAX_PER_S,
   CHAT_GLOBAL_MIN_PER_S,
   CHAT_HIGHLIGHTS_MAX,
+  CHAT_MENTION_SAME_TARGET_S,
+  CHAT_MENTIONS_PER_MIN,
+  CHAT_MENTIONS_TO_TARGET_PER_MIN,
   CHAT_PROTOCOL_VERSION,
   CHAT_REACT_FRAME_PREFIX,
   CHAT_RING_MAX_BYTES,
@@ -21,6 +24,8 @@ import {
   containsLink,
   contentOf,
   countGraphemes,
+  cutQuote,
+  findMentionSpans,
   validateNickname,
   type AdminChatMessage,
   type AdminChatState,
@@ -32,6 +37,7 @@ import {
   type ChatPinItem,
   type ChatProtect,
   type ChatRejectCode,
+  type ChatReplyRef,
   type ChatRingItem,
   type ChatServerMessage,
   type ChatSettings,
@@ -40,7 +46,7 @@ import {
   type GifRef,
 } from '@swarmcast/shared';
 import { comparisonKey } from '@swarmcast/shared/chat/skeleton';
-import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
+import { translate, type MessageKey, type MessageParams } from '@swarmcast/shared/i18n';
 import type { AccessControl, Session } from '../access/access.js';
 import type { ActivityLog } from '../core/activity.js';
 import type { Logger } from '../core/logger.js';
@@ -121,6 +127,16 @@ const REJECTS_PER_S = 2;
 const SLOW_CODES = new Set(['chat.err.slow']);
 /** History in a hello while the chat's upload budget is in debt. */
 const SNAPSHOT_IN_DEBT = 10;
+/** Mention buckets and "same person again" times kept (bounded maps, wiped on Stop). */
+const MENTION_KEYS = 5000;
+/** How the streamer is called in the chat while their name is empty, in every language viewers may use. */
+const STREAMER_DEFAULT_NAMES = [translate('en', 'chat.streamer'), translate('pt-BR', 'chat.streamer')];
+
+/** What a message adds to its text or GIF: the reply it is, the people it mentions, and the authors these name. */
+interface MessageExtras {
+  re?: ChatReplyRef;
+  mn?: string[];
+}
 
 /**
  * The chat of one live (docs/CHAT.md): the pipeline, limits and moderation for every message, the
@@ -149,6 +165,10 @@ export class ChatHub {
   private readonly socketResumes = new WeakMap<ChatSocket, TokenBucket>();
   private readonly colorBuckets = new WeakMap<ChatMember, TokenBucket>();
   private readonly streamerBucket: TokenBucket;
+  /** Mentions per sending device, per mentioned person, and when a device last mentioned a person (docs/CHAT.md, "Replies and mentions"). */
+  private readonly mentionsBy = new KeyedBuckets<TokenBucket>(MENTION_KEYS, () => new TokenBucket(CHAT_MENTIONS_PER_MIN, CHAT_MENTIONS_PER_MIN / 60, this.now()));
+  private readonly mentionsTo = new KeyedBuckets<TokenBucket>(MENTION_KEYS, () => new TokenBucket(CHAT_MENTIONS_TO_TARGET_PER_MIN, CHAT_MENTIONS_TO_TARGET_PER_MIN / 60, this.now()));
+  private readonly mentionedAt = new KeyedBuckets<{ at: number }>(MENTION_KEYS, () => ({ at: -Infinity }));
   private blocked = new AhoCorasick([]);
   private blockedSource = '';
   private readonly emoteCodes = new Set(BUILTIN_EMOTE_CODES);
@@ -232,6 +252,9 @@ export class ChatHub {
     this.paces.clear();
     this.ipBuckets.clear();
     this.dups.clear();
+    this.mentionsBy.clear();
+    this.mentionsTo.clear();
+    this.mentionedAt.clear();
     this.moderation.reset();
     this.detector.reset();
     this.adaptive.reset();
@@ -471,7 +494,8 @@ export class ChatHub {
     }
     pace.lastAt = now;
     if (msg.gif) pace.lastGifAt = now;
-    const s = this.append(member, 'x' in result ? { x: result.x } : { g: result.g }, false);
+    const extras = this.extras(member, msg.re, 'x' in result ? result.x : undefined, msg.mn, now, session.deviceId);
+    const s = this.append(member, 'x' in result ? { x: result.x } : { g: result.g }, false, extras);
     this.batcher.sendDirect(socket, JSON.stringify({ t: 'chat.ack', n: msg.n, s } satisfies ChatServerMessage));
     this.accepted.add(now);
     this.adaptive.accept(now, session.deviceId);
@@ -540,6 +564,76 @@ export class ChatHub {
     return { x: r.text, key };
   }
 
+  /**
+   * The reply and the mentions of an accepted message (docs/CHAT.md, "Replies and mentions"). Neither
+   * can make a message fail: a reply whose message is gone (deleted, cleared, out of the ring, or a seq
+   * that never was) is sent as a plain message, and a mention that does not hold is plain text.
+   * `limitDevice`: the sending device, whose mentions are limited (absent for the streamer).
+   */
+  private extras(sender: ChatMember, re: number | undefined, text: string | undefined, mn: readonly string[] | undefined, now: number, limitDevice?: string): MessageExtras {
+    const out: MessageExtras = {};
+    const parent = re === undefined ? undefined : this.messageEntry(re)?.item;
+    if (parent) out.re = this.quoteOf(parent);
+    if (text !== undefined && mn?.length) {
+      const keys = this.mentions(sender, text, mn, now, limitDevice);
+      if (keys.length) out.mn = keys;
+    }
+    return out;
+  }
+
+  /**
+   * What a reply shows of the message it answers: always the server's copy, cut on a grapheme
+   * boundary (cutQuote), never text from the client. A quote that holds a blocked word (the list may
+   * have changed since, and the streamer's own messages skip it) is left out: the reply still shows
+   * whom it answers.
+   */
+  private quoteOf(parent: ChatMessageItem): ChatReplyRef {
+    const base: ChatReplyRef = { s: parent.s, a: parent.a };
+    if (parent.g) return { ...base, gif: 1 };
+    if (parent.x === undefined) return base;
+    const { q, cut } = cutQuote(parent.x);
+    if (q === '' || (!this.blocked.empty && this.blocked.test(comparisonKey(q)))) return base;
+    return { ...base, q, ...(cut ? { cut: 1 as const } : {}) };
+  }
+
+  /**
+   * The author keys a message may mention, of those it claims (`mn`): each one is someone who already
+   * wrote in this live (their roster entry went out, so no key of a person who only watches is
+   * confirmed), still watching (or the streamer), not the sender, and named in the text as
+   * "@" + their nickname exactly (findMentionSpans). For a viewer, the limits apply too: at most
+   * CHAT_MENTIONS_PER_MIN from one device, the same person at most once per CHAT_MENTION_SAME_TARGET_S
+   * from it, and CHAT_MENTIONS_TO_TARGET_PER_MIN to one person from everyone. Past a limit the mention
+   * is plain text; the message still goes (nothing to retry, so nothing to flood with).
+   */
+  private mentions(sender: ChatMember, text: string, claimed: readonly string[], now: number, limitDevice?: string): string[] {
+    const out: string[] = [];
+    for (const a of new Set(claimed)) {
+      const m = this.moderation.byAuthor(a);
+      if (!m || m.a === sender.a || !this.announced.has(a)) continue;
+      const streamer = m.role === 'streamer';
+      if (!streamer && !this.d.access.sessions.has(m.sessionId)) continue;
+      const names = streamer && m.nickname.trim() === '' ? STREAMER_DEFAULT_NAMES : [m.nickname];
+      if (findMentionSpans(text, names.map((n) => ({ a, n }))).length === 0) continue;
+      if (limitDevice !== undefined && !this.mentionAllowed(limitDevice, a, now)) continue;
+      out.push(a);
+    }
+    return out;
+  }
+
+  /** The mention limits for one device and one person; true takes a token from both. */
+  private mentionAllowed(device: string, target: string, now: number): boolean {
+    const last = this.mentionedAt.get(`${device}|${target}`);
+    if (now - last.at < CHAT_MENTION_SAME_TARGET_S * 1000) return false;
+    const by = this.mentionsBy.get(device);
+    if (!by.take(now)) return false;
+    if (!this.mentionsTo.get(target).take(now)) {
+      by.refund();
+      return false;
+    }
+    last.at = now;
+    return true;
+  }
+
   private reject(socket: ChatSocket, n: number | undefined, r: Reject, now: number): void {
     this.rejected.add(now);
     this.detector.reject(now, r.code);
@@ -602,10 +696,14 @@ export class ChatHub {
     this.toAdmin(item);
   }
 
-  /** Accept a message into the ring and the next batch; returns its seq. `refs`: other authors it names. */
-  private append(m: ChatMember, body: { x: string } | { g: GifRef }, prio: boolean, refs?: readonly string[]): number {
+  /**
+   * Accept a message into the ring and the next batch; returns its seq. The authors its reply and
+   * mentions name go with it as `refs` (kept in the roster, sent before it to every socket).
+   */
+  private append(m: ChatMember, body: { x: string } | { g: GifRef }, prio: boolean, extras: MessageExtras = {}): number {
     this.announce(m);
-    const item: ChatRingItem = { k: 'm', s: ++this.seq, at: this.now(), a: m.a, ...body };
+    const item: ChatRingItem = { k: 'm', s: ++this.seq, at: this.now(), a: m.a, ...body, ...(extras.re ? { re: extras.re } : {}), ...(extras.mn?.length ? { mn: extras.mn } : {}) };
+    const refs = [...new Set([...(extras.re ? [extras.re.a] : []), ...(extras.mn ?? [])])].filter((a) => a !== m.a);
     this.ringPush(item, refs);
     this.batcher.push(item, prio, refs);
     this.toAdmin(item);
@@ -748,21 +846,21 @@ export class ChatHub {
   }
 
   /** A message from the panel: role streamer, the same pipeline, only an anti-mistake limit. */
-  sendAsStreamer(body: { text?: string; gif?: GifRef }): { ok: true; s: number } | { ok: false; code: ChatRejectCode | 'admin.chat.err.tooFast' | 'admin.chat.err.disabled'; params?: MessageParams } {
+  sendAsStreamer(body: { text?: string; gif?: GifRef; re?: number; mn?: string[] }): { ok: true; s: number } | { ok: false; code: ChatRejectCode | 'admin.chat.err.tooFast' | 'admin.chat.err.disabled'; params?: MessageParams } {
     const now = this.now();
     if (!this.eff.enabled) return { ok: false, code: 'admin.chat.err.disabled' };
     if (!this.streamerBucket.take(now)) return { ok: false, code: 'admin.chat.err.tooFast' };
     const m = this.streamerMember();
     if (body.gif) {
       if (!this.eff.public.gif || body.gif.p !== this.d.settings().gif.provider) return { ok: false, code: 'chat.err.gifOff' };
-      return { ok: true, s: this.append(m, { g: body.gif }, true) };
+      return { ok: true, s: this.append(m, { g: body.gif }, true, this.extras(m, body.re, undefined, undefined, now)) };
     }
     const r = canonicalizeChatText(body.text ?? '', { maxGraphemes: this.d.settings().maxGraphemes, maxEmoji: this.d.settings().maxEmoji });
     if (!r.ok) {
       this.streamerBucket.refund();
       return { ok: false, code: r.code, params: r.params };
     }
-    return { ok: true, s: this.append(m, { x: r.text }, true) };
+    return { ok: true, s: this.append(m, { x: r.text }, true, this.extras(m, body.re, r.text, body.mn, now)) };
   }
 
   delete(seqs: number[]): number {
@@ -778,6 +876,13 @@ export class ChatHub {
       return true;
     });
     const removed = before - this.ring.length;
+    // Replies to a deleted message lose their quote ("Original message deleted"): its text must not
+    // live on in them. Clients do the same with the replies they show when the `d` item comes.
+    for (const e of this.ring) {
+      const it = e.item;
+      if (it.k !== 'm' || !it.re || !set.has(it.re.s) || it.re.gone === 1) continue;
+      this.replaceItem(e, { ...it, re: { s: it.re.s, a: it.re.a, gone: 1 } });
+    }
     this.modSeq = this.seq;
     const item: ChatItem = { k: 'd', s: [...set] };
     this.batcher.push(item, true);
@@ -860,14 +965,19 @@ export class ChatHub {
     return { ok: true };
   }
 
-  private setHighlight(e: RingEntry, on: boolean): void {
-    if (e.item.k !== 'm') return;
-    const { h: _h, ...rest } = e.item;
-    const item: ChatMessageItem = on ? { ...rest, h: 1 } : rest;
+  /** A ring item changes (highlight, quote wiped): a new object, with its bytes counted again. */
+  private replaceItem(e: RingEntry, item: ChatRingItem): void {
     this.ringBytes -= e.bytes;
     e.item = item;
     e.bytes = JSON.stringify(item).length;
     this.ringBytes += e.bytes;
+  }
+
+  private setHighlight(e: RingEntry, on: boolean): void {
+    if (e.item.k !== 'm') return;
+    const { h: _h, ...rest } = e.item;
+    const item: ChatMessageItem = on ? { ...rest, h: 1 } : rest;
+    this.replaceItem(e, item);
     const hl: ChatItem = { k: 'hl', s: item.s, on };
     this.batcher.pushState(`hl:${item.s}`, hl);
     this.toAdmin(hl);

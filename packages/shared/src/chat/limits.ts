@@ -100,6 +100,25 @@ export const CHAT_PIN_MAX_MIN = 120;
 export const CHAT_PIN_PRESETS_MIN = [5, 15, 60] as const;
 
 /**
+ * Replies (docs/CHAT.md, "Replies and mentions"): the server cuts a quote of the message being
+ * answered from its canonical text, on a grapheme boundary, at most this many graphemes and UTF-8
+ * bytes. A viewer who joined later, or whose list no longer holds that message, still sees it.
+ */
+export const CHAT_REPLY_QUOTE_MAX_GRAPHEMES = 40;
+export const CHAT_REPLY_QUOTE_MAX_BYTES = 160;
+
+/** Distinct people one message may mention (`mn`); the rest of the text stays plain. */
+export const CHAT_MENTIONS_MAX = 3;
+/** Mentions one device may make per minute (a bucket); past it a mention stays plain text, the message still goes. */
+export const CHAT_MENTIONS_PER_MIN = 6;
+/** Seconds before one device's mention of the same person counts (highlights) again. */
+export const CHAT_MENTION_SAME_TARGET_S = 30;
+/** Mentions one person may receive per minute from everyone together; past it they stay plain text. */
+export const CHAT_MENTIONS_TO_TARGET_PER_MIN = 10;
+/** Names the @ list offers at most (only people who already wrote in the chat). */
+export const CHAT_MENTION_SUGGESTIONS = 8;
+
+/**
  * State items (a pin, a highlight) a socket too slow to receive them may owe before it gets a fresh
  * snapshot instead of their current state when it catches up (batcher.ts).
  */

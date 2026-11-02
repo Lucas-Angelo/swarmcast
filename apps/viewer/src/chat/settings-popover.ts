@@ -1,5 +1,5 @@
 // The chat's gear menu: your name colour (when the streamer lets viewers choose and has not
-// locked yours), show times, text size. Choices about this device are kept in prefs.ts; the
+// locked yours), show times, highlight messages that mention me, text size. Choices about this device are kept in prefs.ts; the
 // colour goes to the server (chat.color), which tells everyone.
 import { t } from '@swarmcast/shared/i18n';
 import { createColorChooser } from './color-ui.js';
@@ -40,6 +40,17 @@ export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor
   times.append(timesBox, timesText);
   timesBox.addEventListener('change', () => opts.onPrefs(savePrefs({ times: timesBox.checked })));
 
+  const mentions = document.createElement('label');
+  mentions.className = 'check-row';
+  const mentionsBox = document.createElement('input');
+  mentionsBox.type = 'checkbox';
+  mentionsBox.checked = prefs.mentions;
+  mentionsBox.dataset.testid = 'chat-mention-highlight';
+  const mentionsText = document.createElement('span');
+  mentionsText.textContent = t('chat.viewer.mentionHighlight');
+  mentions.append(mentionsBox, mentionsText);
+  mentionsBox.addEventListener('change', () => opts.onPrefs(savePrefs({ mentions: mentionsBox.checked })));
+
   const size = document.createElement('fieldset');
   size.className = 'size-row';
   const legend = document.createElement('legend');
@@ -77,7 +88,7 @@ export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor
   gifAnimate.text.textContent = t('chat.viewer.animate');
   gifs.append(gifConsent.label, gifAnimate.label);
   gifs.hidden = true;
-  panel.append(colorSection, times, size, gifs);
+  panel.append(colorSection, times, mentions, size, gifs);
   const popover = createPopover(button, panel);
 
   return {
