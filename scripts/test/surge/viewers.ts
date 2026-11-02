@@ -86,6 +86,8 @@ const BW_FACTOR = 0.8;
 const BW_UP_FACTOR = 0.6;
 const RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 8000, 8000, 8000, 8000];
 const NO_BYTES_ABORT_MS = 3000;
+/** A join step that takes longer fails the join (a browser would show an error by then). */
+const STEP_TIMEOUT_MS = 30_000;
 
 let base = '';
 let link = '';
@@ -239,14 +241,14 @@ class SimViewer {
   /** Assets a page loads from our origin (scripts, styles, the font): fetched once, as a fresh browser does. */
   private seenAssets = new Set<string>();
   private async page(path: string): Promise<number> {
-    const res = await this.jar.fetch(path);
+    const res = await this.jar.fetch(path, { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
     const html = await res.text();
     this.r.assetBytes += html.length;
     const assets = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)].map((m) => m[1]!).filter((a) => !this.seenAssets.has(a));
     await Promise.all(
       assets.map(async (a) => {
         this.seenAssets.add(a);
-        const r = await this.jar.fetch(a);
+        const r = await this.jar.fetch(a, { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) });
         this.r.assetBytes += (await r.arrayBuffer()).byteLength;
       }),
     );
@@ -256,20 +258,20 @@ class SimViewer {
   async join(): Promise<void> {
     this.r.joinAt = Date.now();
     try {
-      const s1 = await this.step('link', async () => (await this.jar.fetch(link)).status);
+      const s1 = await this.step('link', async () => (await this.jar.fetch(link, { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) })).status);
       if (s1 !== 303) throw new Error(`link ${s1}`);
       await this.step('joinPage', () => this.page('/join'));
-      const ch = await this.step('challenge', async () => (await (await this.jar.fetch('/api/join/challenge')).json()) as { required: boolean; challenge?: Challenge });
+      const ch = await this.step('challenge', async () => (await (await this.jar.fetch('/api/join/challenge', { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) })).json()) as { required: boolean; challenge?: Challenge });
       const pow = ch.required ? await this.step('solve', async () => ({ challenge: ch.challenge!, solution: await solveChallenge({ challenge: ch.challenge!, deriveKey }) })) : undefined;
       const nickname = `v${this.id}`;
       const res = await this.step('join', async () => {
-        const r = await this.jar.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pow ? { nickname, pow } : { nickname }) });
+        const r = await this.jar.fetch('/api/join', { signal: AbortSignal.timeout(STEP_TIMEOUT_MS), method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(pow ? { nickname, pow } : { nickname }) });
         await r.arrayBuffer();
         return r.status;
       });
       if (res !== 200) throw new Error(`join ${res}`);
       await this.step('watchPage', () => this.page('/watch'));
-      const cfg = await this.step('config', async () => (await (await this.jar.fetch('/api/config')).json()) as { swarmId: string });
+      const cfg = await this.step('config', async () => (await (await this.jar.fetch('/api/config', { signal: AbortSignal.timeout(STEP_TIMEOUT_MS) })).json()) as { swarmId: string });
       this.swarmId = cfg.swarmId;
       await this.step('manifest', () => this.get('/hls/manifest.json', 'manifest'));
       this.r.joined = true;

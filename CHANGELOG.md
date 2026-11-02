@@ -18,12 +18,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Keyboard shortcuts on the watch page.** Space or K play and pause, M turns the sound on or off, F goes full screen, T switches theater mode, G goes back to live, C jumps to the chat box and ? lists them all. They never fire while someone types in the chat. Viewers can turn them off in that list (useful with voice control), and the choice is remembered.
 - **"Stats for nerds" for curious viewers.** A small link under the video opens a panel with the video's resolution and quality, how much video is loaded ahead, how far behind live it plays, dropped frames, how much came from other viewers (P2P) and the connection type. It is off unless opened, costs nothing while closed, never shows anyone's address, and has a **Copy** button for a support message.
 
+- **"Connecting to other viewers…" when P2P is turned on.** Finding other viewers takes a few seconds; the line under the P2P switch now says so until the first one connects, instead of showing "0 peers".
+
 ### Changed
 
 - **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
 
+- **Many people joining at once no longer makes everyone stutter.** When your upload is the limit (lots of people arriving in a few seconds, or a full connection), SwarmCast now sends first the video each viewer needs soonest: someone about to run out of video, or a newcomer waiting for the first picture, goes before video someone only stores far ahead. In our tests with 30 people joining within 3 seconds next to 15 watching, the people already watching went from about a minute of stutter in total to almost none, and newcomers saw the picture after about 2 seconds instead of 7.
+- **The watch page loads with a quarter of the data.** Its scripts are now sent compressed (about 0.3 MB instead of 1.1 MB per new viewer), which leaves more of your upload for the video when many people open the link at once.
+
 ### Fixed
 
+- **A rush of real viewers is no longer taken for an attack.** When many people joined within a few seconds while your upload was full (which happens by itself when they all start watching), the attack protection could switch to "attack": it then refused new people as "stream full" and gave the rest a slower browser check. Many people joining now only turns on the light browser check; real attack signs (refused links, too many requests) still trigger the protection as before.
 - **The ⋯ menu of a chat message in the panel holds still while new messages arrive.** The live chat used to jump to the newest message even with a menu open, so a click aimed at one button (Delete, Mute, Highlight…) could land on another. It now stays put while the menu is open and shows **New messages below**; it follows the chat again when you close the menu.
 
 ### Security

@@ -485,10 +485,10 @@ async function main(): Promise<void> {
   video.addEventListener('pause', fitLatency);
   video.addEventListener('play', fitLatency);
 
-  // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
-  // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
   // "Connecting to other viewers…" until the first peer (p2p-status.ts).
   const connect: Omit<P2PConnectState, 'enabled' | 'peers'> = { onAt: stats.p2pEnabled ? performance.now() : null, connectedOnce: false };
+  // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
+  // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
   const activity = new CoreActivity();
   activity.attach(engine);
   const strikes = new PeerStrikes();
