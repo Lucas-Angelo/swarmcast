@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Viewers who join right after OBS connects start smoothly.** When OBS sent its first seconds all at once (as it can when it connects or catches up after a hiccup), people who opened the live in the next half minute or so could wait a few seconds for the sound to line up with the picture, and on Linux browsers built on WebKit (such as GNOME Web) the video could freeze for good. Sound and picture now start together.
 - **The ⋯ menu of a chat message in the panel holds still while new messages arrive.** The live chat used to jump to the newest message even with a menu open, so a click aimed at one button (Delete, Mute, Highlight…) could land on another. It now stays put while the menu is open and shows **New messages below**; it follows the chat again when you close the menu.
 
 ### Security
