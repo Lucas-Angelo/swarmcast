@@ -34,6 +34,7 @@
 // on, not starting over (a source reload restarts the timeline). The server goes back to one
 // quality, a 40 s window and the default feed at the next test's gate.
 import type { BrowserContext, CDPSession, Page } from '@playwright/test';
+import { translate } from '@swarmcast/shared/i18n';
 import type { AdminState, QualityState } from '@swarmcast/shared';
 import {
   admin,
@@ -167,10 +168,17 @@ async function watch480(context: BrowserContext): Promise<void> {
 }
 
 test('viewers who opt in exchange video over P2P (verified by hash)', { tag: '@media' }, async ({ viewers }) => {
-  // Act
-  const [A, B] = await connectedPair(viewers, uid('p2pA'), uid('p2pB'));
+  // Act: A turns P2P on alone; it says it is connecting (p2p-status.ts) until B is there too.
+  const A = await p2pViewer(viewers, uid('p2pA'));
+  await expect(A.page.locator('#p2p-stats')).toHaveText(translate('en', 'watch.p2pConnecting'));
+  const B = await p2pViewer(viewers, uid('p2pB'));
+  await expect.poll(() => peerCount(A.page), { timeout: 60_000 }).toBeGreaterThan(0);
+  await expect.poll(() => peerCount(B.page), { timeout: 60_000 }).toBeGreaterThan(0);
 
   // Assert
+  // The usual counters once a peer is there ("… % of your video came from peers …").
+  const counters = translate('en', 'watch.p2pStats', { peers: '\u0000', share: '\u0001', mb: '\u0002' }).split('\u0001')[1]!.split('\u0002')[0]!;
+  await expect(A.page.locator('#p2p-stats')).toContainText(counters);
   await expect.poll(async () => (await stats(A.page)).p2pDownBytes + (await stats(B.page)).p2pDownBytes, { timeout: 90_000, intervals: [2000] }).toBeGreaterThan(0);
   expect((await stats(A.page)).hashFailures + (await stats(B.page)).hashFailures).toBe(0);
   await expect.poll(async () => (await adminState()).stats.viewersHelping, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);

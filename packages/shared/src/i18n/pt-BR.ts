@@ -410,6 +410,7 @@ export const ptBR: Messages = {
   'watch.p2pOwnConnection': 'O P2P fica desligado na própria conexão de quem transmite, para manter o IP dessa pessoa privado. Pode continuar assistindo normalmente.',
   'watch.p2pChecking': 'P2P pausado por um instante enquanto a conexão é verificada. Pode continuar assistindo normalmente.',
   'watch.peers': { one: '{count} peer', other: '{count} peers' },
+  'watch.p2pConnecting': 'P2P ligado · conectando a outros espectadores…',
   'watch.p2pStats': 'P2P ligado · {peers} · {share}% do seu vídeo veio de peers · você compartilhou {mb} MB',
   'watch.p2pStats.tip': 'Peers: outros espectadores conectados a você. A porcentagem é quanto do seu vídeo veio deles em vez de quem transmite. Compartilhado: megabytes (MB) que você mandou para os outros.',
   'watch.watchingAs': 'Assistindo como',

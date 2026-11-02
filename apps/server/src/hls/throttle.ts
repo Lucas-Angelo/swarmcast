@@ -6,6 +6,12 @@ import { Readable } from 'node:stream';
  * buffer far ahead. docs/QUALITY.md "Upload order".
  */
 export const DEFAULT_NEED_S = 8;
+/**
+ * Bytes should be there this long before they are needed (one segment's worth): sent exactly at
+ * their deadline they arrive a moment late, a short stall each time (surge bench: 26 stalls of
+ * 0.1 s in one burst without it).
+ */
+export const NEED_MARGIN_S = 2;
 /** The furthest ahead a need counts: past this, every response is "later" alike. */
 export const MAX_NEED_S = 30;
 /**
@@ -41,6 +47,7 @@ export class BandwidthLimiter {
   private last: number;
   private queue: Waiter[] = [];
   private seq = 0;
+
   private timer: NodeJS.Timeout | null = null;
   private windowBytes = 0;
   private windowStart: number;
@@ -130,10 +137,10 @@ export class BandwidthLimiter {
     return this.queue.length;
   }
 
-  /** The deadline of bytes needed in `needInS` seconds from now (clamped to 0…MAX_NEED_S). */
+  /** The deadline of bytes needed in `needInS` seconds from now (clamped to 0…MAX_NEED_S), NEED_MARGIN_S earlier. */
   dueIn(needInS: number = DEFAULT_NEED_S): number {
     const s = Number.isFinite(needInS) ? Math.min(MAX_NEED_S, Math.max(0, needInS)) : DEFAULT_NEED_S;
-    return this.now() + s * 1000;
+    return this.now() + Math.max(0, s - NEED_MARGIN_S) * 1000;
   }
 
   /**

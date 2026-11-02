@@ -1,6 +1,6 @@
 import type { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BandwidthLimiter, DEFAULT_NEED_S, MAX_CHUNK_WAIT_MS, MAX_NEED_S } from '../../src/hls/throttle.js';
+import { BandwidthLimiter, DEFAULT_NEED_S, MAX_CHUNK_WAIT_MS, MAX_NEED_S, NEED_MARGIN_S } from '../../src/hls/throttle.js';
 
 // The global upload limiter: a token bucket shared by every viewer, with a burst of 250 ms worth
 // of traffic. Time is the subject here, so the clock is fake (timers, Date and performance.now):
@@ -151,16 +151,18 @@ describe('BandwidthLimiter order (docs/QUALITY.md "Upload order")', () => {
     expect(Math.max(done.a!, done.b!)).toBeGreaterThanOrEqual(3_900);
   });
 
-  it('clamps needs to 0…MAX_NEED_S and treats a missing or broken one as DEFAULT_NEED_S', () => {
+  it('aims NEED_MARGIN_S before the need, clamped to 0…MAX_NEED_S; a missing or broken need is DEFAULT_NEED_S', () => {
     // Arrange
     let now = 1_000;
     const lim = new BandwidthLimiter(100_000, () => now);
+    const due = (s: number): number => now + Math.max(0, s - NEED_MARGIN_S) * 1000;
     // Act + Assert
     expect(lim.dueIn(-5)).toBe(1_000);
-    expect(lim.dueIn(1e9)).toBe(1_000 + MAX_NEED_S * 1000);
-    expect(lim.dueIn(Number.NaN)).toBe(1_000 + DEFAULT_NEED_S * 1000);
-    expect(lim.dueIn()).toBe(1_000 + DEFAULT_NEED_S * 1000);
+    expect(lim.dueIn(NEED_MARGIN_S / 2)).toBe(1_000);
+    expect(lim.dueIn(1e9)).toBe(due(MAX_NEED_S));
+    expect(lim.dueIn(Number.NaN)).toBe(due(DEFAULT_NEED_S));
+    expect(lim.dueIn()).toBe(due(DEFAULT_NEED_S));
     now = 5_000;
-    expect(lim.dueIn(2)).toBe(7_000);
+    expect(lim.dueIn(12)).toBe(15_000);
   });
 });

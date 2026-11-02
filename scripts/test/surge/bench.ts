@@ -258,8 +258,9 @@ export async function runScenario(sc: Scenario, o: { viewerDir: string; variant:
       }),
     );
     tunnel.kill();
-    await live.stop().catch(() => {});
+    // The source first: "Stop everything" checks that nothing listens on MediaMTX's port any more.
     await source.close();
+    await live.stop().catch(() => {});
   }
 }
 
@@ -279,6 +280,9 @@ function analyse(sc: Scenario, viewers: ViewerReport[], samples: Sample[], marks
   const refusals = (vs: ViewerReport[], from: number, to: number): number => vs.reduce((a, v) => a + v.loads.filter((l) => l.at >= from && l.at < to && (l.status === 429 || l.status <= 0 || l.status >= 500)).length, 0);
   const ttff = fresh.filter((v) => v.firstFrameAt).map((v) => (v.firstFrameAt! - v.joinAt) / 1000);
   const freshStalls = fresh.map((v) => stallsIn(v, v.firstFrameAt ?? endAt, endAt, endAt));
+  // Seconds without a picture per newcomer: waiting for the first frame plus stalls after it.
+  const dark = fresh.map((v, i) => ((v.firstFrameAt ?? endAt) - v.joinAt) / 1000 + freshStalls[i]!.s);
+  const oldStalledShare = burstStalls.reduce((a, s) => a + s.s, 0) / Math.max(1, old.length * ((endAt - burstAt) / 1000));
   // Mean bitrate the existing viewers played (kbps), calm vs burst: how much ABR gave up.
   const kbpsOf = (vs: ViewerReport[], from: number, to: number): number => {
     const loads = vs.flatMap((v) => v.loads.filter((l) => l.kind === 'segment' && l.status === 200 && l.at >= from && l.at < to));
@@ -294,6 +298,7 @@ function analyse(sc: Scenario, viewers: ViewerReport[], samples: Sample[], marks
   const summary: Record<string, number | string> = {
     'existing stalls calm → burst (n / s)': `${calmStalls.reduce((a, s) => a + s.n, 0)} / ${round(calmStalls.reduce((a, s) => a + s.s, 0))} → ${burstStalls.reduce((a, s) => a + s.n, 0)} / ${round(burstStalls.reduce((a, s) => a + s.s, 0))}`,
     'existing viewers who stalled in burst': burstStalls.filter((s) => s.n > 0).length,
+    'existing share of burst time stalled %': round(oldStalledShare * 100),
     'existing segment p50/p95 ms calm': `${q(segs(old, calmFrom, burstAt), 0.5)}/${q(segs(old, calmFrom, burstAt), 0.95)}`,
     'existing segment p50/p95 ms burst': `${q(segs(old, burstAt, endAt), 0.5)}/${q(segs(old, burstAt, endAt), 0.95)}`,
     'existing playlist p95 ms calm/burst': `${q(pls(old, calmFrom, burstAt), 0.95)}/${q(pls(old, burstAt, endAt), 0.95)}`,
@@ -305,6 +310,7 @@ function analyse(sc: Scenario, viewers: ViewerReport[], samples: Sample[], marks
     Object.assign(summary, {
       'newcomers TTFF p50/p95/max s': `${round(q(ttff, 0.5))}/${round(q(ttff, 0.95))}/${round(Math.max(0, ...ttff))}`,
       'newcomers without first frame': fresh.length - ttff.length,
+      'newcomers seconds without picture mean/p95 (TTFF + stalls)': `${round(mean(dark))}/${round(q(dark, 0.95))}`,
       'newcomers stalls after first frame (n / s)': `${freshStalls.reduce((a, s) => a + s.n, 0)} / ${round(freshStalls.reduce((a, s) => a + s.s, 0))}`,
       'newcomers join p95 ms (link/join/watch/config)': `${stepP95('link', fresh)}/${stepP95('join', fresh)}/${stepP95('watchPage', fresh)}/${stepP95('config', fresh)}`,
       'newcomers solve p95 ms': stepP95('solve', fresh),
@@ -344,6 +350,12 @@ function analyse(sc: Scenario, viewers: ViewerReport[], samples: Sample[], marks
   summary['join failures'] = joinFailed.length ? `${joinFailed.length} (${[...why].map(([k, n]) => `${k} ×${n}`).join(', ')})` : 0;
   check(joinFailed.length === 0, `${joinFailed.length} viewers could not join (${[...why].map(([k, n]) => `${k} ×${n}`).join(', ')})`);
   check(closed.length === 0, `the server closed ${closed.length} control sockets`);
+  // Every newcomer is watching by the end of the burst.
+  check(fresh.length - ttff.length === 0, `${fresh.length - ttff.length} newcomers never got a first picture`);
+  // Many people arriving at once is a popular moment, not an attack (security/detector.ts
+  // SATURATION_CONFIRMS): no frozen admission, no stronger browser check for the rest.
+  const attacked = burstSamples.filter((s) => s.shield.startsWith('attack'));
+  check(attacked.length === 0, `the attack shield treated the burst as an attack (${[...new Set(attacked.map((s) => s.signals))].join(' | ')})`);
   return { passed: failures.length === 0, failures, summary };
 }
 

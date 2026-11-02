@@ -88,6 +88,15 @@ export interface DetectorEvents {
 }
 
 const COUNTERS: CounterSignal[] = ['requests', 'joins', 'badJoins', 'rateLimited', 'upgrades', 'tlsErrors'];
+/**
+ * Signals a full upload confirms. Not joins, requests, upgrades, IPs or connections: many real
+ * people arriving at once raise those AND fill the upload (they all start watching), so the two
+ * together are what a popular moment looks like, not evidence of an attack. The surge bench
+ * (scripts/test/surge) had 30 people joining within 3 s next to 15 watching escalate to "attack":
+ * admission frozen at 1.25 × the audience + 10 and the stronger browser check for everyone else.
+ * Refused joins, our own 429s and TLS errors are not raised by an audience that has the link.
+ */
+const SATURATION_CONFIRMS: ReadonlySet<SignalName> = new Set<SignalName>(['badJoins', 'rateLimited', 'tlsErrors']);
 const ALL: SignalName[] = [...COUNTERS, 'ips', 'connections'];
 const RANK: Record<ThreatState, number> = { normal: 0, suspicious: 1, attack: 2 };
 
@@ -201,8 +210,8 @@ export class AttackDetector extends EventEmitter<DetectorEvents> {
     }
     signals.sort((a, b) => b.level - a.level || b.value / b.threshold - a.value / a.threshold);
     let level: 0 | 1 | 2 = signals.length ? signals[0]!.level : 0;
-    // Several anomalies at once, or one while the upload is maxed out, add up to an attack.
-    if (level === 1 && (signals.length >= 3 || saturation >= this.o.saturationCorroborates)) level = 2;
+    // Several anomalies at once, or one the full upload confirms (SATURATION_CONFIRMS), add up to an attack.
+    if (level === 1 && (signals.length >= 3 || (saturation >= this.o.saturationCorroborates && signals.some((g) => SATURATION_CONFIRMS.has(g.signal))))) level = 2;
 
     // Baselines learn only while calm, so an attack never becomes "normal".
     if (this.state === 'normal' && level === 0) {

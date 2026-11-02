@@ -30,6 +30,7 @@ import {
 import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
+import { p2pConnecting, type P2PConnectState } from './p2p-status.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 import { createChatRouter } from './chat/loader.js';
@@ -486,6 +487,8 @@ async function main(): Promise<void> {
 
   // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
   // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
+  // "Connecting to other viewers…" until the first peer (p2p-status.ts).
+  const connect: Omit<P2PConnectState, 'enabled' | 'peers'> = { onAt: stats.p2pEnabled ? performance.now() : null, connectedOnce: false };
   const activity = new CoreActivity();
   activity.attach(engine);
   const strikes = new PeerStrikes();
@@ -526,6 +529,7 @@ async function main(): Promise<void> {
   });
   engine.addEventListener('onPeerConnect', (p) => {
     stats.peers.add(p.peerId);
+    connect.connectedOnce = true;
     if (peerGuard.isBlocked(asciiToHex(p.peerId))) peerGuard.closePeer(asciiToHex(p.peerId));
   });
   engine.addEventListener('onPeerClose', (p) => {
@@ -634,7 +638,9 @@ async function main(): Promise<void> {
   });
 
   const setP2P = (on: boolean): void => {
+    const was = stats.p2pEnabled;
     stats.p2pEnabled = on && stats.p2pAllowed;
+    if (stats.p2pEnabled && !was) Object.assign(connect, { onAt: performance.now(), connectedOnce: false });
     engine.applyDynamicConfig({
       core: {
         isP2PDisabled: !stats.p2pEnabled,
@@ -653,6 +659,8 @@ async function main(): Promise<void> {
   const renderP2PLine = (): void => {
     if (!stats.p2pAllowed) {
       showP2PLine(t(p2pOffKey()));
+    } else if (p2pConnecting({ ...connect, enabled: stats.p2pEnabled, peers: stats.peers.size }, performance.now())) {
+      showP2PLine(t('watch.p2pConnecting'));
     } else if (stats.p2pEnabled) {
       const total = stats.httpBytes + stats.p2pDownBytes;
       const share = total > 0 ? Math.round((stats.p2pDownBytes / total) * 100) : 0;

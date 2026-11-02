@@ -194,7 +194,7 @@ class SimViewer {
     for (let attempt = 0; ; attempt++) {
       const at = Date.now();
       const t = performance.now();
-      let status = 0;
+      let status: number;
       let ttfb = 0;
       let body = Buffer.alloc(0);
       const ac = new AbortController();
