@@ -11,8 +11,9 @@
  * - Picture-in-picture: `requestPictureInPicture` (Chrome, Edge, Safari, Firefox 153+ on
  *   computers) or Safari's `webkitSetPresentationMode`; nothing on Firefox for Android, Android
  *   WebView and Firefox before 153 (its own button over the video stays its own).
- * - Volume: read-only on iOS and iPadOS (the hardware buttons own it; setting it does nothing),
- *   so the volume slider shows only where a value set is read back.
+ * - Volume: read-only on iOS and iPadOS per Apple's Safari guide (the hardware buttons own it;
+ *   setting it does nothing), though the iOS 26 Simulator accepts it: the volume slider shows
+ *   only where a value set is read back, whatever the device.
  */
 
 /** Vendor-prefixed full-screen and picture-in-picture members (Safari, iOS). */

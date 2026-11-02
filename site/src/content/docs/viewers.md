@@ -20,7 +20,7 @@ A streamer sent you a SwarmCast link? You can watch in your browser. **No app, n
 
 A bar along the bottom of the video has the player's buttons. It looks the same in every browser, and it fades out while the live plays: move the mouse over the video, tap the video, or press Tab to bring it back. (If you asked your device for **reduced motion**, it stays.) From left to right:
 
-- **Play / Pause** (a big **Play** button also shows in the middle while the video is paused), and **Mute / Unmute** with the **volume** slider. Phones and iPads have no slider: use the volume buttons of the device.
+- **Play / Pause** (a big **Play** button also shows in the middle while the video is paused), and **Mute / Unmute** with the **volume** slider. Phones have no slider: use the volume buttons of the phone.
 - **● LIVE / Go live:** you are 10 to 30 seconds behind the streamer, which is normal. Next to it, "~14 s behind live" shows your delay: it adjusts itself to your connection (closer to live on steady internet, further back when it wobbles, so the video does not pause). If you fell behind, click **Go live**.
 - **Quality** (on the right of the bar): **Auto** picks the best quality your internet can play without pausing. You can pick one yourself.
 - **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.

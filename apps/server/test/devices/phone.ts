@@ -364,14 +364,23 @@ export async function tapControl(phone: Phone, selector: string): Promise<void> 
 }
 
 /** What the player's own controls show and what the page may do with the video here. */
-export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: boolean; volumeSlider: boolean; pipButton: boolean; pipApi: boolean; play: string }> {
+export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: boolean; volumeSlider: boolean; volumeApi: boolean; pipButton: boolean; pipApi: boolean; play: string }> {
   return phone.evaluate(() => {
     const v = document.querySelector('video') as HTMLVideoElement & { webkitSupportsPresentationMode?: (m: string) => boolean };
     const shown = (sel: string): boolean => {
       const el = document.querySelector<HTMLElement>(sel);
       return !!el && !el.hidden && el.getClientRects().length > 0;
     };
+    // Whether this browser lets a page set the volume: set it, read it back, put it back. Apple's
+    // guide says iOS keeps it read-only (always 1); the iOS 26 Simulator accepts it (Devices run
+    // 41507746407), so the check asks the browser, as the page does.
+    const before = v.volume;
+    const probe = before > 0.5 ? before - 0.25 : before + 0.25;
+    v.volume = probe;
+    const volumeApi = Math.abs(v.volume - probe) < 0.01;
+    v.volume = before;
     return {
+      volumeApi,
       nativeControls: v.hasAttribute('controls'),
       bar: shown('[data-testid="controls"]'),
       // The slider's own switch (hidden where the page cannot set the volume), not the narrow-screen CSS.

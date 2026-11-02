@@ -18,8 +18,8 @@
 // that the tap reached the field as a finger's, and the text is put in the field as the keyboard would.
 // The trip to the background runs on Android: under safaridriver the session ends as Safari leaves
 // the screen (ios.ts IosPhone.background has the evidence).
-// - the player's own controls instead of the browser's: no volume slider where the page cannot set
-//   the volume (iOS), picture-in-picture only where the browser has it, and full screen: the player
+// - the player's own controls instead of the browser's: no volume slider on a phone (and none
+//   wherever the page cannot set the volume), picture-in-picture only where the browser has it, and full screen: the player
 //   with its controls on Android; on an iPhone, which has no full screen but the video's own, iOS's
 //   player, after which the page's controls are back and the video plays on.
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
@@ -121,14 +121,16 @@ test('back from the background the video plays again, behind the live; Go live r
   expect((await videoState(phone)).paused).toBe(false);
 });
 
-test("the player's own controls: full screen is the player with them on Android, iOS's own player on an iPhone (then they are back); no volume slider on iOS", async ({ phone }) => {
+test("the player's own controls: full screen is the player with them on Android, iOS's own player on an iPhone (then they are back); no volume slider on a phone", async ({ phone }) => {
   // Arrange
   await joinOnPhone(phone, uid('controls'), await liveLink());
   await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
   const ui = await playerUi(phone);
   // Assert
   expect(ui).toMatchObject({ nativeControls: false, bar: true, play: 'Pause' });
-  expect(ui.volumeSlider, 'a volume slider only where the page can set the volume').toBe(phone.platform === 'android');
+  expect(ui.volumeSlider, 'a volume slider only where the page can set the volume').toBe(ui.volumeApi);
+  // On a phone's narrow screen the slider never shows: the device's buttons set the volume.
+  expect(await isShown(phone, '[data-testid="volume"]')).toBe(false);
   expect(ui.pipButton, 'picture-in-picture only where the browser has it').toBe(ui.pipApi);
   // Act
   await tapControl(phone, '[data-testid="fullscreen"]');
