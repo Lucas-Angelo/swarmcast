@@ -127,22 +127,26 @@ Items inside a batch or snapshot:
 
 | `k` | Item | Fields |
 |---|---|---|
-| `m` | Message | `s` seq, `at` server time (ms), `a` author key, `x` text **or** `g` GIF |
+| `m` | Message | `s` seq, `at` server time (ms), `a` author key, `x` text **or** `g` GIF; `h: 1` while the streamer has it highlighted |
 | `u` | Roster upsert | `au: {a, n nickname, c colour, r role, tag}`; sent once per author, again after a colour change |
 | `d` | Delete | `s: [seq…]` |
 | `clr` | Clear | `s`: everything up to and including this seq |
 | `sys` | System line | `s`, `at`, `code` (a message key), `params`; translated by the client |
 | `skip` | Not delivered | `n` messages this viewer did not get (budget or a slow connection) |
+| `hl` | Highlight changed | `s` the message (not a seq of its own), `on` true or false |
+| `pin` | Pin changed | `p`: the pinned message (`s`, `a`, `x` or `g`, `at` when pinned, `endsIn` ms left for a timed pin) or `null` |
 
 The **author key** `a` is an opaque base36 counter per live, never the session id. The **tag** is 4
 base32 characters from an HMAC of the session id with a per-live salt; it tells apart two people
 whose names look alike. `r` is `viewer` or `streamer`, and only messages posted from the panel ever
 carry `streamer`.
 
-**Snapshot** (`ChatSnapshot`): `{v, settings, you, roster, items, lastSeq}`. `v` is
+**Snapshot** (`ChatSnapshot`): `{v, settings, you, roster, items, lastSeq, pin?}`. `v` is
 `CHAT_PROTOCOL_VERSION` (1). `items` are the last `historyOnJoin` ring items (20 at most under
-"slow" protection, none under "lockdown"); `roster` holds only the authors of those items plus the
-viewer. The snapshot's bytes are counted against the chat budget.
+"slow" protection, none under "lockdown"); `roster` holds only the authors of those items, the
+pinned message's author and the viewer. `pin` is the pinned message, in full snapshots and
+reconnect deltas alike (absent: nothing is pinned). The snapshot's bytes are counted against the
+chat budget.
 
 **Ordering and gaps.** `seq` increases by one per ring item within a live and starts at 1 after every
 Start. A client that sees a gap, or reconnects, sends `chat.resume`; the server answers with the
@@ -164,8 +168,14 @@ without a resume.
   missed items and asks to resume, so a new kind that took a `seq` would stall every older page for
   3 s each time. Every other kind is seq-less, and clients treat an unknown kind as seq-less even if
   it carries an `s`.
-- **Durable seq-less items** (`u`, `d`, `clr`, and later pins and polls): never dropped; a socket
-  too slow to get one receives a fresh snapshot when it catches up.
+- **Durable seq-less items** (`u`, `d`, `clr`, and later polls): never dropped; a socket too slow
+  to get one receives a fresh snapshot when it catches up.
+- **State items** (`ChatBatcher.pushState(key, item, refs?)`: `pin` under the key `pin`, `hl`
+  under `hl:<seq>`): durable too, never dropped, but each one only says what a piece of state is
+  now. A socket too slow to get some is sent the current state of each key it missed when it
+  catches up (`stateOf` in [`hub.ts`](../apps/server/src/chat/hub.ts)), after the roster entries
+  they name and before the next batch, instead of a snapshot; owing more than
+  `CHAT_STATE_MISSED_MAX` (64) keys, or a durable item as well, still means a snapshot.
 - **Ephemeral items** (`ChatBatcher.pushLatest(key, item, merge?)`, for vote and reaction counts):
   latest-wins state, at most one pending per key (a newer one replaces the pending one, or `merge`
   folds the two), at most `CHAT_EPHEMERAL_PENDING_MAX` (32) keys, sent after the batch's other
@@ -357,6 +367,58 @@ viewer draws a translated "Streamer" badge from that role. A viewer can never ge
   batch is drawn. The viewer's session and the panel's store skip a malformed item on its own.
 - The chat is a separate, lazily loaded chunk, so the player never depends on it.
 
+## Highlight and pin
+
+The streamer can **highlight** messages (they stand out for everyone) and **pin** one message at the
+top of everyone's chat. Both are streamer actions only: the panel's REST routes (below) are the only
+way in, and no viewer frame can create, change or remove either. Nothing new reaches pages older
+than 0.5.0 that they could stumble on: they ignore the `hl` and `pin` items, the `h` field and the
+snapshot's `pin`, so they keep working and simply show neither (`chat-compat.test.ts`). No `sys`
+line is posted for either.
+
+**Highlight** (`ChatHub.highlight(s, on)`): a flag on the ring item (`h: 1`), so snapshots and
+resume answers carry it, plus an `hl` state item for the pages already showing the message. At most
+`CHAT_HIGHLIGHTS_MAX` (20) at once: one more takes it off the oldest, with its own `hl` item. A
+highlight changes a message the viewer may already have, so a reconnect delta from before it is not
+served (as after a delete). On the viewer page a highlighted row has an accent bar and the soft
+accent fill (`--sc-accent-soft`; names on it are checked for 4.5:1 against that fill) and starts
+with a visually hidden "Highlighted by the streamer"; in the panel, a bar and a "Highlighted" mark.
+
+**Pin** (`ChatHub.pin(s, minutes)`): one at a time; pinning another message replaces it. The hub
+keeps a copy of the message's text (or GIF) and author key, so the pin outlives the message's place
+in the ring, and the author's roster entry is kept with it (snapshots, resume answers, the roster
+prune). A timed pin (`minutes` 1–`CHAT_PIN_MAX_MIN` (120); the panel offers until unpinned, 5, 15
+and 60 minutes) carries `endsIn`, the milliseconds left when it was sent, and comes down by
+itself (checked on the hub's one-second tick and whenever the pin is read). The pin comes down,
+with a `{k: 'pin', p: null}` item, on **Unpin**, when its message is **deleted**, on **Clear chat**,
+when its time is up, and on **Stop** (wiped with everything else). Muting or kicking the author does
+not unpin (the streamer decides), and neither do slow mode, the content modes, blocked words or
+protection: they apply to what viewers send, and the pin is the streamer's. With the chat off,
+viewers get no snapshot and see no chat at all; the pin is kept and shows again when the chat is
+turned back on (a resume answer carries the current `pin` item). The pin is in every snapshot, also
+under lockdown (no history): it is the streamer's own choice and costs at most ~1.2 KB per hello.
+
+The viewer page shows the pin in a bar between the chat's header and the list
+(`<section aria-label="Pinned message">`), never over the list or the input: the label "Pinned by
+the streamer" (UI chrome, never message text), the author with the badge from the role, and the
+text built by the same code as a row (text nodes, `<bdi>`, invariants, emotes, GIF consent). It is
+folded to one line under 1100 px (where the chat is 40 % of the screen) and two lines in the side
+column; **Show more** opens it up to the usual clamp. **✕** hides that pin on this page (in memory;
+the next pin shows again). A new pin is announced in the polite status region, and "Show chat"
+says "Pinned" while the chat is hidden. The panel shows the same pin above its feed with **Unpin**
+and, for a timed pin, the time it comes down.
+
+| Moderation or setting | Highlight | Pin |
+|---|---|---|
+| Delete | The message is gone | Deleting the pinned message unpins |
+| Clear chat | Gone with the ring | Unpinned |
+| Mute, kick | Stays | Stays |
+| Slow mode, content modes, blocked words, links, protection | Not affected (streamer action) | Not affected; in every snapshot, also under lockdown |
+| Chat off | Hidden with the chat | Hidden with the chat; kept for when it comes back |
+| Reconnect | A delta from before a highlight is not served | In every snapshot and delta |
+| Slow socket | Current state when it catches up (state item) | Current state when it catches up (state item) |
+| Stop | Wiped | Wiped |
+
 ## Moderation (panel)
 
 While live with the chat on (`AdminState.chatEnabled`, pushed on `/ws` when the setting changes), the
@@ -370,6 +432,8 @@ down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `ch
 | Action | Effect |
 |---|---|
 | Delete | Up to 100 messages at once; a `d` item goes to everyone, the ring forgets them |
+| Highlight / Remove highlight | Marks the message for everyone (at most 20 at once), or takes the mark off |
+| Pin to top / Unpin | One pinned message at the top of everyone's chat, until unpinned or for 5, 15 or 60 minutes ("Highlight and pin") |
 | Clear | A `clr` item; the ring is emptied |
 | Mute | 1, 10 or 60 minutes (any value up to 1,440), or **until the end of this live**. Keyed by the device cookie and the session, never by IP, so it survives leaving and rejoining. The viewer sees "muted until…". There are no accounts, so a mute cannot follow a person to the next live |
 | Unmute | Applies at once |
@@ -378,6 +442,10 @@ down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `ch
 | Post | The streamer writes with the same pipeline, the badge, and a small anti-mistake limit (5 messages, then 1 per second) |
 
 Kick, "Remove from P2P" and "New link" work as before; mute is a separate state.
+
+The feed follows the newest message unless the streamer scrolled up, and holds still while a ⋯
+menu is open (it shows "New messages below" instead), so a click never lands on a button that
+moved under the pointer (`ChatFeed.tsx`).
 
 ## Flood protection and the video budget
 
@@ -495,6 +563,9 @@ with zod ([`apps/server/src/admin/chat-routes.ts`](../apps/server/src/admin/chat
 | `POST /api/chat/unmute` | `{sessionId}` | |
 | `PUT /api/chat/color` | `{sessionId, color \| null, lock}` | Set (and lock) a colour, or back to the default |
 | `POST /api/chat/protect` | `{mode: off \| slow \| lockdown}` | Manual protection |
+| `POST /api/chat/highlight` | `{s, on}` | Highlight a ring message for everyone, or take the highlight off (`admin.chat.err.gone` when it is not in the ring) |
+| `POST /api/chat/pin` | `{s, minutes?: 1…120 \| null}` | Pin a ring message (replaces any other pin); `null` or absent = until unpinned |
+| `POST /api/chat/unpin` | — | Unpin |
 
 The panel's `/ws` gets chat items in their own message type (`{type: 'chat', reset, items,
 sessions, counters}`), so the big panel snapshot never carries chat. Counters: accepted and rejected
@@ -515,22 +586,22 @@ the chat stopped itself.
 | Properties P1–P12 (well-formed, idempotent, caps, NFC-stable, passes the client check, linear work, realistic chat unchanged, skeleton, tokenizer round trip, colour contrast for every 24-bit colour); 2,000 seeded runs per PR, `CHAT_FUZZ_RUNS` raises it | [`properties.test.ts`](../packages/shared/test/chat/properties.test.ts), [`arbitraries.ts`](../packages/shared/test/chat/arbitraries.ts) |
 | Grapheme clusters vs GraphemeBreakTest.txt and `Intl.Segmenter` | [`grapheme.test.ts`](../packages/shared/test/chat/grapheme.test.ts) |
 | No ReDoS in `chat/` | [`redos.test.ts`](../packages/shared/test/chat/redos.test.ts) |
-| Protocol shapes, reject codes translated, settings defaults | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
-| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
+| Protocol shapes, reject codes translated, settings defaults, the highlight and pin bodies, `hl` and `pin` seq-less | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
+| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume; highlights and pins (also missed by a slow socket and in a reconnect hello) show only on the current page | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
 | Network keys (IPv4, IPv6 /64, IPv4-mapped) against Node's `BlockList` on random addresses in every spelling | [`network.test.ts`](../apps/server/test/unit/network.test.ts) |
-| Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed) | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
-| Hub: pipeline, slow mode, burst, duplicates, modes, blocked words, mutes, colours, roles, snapshot, resume, ring, reset, G, lockdown, failure isolation | [`apps/server/test/unit/chat-hub.test.ts`](../apps/server/test/unit/chat-hub.test.ts) |
+| Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed); highlighted rows and the pinned bar (text nodes, hide, Show more, chat off), and the panel store's highlights and pin | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
+| Hub: pipeline, slow mode, burst, duplicates, modes, blocked words, mutes, colours, roles, snapshot, resume, ring, reset, G, lockdown, failure isolation; highlight (cap, delta) and pin (replace, delete, clear, timer, Stop, mute and kick keep it, snapshots under lockdown, roster prune, slow sockets, resume) | [`apps/server/test/unit/chat-hub.test.ts`](../apps/server/test/unit/chat-hub.test.ts) |
 | `/control`: frame budgets (chat and reactions), raw size, fuzzed hostile frames and frame kinds; nickname uniqueness and reserved names | [`chat-control.test.ts`](../apps/server/test/unit/chat-control.test.ts) |
-| Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
+| Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, state items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
-| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
+| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
 | The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
-| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
-| The panel's live chat (on screen without scrolling, desktop window and narrow) and Chat card: feed, moderation menu, settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin) | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
+| The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (highlight, pin, unpin), settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
-| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 
 ## Load and soak
 

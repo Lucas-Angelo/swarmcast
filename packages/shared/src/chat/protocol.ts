@@ -43,6 +43,8 @@ export interface ChatMessageItem {
   a: string;
   x?: string;
   g?: GifRef;
+  /** Highlighted by the streamer (absent: not highlighted). Snapshots and resume answers carry the current value. */
+  h?: 1;
 }
 
 /** Roster upsert: first appearance of an author, or a colour change. */
@@ -78,7 +80,38 @@ export interface ChatSkipItem {
   n: number;
 }
 
-export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem;
+/**
+ * The streamer highlighted a message (`on`) or took the highlight off. Seq-less: `s` names the
+ * message, it is not a seq of this item. A client that does not have message `s` ignores it.
+ */
+export interface ChatHighlightItem {
+  k: 'hl';
+  s: number;
+  on: boolean;
+}
+
+/** The message pinned at the top of the chat: a copy, so it outlives the message's place in the ring. */
+export interface ChatPin {
+  /** Seq of the pinned message. */
+  s: number;
+  /** Its author key (see the roster; always sent before the pin). */
+  a: string;
+  /** Its text (canonical) or its GIF, never both. */
+  x?: string;
+  g?: GifRef;
+  /** When it was pinned (server time, Unix ms): tells one pin of the same message from the next. */
+  at: number;
+  /** A timed pin: milliseconds left when this was sent (relative, so clock skew does not matter). */
+  endsIn?: number;
+}
+
+/** The pin changed: a new pinned message (replacing any other), or `null` (unpinned). Seq-less. */
+export interface ChatPinItem {
+  k: 'pin';
+  p: ChatPin | null;
+}
+
+export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem | ChatHighlightItem | ChatPinItem;
 
 /** Ring items (they carry a `seq`). */
 export type ChatRingItem = ChatMessageItem | ChatSystemItem;
@@ -143,6 +176,8 @@ export interface ChatSnapshot {
    * (`/control?chatAfter=<seq>`); keep what is shown and add them. Absent: a full snapshot.
    */
   delta?: true;
+  /** The pinned message, in full snapshots and in deltas alike (absent: nothing is pinned). */
+  pin?: ChatPin;
 }
 
 /** Reject codes (each is a message key in en.ts / pt-BR.ts). */
@@ -243,4 +278,6 @@ export interface AdminChatState {
   lastSeq: number;
   sessions: ChatSessionInfo[];
   counters: ChatCounters;
+  /** The pinned message (absent: nothing is pinned). */
+  pin?: ChatPin;
 }

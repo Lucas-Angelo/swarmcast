@@ -1,4 +1,4 @@
-import type { AdminChatMessage, AdminChatState, ChatAuthor, ChatCounters, ChatItem, ChatRingItem, ChatSessionInfo } from '@swarmcast/shared';
+import type { AdminChatMessage, AdminChatState, ChatAuthor, ChatCounters, ChatItem, ChatPin, ChatRingItem, ChatSessionInfo } from '@swarmcast/shared';
 
 /** Messages the panel keeps (the server's ring holds 200; the panel also keeps lines skipped for slow viewers). */
 export const PANEL_CHAT_KEEP = 500;
@@ -14,6 +14,9 @@ export interface ChatView {
   /** Session id → mute and colour state (from GET /api/chat). */
   info: ReadonlyMap<string, ChatSessionInfo>;
   counters: ChatCounters | null;
+  /** The pinned message (null: none) and, for a timed pin, when it comes down (this computer's clock, ms). */
+  pin: ChatPin | null;
+  pinUntil: number | null;
   /** Highest seq seen. */
   lastSeq: number;
   /** Bumped on every change (cheap equality for UI hooks). */
@@ -33,6 +36,8 @@ export class ChatStore {
   private sessions = new Map<string, string>();
   private info = new Map<string, ChatSessionInfo>();
   private counters: ChatCounters | null = null;
+  private pin: ChatPin | null = null;
+  private pinUntil: number | null = null;
   private lastSeq = 0;
   private rev = 0;
   private listeners = new Set<Listener>();
@@ -44,7 +49,10 @@ export class ChatStore {
    */
   private unknown = new Set<string>();
 
-  constructor(private readonly keep = PANEL_CHAT_KEEP) {}
+  constructor(
+    private readonly keep = PANEL_CHAT_KEEP,
+    private readonly now: () => number = Date.now,
+  ) {}
 
   /** A /ws chat message. */
   apply(msg: AdminChatMessage): void {
@@ -54,6 +62,7 @@ export class ChatStore {
       this.sessions.clear();
       this.unknown.clear();
       this.lastSeq = 0;
+      this.setPin(null);
     }
     for (const [a, sid] of Object.entries(msg.sessions ?? {})) {
       if (typeof sid === 'string') this.sessions.set(a, sid);
@@ -72,6 +81,7 @@ export class ChatStore {
     for (const au of s.roster) this.roster.set(au.a, au);
     this.applyItems(s.items);
     this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
+    this.setPin(s.pin ?? null);
     this.fillSessions(s.sessions);
     this.counters = s.counters;
     this.changed();
@@ -118,11 +128,28 @@ export class ChatStore {
           if (!Array.isArray(it.s)) break;
           const gone = new Set(it.s);
           this.items = this.items.filter((x) => !(x.k === 'm' && gone.has(x.s)));
+          if (this.pin && gone.has(this.pin.s)) this.setPin(null);
           break;
         }
         case 'clr':
           if (!Number.isSafeInteger(it.s)) break;
           this.items = this.items.filter((x) => x.s > it.s);
+          if (this.pin && this.pin.s <= it.s) this.setPin(null);
+          break;
+        case 'hl': {
+          if (!Number.isSafeInteger(it.s) || typeof it.on !== 'boolean') break;
+          const i = this.items.findIndex((x) => x.k === 'm' && x.s === it.s);
+          const x = this.items[i];
+          if (x?.k !== 'm') break;
+          const { h: _h, ...rest } = x;
+          // A new array and a new item: the feed re-renders that row.
+          const next = this.items.slice();
+          next[i] = it.on ? { ...rest, h: 1 } : rest;
+          this.items = next;
+          break;
+        }
+        case 'pin':
+          this.setPin(isPin(it.p) ? it.p : null);
           break;
         case 'skip':
           // Viewers' gaps only: the panel gets every message.
@@ -133,6 +160,11 @@ export class ChatStore {
       }
     }
     if (this.items.length > this.keep) this.items = this.items.slice(-this.keep);
+  }
+
+  private setPin(p: ChatPin | null): void {
+    this.pin = p;
+    this.pinUntil = p && typeof p.endsIn === 'number' ? this.now() + p.endsIn : null;
   }
 
   private changed(): void {
@@ -149,6 +181,8 @@ export class ChatStore {
       sessions: this.sessions,
       info: this.info,
       counters: this.counters,
+      pin: this.pin,
+      pinUntil: this.pinUntil,
       lastSeq: this.lastSeq,
       rev: this.rev,
     };
@@ -174,6 +208,13 @@ export class ChatStore {
   infoOf(sessionId: string): ChatSessionInfo | undefined {
     return this.info.get(sessionId);
   }
+}
+
+/** A pin as the server sends it (seq, author, when, text or GIF); anything else counts as no pin. */
+function isPin(p: unknown): p is ChatPin {
+  if (p === null || typeof p !== 'object') return false;
+  const v = p as Partial<ChatPin>;
+  return Number.isSafeInteger(v.s) && typeof v.a === 'string' && typeof v.at === 'number' && (typeof v.x === 'string' || (typeof v.g === 'object' && v.g !== null));
 }
 
 /** The panel's one store (the /ws handler in api.ts feeds it from the moment the socket opens). */

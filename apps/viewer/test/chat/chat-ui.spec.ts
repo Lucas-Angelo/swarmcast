@@ -485,6 +485,224 @@ test.describe('viewer chat (mock hub)', () => {
   });
 });
 
+test.describe('highlight and pin (mock hub)', () => {
+  /** Top and bottom (px) of the pinned bar, the list and the input on screen. */
+  async function boxes(page: Page) {
+    const of = async (id: string) => {
+      const b = (await page.getByTestId(id).boundingBox())!;
+      return { top: b.y, bottom: b.y + b.height, height: b.height };
+    };
+    return { pinned: await of('chat-pinned'), list: await of('chat-list'), input: await of('chat-input') };
+  }
+
+  for (const scheme of ['light', 'dark'] as const) {
+    test(`a highlighted message stands out and stays readable (${scheme} theme); a page opened later shows it highlighted too`, async ({ page, context }) => {
+      // Arrange
+      await page.emulateMedia({ colorScheme: scheme });
+      const hub = new MockHub('Bia');
+      const plain = hub.say(clara, 'uma pergunta');
+      const asked = hub.say(escuro, 'qual o link da loja?');
+      await openWatch(page, hub);
+      const list = page.getByTestId('chat-list');
+      await expect(list.locator('li.msg')).toHaveCount(2);
+
+      // Act
+      hub.highlight(asked, true);
+
+      // Assert
+      const row = list.locator(`li.msg[data-seq="${asked}"]`);
+      await expect(row).toHaveClass(/highlighted/);
+      await expect(list.locator(`li.msg[data-seq="${plain}"]`)).not.toHaveClass(/highlighted/);
+      await expect(row.locator('.hl-note')).toHaveText('Highlighted by the streamer:');
+      const look = await row.evaluate((el) => {
+        const s = getComputedStyle(el);
+        const plainRow = el.previousElementSibling!;
+        return { bg: s.backgroundColor, plainBg: getComputedStyle(plainRow).backgroundColor, bar: s.borderLeftWidth, name: getComputedStyle(el.querySelector('.nick')!).color, text: getComputedStyle(el.querySelector('.text')!).color };
+      });
+      expect(look.bg).not.toBe(look.plainBg);
+      expect(look.bar).toBe('3px');
+      expect(contrast(look.name, look.bg), `${look.name} on ${look.bg}`).toBeGreaterThanOrEqual(4.5);
+      expect(contrast(look.text, look.bg), `${look.text} on ${look.bg}`).toBeGreaterThanOrEqual(4.5);
+
+      // Act
+      const later = await context.newPage();
+      await later.emulateMedia({ colorScheme: scheme });
+      await openWatch(later, hub);
+
+      // Assert
+      await expect(later.getByTestId('chat-list').locator(`li.msg[data-seq="${asked}"]`)).toHaveClass(/highlighted/);
+
+      // Act
+      hub.highlight(asked, false);
+
+      // Assert
+      await expect(row).not.toHaveClass(/highlighted/);
+      await expect(row.locator('.hl-note')).toHaveCount(0);
+    });
+  }
+
+  test('the pinned bar: above the list, never over it or the input, text as text; replaced, then gone with its message', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const first = hub.say(ana, HOSTILE);
+    const second = hub.say(streamer, 'Link da loja: na descrição :love:');
+    await openWatch(page, hub);
+    const bar = page.getByTestId('chat-pinned');
+    await expect(bar).toBeHidden();
+
+    // Act
+    hub.pin(first);
+
+    // Assert
+    await expect(bar).toBeVisible();
+    await expect(bar).toHaveAttribute('aria-label', 'Pinned message');
+    await expect(bar.locator('.pinned-label')).toHaveText('Pinned by the streamer');
+    await expect(bar.locator('.text')).toHaveText(HOSTILE);
+    await expect(bar.locator('img, a, script')).toHaveCount(0);
+    const b = await boxes(page);
+    expect(b.pinned.bottom).toBeLessThanOrEqual(b.list.top + 1);
+    expect(b.list.bottom).toBeLessThanOrEqual(b.input.top + 1);
+    expect(b.list.height).toBeGreaterThan(b.pinned.height);
+
+    // Act
+    hub.pin(second);
+
+    // Assert
+    await expect(bar.locator('.badge')).toHaveText('Streamer');
+    await expect(bar.locator('img.emote')).toHaveAttribute('alt', ':love:');
+
+    // Act
+    hub.remove([second]);
+
+    // Assert
+    await expect(bar).toBeHidden();
+  });
+
+  test('a page opened later gets the pin in its hello; clearing the chat takes it down', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const s = hub.say(ana, 'regras do chat: sejam gentis');
+    hub.pin(s);
+
+    // Act
+    await openWatch(page, hub);
+
+    // Assert
+    const bar = page.getByTestId('chat-pinned');
+    await expect(bar.locator('.text')).toHaveText('regras do chat: sejam gentis');
+    await expect(bar.locator('.nick')).toHaveText('Ana');
+
+    // Act
+    hub.clear();
+
+    // Assert
+    await expect(bar).toBeHidden();
+  });
+
+  test('keyboard only: "Show more" unfolds a long pin and folds it again; "hide" hides it for this page and moves focus to the list', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const s = hub.say(ana, 'texto bem longo do aviso fixado '.repeat(12));
+    hub.pin(s);
+    await openWatch(page, hub);
+    const bar = page.getByTestId('chat-pinned');
+    const more = page.getByTestId('chat-pinned-more');
+    const msg = bar.locator('.pinned-msg');
+    await expect(more).toBeVisible();
+    const folded = (await msg.boundingBox())!.height;
+
+    // Act
+    await more.focus();
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(more).toHaveAttribute('aria-expanded', 'true');
+    await expect(more).toHaveText('Show less');
+    expect((await msg.boundingBox())!.height).toBeGreaterThan(folded);
+
+    // Act
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(more).toHaveAttribute('aria-expanded', 'false');
+
+    // Act
+    await page.getByTestId('chat-pinned-hide').focus();
+    await page.keyboard.press('Enter');
+
+    // Assert
+    await expect(bar).toBeHidden();
+    await expect(page.getByTestId('chat-list')).toBeFocused();
+
+    // Act: the streamer pins it again (a new pin): it shows again.
+    hub.pin(s);
+
+    // Assert
+    await expect(bar).toBeVisible();
+  });
+
+  test('in Portuguese; chat hidden: "Show chat" says a message was pinned; chat turned off: no pinned bar', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    const s = hub.say(ana, 'promoção só hoje');
+    await openWatch(page, hub, { lang: 'pt-BR' });
+    await page.getByTestId('chat-hide').click();
+
+    // Act
+    hub.pin(s);
+
+    // Assert
+    await expect(page.getByTestId('chat-show-pinned')).toHaveText('Fixada');
+
+    // Act
+    await page.getByTestId('chat-show').click();
+
+    // Assert
+    const bar = page.getByTestId('chat-pinned');
+    await expect(bar.locator('.pinned-label')).toHaveText('Fixada por quem transmite');
+    await expect(bar).toHaveAttribute('aria-label', 'Mensagem fixada');
+    await expect(page.getByTestId('chat-show-pinned')).toHaveCount(0);
+
+    // Act
+    hub.setSettings({ enabled: false });
+
+    // Assert
+    await expect(bar).toBeHidden();
+
+    // Act
+    hub.setSettings({ enabled: true });
+
+    // Assert
+    await expect(bar).toBeVisible();
+  });
+
+  test('pinned bar on a phone: inside the chat, the list keeps room, the input stays below it @mobile', async ({ page }) => {
+    // Arrange
+    const hub = new MockHub('Bia');
+    hub.say(ana, 'oi do celular');
+    const s = hub.say(streamer, 'Sorteio às 21h, fiquem até o fim! '.repeat(4));
+    hub.pin(s);
+    hub.highlight(s, true);
+
+    // Act
+    await openWatch(page, hub);
+    const bar = page.getByTestId('chat-pinned');
+    await expect(bar).toBeVisible();
+
+    // Assert
+    const chat = (await page.getByTestId('chat').boundingBox())!;
+    const b = await boxes(page);
+    expect(b.pinned.top).toBeGreaterThanOrEqual(chat.y);
+    expect(b.pinned.bottom).toBeLessThanOrEqual(b.list.top + 1);
+    expect(b.list.bottom).toBeLessThanOrEqual(b.input.top + 1);
+    // The list keeps room for at least three lines of chat next to the pin.
+    const line = await page.getByTestId('chat-list').locator('li.msg').first().evaluate((el) => parseFloat(getComputedStyle(el).lineHeight));
+    expect(b.list.height).toBeGreaterThanOrEqual(3 * line);
+    expect(chat.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+    await expect(page.getByTestId('chat-list').locator('li.highlighted')).toHaveCount(1);
+  });
+});
+
 // Screenshots for review, not a check: set CHAT_SCREENSHOTS to a folder and run with -g screenshots.
 test('screenshots', async ({ page, browserName }, testInfo) => {
   // Arrange
@@ -498,9 +716,11 @@ test('screenshots', async ({ page, browserName }, testInfo) => {
     await page.emulateMedia({ colorScheme: scheme });
     const hub = new MockHub('Bia', { settings: { slowS: 2 } });
     hub.say(ana, 'boa noite, chat! :hi:');
-    hub.say({ a: 'k5', n: 'Rafa', c: '#46a758', r: 'viewer' }, 'que live boa 🔥🔥 :gg:');
+    const asked = hub.say({ a: 'k5', n: 'Rafa', c: '#46a758', r: 'viewer' }, 'que live boa 🔥🔥 :gg:');
     hub.say({ a: 'k6', n: 'נועה', c: '#e5484d', r: 'viewer' }, 'שלום לכולם 123');
-    hub.say(streamer, 'Valeu por estarem aqui! :love:');
+    const thanks = hub.say(streamer, 'Valeu por estarem aqui! :love: O link da loja está na descrição.');
+    hub.highlight(asked, true);
+    hub.pin(thanks);
     hub.say({ a: 'k7', n: 'Zé', c: '#ffee88', r: 'viewer' }, 'Z̷̢A̴L̵G̶O̷ ' + 'texto longo que quebra a linha sem sair da caixa '.repeat(5));
     hub.say({ a: 'k8', n: 'Bot', c: '#0090ff', r: 'viewer' }, BIDI_OVERRIDE);
     await openWatch(page, hub, { lang: 'pt-BR' });
