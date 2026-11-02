@@ -309,6 +309,52 @@ export class DiscontinuityClock {
   }
 }
 
+const PDT_TAG = '#EXT-X-PROGRAM-DATE-TIME:';
+/**
+ * How far a segment's date may be from the one its successor and its duration give before it
+ * is replaced: MediaMTX's own dates wander by a few ms (when the first frame of a segment was
+ * read), while a burst puts them a whole segment off.
+ */
+const PDT_TOLERANCE_MS = 250;
+
+/**
+ * Each entry's tags, with PROGRAM-DATE-TIMEs that agree with the durations inside one upstream
+ * run. MediaMTX dates a segment by the wall clock at which its first frame arrived, so when OBS
+ * sends its first seconds at once (the burst at connect, a reconnect flushing a backlog), 2 s
+ * segments get dates 1 ms apart. hls.js lines the audio playlist up with the video one by these
+ * dates (alignMediaPlaylistByPDT compares the first audio segment of the run with the middle
+ * video one), so for as long as such a segment was in the window (~40 s) it placed every audio
+ * segment a segment late: a new viewer loaded audio and video of different moments, filled the
+ * holes out of order and jumped to where the video started and the audio did not. Linux WebKit
+ * froze on that jump for good (its GStreamer media source deadlocks), the other engines waited.
+ *
+ * The newest dated segment of each run keeps its date (the dates stay on the wall clock), and
+ * walking back, a date more than PDT_TOLERANCE_MS away from (next date - own duration) becomes
+ * that. Every playlist of the run gets the same dates for the same moments, whatever segment it
+ * starts with. Nothing crosses a discontinuity, and an entry without a date gets none.
+ */
+function consistentDates(window: readonly WindowEntry[]): string[][] {
+  const out = window.map((e) => e.tags);
+  let next: { cc: number; ms: number } | null = null;
+  for (let i = window.length - 1; i >= 0; i--) {
+    const e = window[i]!;
+    const at = e.tags.findIndex((t) => t.startsWith(PDT_TAG));
+    const own = at < 0 ? Number.NaN : Date.parse(e.tags[at]!.slice(PDT_TAG.length));
+    if (!Number.isFinite(own)) {
+      next = null;
+      continue;
+    }
+    let ms = own;
+    if (next && next.cc === e.cc) {
+      const expected = next.ms - Math.round(e.duration * 1000);
+      if (Math.abs(own - expected) > PDT_TOLERANCE_MS) ms = expected;
+    }
+    if (ms !== own) out[i] = e.tags.map((t, k) => (k === at ? `${PDT_TAG}${new Date(ms).toISOString()}` : t));
+    next = { cc: e.cc, ms };
+  }
+  return out;
+}
+
 /** Header tags the stitcher writes itself (or drops: a live playlist never ends). */
 const OWN_HEADER = /^#(EXTM3U|EXT-X-VERSION|EXT-X-TARGETDURATION|EXT-X-MEDIA-SEQUENCE|EXT-X-DISCONTINUITY-SEQUENCE|EXT-X-MAP|EXT-X-ENDLIST|EXT-X-PLAYLIST-TYPE)\b/;
 const DISCONTINUITY_TAG = /^#EXT-X-DISCONTINUITY$/;
@@ -459,16 +505,17 @@ export class PlaylistStitcher {
     const startCc = this.window[0]?.cc ?? this.droppedCc ?? 0;
     if (startCc > 0) lines.push(`#EXT-X-DISCONTINUITY-SEQUENCE:${startCc}`);
     lines.push(...this.header);
+    const tagsOf = consistentDates(this.window);
     let map: string | undefined;
     let cc = startCc;
-    for (const e of this.window) {
+    this.window.forEach((e, i) => {
       for (; cc < e.cc; cc++) lines.push('#EXT-X-DISCONTINUITY');
       if (e.map && e.map !== map) {
         lines.push(`#EXT-X-MAP:URI="${e.map}"`);
         map = e.map;
       }
-      lines.push(...e.tags, e.name);
-    }
+      lines.push(...tagsOf[i]!, e.name);
+    });
     return lines.join('\n') + '\n';
   }
 }
