@@ -321,7 +321,8 @@ async function guideShot(page, target, section, lang, name, { pad = 24, callouts
       const badge = document.createElement('div');
       ring.dataset.guide = badge.dataset.guide = '1';
       Object.assign(ring.style, { position: 'absolute', left: `${b.x + scrollX - 3}px`, top: `${b.y + scrollY - 3}px`, width: `${b.width + 6}px`, height: `${b.height + 6}px`, border: '2.5px solid #e9a92c', borderRadius: '8px', zIndex: '2147483646', pointerEvents: 'none', boxSizing: 'border-box' });
-      Object.assign(badge.style, { position: 'absolute', left: `${b.x + scrollX - 20}px`, top: `${b.y + scrollY - 20}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
+      // Kept inside the page: a target at its top or left edge (the chat column) has no room outside it.
+      Object.assign(badge.style, { position: 'absolute', left: `${Math.max(2, b.x + scrollX - 20)}px`, top: `${Math.max(2, b.y + scrollY - 20)}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
       badge.textContent = String(b.n);
       document.body.append(ring, badge);
     }
