@@ -406,13 +406,17 @@ export class IosPhone implements Phone {
     // What the tap delivers to the element, kept in sessionStorage (a tap on Watch may navigate):
     // each event's type, its time stamp (the platform event's) and when the page handled it, as
     // epoch milliseconds, so that a tap that ends in no click says how long the finger was down.
+    // An event on another element is kept as `type>element`, so a tap that missed says what it hit.
+    // Passive listeners: a touchend listener that may call preventDefault makes the browser wait
+    // for the page before it decides the tap (phone.ts recordInput).
     await this.session.execute(
       `const el = arguments[0];
        window.__tapStop?.();
        sessionStorage.setItem('__tap', '');
-       const note = (e) => { if (e.isTrusted && (e.target === el || el.contains(e.target))) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + Math.round(performance.timeOrigin + performance.now()) + ' '); };
+       const name = (t) => t instanceof Element ? (t.id || t.getAttribute('data-testid') || t.tagName.toLowerCase()).replace(/[\\s@>:]/g, '_') : '?';
+       const note = (e) => { if (e.isTrusted) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + (e.target === el || el.contains(e.target) ? '' : '>' + name(e.target)) + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + Math.round(performance.timeOrigin + performance.now()) + ' '); };
        const types = ['touchstart', 'touchend', 'click'];
-       for (const type of types) window.addEventListener(type, note, true);
+       for (const type of types) window.addEventListener(type, note, { capture: true, passive: true });
        window.__tapStop = () => { for (const type of types) window.removeEventListener(type, note, true); };`,
       [element],
     );
@@ -428,7 +432,8 @@ export class IosPhone implements Phone {
         .poll(async () => (seen = describeTap(parseTapEvents((await this.evaluate(() => sessionStorage.getItem('__tap'))) ?? ''), started, performed)), {
           message: `the tap on ${selector} ended in a click`,
         })
-        .toContain('click');
+        // A click on the element itself (one elsewhere is listed as "click>element").
+        .toMatch(/^events: (\S+, )*click[,;]/);
     } catch (e) {
       (e as Error).message += `\n(${await this.device.tapLogs(new Date(started))})`;
       throw e;
