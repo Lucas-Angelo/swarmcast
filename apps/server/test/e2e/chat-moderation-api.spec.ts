@@ -7,7 +7,10 @@
 // (text only also refuses emoji), blocked words matched through look-alikes (fullwidth letters
 // and capitals: the comparison key folds them), and the streamer's highlight and pin (the pinned
 // bar above the list, for viewers who join later too; mute and the content modes leave it alone,
-// delete and clear take it down). The `chat` fixture puts the settings back.
+// delete and clear take it down), and replies and mentions under moderation (the content mode
+// refuses a mention in emotes only and takes it in text only, a reply's own text meets the blocked
+// words, a muted viewer cannot reply, a cleared chat leaves nothing to reply to). The `chat` fixture
+// puts the settings back.
 //
 // What a viewer must never see is proven with a marker the streamer posts after it (fixtures.ts
 // neverSees): the chat delivers in order, so once the marker shows, the refused text would too.
@@ -199,6 +202,77 @@ test('content presets: emotes only refuses text, text only refuses emoji', { tag
 
   // Assert
   await sees(b.page, plain);
+});
+
+test('replies and mentions under moderation: the content mode, blocked words in the reply, mute, and a cleared chat', { tag: '@ui' }, async ({ viewers, chat, bots }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const ana = await bots.join(uid('mRepAna'));
+  const asked = `pergunta ${uid('q')}`;
+  const { s: parent } = await ana.answer(ana.send(asked));
+  const a = await viewers.join(uid('mRepA'));
+  await chatReady(a.page);
+  await sees(a.page, asked);
+  const input = a.page.getByTestId('chat-input');
+  const status = a.page.getByTestId('chat-status');
+  const reply = async (text: string): Promise<void> => {
+    // By its seq: a reply quotes the same text.
+    const row = a.page.getByTestId('chat-list').locator(`li.msg[data-seq="${parent}"]`);
+    await row.hover();
+    await row.getByTestId('chat-reply').click();
+    await input.fill(text);
+    await input.press('Enter');
+  };
+
+  // Act: emotes only refuses a mention (it is text) and gives it back with the reply.
+  await chat.change({ content: { text: false, emotes: true, gifs: false } });
+  await expect(input).toHaveAttribute('placeholder', translate('en', 'chat.viewer.placeholder.emotes'), { timeout: 5_000 });
+  // (A space after the name: it is complete, so the @ list is closed and Enter sends.)
+  await reply(`@${ana.nickname} `);
+
+  // Assert
+  await expect(status).toHaveText(translate('en', 'chat.err.mode', { allowedKey: 'chat.content.e' }), { timeout: 5_000 });
+  await expect(input).toHaveValue(`@${ana.nickname}`);
+  await expect(a.page.getByTestId('chat-replying')).toContainText(ana.nickname);
+
+  // Act: text only takes it; Ana is told she is mentioned (by her author key).
+  await chat.change({ content: { text: true, emotes: false, gifs: false } });
+  await expect(input).toHaveAttribute('placeholder', translate('en', 'chat.viewer.placeholder'), { timeout: 5_000 });
+  const answer = `respondi ${uid('r')}`;
+  await input.fill(`@${ana.nickname} ${answer}`);
+  await input.press('Enter');
+
+  // Assert
+  await sees(a.page, answer);
+  await expect(chatMessage(a.page, answer).getByTestId('chat-reply-quote')).toContainText(asked);
+  await expect.poll(() => ana.items().find((i): i is ChatMessageItem => i.k === 'm' && i.x === `@${ana.nickname} ${answer}`)).toMatchObject({ re: { s: parent, q: asked }, mn: [ana.authorKey] });
+
+  // Act: a blocked word in the reply's own text is refused like any message.
+  await chat.change((st) => ({ ...st, blockedWords: [...st.blockedWords, 'abacaxi'] }));
+  await reply(`abacaxi ${uid('b')}`);
+
+  // Assert
+  await expect(status).toHaveText('This message has a word the streamer blocked.', { timeout: 5_000 });
+
+  // Act: muted, the box says so and nothing goes out.
+  const session = (await chat.state()).sessions.find((x) => x.nickname === a.nickname)!.sessionId;
+  await admin('/api/chat/mute', { sessionId: session, minutes: 1 });
+
+  // Assert
+  await expect(input).toBeDisabled({ timeout: 5_000 });
+
+  // Act: unmuted, the chat cleared: the reply that was being written goes away with its message.
+  await admin('/api/chat/unmute', { sessionId: session });
+  await expect(input).toBeEnabled({ timeout: 5_000 });
+  await expect(a.page.getByTestId('chat-replying')).toBeVisible();
+  await chat.clear();
+
+  // Assert
+  await expect(a.page.getByTestId('chat-replying')).toBeHidden({ timeout: 5_000 });
+  const { s: after } = await ana.answer(ana.send(`depois ${uid('d')}`, { re: parent }));
+  const plain = () => ana.items().find((i): i is ChatMessageItem => i.k === 'm' && i.s === after);
+  await expect.poll(plain).toBeDefined();
+  expect(plain()).not.toHaveProperty('re');
 });
 
 test('blocked words match look-alikes and never reach other viewers', { tag: '@ui' }, async ({ viewers, chat }) => {
