@@ -495,3 +495,194 @@ describe('ChatInput', () => {
     expect(input.textarea.getAttribute('enterkeyhint')).toBe('send');
   });
 });
+
+describe('ChatInput: replies and the @ list (docs/CHAT.md "Replies and mentions")', () => {
+  const ana = { a: 'k1', n: 'Ana', c: '#e5484d', r: 'viewer' as const, tag: 'abcd' };
+  const anaMaria = { a: 'k2', n: 'Ana Maria', c: '#46a758', r: 'viewer' as const, tag: 'efgh' };
+  const joao = { a: 'k3', n: 'João', c: '#0090ff', r: 'viewer' as const };
+  const streamer = { a: 'k0', n: '', c: '', r: 'streamer' as const };
+
+  /** A box whose @ list offers `people`; `sent` has each text with the seq of the message it replies to. */
+  function withPeople(people = [anaMaria, ana, joao, streamer]) {
+    document.body.replaceChildren();
+    const sent: Array<{ text: string; re?: number }> = [];
+    let n = 0;
+    const input = new ChatInput({
+      settings: () => settings(),
+      you: () => you,
+      connected: () => true,
+      send: (text, reply) => {
+        sent.push({ text, ...(reply ? { re: reply.s } : {}) });
+        return ++n;
+      },
+      mentionable: () => people,
+      now: () => NOW,
+    });
+    document.body.append(input.form);
+    const type = (v: string): void => {
+      input.textarea.value = v;
+      input.textarea.setSelectionRange(v.length, v.length);
+      input.textarea.dispatchEvent(new Event('input'));
+    };
+    const key = (k: string): boolean => input.textarea.dispatchEvent(new KeyboardEvent('keydown', { key: k, cancelable: true }));
+    const options = (): string[] => [...input.suggestions.querySelectorAll('li')].map((li) => li.textContent ?? '');
+    return { input, sent, type, key, options };
+  }
+
+  it('"Replying to Ana" with the quote and ✕ sits above the box; the reply goes with the next message, then the bar goes away', () => {
+    // Arrange
+    const { input, sent, type } = withPeople();
+
+    // Act
+    input.setReply({ s: 4, author: ana, quote: 'qual a música?', cut: true });
+    const bar = { hidden: input.replyBar.hidden, text: input.replyBar.textContent, focused: document.activeElement === input.textarea };
+    const nick = input.replyBar.querySelector('bdi.q-nick')!.textContent;
+    type('é a do começo');
+    input.submit();
+
+    // Assert
+    expect(bar).toEqual({ hidden: false, text: 'Replying to Anaqual a música?…✕', focused: true });
+    expect(nick).toBe('Ana');
+    expect(sent).toEqual([{ text: 'é a do começo', re: 4 }]);
+    expect(input.replyBar.hidden).toBe(true);
+    expect(input.replyingTo).toBeNull();
+  });
+
+  it('✕ and Escape cancel the reply; Escape with nothing to cancel does nothing', () => {
+    // Arrange
+    const { input, key, type, sent } = withPeople();
+    input.setReply({ s: 4, author: ana, quote: 'oi' });
+
+    // Act
+    input.replyBar.querySelector<HTMLButtonElement>('[data-testid="chat-reply-cancel"]')!.click();
+    const afterX = input.replyingTo;
+    input.setReply({ s: 5, author: ana, gif: true });
+    const gifText = input.replyBar.querySelector('.q-text')!.textContent;
+    const handled = !key('Escape');
+    const unhandled = !key('Escape');
+    type('sem resposta');
+    input.submit();
+
+    // Assert
+    expect(afterX).toBeNull();
+    expect(gifText).toBe('GIF');
+    expect(handled).toBe(true);
+    expect(unhandled).toBe(false);
+    expect(sent).toEqual([{ text: 'sem resposta' }]);
+  });
+
+  it('a refused reply comes back with its text and its reply; a reply whose message is deleted is cancelled', () => {
+    // Arrange
+    const { input, type } = withPeople();
+    input.setReply({ s: 4, author: ana, quote: 'oi' });
+    type('palavra feia');
+    input.submit();
+
+    // Act
+    input.rejected(1, 'chat.err.blocked', undefined, undefined);
+    const back = { text: input.textarea.value, re: input.replyingTo?.s };
+    input.dropReply((s) => s === 3);
+    const kept = input.replyingTo?.s;
+    input.dropReply((s) => s === 4);
+
+    // Assert
+    expect(back).toEqual({ text: 'palavra feia', re: 4 });
+    expect(kept).toBe(4);
+    expect(input.replyingTo).toBeNull();
+  });
+
+  it('a name or quote that fails the safety check is not shown in the bar', () => {
+    // Arrange
+    const { input } = withPeople();
+
+    // Act
+    input.setReply({ s: 4, author: { ...ana, n: 'a\u{202E}b' }, quote: 'x\u{202E}y' });
+
+    // Assert
+    expect(input.replyBar.querySelector('.q-nick')!.textContent).toBe('…');
+    expect(input.replyBar.querySelector('.q-text')!.textContent).toBe('');
+  });
+
+  it('"@" lists the people who wrote (newest first, the tag after look-alike-prone names, the streamer by the translated name); typing narrows it', () => {
+    // Arrange
+    const { input, type, options } = withPeople();
+
+    // Act
+    type('oi @');
+    const all = options();
+    type('oi @an');
+    const an = options();
+    type('oi @Tra');
+    const none = options();
+    type('oi @Str');
+    const str = options();
+
+    // Assert
+    expect(all).toEqual(['Ana Maria #efgh', 'Ana #abcd', 'João', 'Streamer']);
+    expect(an).toEqual(['Ana Maria #efgh', 'Ana #abcd']);
+    expect(none).toEqual([]);
+    expect(input.suggestions.hidden).toBe(false);
+    expect(str).toEqual(['Streamer']);
+    expect(input.textarea.getAttribute('aria-controls')).toBe(input.suggestions.id);
+  });
+
+  it('keyboard: the arrows move the choice (aria-activedescendant follows), Enter or Tab puts "@Name " in, Escape closes the list and keeps the reply', () => {
+    // Arrange
+    const { input, type, key, options } = withPeople();
+    input.setReply({ s: 4, author: joao, quote: 'oi' });
+    type('oi @an');
+
+    // Act
+    key('ArrowDown');
+    const active = input.textarea.getAttribute('aria-activedescendant');
+    const selected = [...input.suggestions.querySelectorAll('li')].map((li) => li.getAttribute('aria-selected'));
+    key('Enter');
+    const afterEnter = input.textarea.value;
+    type(`${input.textarea.value}e @J`);
+    key('Tab');
+    const afterTab = input.textarea.value;
+    type(`${input.textarea.value}@`);
+    key('Escape');
+    const closed = options();
+
+    // Assert
+    expect(active).toBe(`${input.suggestions.id}-1`);
+    expect(selected).toEqual(['false', 'true']);
+    expect(afterEnter).toBe('oi @Ana ');
+    expect(afterTab).toBe('oi @Ana e @João ');
+    expect(closed).toEqual([]);
+    expect(input.replyingTo?.s).toBe(4);
+  });
+
+  it('a tap on a name picks it (before the box could lose the focus); Enter with the list closed sends', () => {
+    // Arrange
+    const { input, type, key, sent } = withPeople();
+    type('@Jo');
+
+    // Act
+    input.suggestions.querySelector('li')!.dispatchEvent(new Event('pointerdown', { cancelable: true }));
+    const picked = input.textarea.value;
+    key('Enter');
+
+    // Assert
+    expect(picked).toBe('@João ');
+    expect(sent).toEqual([{ text: '@João' }]);
+  });
+
+  it('no list inside a word, after a completed name, or with nobody who wrote', () => {
+    // Arrange
+    const { type, options } = withPeople();
+    const empty = withPeople([]);
+
+    // Act
+    type('ana@An');
+    const inWord = options();
+    type('@Ana ');
+    const completed = options();
+    empty.type('@');
+    const nobody = empty.options();
+
+    // Assert
+    expect([inWord, completed, nobody]).toEqual([[], [], []]);
+  });
+});

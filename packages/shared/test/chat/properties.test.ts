@@ -9,7 +9,12 @@ import {
   canonicalizeChatText,
   chatTextWork,
   checkChatInvariants,
+  CHAT_REPLY_QUOTE_MAX_BYTES,
+  CHAT_REPLY_QUOTE_MAX_GRAPHEMES,
   containsLink,
+  countGraphemes,
+  cutQuote,
+  findMentionSpans,
   contrastRatio,
   defaultNameColor,
   joinTokens,
@@ -341,5 +346,50 @@ describe('colours', () => {
     expect(contrastRatio(onLight, CHAT_BG_LIGHT)).toBeGreaterThanOrEqual(4.5);
     expect(contrastRatio(onLight, CHAT_BG_LIGHT)).toBeLessThan(5);
     expect(defaultNameColor('k1f')).toBe(defaultNameColor('k1f'));
+  });
+});
+
+describe('replies and mentions', () => {
+  it('P13: the quote of any accepted text passes the client check, fits both caps and is that text up to a grapheme boundary', () => {
+    // Act
+    const run = holds(hostile, (input) => {
+      const r = canonicalizeChatText(input, { maxGraphemes: 500, maxEmoji: 100 });
+      if (!r.ok) return;
+      const { q, cut } = cutQuote(r.text);
+      expect(checkChatInvariants(q, { maxGraphemes: CHAT_REPLY_QUOTE_MAX_GRAPHEMES, maxBytes: CHAT_REPLY_QUOTE_MAX_BYTES })).toBe(true);
+      expect(countGraphemes(q)).toBeLessThanOrEqual(CHAT_REPLY_QUOTE_MAX_GRAPHEMES);
+      expect(utf8Length(q)).toBeLessThanOrEqual(CHAT_REPLY_QUOTE_MAX_BYTES);
+      expect(r.text.startsWith(q)).toBe(true);
+      // On a boundary of the platform's own segmenter as well as ours.
+      const ends = new Set([0, ...Array.from(segmenter.segment(r.text), (g) => g.index + g.segment.length)]);
+      expect(ends.has(q.length)).toBe(true);
+      expect(cut).toBe(q !== r.text);
+    });
+    // Assert
+    expect(run).not.toThrow();
+  });
+
+  it('P15: mention spans name exactly "@" + a candidate, never overlap, and start and end on grapheme boundaries', () => {
+    // Arrange: names from hostile text too, inserted after "@" in hostile text.
+    const names = fc.array(fc.oneof(fc.constantFrom('Ana', 'Ana Maria', 'João', 'Bia_2', '\u{5D3}\u{5E0}\u{5D4}'), realistic), { minLength: 1, maxLength: 5 });
+    const arb = fc.tuple(names, fc.array(fc.oneof(hostile, fc.constant('@')), { maxLength: 6 }));
+
+    // Act
+    const run = holds(arb, ([ns, parts]) => {
+      const people = ns.map((n, i) => ({ a: i.toString(36), n }));
+      const text = parts.map((p, i) => `${p}@${ns[i % ns.length]}`).join(' ').toWellFormed();
+      const found = findMentionSpans(text, people);
+      const ends = new Set([0, ...Array.from(segmenter.segment(text), (g) => g.index + g.segment.length)]);
+      let last = -1;
+      for (const sp of found) {
+        expect(sp.start).toBeGreaterThan(last);
+        expect(text.slice(sp.start, sp.end)).toBe(`@${people.find((p) => p.a === sp.a)!.n}`);
+        expect(ends.has(sp.start)).toBe(true);
+        expect(ends.has(sp.end)).toBe(true);
+        last = sp.end - 1;
+      }
+    });
+    // Assert
+    expect(run).not.toThrow();
   });
 });

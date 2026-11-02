@@ -1,19 +1,51 @@
 // The message box: one line, a grapheme counter with the same limits as the server, Enter to
 // send, and disabled states that say why (chat off, muted, slow mode, only emotes…). Typed text
-// is never lost: on a reject the text comes back into an empty box.
+// is never lost: on a reject the text comes back into an empty box, with the reply it was.
+//
+// Replies and mentions (docs/CHAT.md, "Replies and mentions"): "Replying to Ana" sits above the box
+// with the quote the server will show and ✕ (Escape cancels too); typing "@" lists the people who
+// already wrote in the chat (never everyone watching), and the people a message mentions are worked
+// out from its text when it is sent (mentionKeys), so a picked name deleted again is not sent.
 import { getLang, t, tc } from '@swarmcast/shared/i18n';
-import { CHAT_MAX_EMOJI_DEFAULT, CHAT_MAX_GRAPHEMES_DEFAULT, CHAT_TEXT_MAX_UNITS, measureChatText, type ChatPublicSettings, type ChatYou } from './core/index.js';
+import {
+  applyMention,
+  checkChatInvariants,
+  CHAT_MAX_EMOJI_DEFAULT,
+  CHAT_MAX_GRAPHEMES_DEFAULT,
+  CHAT_NICKNAME_MAX,
+  CHAT_REPLY_QUOTE_MAX_BYTES,
+  CHAT_REPLY_QUOTE_MAX_GRAPHEMES,
+  CHAT_TEXT_MAX_UNITS,
+  measureChatText,
+  mentionQuery,
+  suggestMentions,
+  type ChatAuthor,
+  type ChatPublicSettings,
+  type ChatYou,
+} from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 import { counterText } from './render.js';
+import type { ReplyEntry } from './session.js';
 
 export interface InputDeps {
   settings(): ChatPublicSettings | null;
   you(): ChatYou | null;
   connected(): boolean;
-  /** Send `text`; returns its nonce, or null when it could not go out. */
-  send(text: string): number | null;
+  /** Send `text` (a reply to `reply`, when set); returns its nonce, or null when it could not go out. */
+  send(text: string, reply: ReplyEntry | null): number | null;
+  /** People the @ list may offer, most recent writer first (only people who already wrote; never this viewer). */
+  mentionable?(): readonly ChatAuthor[];
   now?: () => number;
 }
+
+/** A person in the @ list: the name to insert (the translated "Streamer" for a streamer without one). */
+interface Suggestion {
+  a: string;
+  n: string;
+  tag?: string;
+}
+
+let inputIds = 0;
 
 export type InputBlock = { key: MessageKey; params?: MessageParams; typing: boolean } | null;
 
@@ -71,9 +103,16 @@ export class ChatInput {
   private retryUntil = 0;
   private errorText: string | null = null;
   private tick: ReturnType<typeof setInterval> | null = null;
-  /** Sends still waiting for their answer: the text to give back on a reject ('' for a GIF), and when they went. */
-  private readonly sent = new Map<number, { text: string; at: number }>();
+  /** Sends still waiting for their answer: the text and reply to give back on a reject ('' for a GIF), and when they went. */
+  private readonly sent = new Map<number, { text: string; at: number; reply: ReplyEntry | null }>();
   private readonly now: () => number;
+  /** "Replying to …" above the box, and the @ list. */
+  readonly replyBar: HTMLDivElement;
+  readonly suggestions: HTMLUListElement;
+  private reply: ReplyEntry | null = null;
+  private offered: Suggestion[] = [];
+  private active = 0;
+  private query: { start: number; prefix: string } | null = null;
 
   constructor(private readonly deps: InputDeps) {
     this.now = deps.now ?? Date.now;
@@ -103,10 +142,47 @@ export class ChatInput {
     const row = document.createElement('div');
     row.className = 'row';
     row.append(this.textarea, this.tools, this.sendButton);
-    this.form.append(row, this.counter, this.status);
+    this.replyBar = document.createElement('div');
+    this.replyBar.className = 'chat-replying';
+    this.replyBar.hidden = true;
+    this.replyBar.dataset.testid = 'chat-replying';
+    const id = ++inputIds;
+    this.suggestions = document.createElement('ul');
+    this.suggestions.className = 'chat-mentions';
+    this.suggestions.id = `chat-mentions-${id}`;
+    this.suggestions.hidden = true;
+    this.suggestions.setAttribute('role', 'listbox');
+    this.suggestions.setAttribute('aria-label', t('chat.viewer.mention.list'));
+    this.suggestions.dataset.testid = 'chat-mentions';
+    this.textarea.setAttribute('aria-autocomplete', 'list');
+    this.textarea.setAttribute('aria-controls', this.suggestions.id);
+    this.form.append(this.suggestions, this.replyBar, row, this.counter, this.status);
 
     this.textarea.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      if (e.isComposing) return;
+      if (this.offered.length > 0) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+          e.preventDefault();
+          this.setActive(this.active + (e.key === 'ArrowDown' ? 1 : -1));
+          return;
+        }
+        if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+          e.preventDefault();
+          this.pick(this.active);
+          return;
+        }
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          this.closeSuggestions();
+          return;
+        }
+      }
+      if (e.key === 'Escape' && this.reply) {
+        e.preventDefault();
+        this.setReply(null);
+        return;
+      }
+      if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.submit();
       }
@@ -116,7 +192,14 @@ export class ChatInput {
       if (v !== this.textarea.value) this.textarea.value = v;
       this.errorText = null;
       this.update();
+      this.suggest();
     });
+    // The caret moved without typing (a click, the arrow keys): the @ list follows it.
+    this.textarea.addEventListener('click', () => this.suggest());
+    this.textarea.addEventListener('keyup', (e) => {
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') this.suggest();
+    });
+    this.textarea.addEventListener('blur', () => this.closeSuggestions());
     this.form.addEventListener('submit', (e) => {
       e.preventDefault();
       this.submit();
@@ -139,16 +222,140 @@ export class ChatInput {
   submit(): void {
     const text = this.textarea.value.trim();
     if (!text || this.sendButton.disabled) return;
-    const n = this.deps.send(text);
+    const reply = this.reply;
+    const n = this.deps.send(text, reply);
     if (n === null) {
       this.errorText = t('chat.viewer.err.offline');
       this.update();
       return;
     }
-    this.track(n, text);
+    this.track(n, text, reply);
     this.textarea.value = '';
     this.errorText = null;
+    this.closeSuggestions();
+    this.setReply(null, false);
     this.update();
+  }
+
+  /** The message being answered (null: none). Shown above the box until sent or cancelled. */
+  get replyingTo(): ReplyEntry | null {
+    return this.reply;
+  }
+
+  /**
+   * Answer a message: "Replying to Ana" with the quote the server will show (cut the same way) and
+   * ✕ above the box, and the focus in the box. null cancels (focus back in the box when `focus`).
+   */
+  setReply(r: ReplyEntry | null, focus = true): void {
+    this.reply = r;
+    const bar = this.replyBar;
+    bar.replaceChildren();
+    bar.hidden = r === null;
+    if (r) {
+      const label = document.createElement('span');
+      label.className = 'replying-label';
+      const icon = document.createElement('span');
+      icon.className = 'sc-ico-reply';
+      icon.setAttribute('aria-hidden', 'true');
+      const name = r.author.n || (r.author.r === 'streamer' ? t('chat.streamer') : '…');
+      const nameOk = checkChatInvariants(name, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
+      // "Replying to {nickname}": the name goes in a <bdi> of its own, between the two halves.
+      const [before, after = ''] = t('chat.viewer.replyingTo', { nickname: '\u0000' }).split('\u0000');
+      const nick = document.createElement('bdi');
+      nick.className = 'q-nick';
+      nick.textContent = nameOk ? name : '…';
+      label.append(icon, document.createTextNode(before ?? ''), nick, document.createTextNode(after));
+      const quote = document.createElement('bdi');
+      quote.className = 'q-text';
+      quote.setAttribute('dir', 'auto');
+      if (r.gif) quote.textContent = t('chat.viewer.gif');
+      else if (r.quote !== undefined && checkChatInvariants(r.quote, { maxGraphemes: CHAT_REPLY_QUOTE_MAX_GRAPHEMES, maxBytes: CHAT_REPLY_QUOTE_MAX_BYTES })) quote.textContent = `${r.quote}${r.cut ? '…' : ''}`;
+      const cancel = document.createElement('button');
+      cancel.type = 'button';
+      cancel.className = 'chat-tool replying-cancel';
+      cancel.textContent = '✕';
+      cancel.setAttribute('aria-label', t('chat.viewer.reply.cancel'));
+      cancel.title = t('chat.viewer.reply.cancel');
+      cancel.dataset.testid = 'chat-reply-cancel';
+      cancel.addEventListener('click', () => this.setReply(null));
+      bar.append(label, quote, cancel);
+    }
+    if (focus && !this.textarea.disabled) this.textarea.focus();
+  }
+
+  /** The message being answered left the chat (deleted, cleared): the reply is cancelled. */
+  dropReply(gone: (s: number) => boolean): void {
+    if (this.reply && gone(this.reply.s)) this.setReply(null, false);
+  }
+
+  /** Show the @ list for the name being typed at the caret, or hide it. */
+  private suggest(): void {
+    const ta = this.textarea;
+    const q = ta.selectionStart === ta.selectionEnd ? mentionQuery(ta.value, ta.selectionStart ?? ta.value.length) : null;
+    const people = q ? (this.deps.mentionable?.() ?? []) : [];
+    const offered = q ? suggestMentions(q.prefix, people.map((p): Suggestion => ({ a: p.a, n: p.n || (p.r === 'streamer' ? t('chat.streamer') : ''), ...(p.tag && p.r !== 'streamer' ? { tag: p.tag } : {}) }))) : [];
+    this.query = q;
+    this.offered = offered.filter((o) => checkChatInvariants(o.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX }));
+    const list = this.suggestions;
+    list.replaceChildren();
+    list.hidden = this.offered.length === 0;
+    if (list.hidden) {
+      ta.removeAttribute('aria-activedescendant');
+      return;
+    }
+    this.offered.forEach((o, i) => {
+      const li = document.createElement('li');
+      li.id = `${list.id}-${i}`;
+      li.setAttribute('role', 'option');
+      li.dataset.testid = 'chat-mention-option';
+      const name = document.createElement('bdi');
+      name.textContent = o.n;
+      li.append(name);
+      if (o.tag) {
+        const tag = document.createElement('span');
+        tag.className = 'tag';
+        tag.textContent = ` #${o.tag}`;
+        li.append(tag);
+      }
+      // pointerdown, not click: the box keeps the focus (and the caret, and a phone's keyboard)
+      // while a name is picked, and the pick happens before any blur could close the list.
+      li.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        this.pick(i);
+      });
+      list.append(li);
+    });
+    this.setActive(Math.min(this.active, this.offered.length - 1));
+  }
+
+  private setActive(i: number): void {
+    const n = this.offered.length;
+    if (n === 0) return;
+    this.active = ((i % n) + n) % n;
+    this.suggestions.querySelectorAll('li').forEach((li, k) => li.setAttribute('aria-selected', String(k === this.active)));
+    this.textarea.setAttribute('aria-activedescendant', `${this.suggestions.id}-${this.active}`);
+  }
+
+  /** Put "@Name " in place of the name being typed. */
+  private pick(i: number): void {
+    const o = this.offered[i];
+    const q = this.query;
+    if (!o || !q) return;
+    const ta = this.textarea;
+    const next = applyMention(ta.value, q.start, ta.selectionStart ?? ta.value.length, o.n);
+    ta.value = next.text;
+    ta.setSelectionRange(next.caret, next.caret);
+    this.closeSuggestions();
+    this.update();
+  }
+
+  private closeSuggestions(): void {
+    this.offered = [];
+    this.active = 0;
+    this.query = null;
+    this.suggestions.hidden = true;
+    this.suggestions.replaceChildren();
+    this.textarea.removeAttribute('aria-activedescendant');
   }
 
   /** The oldest send still waiting for its ack (a reject without `n` belongs to it). */
@@ -158,12 +365,12 @@ export class ChatInput {
 
   /** A send that did not come from the box (a GIF): tracked for acks and rejects, and in slow mode it holds Send like one. */
   noteSent(n: number): void {
-    this.track(n, '');
+    this.track(n, '', null);
     this.update();
   }
 
-  private track(n: number, text: string): void {
-    this.sent.set(n, { text, at: this.now() });
+  private track(n: number, text: string, reply: ReplyEntry | null): void {
+    this.sent.set(n, { text, at: this.now(), reply });
     if (this.sent.size > 20) this.sent.delete(this.sent.keys().next().value as number);
   }
 
@@ -178,9 +385,12 @@ export class ChatInput {
 
   rejected(n: number | undefined, code: MessageKey, params: MessageParams | undefined, retryMs: number | undefined): void {
     this.errorText = tc({ code, params: params ?? null }, t('chat.viewer.err.generic'));
-    const text = n === undefined ? undefined : this.sent.get(n)?.text;
+    const sent = n === undefined ? undefined : this.sent.get(n);
     if (n !== undefined) this.sent.delete(n);
-    if (text !== undefined && this.textarea.value.trim() === '') this.textarea.value = text;
+    if (sent && sent.text !== '' && this.textarea.value.trim() === '') {
+      this.textarea.value = sent.text;
+      if (sent.reply && !this.reply) this.setReply(sent.reply, false);
+    }
     // retryMs counts from now, a moment after the server measured it, so a retry never comes early.
     // A refused message starts no slow-mode wait, and leaves the one of a message the server took.
     this.retryUntil = typeof retryMs === 'number' && retryMs > 0 ? this.now() + Math.min(retryMs, 3_600_000) : 0;

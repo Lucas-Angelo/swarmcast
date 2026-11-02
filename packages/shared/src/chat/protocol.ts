@@ -32,6 +32,25 @@ export interface ChatAuthor {
   tag?: string;
 }
 
+/**
+ * What a reply answers (docs/CHAT.md, "Replies and mentions"): the message's seq and author, and a
+ * quote the server cut from its text (never text from the client). `q` absent: a GIF (`gif`), a
+ * message deleted since (`gone`, the quote is wiped), or a quote hidden because it holds a blocked
+ * word. Pages older than 0.5.0 ignore it and show the reply as a plain message.
+ */
+export interface ChatReplyRef {
+  s: number;
+  a: string;
+  /** The first CHAT_REPLY_QUOTE_MAX_GRAPHEMES graphemes of its canonical text, cut on a grapheme boundary. */
+  q?: string;
+  /** The quote is shorter than the message (the client adds an ellipsis). */
+  cut?: 1;
+  /** It was a GIF. */
+  gif?: 1;
+  /** It was deleted: "Original message deleted". */
+  gone?: 1;
+}
+
 /** A chat message: `x` (text) or `g` (GIF), never both. */
 export interface ChatMessageItem {
   k: 'm';
@@ -45,6 +64,10 @@ export interface ChatMessageItem {
   g?: GifRef;
   /** Highlighted by the streamer (absent: not highlighted). Snapshots and resume answers carry the current value. */
   h?: 1;
+  /** A reply: the message it answers (its author's roster entry is always sent before it). */
+  re?: ChatReplyRef;
+  /** Author keys this message mentions, checked by the server (at most CHAT_MENTIONS_MAX; roster entries sent before it). */
+  mn?: string[];
 }
 
 /** Roster upsert: first appearance of an author, or a colour change. */
@@ -217,8 +240,8 @@ export type ChatServerMessage =
  * never both (the rule chatSendSchema refines). The server parses them with chatClientSchemas.
  */
 export type ChatClientMessage =
-  | { t: 'chat.send'; n: number; text: string }
-  | { t: 'chat.send'; n: number; gif: GifRef }
+  | { t: 'chat.send'; n: number; text: string; re?: number; mn?: string[] }
+  | { t: 'chat.send'; n: number; gif: GifRef; re?: number }
   | { t: 'chat.color'; color: string }
   | { t: 'chat.resume'; after: number };
 

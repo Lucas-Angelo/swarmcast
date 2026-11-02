@@ -16,10 +16,31 @@
 // The list also draws what the streamer marks (docs/CHAT.md, "Highlight and pin"): highlighted rows,
 // and the pinned bar (`pinned`, placed above the list by chat.ts so it never covers the input). The
 // pinned message is built by the same code as a row, so it follows the same rules.
-import { formatNumber, getLang, t, translateWire } from '@swarmcast/shared/i18n';
-import { checkChatInvariants, CHAT_NICKNAME_MAX, defaultNameColor, gifMediaUrl, isHexColor, tokenizeChat, type ChatAuthor, type GifProvider, type GifRef } from './core/index.js';
+//
+// Replies and mentions (docs/CHAT.md, "Replies and mentions"): a reply starts with a one-line quote
+// of the message it answers (the server's copy, in its own <bdi>, checked like any text; a click
+// scrolls to that message while it is still in the list), every message has a Reply button (shown on
+// hover, on a tap of the row, and reached from the list with the arrow keys, so 150 buttons never sit
+// in the Tab order), and "@Name" of a person the server confirmed is a span built from text nodes.
+// A message that mentions this viewer is marked for them only, with no sound.
+import { formatNumber, getLang, t, translate, translateWire } from '@swarmcast/shared/i18n';
+import {
+  checkChatInvariants,
+  CHAT_NICKNAME_MAX,
+  CHAT_REPLY_QUOTE_MAX_BYTES,
+  CHAT_REPLY_QUOTE_MAX_GRAPHEMES,
+  defaultNameColor,
+  findMentionSpans,
+  gifMediaUrl,
+  isHexColor,
+  tokenizeChat,
+  type ChatAuthor,
+  type GifProvider,
+  type GifRef,
+  type MentionCandidate,
+} from './core/index.js';
 import type { Emote } from './emotes.js';
-import type { ChatEntry, PinnedEntry } from './session.js';
+import { goneReply, type ChatEntry, type PinnedEntry, type ReplyEntry } from './session.js';
 
 export const RENDER_PER_FRAME = 50;
 export const DOM_MAX = 150;
@@ -28,6 +49,8 @@ export const ANNOUNCE_EVERY_MS = 3000;
 export const FRAME_FALLBACK_MS = 500;
 /** A sent message still waiting for its own copy from the server after the ack: shown as sent. */
 const ACKED_WAIT_MS = 10_000;
+/** How long the message a quote points to stays marked after the jump. */
+export const JUMP_FLASH_MS = 1600;
 
 export interface ListOptions {
   /** Emotes usable now (code → files). */
@@ -49,6 +72,10 @@ export interface ListOptions {
   gifs?: () => { consented: boolean; animate: boolean };
   /** The viewer tapped "show GIFs" on a placeholder. */
   onGifConsent?: () => void;
+  /** The viewer chose Reply on a message (absent: rows have no Reply button). */
+  onReply?: (e: MessageEntry) => void;
+  /** This viewer's author key (their own name in a mention is marked). */
+  me?: () => string | null;
 }
 
 /** How a provider is named on screen. */
@@ -72,7 +99,7 @@ interface Pending {
   timer?: ReturnType<typeof setTimeout>;
 }
 
-type MessageEntry = Extract<ChatEntry, { kind: 'msg' }>;
+export type MessageEntry = Extract<ChatEntry, { kind: 'msg' }>;
 
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
@@ -101,6 +128,10 @@ export class ChatList {
   private readonly bySeq = new Map<number, HTMLLIElement>();
   private readonly pending = new Map<number, Pending>();
   private readonly gifRefs = new WeakMap<HTMLElement, GifRef>();
+  /** The reply each quote shows (wiped to "deleted" when its message goes). */
+  private readonly quotes = new WeakMap<HTMLElement, ReplyEntry>();
+  /** The row whose actions a tap opened (touch screens have no hover). */
+  private actionsRow: HTMLElement | null = null;
   private liveGifs: HTMLElement[] = [];
   private readonly raf: (cb: () => void) => unknown;
   private readonly later: (cb: () => void, ms: number) => () => void;
@@ -135,6 +166,13 @@ export class ChatList {
     this.list.setAttribute('aria-label', t('chat.viewer.title'));
     this.list.tabIndex = 0;
     this.list.dataset.testid = 'chat-list';
+    this.list.classList.add('mention-highlight');
+    const hint = el('span', 'sr-only');
+    hint.id = `chat-list-hint-${++listIds}`;
+    hint.textContent = t('chat.viewer.list.hint');
+    this.list.setAttribute('aria-describedby', hint.id);
+    this.list.addEventListener('keydown', (e) => this.onListKey(e));
+    this.list.addEventListener('click', (e) => this.onListClick(e));
     this.pill = el('button', 'chat-pill');
     this.pill.type = 'button';
     this.pill.hidden = true;
@@ -147,7 +185,7 @@ export class ChatList {
       this.stuck = this.atEnd();
       if (this.stuck) this.setUnread(0);
     });
-    root.append(this.list, this.pill, this.live);
+    root.append(this.list, this.pill, this.live, hint);
     this.showEmpty();
     this.pinned = el('section', 'chat-pinned');
     this.pinned.hidden = true;
@@ -287,6 +325,75 @@ export class ChatList {
       this.bySeq.get(s)?.remove();
       this.bySeq.delete(s);
     }
+    // Replies to a deleted message no longer show its text ("Original message deleted").
+    for (const e of this.queue) if (e.kind === 'msg' && e.reply && set.has(e.reply.s)) e.reply = goneReply(e.reply);
+    for (const box of this.list.querySelectorAll<HTMLElement>('.reply-quote')) {
+      const r = this.quotes.get(box);
+      if (r && set.has(r.s) && !r.gone) this.fillQuote(box, goneReply(r));
+    }
+  }
+
+  /** Mark the messages that mention this viewer (the setting "Highlight messages that mention me"). */
+  setMentionHighlight(on: boolean): void {
+    this.list.classList.toggle('mention-highlight', on);
+  }
+
+  /**
+   * Scroll to message `s` and mark it for a moment (a click on a quote); false when it is no longer in
+   * the list. Its Reply button takes the focus, so a keyboard or screen reader user lands on it too.
+   */
+  jumpTo(s: number): boolean {
+    const li = this.bySeq.get(s);
+    if (!li?.isConnected) return false;
+    li.scrollIntoView({ block: 'center' });
+    li.classList.remove('flash');
+    void li.offsetWidth;
+    li.classList.add('flash');
+    this.later(() => li.classList.remove('flash'), JUMP_FLASH_MS);
+    li.querySelector<HTMLButtonElement>('button.msg-reply')?.focus({ preventScroll: true });
+    return true;
+  }
+
+  /**
+   * Arrow keys on the list (or on a Reply button in it) go from message to message, focusing each
+   * one's Reply button; Home and End jump to the first and the last; Escape goes back to the list.
+   */
+  private onListKey(e: KeyboardEvent): void {
+    const keys = ['ArrowUp', 'ArrowDown', 'Home', 'End', 'Escape'];
+    if (!keys.includes(e.key) || e.altKey || e.ctrlKey || e.metaKey) return;
+    const buttons = [...this.list.querySelectorAll<HTMLButtonElement>('button.msg-reply')];
+    const active = document.activeElement;
+    const cur = buttons.indexOf(active as HTMLButtonElement);
+    if (e.key === 'Escape') {
+      if (cur < 0) return;
+      e.preventDefault();
+      this.list.focus();
+      return;
+    }
+    if (buttons.length === 0 || (cur < 0 && active !== this.list)) return;
+    let next: number;
+    if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = buttons.length - 1;
+    else if (cur >= 0) next = Math.max(0, Math.min(buttons.length - 1, cur + (e.key === 'ArrowUp' ? -1 : 1)));
+    else {
+      // From the list: the last (or first) message in view, so the focus starts where the eyes are.
+      const box = this.list.getBoundingClientRect();
+      const inView = buttons.map((b, i) => ({ i, r: b.closest('li')!.getBoundingClientRect() })).filter(({ r }) => r.bottom > box.top && r.top < box.bottom);
+      next = inView.length ? (e.key === 'ArrowUp' ? inView[inView.length - 1]!.i : inView[0]!.i) : e.key === 'ArrowUp' ? buttons.length - 1 : 0;
+    }
+    e.preventDefault();
+    buttons[next]!.focus();
+  }
+
+  /** A tap on a message (not on a button, an image or a GIF) shows its actions; another tap hides them. */
+  private onListClick(e: MouseEvent): void {
+    const target = e.target as Element | null;
+    if (!target || target.closest('button, a, img')) return;
+    const row = target.closest<HTMLElement>('li.can-reply');
+    const prev = this.actionsRow;
+    prev?.classList.remove('actions');
+    this.actionsRow = row && row !== prev ? row : null;
+    this.actionsRow?.classList.add('actions');
   }
 
   clearUpTo(s: number): void {
@@ -312,9 +419,9 @@ export class ChatList {
     }
   }
 
-  /** The viewer's own message, shown at once as "sending…" until the server acks it. */
-  addPending(n: number, text: string, me: ChatAuthor, gif?: GifRef): void {
-    const li = this.build({ kind: 'msg', s: 0, at: (this.opts.now ?? Date.now)(), author: me, ...(gif ? { gif } : { text }) });
+  /** The viewer's own message, shown at once as "sending…" until the server acks it (with the quote of the message it answers). */
+  addPending(n: number, text: string, me: ChatAuthor, gif?: GifRef, reply?: ReplyEntry): void {
+    const li = this.build({ kind: 'msg', s: 0, at: (this.opts.now ?? Date.now)(), author: me, ...(gif ? { gif } : { text }), ...(reply ? { reply } : {}) });
     li.classList.add('pending');
     li.removeAttribute('data-seq');
     const state = el('span', 'state');
@@ -520,9 +627,30 @@ export class ChatList {
       this.stats.rendered++;
       return li;
     }
-    if (this.fillMessage(li, e)) this.stats.rendered++;
-    else this.stats.hidden++;
+    if (this.fillMessage(li, e)) {
+      this.stats.rendered++;
+      if (e.s > 0 && this.opts.onReply) li.append(this.replyButton(e));
+    } else this.stats.hidden++;
     return li;
+  }
+
+  /** The Reply button of a row: out of the Tab order (the arrow keys reach it from the list). */
+  private replyButton(e: MessageEntry): HTMLButtonElement {
+    const b = el('button', 'msg-reply');
+    b.type = 'button';
+    b.tabIndex = -1;
+    b.dataset.testid = 'chat-reply';
+    b.setAttribute('aria-label', t('chat.viewer.reply.button', { nickname: displayName(e.author) }));
+    b.title = t('chat.viewer.reply');
+    const icon = el('span', 'sc-ico-reply');
+    icon.setAttribute('aria-hidden', 'true');
+    b.append(icon);
+    b.addEventListener('click', () => {
+      this.actionsRow?.classList.remove('actions');
+      this.actionsRow = null;
+      this.opts.onReply?.(e);
+    });
+    return b;
   }
 
   /**
@@ -537,6 +665,16 @@ export class ChatList {
       box.classList.add('hidden-msg');
       box.append(this.hiddenText());
       return false;
+    }
+    if (e.reply) {
+      box.classList.add('is-reply');
+      box.append(this.quoteNode(e.reply));
+    }
+    if (e.mentionsMe) {
+      box.classList.add('mentions-me');
+      const note = el('span', 'mention-note sr-only');
+      note.textContent = `${t('chat.viewer.mentionsMe')}: `;
+      box.append(note);
     }
     if (e.author.r === 'streamer') {
       box.classList.add('from-streamer');
@@ -561,11 +699,63 @@ export class ChatList {
       box.classList.add('has-gif');
       text.append(this.gifNode(e.gif));
     } else {
-      this.fillText(text, e.text ?? '');
+      this.fillText(text, e.text ?? '', e.mentions);
     }
     box.append(nick, sep, text);
     if (e.highlighted) this.markHighlighted(box, true);
+    if (e.s > 0 && this.opts.onReply && box.tagName === 'LI') box.classList.add('can-reply');
     return true;
+  }
+
+  /** The quote line of a reply (a button: a click scrolls to the message it answers). */
+  private quoteNode(r: ReplyEntry): HTMLButtonElement {
+    const b = el('button', 'reply-quote');
+    b.type = 'button';
+    b.tabIndex = -1;
+    b.dataset.testid = 'chat-reply-quote';
+    b.title = t('chat.viewer.reply.jump');
+    this.fillQuote(b, r);
+    b.addEventListener('click', () => {
+      const cur = this.quotes.get(b);
+      if (cur) this.jumpTo(cur.s);
+    });
+    return b;
+  }
+
+  /**
+   * "↩ Ana: the start of her message…" in two <bdi> boxes (name, quote), so neither can reorder the
+   * other or the reply. A quote that fails the shared invariants shows "Message hidden" instead.
+   */
+  private fillQuote(b: HTMLElement, r: ReplyEntry): void {
+    this.quotes.set(b, r);
+    b.replaceChildren();
+    b.dataset.re = String(r.s);
+    b.classList.toggle('gone', r.gone === true);
+    const icon = el('span', 'sc-ico-reply');
+    icon.setAttribute('aria-hidden', 'true');
+    const nick = el('bdi', 'q-nick');
+    const nickname = displayName(r.author);
+    nick.textContent = nickname;
+    b.append(icon, nick);
+    let spoken: string | null = null;
+    const q = el('bdi', 'q-text');
+    q.setAttribute('dir', 'auto');
+    if (r.gone) spoken = t('chat.viewer.reply.gone');
+    else if (r.gif) spoken = t('chat.viewer.gif');
+    else if (r.quote !== undefined) {
+      if (checkChatInvariants(r.quote, { maxGraphemes: CHAT_REPLY_QUOTE_MAX_GRAPHEMES, maxBytes: CHAT_REPLY_QUOTE_MAX_BYTES })) {
+        this.fillText(q, r.quote);
+        if (r.cut) q.append(document.createTextNode('…'));
+        spoken = `${r.quote}${r.cut ? '…' : ''}`;
+      } else spoken = t('chat.viewer.hidden');
+    }
+    if (spoken !== null) {
+      if (q.childNodes.length === 0) q.textContent = spoken;
+      const sep = el('span', 'sep');
+      sep.textContent = ': ';
+      b.append(sep, q);
+    }
+    b.setAttribute('aria-label', spoken === null ? t('chat.viewer.reply.quoteNoText', { nickname }) : t('chat.viewer.reply.quote', { nickname, text: spoken }));
   }
 
   /** A GIF in a message: a consent placeholder, a play button or the image (never fetched before consent). */
@@ -638,7 +828,22 @@ export class ChatList {
     }
   }
 
-  private fillText(target: HTMLElement, text: string): void {
+  /** Text with "@Name" of each person the server confirmed (`mentions`) in a span of its own. */
+  private fillText(target: HTMLElement, text: string, mentions?: readonly ChatAuthor[]): void {
+    const spans = mentions?.length ? findMentionSpans(text, mentionCandidates(mentions)) : [];
+    let at = 0;
+    for (const sp of spans) {
+      if (sp.start > at) this.fillTokens(target, text.slice(at, sp.start));
+      const m = el('span', sp.a === this.opts.me?.() ? 'mention me' : 'mention');
+      m.textContent = text.slice(sp.start, sp.end);
+      m.dataset.a = sp.a;
+      target.append(m);
+      at = sp.end;
+    }
+    if (at < text.length) this.fillTokens(target, at === 0 ? text : text.slice(at));
+  }
+
+  private fillTokens(target: HTMLElement, text: string): void {
     const emotes = this.opts.emotes();
     for (const tok of tokenizeChat(text, new Set(emotes.keys()))) {
       if (tok.k === 'e') {
@@ -664,6 +869,26 @@ export class ChatList {
       }
     }
   }
+}
+
+let listIds = 0;
+
+/** How a name is shown: the nickname, the translated "Streamer" for a streamer without one, else "…". */
+function displayName(a: ChatAuthor): string {
+  return a.n || (a.r === 'streamer' ? t('chat.streamer') : '…');
+}
+
+/**
+ * The names a mention of these people can have: the nickname, or for a streamer without one, the
+ * translated "Streamer" in every language (the server accepts either; a reader may use the other).
+ */
+export function mentionCandidates(people: readonly ChatAuthor[]): MentionCandidate[] {
+  const out: MentionCandidate[] = [];
+  for (const p of people) {
+    if (p.n) out.push({ a: p.a, n: p.n });
+    else if (p.r === 'streamer') for (const lang of ['en', 'pt-BR'] as const) out.push({ a: p.a, n: translate(lang, 'chat.streamer') });
+  }
+  return out;
 }
 
 /** One pin of one message: pinning the same message again later is a new pin. */

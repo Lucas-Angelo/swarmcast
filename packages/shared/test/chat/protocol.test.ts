@@ -28,6 +28,12 @@ const ACCEPTED_FRAMES = [
   '{"t":"chat.color","color":"#E5484D"}',
   '{"t":"chat.resume","after":0}',
   '{"t":"chat.resume","after":4711}',
+  // Replies and mentions (0.5.0): optional, an older server ignores them.
+  '{"t":"chat.send","n":5,"text":"@Ana concordo","re":42,"mn":["1f","2a"]}',
+  '{"t":"chat.send","n":6,"text":"sim","re":9007199254740991}',
+  '{"t":"chat.send","n":7,"text":"@Ana @Bia @Caio","mn":["a","b","zzzzzzzzzz"]}',
+  '{"t":"chat.send","n":8,"text":"nada","mn":[]}',
+  '{"t":"chat.send","n":9,"gif":{"p":"klipy","id":"x","w":220,"h":220,"m":"/ii/935d7ab9d8c6202580a668421940ec81/14/af/SE72470w.webp"},"re":3}',
 ];
 
 /** Malformed or hostile frames: exactly one of text or gif, bounds, no URLs. */
@@ -53,6 +59,17 @@ const REFUSED_FRAMES = [
   '{"t":"chat.color","color":"url(javascript:1)"}',
   '{"t":"chat.resume","after":-1}',
   '{"t":"chat.unknown"}',
+  '{"t":"chat.send","n":1,"text":"a","re":0}',
+  '{"t":"chat.send","n":1,"text":"a","re":1.5}',
+  '{"t":"chat.send","n":1,"text":"a","re":"42"}',
+  '{"t":"chat.send","n":1,"text":"a","re":9007199254740992}',
+  '{"t":"chat.send","n":1,"text":"a","mn":["a","b","c","d"]}',
+  '{"t":"chat.send","n":1,"text":"a","mn":["A"]}',
+  '{"t":"chat.send","n":1,"text":"a","mn":[""]}',
+  '{"t":"chat.send","n":1,"text":"a","mn":["zzzzzzzzzzz"]}',
+  '{"t":"chat.send","n":1,"text":"a","mn":[1]}',
+  '{"t":"chat.send","n":1,"text":"a","mn":"a"}',
+  '{"t":"chat.send","n":1,"text":"a","mn":[["a"]]}',
 ];
 
 const parse = (raw: string) => clientMessageSchema.safeParse(JSON.parse(raw));

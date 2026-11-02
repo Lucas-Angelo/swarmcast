@@ -100,7 +100,7 @@ server recognises it before decoding it.
 
 | Frame | Fields | Meaning |
 |---|---|---|
-| `chat.send` | `n` (nonce, 1…2³¹−1), exactly one of `text` (≤ 1,500 UTF-16 units) or `gif` | Send a message |
+| `chat.send` | `n` (nonce, 1…2³¹−1), exactly one of `text` (≤ 1,500 UTF-16 units) or `gif`; optional `re` (the seq it replies to) and `mn` (≤ 3 author keys it mentions, `[0-9a-z]{1,10}`) | Send a message ("Replies and mentions") |
 | `chat.color` | `color` `#rrggbb` | Choose my name colour (rate limited, ignored while locked) |
 | `chat.resume` | `after` (a seq) | I missed items after `after` (gap or reconnect) |
 
@@ -127,7 +127,7 @@ Items inside a batch or snapshot:
 
 | `k` | Item | Fields |
 |---|---|---|
-| `m` | Message | `s` seq, `at` server time (ms), `a` author key, `x` text **or** `g` GIF; `h: 1` while the streamer has it highlighted |
+| `m` | Message | `s` seq, `at` server time (ms), `a` author key, `x` text **or** `g` GIF; `h: 1` while the streamer has it highlighted; `re` the message it replies to (`s`, `a`, and the server's quote `q` with `cut: 1` when shortened, or `gif: 1`, or `gone: 1` once deleted); `mn` the author keys it mentions |
 | `u` | Roster upsert | `au: {a, n nickname, c colour, r role, tag}`; sent once per author, again after a colour change |
 | `d` | Delete | `s: [seq…]` |
 | `clr` | Clear | `s`: everything up to and including this seq |
@@ -419,6 +419,75 @@ and, for a timed pin, the time it comes down.
 | Slow socket | Current state when it catches up (state item) | Current state when it catches up (state item) |
 | Stop | Wiped | Wiped |
 
+## Replies and mentions
+
+A viewer or the streamer can **reply** to a message and **mention** people with `@`. Both are fields
+of an ordinary message (`re`, `mn`), so a reply is a message like any other: it takes a seq, goes
+through the whole pipeline (slow mode, content modes, blocked words, links, duplicates, mute,
+protection) and is moderated like one. Pages older than 0.5.0 ignore both fields and show a reply as
+the plain message it is (`chat-compat.test.ts`); no `sys` line and no new kind are involved.
+
+**Reply** (`re`: the seq of the message answered). The server looks it up in the ring: only a
+message (`m`) that is there now. Gone (deleted, cleared, evicted, a system line, a seq that never
+was), the message is accepted **without** the reply: its text is fine, there is nothing to answer, and
+a deleted message must not come back through a quote. Otherwise the item gets `re = {s, a, q}` where
+`q` is the server's own quote of that message, never text from the client: its canonical text cut by
+`cutQuote()` ([`quote.ts`](../packages/shared/src/chat/quote.ts)) on a grapheme boundary (never inside
+an emoji ZWJ sequence, a flag, a mark run or a surrogate pair), at most
+`CHAT_REPLY_QUOTE_MAX_GRAPHEMES` (40) graphemes and `CHAT_REPLY_QUOTE_MAX_BYTES` (160) UTF-8 bytes,
+without the space the cut left, with `cut: 1` when it is shorter than the message (clients add the
+ellipsis). A GIF is quoted as `gif: 1`. A quote that holds a blocked word (the list may have changed
+since, and the streamer's own messages skip it) is left out: the reply still says whom it answers.
+The quote is a copy, so it outlives its message's place in the ring and reaches viewers who joined
+later; deleting the message wipes it from every reply in the ring (`gone: 1`, bytes counted again),
+in the panel and on every page (`d` item), and the replies stay. The answered author is a referred
+author (`refs`): kept in the roster and sent before the reply.
+
+**Mention** (`mn`: author keys). The client works the keys out of the text when it sends
+(`mentionKeys()` in [`mentions.ts`](../packages/shared/src/chat/mentions.ts)), so a name picked and
+then deleted is not sent; the server checks each one again and keeps it only when that person already
+wrote in this live (their roster entry went out, so the key of someone who only watches is never
+confirmed), is still watching (or is the streamer), is not the sender, and is named in the text as
+`@` + their nickname exactly, not inside a word or a grapheme (`findMentionSpans()`): "ana@Ana.com",
+"@Anabela" and a look-alike "@Аna" (Cyrillic А) mention nobody, because nicknames are unique by
+confusable skeleton among the people watching. A streamer without a name is mentioned as "@Streamer"
+or "@Transmissão". Limits per viewer (never for the streamer): `CHAT_MENTIONS_PER_MIN` (6) a minute
+from one device, the same person at most once per `CHAT_MENTION_SAME_TARGET_S` (30 s) from it, and
+`CHAT_MENTIONS_TO_TARGET_PER_MIN` (10) a minute to one person from everyone. A mention that fails any
+of this stays plain text and the message still goes: there is no reject to retry against. Mentioned
+people are referred authors too. Nothing makes a sound, sends a notification or reaches anyone but
+the people on the page; there is no `@everyone`.
+
+| Moderation or setting | Replies | Mentions |
+|---|---|---|
+| Delete | The quote of every reply to it becomes "Original message deleted"; a reply being written to it is cancelled | — |
+| Clear chat | Nothing left to reply to (a later `re` to a cleared message is a plain message) | — |
+| Mute | A muted viewer cannot send, so cannot reply; replies to their messages keep the quote (the streamer can delete them) | A muted viewer can still be mentioned |
+| Kick | Messages and quotes stay | A person who left is no longer mentioned |
+| Slow mode, protection | A reply is a message: the same wait | The same |
+| Content modes | The reply's own text follows the mode | `@name` is text: refused in emotes only, taken in text only |
+| Blocked words | The reply's own text is checked; a quote holding one is left out | — |
+| Chat off | Nothing is sent | — |
+| Reconnect, snapshot, resume | Ring items carry `re` (with the quote as it is now) and `mn`; their authors are in the roster | |
+| Slow socket | Replies are messages: dropped with a `skip` under pressure like any other | |
+| Stop | Wiped with the ring and the mention limits | |
+
+**Viewer page.** Every message has a **Reply** button in its top right corner: shown when the pointer
+is over the message, after a tap on it (touch screens), or reached from the list with the arrow keys
+(↑/↓ from message to message, Home/End, Escape back to the list), so the Tab order never runs through
+150 buttons. "Replying to Ana" with the quote and ✕ sits above the box (Escape cancels too); the
+reply starts with one clipped line, `↩ Ana: the start of her message…`, name and quote in their own
+`<bdi>` boxes and checked with the shared invariants, and a click on it scrolls to the message it
+answers while that is still in the list and marks it for a moment. Typing `@` lists up to
+`CHAT_MENTION_SUGGESTIONS` (8) people who wrote in the chat on this page, newest first, with their tag
+(↑/↓, Enter or Tab picks, Escape closes); nobody who only watches is ever listed, so the list sends
+no one's name anywhere. A message that mentions this viewer gets a honey bar, its `@Name` a honey
+tint and a visually hidden "Mentions you", only for them, and only while **Highlight messages that
+mention me** (chat settings, on by default) is on; "Show chat" counts mentions while the chat is
+hidden. **Panel.** **Reply** in the ⋯ menu, the same bar over the "Send as …" box, `@` over the people
+who wrote in the feed with their tags, the quote above replies, and "Mentions you" on messages that
+mention the streamer.
+
 ## Moderation (panel)
 
 While live with the chat on (`AdminState.chatEnabled`, pushed on `/ws` when the setting changes), the
@@ -434,6 +503,7 @@ down (`ChatCard`); both share one load of `GET /api/chat` (`useChatPanel` in `ch
 | Delete | Up to 100 messages at once; a `d` item goes to everyone, the ring forgets them |
 | Highlight / Remove highlight | Marks the message for everyone (at most 20 at once), or takes the mark off |
 | Pin to top / Unpin | One pinned message at the top of everyone's chat, until unpinned or for 5, 15 or 60 minutes ("Highlight and pin") |
+| Reply | Answers the message from the "Send as …" box, with its quote ("Replies and mentions") |
 | Clear | A `clr` item; the ring is emptied |
 | Mute | 1, 10 or 60 minutes (any value up to 1,440), or **until the end of this live**. Keyed by the device cookie and the session, never by IP, so it survives leaving and rejoining. The viewer sees "muted until…". There are no accounts, so a mute cannot follow a person to the next live |
 | Unmute | Applies at once |
@@ -583,25 +653,27 @@ the chat stopped itself.
 | What | Where |
 |---|---|
 | Corpus of hostile strings (zalgo, bidi, invisibles, ZWJ, tags, crash strings, controls, normalisation) with exact expectations | [`packages/shared/test/chat/corpus.ts`](../packages/shared/test/chat/corpus.ts), [`text.test.ts`](../packages/shared/test/chat/text.test.ts) |
-| Properties P1–P12 (well-formed, idempotent, caps, NFC-stable, passes the client check, linear work, realistic chat unchanged, skeleton, tokenizer round trip, colour contrast for every 24-bit colour); 2,000 seeded runs per PR, `CHAT_FUZZ_RUNS` raises it | [`properties.test.ts`](../packages/shared/test/chat/properties.test.ts), [`arbitraries.ts`](../packages/shared/test/chat/arbitraries.ts) |
+| Properties P1–P13 and P15 (well-formed, idempotent, caps, NFC-stable, passes the client check, linear work, realistic chat unchanged, skeleton, tokenizer round trip, colour contrast for every 24-bit colour, a reply's quote is a grapheme prefix that passes the client check, mention spans on grapheme boundaries); 2,000 seeded runs per PR, `CHAT_FUZZ_RUNS` raises it | [`properties.test.ts`](../packages/shared/test/chat/properties.test.ts), [`arbitraries.ts`](../packages/shared/test/chat/arbitraries.ts) |
 | Grapheme clusters vs GraphemeBreakTest.txt and `Intl.Segmenter` | [`grapheme.test.ts`](../packages/shared/test/chat/grapheme.test.ts) |
 | No ReDoS in `chat/` | [`redos.test.ts`](../packages/shared/test/chat/redos.test.ts) |
-| Protocol shapes, reject codes translated, settings defaults, the highlight and pin bodies, `hl` and `pin` seq-less | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
-| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume; highlights and pins (also missed by a slow socket and in a reconnect hello) show only on the current page | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
+| Quotes (graphemes, bytes, bidi, zero-width, the corpus) and mentions (longest name, word and grapheme boundaries, look-alikes, RTL names, the @ list's query, suggestions and insertion) | [`quote.test.ts`](../packages/shared/test/chat/quote.test.ts), [`mentions.test.ts`](../packages/shared/test/chat/mentions.test.ts) |
+| Hub: replies (present, long, GIF, gone, deleted, cleared, blocked quote, streamer) and mentions (who counts, look-alikes, the streamer's names, every limit, reset) | [`chat-replies.test.ts`](../apps/server/test/unit/chat-replies.test.ts) |
+| Protocol shapes, reject codes translated, settings defaults, the highlight and pin bodies, `hl` and `pin` seq-less, `re` and `mn` bounds | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
+| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume; highlights and pins (also missed by a slow socket and in a reconnect hello), replies and mentions show only on the current page | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
 | Network keys (IPv4, IPv6 /64, IPv4-mapped) against Node's `BlockList` on random addresses in every spelling | [`network.test.ts`](../apps/server/test/unit/network.test.ts) |
-| Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed); highlighted rows and the pinned bar (text nodes, hide, Show more, chat off), and the panel store's highlights and pin | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
+| Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed); highlighted rows and the pinned bar (text nodes, hide, Show more, chat off), and the panel store's highlights and pin; replies (quote, gone, GIF, unsafe quote, jump, the Reply button, the arrow keys, taps) and mentions (spans, the mark and its setting), the reply bar and the @ list | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-input.test.ts`](../apps/viewer/test/unit/chat-input.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
 | Hub: pipeline, slow mode, burst, duplicates, modes, blocked words, mutes, colours, roles, snapshot, resume, ring, reset, G, lockdown, failure isolation; highlight (cap, delta) and pin (replace, delete, clear, timer, Stop, mute and kick keep it, snapshots under lockdown, roster prune, slow sockets, resume) | [`apps/server/test/unit/chat-hub.test.ts`](../apps/server/test/unit/chat-hub.test.ts) |
-| `/control`: frame budgets (chat and reactions), raw size, fuzzed hostile frames and frame kinds; nickname uniqueness and reserved names | [`chat-control.test.ts`](../apps/server/test/unit/chat-control.test.ts) |
+| `/control`: frame budgets (chat and reactions), raw size, fuzzed hostile frames (also replies and mentions) and frame kinds; nickname uniqueness and reserved names | [`chat-control.test.ts`](../apps/server/test/unit/chat-control.test.ts) |
 | Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, state items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
 | Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
-| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
-| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin) | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
-| The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (highlight, pin, unpin), settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
+| Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin); replies and mentions under the content modes, blocked words, mute and clear | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
+| The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (reply, highlight, pin, unpin), the @ list, "Mentions you", settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
-| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 
 ## Load and soak
 

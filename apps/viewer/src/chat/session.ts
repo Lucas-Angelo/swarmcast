@@ -8,14 +8,31 @@
 //
 // Highlights (`hl`) and the pin (`pin`, and `pin` in snapshots) are seq-less state items: they say
 // what a message's highlight or the pinned message is now, never take a seq and never cause a resume.
-import { CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+//
+// Replies and mentions are fields of a message (`re`, `mn`; docs/CHAT.md, "Replies and mentions"):
+// the entry carries the quoted message's author and the server's quote, and the people mentioned.
+// A `d` for the quoted message wipes the quote here too ("Original message deleted").
+import { CHAT_MENTIONS_MAX, CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPublicSettings, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
 /** A chat frame this page sends on /control (the shared protocol type). */
 export type ClientFrame = ChatClientMessage;
 
+/** What a reply answers, as the page shows it: the author, and the server's quote (or why there is none). */
+export interface ReplyEntry {
+  s: number;
+  author: ChatAuthor;
+  /** The quote (absent: a GIF, a deleted message, or a quote the server left out). */
+  quote?: string;
+  /** The quote is the start of a longer message. */
+  cut?: boolean;
+  gif?: boolean;
+  /** The quoted message was deleted. */
+  gone?: boolean;
+}
+
 export type ChatEntry =
-  | { kind: 'msg'; s: number; at: number; author: ChatAuthor; text?: string; gif?: GifRef; highlighted?: boolean }
+  | { kind: 'msg'; s: number; at: number; author: ChatAuthor; text?: string; gif?: GifRef; highlighted?: boolean; reply?: ReplyEntry; mentions?: ChatAuthor[]; mentionsMe?: boolean }
   | { kind: 'sys'; s: number; at: number; code: MessageKey; params?: MessageParams }
   | { kind: 'skip'; n: number };
 
@@ -172,10 +189,39 @@ export class ChatSession {
     this.showPin();
   }
 
+  /** An author from the roster, or a placeholder ("…") for one the page has no entry for. */
+  private authorOf(a: string): ChatAuthor {
+    return this.roster.get(a) ?? { a, n: '…', c: '', r: 'viewer' as const };
+  }
+
+  /** The reply of a message (anything malformed counts as no reply); a quote of a message deleted here is wiped. */
+  private replyOf(re: unknown): ReplyEntry | undefined {
+    if (!isReplyRef(re)) return undefined;
+    const r: ReplyEntry = { s: re.s, author: this.authorOf(re.a) };
+    if (re.gone === 1 || this.deleted.has(re.s)) return goneReply(r);
+    if (re.gif === 1) r.gif = true;
+    else if (typeof re.q === 'string' && re.q !== '') {
+      r.quote = re.q;
+      if (re.cut === 1) r.cut = true;
+    }
+    return r;
+  }
+
+  /** The people a message mentions that the page knows (the server sends their entries first). */
+  private mentionsOf(mn: unknown): ChatAuthor[] {
+    if (!Array.isArray(mn)) return [];
+    const out: ChatAuthor[] = [];
+    for (const a of mn.slice(0, CHAT_MENTIONS_MAX)) {
+      const au = typeof a === 'string' ? this.roster.get(a) : undefined;
+      if (au && !out.includes(au)) out.push(au);
+    }
+    return out;
+  }
+
   private showPin(): void {
     const p = this.pinned;
     if (!p) return this.view.pin(null);
-    const author = this.roster.get(p.a) ?? { a: p.a, n: '…', c: '', r: 'viewer' as const };
+    const author = this.authorOf(p.a);
     this.view.pin({ s: p.s, at: p.at, author, ...(p.x !== undefined ? { text: p.x } : {}), ...(p.g ? { gif: p.g } : {}) });
   }
 
@@ -256,9 +302,23 @@ export class ChatSession {
           out.push({ kind: 'sys', s: item.s, at: item.at, code: item.code, ...(item.params ? { params: item.params } : {}) });
           return;
         }
-        const author = this.roster.get(item.a) ?? { a: item.a, n: '…', c: '', r: 'viewer' as const };
+        const author = this.authorOf(item.a);
         const highlighted = this.highlights.get(item.s) ?? item.h === 1;
-        out.push({ kind: 'msg', s: item.s, at: item.at, author, ...(typeof item.x === 'string' ? { text: item.x } : {}), ...(item.g ? { gif: item.g } : {}), ...(highlighted ? { highlighted } : {}) });
+        const reply = this.replyOf(item.re);
+        const mentions = typeof item.x === 'string' ? this.mentionsOf(item.mn) : [];
+        const mentionsMe = this.you !== null && mentions.some((m) => m.a === this.you!.a);
+        out.push({
+          kind: 'msg',
+          s: item.s,
+          at: item.at,
+          author,
+          ...(typeof item.x === 'string' ? { text: item.x } : {}),
+          ...(item.g ? { gif: item.g } : {}),
+          ...(highlighted ? { highlighted } : {}),
+          ...(reply ? { reply } : {}),
+          ...(mentions.length ? { mentions } : {}),
+          ...(mentionsMe ? { mentionsMe } : {}),
+        });
         return;
       }
       case 'hl': {
@@ -280,10 +340,11 @@ export class ChatSession {
           this.deleted.add(s);
           if (this.deleted.size > DELETED_MEMORY) this.deleted.delete(this.deleted.values().next().value as number);
         }
-        // Remove from what is about to be shown, and from the screen.
+        // Remove from what is about to be shown, and from the screen; replies to them lose their quote.
         for (let i = out.length - 1; i >= 0; i--) {
           const e = out[i]!;
           if (e.kind !== 'skip' && item.s.includes(e.s)) out.splice(i, 1);
+          else if (e.kind === 'msg' && e.reply && item.s.includes(e.reply.s)) e.reply = goneReply(e.reply);
         }
         this.view.remove(item.s);
         // A deleted message is never left pinned (the server unpins it too).
@@ -304,6 +365,18 @@ export class ChatSession {
         return;
     }
   }
+}
+
+/** A reply whose quoted message was deleted: whom it answered, without the quote. */
+export function goneReply(r: ReplyEntry): ReplyEntry {
+  return { s: r.s, author: r.author, gone: true };
+}
+
+/** A reply reference as the server sends it (seq and author key; the rest is optional). */
+function isReplyRef(r: unknown): r is ChatReplyRef {
+  if (r === null || typeof r !== 'object') return false;
+  const v = r as Partial<ChatReplyRef>;
+  return Number.isSafeInteger(v.s) && typeof v.a === 'string' && (v.q === undefined || typeof v.q === 'string');
 }
 
 /** A pin as the server sends it: seq, author key, when, and text or a GIF reference (never both). */

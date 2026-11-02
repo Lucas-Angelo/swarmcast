@@ -19,6 +19,10 @@
 // An author's roster entry ('u') goes out once per live; a viewer whose join history does not
 // hold the streamer's earlier lines (here: after a clear) must still learn who the streamer is,
 // from the roster in their join snapshot (apps/server/src/chat/hub.ts rosterFor).
+//
+// Replies and mentions from the panel: Reply in the ⋯ menu puts "Replying to …" over the box, "@"
+// lists the people who wrote (with their tag), the reply reaches viewers with the server's quote and
+// the mention by author key, and a viewer's message that mentions the streamer is marked.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
@@ -167,6 +171,74 @@ test('from the ⋯ menu: highlight and pin reach viewers and joiners, the pin sh
   await expect(bar).toHaveCount(0);
   await expect.poll(lastPin).toEqual({ k: 'pin', p: null });
   expect((await adminApi<AdminChatState>('GET', '/api/chat')).pin).toBeUndefined();
+});
+
+test('Reply from the ⋯ menu with a mention from the @ list; a viewer message mentioning the streamer is marked', { tag: '@ui' }, async ({ page, bots }) => {
+  // Arrange
+  const { live } = await openChat(page);
+  const ana = await bots.join(uid('rAna'));
+  const bia = await bots.join(uid('rBia'));
+  await panelShows(page, bia.nickname);
+  const { s } = await ana.answer(ana.send('what game is this?'));
+  await bia.answer(bia.send('hello everyone'));
+  // By its seq: the streamer's reply quotes the same text.
+  const anaRow = live.locator(`[data-testid="chat-msg"][data-seq="${s}"]`);
+  const input = live.getByTestId('chat-input');
+
+  // Act
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-reply').click();
+
+  // Assert
+  const replying = live.getByTestId('chat-replying');
+  await expect(replying).toContainText(translate('en', 'admin.chat.replyingTo', { nickname: ana.nickname }));
+  await expect(replying).toContainText('what game is this?');
+  await expect(input).toBeFocused();
+  await expect(live.getByTestId('chat-menu')).toHaveCount(0);
+
+  // Act
+  await input.pressSequentially('@');
+
+  // Assert: the people who wrote, newest first, with their tag; never the streamer.
+  const options = live.getByTestId('chat-mention-option');
+  await expect(options).toHaveCount(2);
+  await expect(options.nth(0)).toContainText(bia.nickname);
+  await expect(options.nth(1)).toContainText(ana.nickname);
+  await expect(options.nth(1)).toContainText('#');
+
+  // Act
+  await input.pressSequentially(ana.nickname.slice(0, 3));
+  await input.press('Enter');
+  await input.pressSequentially('it is Celeste');
+  await input.press('Enter');
+
+  // Assert
+  const text = `@${ana.nickname} it is Celeste`;
+  const mine = row(live, 'it is Celeste');
+  await expect(mine.getByTestId('chat-reply-quote')).toContainText('what game is this?');
+  await expect(mine.getByTestId('chat-badge')).toBeVisible();
+  await expect(replying).toHaveCount(0);
+  await expect.poll(() => ana.items().find((i) => i.k === 'm' && i.x === text)).toMatchObject({ re: { s, q: 'what game is this?' }, mn: [ana.authorKey] });
+
+  // Act: a viewer mentions the streamer by the default name.
+  const streamerKey = (await adminApi<AdminChatState>('GET', '/api/chat')).roster.find((au) => au.r === 'streamer')!.a;
+  await bia.answer(bia.send('@Streamer great run!', { mn: [streamerKey] }));
+
+  // Assert
+  const forMe = row(live, 'great run!');
+  await expect(forMe).toHaveClass(/chat-msg-mentions-me/);
+  await expect(forMe.getByTestId('chat-mentions-you')).toHaveText(translate('en', 'admin.chat.mentionsYou'));
+  await expect(anaRow).not.toHaveClass(/chat-msg-mentions-me/);
+
+  // Act: the message being answered is deleted while the streamer writes a reply.
+  await anaRow.getByTestId('chat-more').click();
+  await anaRow.getByTestId('chat-reply').click();
+  await expect(replying).toBeVisible();
+  await admin('/api/chat/delete', { seqs: [s] });
+
+  // Assert
+  await expect(replying).toHaveCount(0);
+  await expect(mine.getByTestId('chat-reply-quote')).toContainText(translate('en', 'admin.chat.reply.gone'));
 });
 
 test('an open ⋯ menu holds still while new messages arrive, so a click lands on the button it aimed at', { tag: '@ui' }, async ({ page, bots }) => {
