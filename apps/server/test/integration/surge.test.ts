@@ -1,5 +1,4 @@
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -122,16 +121,19 @@ describe('page scripts', () => {
   }
 
   it('are served Brotli-compressed to a browser that accepts it, plain otherwise (about a quarter of the bytes)', async () => {
-    // Arrange: the watch page's main script, as built (npm run build).
-    const { base } = await startLive(8, 500);
-    const html = fs.readFileSync(path.join(VIEWER_DIST, 'watch.html'), 'utf8');
-    const script = /src="(\/assets\/watch-[^"]+\.js)"/.exec(html)?.[1];
-    expect(script, 'watch.html names its script').toBeDefined();
-    const raw = fs.statSync(path.join(VIEWER_DIST, script!)).size;
+    // Arrange: the watch page's main script, named by the watch page the server serves to a viewer.
+    const { base, link } = await startLive(8, 500);
+    const viewer = await joinAs(base, link, 'Reader');
+    const page = await viewer.fetch('/watch');
+    expect(page.status).toBe(200);
+    const script = /src="(\/assets\/watch-[A-Za-z0-9_-]+\.js)"/.exec(await page.text())?.[1];
+    expect(script, 'the watch page names its script').toBeDefined();
+    const plainFile = await viewer.fetch(script!, { headers: { 'accept-encoding': 'identity' } });
+    const raw = (await plainFile.arrayBuffer()).byteLength;
     // Act
     const br = await rawGet(base, script!, { 'accept-encoding': 'gzip, deflate, br' });
     const gz = await rawGet(base, script!, { 'accept-encoding': 'gzip' });
-    const plain = await rawGet(base, script!, {});
+    const plain = await rawGet(base, script!, { 'accept-encoding': 'identity' });
     // Assert
     expect(br.status).toBe(200);
     expect(br.headers['content-encoding']).toBe('br');

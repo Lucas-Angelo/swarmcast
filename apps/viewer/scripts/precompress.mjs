@@ -7,48 +7,38 @@
 // to a browser that accepts it (@fastify/static `preCompressed`); Cloudflare's edge passes the
 // encoding on, or decompresses for a client that does not take it.
 //
-// Vite plugin: after a production build, writes the .br (quality 11) and .gz (level 9) copies of
-// every text asset of 1 KB or more in dist/assets.
-import fs from 'node:fs';
-import path from 'node:path';
+// Vite plugin: in a production build, adds the .br (quality 11) and .gz (level 9) copies of every
+// text asset of 1 KB or more under assets/ to the bundle itself, so they are part of the build's
+// output (.github/scripts/no-dev-deps.mjs checks that dist is exactly that output).
 import zlib from 'node:zlib';
 
 /** Text assets worth compressing (images and fonts are compressed already). */
 export const COMPRESSIBLE = /\.(js|mjs|css|svg|txt|json)$/;
 const MIN_BYTES = 1024;
 
-/** Writes the compressed copies of every compressible file in `dir`; returns { files, raw, br, gz } bytes. */
-export function precompressDir(dir) {
-  const out = { files: 0, raw: 0, br: 0, gz: 0 };
-  for (const name of fs.readdirSync(dir)) {
-    if (!COMPRESSIBLE.test(name)) continue;
-    const file = path.join(dir, name);
-    const data = fs.readFileSync(file);
-    if (data.length < MIN_BYTES) continue;
-    const br = zlib.brotliCompressSync(data, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: data.length } });
-    const gz = zlib.gzipSync(data, { level: 9 });
-    fs.writeFileSync(`${file}.br`, br);
-    fs.writeFileSync(`${file}.gz`, gz);
-    out.files += 1;
-    out.raw += data.length;
-    out.br += br.length;
-    out.gz += gz.length;
-  }
-  return out;
+/** The compressed copies of `data`: Brotli at quality 11 and gzip at level 9 (both deterministic). */
+export function compressedCopies(data) {
+  return {
+    br: zlib.brotliCompressSync(data, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 11, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: data.length } }),
+    gz: zlib.gzipSync(data, { level: 9 }),
+  };
 }
 
 /** @returns {import('vite').Plugin} */
 export function precompress() {
-  let outDir = 'dist';
   return {
     name: 'swarmcast-precompress',
     apply: 'build',
-    configResolved(config) {
-      outDir = path.resolve(config.root, config.build.outDir);
-    },
-    closeBundle() {
-      const assets = path.join(outDir, 'assets');
-      if (fs.existsSync(assets)) precompressDir(assets);
+    enforce: 'post',
+    generateBundle(_options, bundle) {
+      for (const [fileName, item] of Object.entries(bundle)) {
+        if (!fileName.startsWith('assets/') || !COMPRESSIBLE.test(fileName)) continue;
+        const data = Buffer.from(item.type === 'chunk' ? item.code : item.source);
+        if (data.length < MIN_BYTES) continue;
+        const { br, gz } = compressedCopies(data);
+        this.emitFile({ type: 'asset', fileName: `${fileName}.br`, source: br });
+        this.emitFile({ type: 'asset', fileName: `${fileName}.gz`, source: gz });
+      }
     },
   };
 }
