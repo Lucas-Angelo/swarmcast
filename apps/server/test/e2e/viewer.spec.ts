@@ -11,7 +11,7 @@
 // the browser never asks for it again: the page reloads itself (its startup guard, the one inline
 // script, allowed by its hash in the CSP). The tests drop the first request for one of them.
 import type { BrowserContext } from '@playwright/test';
-import { admin, adminState, currentTime, expect, liveLink, playerStopped, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, adminState, currentTime, expect, liveLink, openSettings, playerStopped, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
 
@@ -58,7 +58,8 @@ test('a fresh viewer starts with P2P off and can turn it on (the choice is remem
   await expect(p2p).toBeEnabled();
   expect((await stats(page)).p2pEnabled).toBe(false);
 
-  // Act
+  // Act: the switch is in the Settings menu under the video
+  await openSettings(page);
   await p2p.check();
 
   // Assert
