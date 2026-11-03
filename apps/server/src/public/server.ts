@@ -34,6 +34,7 @@ import type { ControlChannel } from '../control/control.js';
 import type { HlsOrigin } from '../hls/origin.js';
 import type { ManifestSigner } from '../hls/manifest.js';
 import type { BandwidthLimiter } from '../hls/throttle.js';
+import { NEED_HEADER, UrgencyBudget, parseNeed } from '../hls/need.js';
 import { SAFE_NAME } from '../hls/playlist.js';
 import type { TrackerService } from '../tracker/tracker.js';
 import type { Logger } from '../core/logger.js';
@@ -186,6 +187,8 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
   // Connections refused because of maxConnections (Direct mode) count like our own 429s.
   app.server.on('drop', () => sec.rateLimited());
   const cookieBase = { path: '/', httpOnly: true, secure: opts.secureCookies, sameSite: 'lax' as const };
+  // Segments go out soonest-needed first (X-SC-Need, hls/need.ts), each viewer's urgency bounded.
+  const urgency = new UrgencyBudget({ capBytesPerS: () => (deps.limiter.videoMbps * 1_000_000) / 8, viewers: () => access.sessions.size });
 
   await app.register(cookie);
   const limits = resettableRateLimits();
@@ -457,7 +460,7 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     reply.header('Cache-Control', 'private, max-age=120, immutable');
     reply.header('Content-Length', f.data.length);
     reply.type(f.contentType);
-    return reply.send(deps.limiter.stream(f.data));
+    return reply.send(deps.limiter.stream(f.data, urgency.needFor(req.viewer!.id, parseNeed(req.headers[NEED_HEADER]), f.data.length)));
   });
 
   // ---- static assets of the viewer app (no secrets in them) ----
@@ -466,6 +469,9 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     prefix: '/assets/',
     decorateReply: false,
     index: false,
+    // The viewer build writes .br and .gz copies (apps/viewer/scripts/precompress.mjs): about a
+    // quarter of the bytes through the streamer's upload for every newcomer.
+    preCompressed: true,
     setHeaders: (reply) => void reply.header('Cache-Control', 'public, max-age=31536000, immutable'),
   });
 
