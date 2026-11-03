@@ -12,7 +12,8 @@
 #          (a Pixel 7 with the on-screen keyboard). SDK: $ANDROID_HOME, else
 #          ~/Library/Android/sdk (macOS) or ~/Android/Sdk (Linux). Needs Java 17 or newer.
 # ios      macOS: an iOS Simulator runtime (only when Xcode has none) and the simulator
-#          "SwarmCast iPhone" (an iPhone 17) set up for safaridriver. Needs Xcode.
+#          "SwarmCast iPhone" (an iPhone 17) set up for safaridriver, with the daemons a page in
+#          Safari never needs turned off. Needs Xcode.
 # windows  Apple silicon Macs: UTM (Homebrew cask), the unattended-install CD of a Windows 11 on
 #          Arm VM (windows/autounattend.xml, windows/first-logon.ps1) and the steps to make the
 #          VM in UTM. Microsoft's ISO is downloaded by hand (the script says how): Microsoft
@@ -227,6 +228,9 @@ SIM_NAME="SwarmCast iPhone"
 SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-17
 # Web Inspector and remote automation switches inside the simulator (apps/server/test/devices/ios.ts).
 SIM_KEYS="com.apple.webinspectord:RemoteInspectorEnabled com.apple.webinspectord:RemoteAutomationEnabled com.apple.webinspectord:WIRRemoteAutomationEnabled com.apple.mobilesafari:WebKitDeveloperExtrasEnabledPreferenceKey com.apple.mobilesafari:WebInspectorEnabled com.apple.mobilesafari:RemoteAutomationEnabled com.apple.mobilesafari:WebKitRemoteAutomationEnabled"
+# Daemons a page in Safari never needs, turned off for every later boot: the push daemon's retry
+# loop and the rest kept the CI Mac saturated (apps/server/test/devices/ios.ts UNUSED_JOBS).
+SIM_UNUSED_JOBS="com.apple.apsd com.apple.identityservicesd com.apple.StatusKitAgent com.apple.remindd com.apple.healthd com.apple.fitcore com.apple.fitnessintelligenced com.apple.finhealthd com.apple.assistantd com.apple.mediaanalysisd com.apple.chronod"
 
 # shellcheck disable=SC2016 # ${...} below is JavaScript, for node
 ios_runtimes() {
@@ -270,6 +274,7 @@ install_ios() {
   xcrun simctl boot "$udid" 2>/dev/null || true
   xcrun simctl bootstatus "$udid" -b >/dev/null || die "$SIM_NAME did not boot"
   for key in $SIM_KEYS; do xcrun simctl spawn "$udid" defaults write "${key%%:*}" "${key#*:}" -bool true || die "cannot set $key"; done
+  for job in $SIM_UNUSED_JOBS; do xcrun simctl spawn "$udid" launchctl disable "user/foreground/$job" || die "cannot turn off $job"; done
   xcrun simctl shutdown "$udid" || true
   say "iOS ready: $SIM_NAME ($udid). safaridriver needs 'sudo safaridriver --enable' once (it asks for an admin password)."
 }
