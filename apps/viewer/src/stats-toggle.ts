@@ -8,6 +8,11 @@ export type MountStatsPanel = (d: StatsPanelDeps) => StatsPanel;
 export interface StatsToggleDeps {
   /** The "Stats for nerds" link (aria-expanded follows the panel). */
   button: HTMLButtonElement;
+  /**
+   * Where the focus goes back when the panel closes and the link is out of sight (it is in the
+   * Settings menu, which closes when the panel opens): the menu's button.
+   */
+  fallbackFocus?: HTMLElement | null;
   /** The empty, hidden container in the player. */
   host: HTMLElement;
   source: StatsSource;
@@ -54,7 +59,10 @@ export function createStatsToggle(d: StatsToggleDeps): StatsToggle {
     panel = null;
     d.host.hidden = true;
     d.button.setAttribute('aria-expanded', 'false');
-    if (refocus || hadFocus) d.button.focus({ preventScroll: true });
+    if (refocus || hadFocus) {
+      const shown = d.button.getClientRects().length > 0;
+      (shown || !d.fallbackFocus ? d.button : d.fallbackFocus).focus({ preventScroll: true });
+    }
   };
 
   d.host.hidden = true;

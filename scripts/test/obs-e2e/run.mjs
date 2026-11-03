@@ -13,6 +13,7 @@ import { createRequire } from 'node:module';
 import { LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
+import { setP2P } from '../lib/viewer.mjs';
 import { setupObs, ensureMediaFile, OBS_DIR, SCENE } from './setup-obs.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -435,7 +436,7 @@ async function joinAndPlay({ label, kind, contextOptions = {}, link, nickname = 
 const currentTime = (page) => page.evaluate(() => document.querySelector('video').currentTime);
 const viewerStats = (page) => page.evaluate(() => window.__swarmcast.stats);
 async function enableP2P(page) {
-  await page.check('#p2p');
+  await setP2P(page, true);
   assert(await page.isChecked('#p2p'), 'P2P toggle did not stay on');
 }
 const invalidText = /no longer valid/;
@@ -656,7 +657,7 @@ async function main() {
     // Take Chrome A out of P2P so the other engine can only pair with Chrome B.
     const pA = pagesByLabel['p2p-chrome-A'].page;
     const pB = pagesByLabel['p2p-chrome-B'].page;
-    if (await pA.isChecked('#p2p')) await pA.uncheck('#p2p');
+    if (await pA.isChecked('#p2p')) await setP2P(pA, false);
     await poll(async () => (await viewerStats(pB)).peers.length === 0, { timeout: 20_000, what: 'Chrome B to drop its other peers' });
     const baseB = (await viewerStats(pB)).p2pDownBytes;
     const labelC = `p2p-${kind}-C`;
