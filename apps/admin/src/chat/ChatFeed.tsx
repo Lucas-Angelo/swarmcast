@@ -1,11 +1,41 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'preact/hooks';
-import { applyMention, checkChatInvariants, CHAT_NICKNAME_MAX, mentionKeys, mentionQuery, suggestMentions, type ChatAuthor, type ChatMessageItem, type ChatPin, type ChatReplyRef, type ChatSystemItem, type ChatToken, type GifRef } from '@swarmcast/shared';
-import { t } from '@swarmcast/shared/i18n';
+import {
+  applyMention,
+  checkChatInvariants,
+  CHAT_NICKNAME_MAX,
+  commandNames,
+  mentionKeys,
+  mentionQuery,
+  parseCommand,
+  suggestCommands,
+  suggestMentions,
+  type ChatAuthor,
+  type ChatCommandDef,
+  type ChatMessageItem,
+  type ChatPin,
+  type ChatPollKind,
+  type ChatReplyRef,
+  type ChatSettings,
+  type ChatSystemItem,
+  type ChatToken,
+  type GifRef,
+} from '@swarmcast/shared';
+import { getLang, t } from '@swarmcast/shared/i18n';
 import { chatApi, errorText } from '../api.js';
 import { Info } from '../Info.js';
+import { CommandHelp } from './CommandHelp.js';
 import { clockOf } from './hooks.js';
-import { draftLength, mentionableAuthors, mentionCandidates, messageParts, readableName, replyPreview, streamerKey, systemText } from './logic.js';
+import { draftLength, mentionableAuthors, mentionCandidates, messageParts, readableName, replyPreview, runCommand, streamerKey, systemText, type CommandApi } from './logic.js';
 import { ModerationMenu } from './ModerationMenu.js';
+import { PollCard, PollForm } from './Poll.js';
+
+/** What the "Send as …" box needs to run slash commands besides the chat API (docs/CHAT.md, "Slash commands"). */
+export interface FeedCommands {
+  settings: ChatSettings;
+  saveSettings: (s: ChatSettings) => Promise<void>;
+  /** Ask the Clear question (as the Clear button does): /clear never clears by itself. */
+  onClear: () => void;
+}
 import type { ChatView } from './store.js';
 
 /**
@@ -18,8 +48,14 @@ import type { ChatView } from './store.js';
  * sent above it; Reply in the ⋯ menu puts "Replying to …" over the box; "@" in the box lists the
  * people who wrote in the chat (with their tag, to tell look-alike names apart); a message that
  * mentions the streamer is marked.
+ *
+ * Polls and predictions (docs/CHAT.md, "Polls and predictions"): the card with the live counts sits
+ * under the pinned message; the form opens above the box with the Poll button or /poll alone.
+ * Slash commands (docs/CHAT.md, "Slash commands") are read here and run as the buttons' REST calls:
+ * a list of matching commands shows while the text starts with "/", and "?" lists them all.
  */
-export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { view: ChatView; dark: boolean; maxGraphemes: number; streamerName: string; enabled: boolean }) {
+export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled, commands }: { view: ChatView; dark: boolean; maxGraphemes: number; streamerName: string; enabled: boolean; commands?: FeedCommands }) {
+  const [form, setForm] = useState<ChatPollKind | null>(null);
   const list = useRef<HTMLOListElement>(null);
   const stick = useRef(true);
   const [below, setBelow] = useState(false);
@@ -60,8 +96,10 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { 
   };
 
   return (
-    <div class="chat-feed">
+    <div class={`chat-feed${form !== null ? ' with-form' : ''}`}>
       {view.pin && <PinnedBar pin={view.pin} until={view.pinUntil} author={view.roster.get(view.pin.a)} dark={dark} />}
+      {/* The form takes the card's place while it is open (the column's height is the window's). */}
+      {view.poll && form === null && <PollCard poll={view.poll} until={view.pollUntil} viewers={view.info.size} />}
       <ol class="chat-list" ref={list} onScroll={onScroll} aria-live="polite" aria-label={t('admin.chat.feed')} data-testid="chat-feed">
         {view.items.length === 0 && <li class="chat-empty muted small">{t('admin.chat.feed.empty')}</li>}
         {view.items.map((it) =>
@@ -100,7 +138,8 @@ export function ChatFeed({ view, dark, maxGraphemes, streamerName, enabled }: { 
           {t('admin.chat.feed.newBelow')}
         </button>
       )}
-      <SendBox maxGraphemes={maxGraphemes} streamerName={streamerName} enabled={enabled} view={view} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} input={input} />
+      {form !== null && <PollForm kind={form} onClose={() => setForm(null)} />}
+      <SendBox maxGraphemes={maxGraphemes} streamerName={streamerName} enabled={enabled} view={view} replyTo={replyTo} onCancelReply={() => setReplyTo(null)} input={input} commands={commands} onPollForm={(k) => setForm(k)} />
     </div>
   );
 }
@@ -307,6 +346,8 @@ function SendBox({
   replyTo,
   onCancelReply,
   input,
+  commands,
+  onPollForm,
 }: {
   maxGraphemes: number;
   streamerName: string;
@@ -315,10 +356,15 @@ function SendBox({
   replyTo: ChatMessageItem | null;
   onCancelReply: () => void;
   input: { current: HTMLInputElement | null };
+  commands?: FeedCommands | undefined;
+  onPollForm: (kind: ChatPollKind) => void;
 }) {
   const [text, setText] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
+  /** The last command's result line, or why it did not run. */
+  const [note, setNote] = useState<{ ok: boolean; text: string } | null>(null);
+  const [help, setHelp] = useState(false);
   const [caret, setCaret] = useState(0);
   const [active, setActive] = useState(0);
   const [closed, setClosed] = useState(false);
@@ -327,12 +373,47 @@ function SendBox({
   useEffect(() => setErr(null), [text]);
   const people = useMemo(() => mentionableAuthors(view.items, view.roster), [view.rev]);
   const query = mentionQuery(text, caret);
-  const offered: Suggestion[] = query && !closed ? suggestMentions(query.prefix, people.map((p): Suggestion => ({ a: p.a, n: p.n, ...(p.tag ? { tag: p.tag } : {}) }))).filter((o) => checkChatInvariants(o.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX })) : [];
+  // A command name being typed ("/enq"): the matching commands, with how to write them.
+  const cmdPrefix = /^\/[^\s/]*$/.test(text) ? text.slice(1) : null;
+  const cmdOffered: ChatCommandDef[] = cmdPrefix !== null && !closed ? suggestCommands(cmdPrefix, 'streamer') : [];
+  const offered: Suggestion[] = cmdOffered.length > 0 ? [] : query && !closed ? suggestMentions(query.prefix, people.map((p): Suggestion => ({ a: p.a, n: p.n, ...(p.tag ? { tag: p.tag } : {}) }))).filter((o) => checkChatInvariants(o.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX })) : [];
   const sel = offered.length ? Math.min(active, offered.length - 1) : 0;
   const replyAuthor = replyTo ? view.roster.get(replyTo.a) : undefined;
   const preview = replyTo ? replyPreview(replyTo) : null;
   // "Replying to {nickname}" around the name, which goes in a <bdi> of its own.
   const replyLabel = t('admin.chat.replyingTo', { nickname: '\u0000' }).split('\u0000');
+
+  /** Put "/name " in the box (the name in the panel's language). */
+  const pickCommand = (c: ChatCommandDef): void => {
+    const el = input.current;
+    const next = `/${commandNames(c, getLang()).main} `;
+    setText(next);
+    setCaret(next.length);
+    setActive(0);
+    setHelp(false);
+    if (el) {
+      el.value = next;
+      el.focus();
+      el.setSelectionRange(next.length, next.length);
+    }
+  };
+
+  const cmdApi: CommandApi = {
+    startPoll: (b) => chatApi.startPoll(b),
+    endPoll: () => chatApi.endPoll(),
+    resolvePoll: (o) => chatApi.resolvePoll(o),
+    cancelPoll: () => chatApi.cancelPoll(),
+    send: (x) => chatApi.send(x),
+    pin: (s, m) => chatApi.pin(s, m),
+    unpin: () => chatApi.unpin(),
+    mute: (id, m) => chatApi.mute(id, m),
+    unmute: (id) => chatApi.unmute(id),
+    protect: (m) => chatApi.protect(m),
+    slow: async (seconds) => {
+      if (!commands) throw new Error(t('admin.loading'));
+      await commands.saveSettings({ ...commands.settings, slowModeS: seconds });
+    },
+  };
 
   const pick = (i: number): void => {
     const o = offered[i];
@@ -346,11 +427,43 @@ function SendBox({
     el.setSelectionRange(next.caret, next.caret);
   };
 
+  const clearBox = (): void => {
+    setText('');
+    setCaret(0);
+    if (input.current) input.current.value = '';
+  };
+
+  /** A slash command: run as the buttons' calls (true), or not a command (false: send the text). */
+  const command = async (body: string): Promise<string | null> => {
+    const parsed = parseCommand(body, 'streamer');
+    if (parsed === null) return body;
+    if (!parsed.ok) {
+      setNote({ ok: false, text: t(parsed.code, parsed.params) });
+      return null;
+    }
+    const out = await runCommand(parsed.cmd, { sessions: view.info.values(), replyTo: replyTo?.s ?? null }, cmdApi);
+    if ('say' in out) return out.say;
+    if ('ui' in out) {
+      clearBox();
+      if (out.ui === 'help') setHelp(true);
+      else if (out.ui === 'clear') commands?.onClear();
+      else onPollForm(out.ui);
+    } else if ('done' in out) {
+      clearBox();
+      if (parsed.cmd.id === 'pin') onCancelReply();
+      setNote({ ok: true, text: t(out.done.key, out.done.params) });
+    } else setNote({ ok: false, text: t(out.error.key, out.error.params) });
+    return null;
+  };
+
   const send = async (): Promise<void> => {
-    if (!text.trim() || over || busy) return;
+    if (!text.trim() || busy) return;
     setBusy(true);
     try {
-      const body = text.trim();
+      const typed = await command(text.trim());
+      if (typed === null) return;
+      if (draftLength(typed, maxGraphemes).over) return;
+      const body = typed;
       const mn = mentionKeys(body, mentionCandidates(people));
       await chatApi.send(body, { ...(replyTo ? { re: replyTo.s } : {}), ...(mn.length ? { mn } : {}) });
       setText('');
@@ -365,6 +478,12 @@ function SendBox({
   };
 
   const listId = 'chat-send-mentions';
+  const cmdListId = 'chat-send-commands';
+  // A command may be longer than a message (a poll's question and options): the length limit is the message's.
+  const isCommand = parseCommand(text.trim(), 'streamer') !== null;
+  const tooLong = over && !isCommand;
+  const cmdSel = cmdOffered.length ? Math.min(active, cmdOffered.length - 1) : 0;
+  const listShown = offered.length > 0 ? listId : cmdOffered.length > 0 ? cmdListId : undefined;
   return (
     <form
       class="chat-send"
@@ -412,6 +531,27 @@ function SendBox({
           ))}
         </ul>
       )}
+      {cmdOffered.length > 0 && (
+        <ul class="chat-mentions chat-cmds" id={cmdListId} role="listbox" aria-label={t('admin.chat.cmd.list')} data-testid="chat-cmd-suggestions">
+          {cmdOffered.map((c, i) => (
+            <li
+              key={c.id}
+              id={`${cmdListId}-${i}`}
+              role="option"
+              aria-selected={i === cmdSel}
+              data-testid="chat-cmd-option"
+              data-cmd={c.id}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                pickCommand(c);
+              }}
+            >
+              <code class="strong">{t(c.usage)}</code> <span class="muted small">{t(c.help)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {help && <CommandHelp onPick={pickCommand} onClose={() => setHelp(false)} />}
       <div class="row tight">
         <input
           type="text"
@@ -420,14 +560,18 @@ function SendBox({
           data-testid="chat-input"
           placeholder={t('admin.chat.send.placeholder', { name })}
           aria-label={t('admin.chat.send.placeholder', { name })}
-          aria-invalid={over}
+          aria-invalid={tooLong}
           aria-autocomplete="list"
-          aria-controls={offered.length ? listId : undefined}
-          aria-activedescendant={offered.length ? `${listId}-${sel}` : undefined}
+          aria-controls={listShown}
+          aria-activedescendant={offered.length ? `${listId}-${sel}` : cmdOffered.length ? `${cmdListId}-${cmdSel}` : undefined}
           value={text}
           disabled={!enabled}
           onInput={(e) => {
             const el = e.target as HTMLInputElement;
+            // The last command's line goes as soon as the streamer types again (here, not in an
+            // effect: an effect runs after the next frame, and could wipe the line of a command sent
+            // right after typing).
+            setNote(null);
             setText(el.value);
             setCaret(el.selectionStart ?? el.value.length);
             setClosed(false);
@@ -439,6 +583,24 @@ function SendBox({
           onBlur={() => setClosed(true)}
           onFocus={() => setClosed(false)}
           onKeyDown={(e) => {
+            if (cmdOffered.length > 0) {
+              if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                e.preventDefault();
+                setActive((cmdSel + (e.key === 'ArrowDown' ? 1 : cmdOffered.length - 1)) % cmdOffered.length);
+                return;
+              }
+              // Enter on a whole name ("/end") runs it; on a part ("/en"), or Tab, completes it.
+              if ((e.key === 'Enter' && parseCommand(text, 'streamer') === null) || e.key === 'Tab') {
+                e.preventDefault();
+                pickCommand(cmdOffered[cmdSel]!);
+                return;
+              }
+              if (e.key === 'Escape') {
+                e.preventDefault();
+                setClosed(true);
+                return;
+              }
+            }
             if (offered.length > 0) {
               if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                 e.preventDefault();
@@ -462,15 +624,26 @@ function SendBox({
             }
           }}
         />
-        <button type="submit" class="primary" data-testid="chat-send" disabled={!enabled || busy || over || !text.trim()} title={t('admin.chat.send.tip')}>
+        <button type="submit" class="primary" data-testid="chat-send" disabled={!enabled || busy || tooLong || !text.trim()} title={t('admin.chat.send.tip')}>
           {t('admin.chat.send')}
+        </button>
+        <button type="button" class="small chat-cmd-button" data-testid="chat-cmd-help-button" aria-expanded={help} aria-label={t('admin.chat.cmd.help')} title={t('admin.chat.cmd.help.tip')} onClick={() => setHelp(!help)}>
+          ?
         </button>
         <Info text={t('admin.chat.send.tip')} />
       </div>
       <div class="row tight small">
-        <span class={over ? 'danger-text' : 'muted'} data-testid="chat-count">
+        <button type="button" class="small" data-testid="chat-poll-new" disabled={!enabled} title={t('admin.chat.poll.new.tip')} onClick={() => onPollForm('poll')}>
+          {t('admin.chat.poll.new')}
+        </button>
+        <span class={tooLong ? 'danger-text' : 'muted'} data-testid="chat-count">
           {t('admin.chat.send.counter', { count, max: maxGraphemes })}
         </span>
+        {note !== null && (
+          <span class={note.ok ? 'muted' : 'danger-text'} role={note.ok ? 'status' : 'alert'} data-testid="chat-cmd-result">
+            {note.text}
+          </span>
+        )}
         {err !== null && (
           <span class="danger-text" role="alert" data-testid="chat-send-error">
             {errorText(err)}

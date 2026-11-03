@@ -183,7 +183,10 @@ async function runScenario(sc: Scenario): Promise<Result> {
       sample('baseline');
     }
     const linkBefore = live.liveLink;
-    child.send({ type: 'go' });
+    // The vote storm: the poll opens as the run starts; every bot votes within the first second.
+    const poll = sc.poll ? live.chat.startPoll({ kind: 'poll', question: 'Vote storm?', options: Array.from({ length: sc.poll.options }, (_, i) => `option ${i + 1}`), seconds: 600 }) : null;
+    const runStart = Date.now();
+    child.send({ type: 'go', ...(poll?.ok ? { pollId: poll.id } : {}) });
     const done = fromChild<{ stats: BotStats }>('done');
     // The bots stopped and the server has handled every frame they sent: one more system line,
     // a priority item that every observer gets after all the messages before it.
@@ -279,6 +282,21 @@ async function runScenario(sc: Scenario): Promise<Result> {
         check(bots.maxGifAcksPerBot >= 1, 'no GIF was accepted');
         break;
       }
+      case 'vote-storm': {
+        // One vote per bot, each answered at once; every vote counted (each bot is its own browser
+        // and network); counts reach observers at most once per CHAT_POLL_TALLY_MS_LARGE (above 40
+        // viewers), so at most one per 2 s of the run, plus the first.
+        const counted = live.chat.poll?.c.reduce((a, b) => a + b, 0) ?? 0;
+        const runS = (Date.now() - runStart) / 1000;
+        check(poll?.ok === true, `the poll did not open (${JSON.stringify(poll)})`);
+        check(bots.votesSent === joined.bots, `${bots.votesSent} of ${joined.bots} bots voted`);
+        check(bots.voted === bots.votesSent, `${bots.voted} votes answered of ${bots.votesSent}`);
+        check(counted === bots.votesSent, `${counted} votes counted of ${bots.votesSent}`);
+        check(bots.maxTalliesPerObserver >= 1, 'no observer got the vote counts');
+        check(bots.maxTalliesPerObserver <= Math.ceil(runS / 2) + 1, `an observer got ${bots.maxTalliesPerObserver} vote counts in ${round(runS)} s (at most one per 2 s)`);
+        check(lat95 <= 1000, `delivery p95 ${lat95} ms (limit 1000)`);
+        break;
+      }
       case 'reconnect-storm':
         check(bots.reconnected === joined.bots, `${bots.reconnected} of ${joined.bots} bots got their hello back`);
         check(bots.reconnectMaxMs <= 10_000, `slowest reconnect ${bots.reconnectMaxMs} ms (limit 10 s)`);
@@ -303,6 +321,8 @@ async function runScenario(sc: Scenario): Promise<Result> {
       'tunnel in-flight calm/run': `${inflightBase}/${inflightRun}`,
       protection: [...protectStates].join(' '),
       'skipped (observers)': bots.skipped,
+      'votes answered/sent': sc.poll ? `${bots.voted}/${bots.votesSent}` : '-',
+      'vote counts per observer': sc.poll ? bots.maxTalliesPerObserver : '-',
       rejects: bots.rejects
         .map(([k, v]) => `${k.replace(/^(chat\.err|text)\./, '')} ${v}`)
         .join(', '),

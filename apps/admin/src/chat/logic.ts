@@ -6,13 +6,20 @@ import {
   CHAT_BG_LIGHT,
   CHAT_BLOCKED_WORD_MAX_GRAPHEMES,
   CHAT_BLOCKED_WORDS_MAX,
+  CHAT_POLL_OPTION_MAX_GRAPHEMES,
+  CHAT_POLL_QUESTION_MAX_GRAPHEMES,
   checkChatInvariants,
   countGraphemes,
   cutQuote,
   findMentionSpans,
+  plainNameKey,
   tokenizeChat,
   type ChatAuthor,
+  type ChatCommand,
   type ChatCounters,
+  type ChatPollCreate,
+  type ChatProtect,
+  type ChatSessionInfo,
   type ChatMessageItem,
   type ChatRingItem,
   type ChatPublicSettings,
@@ -217,4 +224,139 @@ export function messageParts(text: string, mentioned: readonly ChatAuthor[]): Ar
 export function draftLength(text: string, max: number): { count: number; over: boolean } {
   const count = countGraphemes(text);
   return { count, over: count > max };
+}
+
+// ---------------------------------------------------------------------------
+// Slash commands (docs/CHAT.md, "Slash commands"): parsed by the shared parser, run here as the
+// same REST calls the panel's buttons make. The server never reads chat text as a command.
+// ---------------------------------------------------------------------------
+
+/** A person named in a command: "Ana", "@Ana" or "Ana#K3QF" (the tag tells two look-alike names apart). */
+export type PersonMatch = { ok: true; sessionId: string; nickname: string } | { ok: false; key: MessageKey; params: MessageParams };
+
+/**
+ * The person watching whose nickname is `name` (compared without case, accents or separators,
+ * plainNameKey), among `sessions`. Several people with that name: the tags let the streamer pick
+ * one ("Ana#K3QF"); nobody, or several, is an error that says what to do.
+ */
+export function resolvePerson(name: string, sessions: Iterable<ChatSessionInfo>): PersonMatch {
+  let wanted = name.trim();
+  let tag: string | null = null;
+  const hash = wanted.lastIndexOf('#');
+  if (hash > 0 && /^[a-z2-7]{4}$/i.test(wanted.slice(hash + 1))) {
+    tag = wanted.slice(hash + 1).toUpperCase();
+    wanted = wanted.slice(0, hash).trim();
+  }
+  const key = plainNameKey(wanted);
+  const found = [...sessions].filter((s) => plainNameKey(s.nickname) === key && (tag === null || s.tag.toUpperCase() === tag));
+  if (key === '' || found.length === 0) return { ok: false, key: 'chat.cmd.err.noOne', params: { name: wanted } };
+  if (found.length > 1) {
+    const names = found.map((s) => `${s.nickname} #${s.tag}`).join(', ');
+    return { ok: false, key: 'chat.cmd.err.many', params: { names, example: `${found[0]!.nickname}#${found[0]!.tag}` } };
+  }
+  const one = found[0]!;
+  return { ok: true, sessionId: one.sessionId, nickname: one.nickname };
+}
+
+/** What running a command needs from the panel: the same calls its buttons make. */
+export interface CommandApi {
+  startPoll(body: ChatPollCreate): Promise<unknown>;
+  endPoll(): Promise<unknown>;
+  resolvePoll(option: number): Promise<unknown>;
+  cancelPoll(): Promise<unknown>;
+  send(text: string): Promise<{ s: number }>;
+  pin(s: number, minutes: number | null): Promise<unknown>;
+  unpin(): Promise<unknown>;
+  mute(sessionId: string, minutes: number | null): Promise<unknown>;
+  unmute(sessionId: string): Promise<unknown>;
+  protect(mode: ChatProtect): Promise<unknown>;
+  /** Slow mode, in seconds (0: off), saved with the other chat settings. */
+  slow(seconds: number): Promise<unknown>;
+}
+
+export interface CommandContext {
+  /** People watching (mute, unmute resolve names among them). */
+  sessions: Iterable<ChatSessionInfo>;
+  /** The message being replied to (`/pin` alone pins it), or null. */
+  replyTo: number | null;
+}
+
+/**
+ * What a command did: something for the panel to show (`ui`: the command list, the Clear question,
+ * the poll form), text to send as a message (`say`), a result line (`done`), or why it did not run
+ * (`error`). A failed call throws, as the buttons' calls do.
+ */
+export type CommandOutcome =
+  | { ui: 'help' | 'clear' | 'poll' | 'prediction' }
+  | { say: string }
+  | { done: { key: MessageKey; params?: MessageParams } }
+  | { error: { key: MessageKey; params?: MessageParams } };
+
+/** Run a parsed command. `/clear` never clears by itself: it asks first, as the Clear button does. */
+export async function runCommand(cmd: ChatCommand, ctx: CommandContext, api: CommandApi): Promise<CommandOutcome> {
+  switch (cmd.id) {
+    case 'help':
+      return { ui: 'help' };
+    case 'clear':
+      return { ui: 'clear' };
+    case 'say':
+      return { say: cmd.text };
+    case 'poll':
+    case 'prediction':
+      if ('form' in cmd) return { ui: cmd.id };
+      await api.startPoll({ kind: cmd.id, question: cmd.question, options: cmd.options, seconds: cmd.seconds });
+      return { done: { key: cmd.id === 'poll' ? 'admin.chat.cmd.done.poll' : 'admin.chat.cmd.done.prediction' } };
+    case 'end':
+      await api.endPoll();
+      return { done: { key: 'admin.chat.cmd.done.end' } };
+    case 'answer':
+      await api.resolvePoll(cmd.option);
+      return { done: { key: 'admin.chat.cmd.done.answer' } };
+    case 'cancel':
+      await api.cancelPoll();
+      return { done: { key: 'admin.chat.cmd.done.cancel' } };
+    case 'pin': {
+      if (cmd.text === undefined) {
+        if (ctx.replyTo === null) return { error: { key: 'chat.cmd.err.noReply' } };
+        await api.pin(ctx.replyTo, null);
+      } else {
+        const r = await api.send(cmd.text);
+        await api.pin(r.s, null);
+      }
+      return { done: { key: 'admin.chat.cmd.done.pin' } };
+    }
+    case 'unpin':
+      await api.unpin();
+      return { done: { key: 'admin.chat.cmd.done.unpin' } };
+    case 'slow':
+      await api.slow(cmd.seconds);
+      return { done: cmd.seconds === 0 ? { key: 'admin.chat.cmd.done.slowOff' } : { key: 'admin.chat.cmd.done.slow', params: { count: cmd.seconds } } };
+    case 'mute':
+    case 'unmute': {
+      const who = resolvePerson(cmd.name, ctx.sessions);
+      if (!who.ok) return { error: { key: who.key, params: who.params } };
+      if (cmd.id === 'mute') await api.mute(who.sessionId, cmd.minutes);
+      else await api.unmute(who.sessionId);
+      return { done: { key: cmd.id === 'mute' ? 'admin.chat.cmd.done.mute' : 'admin.chat.cmd.done.unmute', params: { name: who.nickname } } };
+    }
+    case 'protect':
+      await api.protect(cmd.mode);
+      return { done: { key: 'admin.chat.cmd.done.protect', params: { modeKey: `chat.protect.${cmd.mode}` } } };
+  }
+}
+
+/** Whole percentages of `c` (0 with no votes). */
+export function pollPercents(c: readonly number[]): number[] {
+  const total = c.reduce((a, b) => a + b, 0);
+  return c.map((n) => (total > 0 ? Math.round((n / total) * 100) : 0));
+}
+
+/** The poll form's request, or why it cannot go yet (the server checks everything again). */
+export function pollRequest(kind: 'poll' | 'prediction', question: string, options: readonly string[], seconds: number, newOnly: boolean): { ok: true; body: ChatPollCreate } | { ok: false; key: MessageKey; params?: MessageParams } {
+  const q = question.trim();
+  if (q === '') return { ok: false, key: 'admin.chat.err.pollQuestion', params: { max: CHAT_POLL_QUESTION_MAX_GRAPHEMES } };
+  const opts = options.map((o) => o.trim());
+  const empty = opts.findIndex((o) => o === '');
+  if (empty >= 0) return { ok: false, key: 'admin.chat.err.pollOption', params: { n: empty + 1, max: CHAT_POLL_OPTION_MAX_GRAPHEMES } };
+  return { ok: true, body: { kind, question: q, options: opts, seconds, newOnly } };
 }
