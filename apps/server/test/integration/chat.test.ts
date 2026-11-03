@@ -376,3 +376,60 @@ describe('polls over /control (docs/CHAT.md, "Polls and predictions")', () => {
     expect(totals.at(-1)).toBe(10);
   });
 });
+
+describe('reactions over /control (docs/CHAT.md, "Reactions")', () => {
+  it('a burst of reaction frames: up to 20 per socket in 10 s never cost the socket, a script past that loses it; everyone gets the taps added up and capped, never more than one rx per batch; messages still flow', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0, duplicateWindowS: 0 } });
+    const watcher = await viewer(base, link, 'Watcher');
+    // Every test viewer comes from 127.0.0.1: one address, so its tap bucket is shared.
+    const people = await Promise.all(Array.from({ length: 6 }, (_, i) => viewer(base, link, `Fan ${i + 1}`)));
+    const bot = await viewer(base, link, 'Bot');
+    // Act: each fan sends 20 frames at once (10 handed on, 10 ignored), each with the most taps a
+    // frame may carry; the bot sends 21 and loses its socket.
+    for (const p of people) for (let i = 0; i < 20; i++) p.send({ t: 'chat.react', c: [0, 0, 0, 0, 0, 10] });
+    for (let i = 0; i < 21; i++) bot.send({ t: 'chat.react', c: [1] });
+    const botClosedWith = await bot.closed;
+    await watcher.until(() => watcher.items().some((i) => i.k === 'rx'), 'the reactions at the watcher');
+    for (const [i, p] of people.entries()) await roundTrip(p, i + 1);
+    // Assert
+    expect(botClosedWith).toBe(1006);
+    for (const p of people) expect(p.ws.readyState).toBe(WebSocket.OPEN);
+    const rx = watcher.items().filter((i) => i.k === 'rx');
+    const fire = rx.reduce((a, i) => a + (i.k === 'rx' ? (i.c[5] ?? 0) : 0), 0);
+    // The address's bucket: a burst of 10 taps (refilled at 2/s per session behind it) out of 1,200 offered.
+    expect(fire).toBeGreaterThanOrEqual(10);
+    expect(fire).toBeLessThanOrEqual(40);
+    for (const i of rx) expect(i.k === 'rx' && i.c.every((n) => n <= 20)).toBe(true);
+    for (const m of watcher.messages) if (m.t === 'chat.batch') expect(m.items.filter((i) => i.k === 'rx').length).toBeLessThanOrEqual(1);
+    expect(watcher.messages.filter((m) => m.t !== 'chat.batch' && m.t.startsWith('chat.'))).toEqual([]);
+    expect(live.chat.lastSeq).toBe(6);
+    expect(live.chat.detector.level).toBe(0);
+    expect(live.chat.isBroken).toBe(false);
+  });
+
+  it('a muted viewer\'s taps and taps while reactions are off reach nobody; Stop wipes the tally', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const watcher = await viewer(base, link, 'Watcher');
+    const muted = await viewer(base, link, 'Muted');
+    const fan = await viewer(base, link, 'Fan');
+    const mutedSession = [...live.access.sessions.values()].find((s) => s.nickname === 'Muted')!;
+    live.chat.mute(mutedSession.id, null);
+    // Act
+    muted.send({ t: 'chat.react', c: [1] });
+    fan.send({ t: 'chat.react', c: [0, 1] });
+    await watcher.until(() => watcher.items().some((i) => i.k === 'rx'), 'the fan\'s reaction');
+    live.updateChatSettings({ ...live.chatSettings(), reactions: false });
+    await watcher.until(() => watcher.messages.some((m) => m.t === 'chat.settings' && m.settings.reactions === undefined), 'reactions off');
+    fan.send({ t: 'chat.react', c: [0, 0, 1] });
+    live.chat.flushReactions();
+    live.chat.flush();
+    await roundTrip(fan, 1);
+    await live.stop();
+    // Assert
+    expect(watcher.items().filter((i) => i.k === 'rx')).toEqual([{ k: 'rx', c: [0, 1, 0, 0, 0, 0, 0, 0] }]);
+    expect(watcher.hello.chat?.settings.reactions).toBe(true);
+    expect(live.chat.counters().reactions).toEqual([0, 0, 0, 0, 0, 0, 0, 0]);
+  });
+});

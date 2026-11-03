@@ -18,7 +18,9 @@ import { joinViewer } from './helpers-b.js';
 // 0.5.0 sends: highlights and the pin (seq-less state items, a snapshot field), and replies and
 // mentions (optional fields of a message), which a v0.4.2 page simply does not show: it shows a
 // reply as the plain message it also is; and polls (a seq-less state item, ephemeral vote counts,
-// a snapshot field and the `chat.voted` answer), which a v0.4.2 page ignores entirely.
+// a snapshot field and the `chat.voted` answer), which a v0.4.2 page ignores entirely; and what 0.5.1
+// sends: reactions over the video (ephemeral `rx` items, a field of the public settings), which a
+// v0.4.2 page ignores entirely too.
 
 interface Page {
   session: { hello(s: Parameters<ChatSession['hello']>[0]): void; frame(m: ChatServerMessage): void; connection(o: boolean): void; readonly lastSeq: number; readonly roster: Map<string, ChatAuthor> };
@@ -37,6 +39,8 @@ interface Page {
   mentions: Map<number, string[]>;
   /** The poll the page shows (current pages only): id, state, counts and this device's vote. */
   poll: { id: string; st: string; c: number[]; mine?: number } | null;
+  /** The reaction counts the page drew over the video, window by window (current pages only). */
+  rx: number[][];
 }
 
 /** A page running `Session` (the current one or v0.4.2's) with a view that records what it shows. */
@@ -49,6 +53,7 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
   const replies: Page['replies'] = new Map();
   const mentions: Page['mentions'] = new Map();
   const out = { pin: null as Page['pin'], poll: null as Page['poll'] };
+  const rx: number[][] = [];
   type Shown = { kind: string; s?: number; highlighted?: boolean; text?: string; reply?: { author: { n: string }; quote?: string; gone?: boolean }; mentions?: Array<{ n: string }> };
   const mark = (e: Shown[]) => {
     for (const x of e) {
@@ -81,6 +86,7 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     pin: (p: { s: number; author: { n: string }; text?: string } | null) => void (out.pin = p ? { s: p.s, n: p.author.n, ...(p.text !== undefined ? { x: p.text } : {}) } : null),
     poll: (p: { id: string; st: string; c: number[]; mine?: number } | null) => void (out.poll = p ? { id: p.id, st: p.st, c: [...p.c], ...(p.mine !== undefined ? { mine: p.mine } : {}) } : null),
     tally: (_id: string, c: number[]) => void (out.poll = out.poll ? { ...out.poll, c: [...c] } : null),
+    reactions: (c: number[]) => void rx.push([...c]),
     remove: (seqs: readonly number[]) => drop((s) => !seqs.includes(s)),
     clearUpTo: (upTo: number) => drop((s) => s > upTo),
     author: () => {},
@@ -105,6 +111,7 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     text,
     replies,
     mentions,
+    rx,
     get pin() {
       return out.pin;
     },
@@ -463,5 +470,82 @@ describe('chat protocol v1: a v0.4.2 page and a current page on this server', ()
     expect(current.alarms).toEqual([]);
     expect(old.session.lastSeq).toBe(hub.lastSeq);
     expect(hub.lastSeq).toBe(4);
+  });
+  it('reactions: through a live chat with taps (also a slow socket and a reconnect), both pages show the same messages without a resume; only the current page draws the reactions', () => {
+    // Arrange
+    const clock = manualClock(1_000_000_000_000);
+    const access = new AccessControl(clock.now);
+    access.begin();
+    const settings: ChatSettings = { ...defaultChatSettings(), slowModeS: 0, duplicateWindowS: 0 };
+    const sockets: PipeSocket[] = [];
+    const host: ChatHost = { sockets: () => sockets, socketsOf: (id) => sockets.filter((s) => s.sessionId === id) };
+    const hub = new ChatHub({ access, host, settings: () => settings, uploadCapMbps: () => 10, viewers: () => 3, activity: new ActivityLog(), log: silentLog, now: clock.now, guard: { sample: () => ({ p99Ms: 10, elu: 0.1 }), intervalMs: 3_600_000 } });
+    hub.begin();
+    onTestFinished(() => hub.reset());
+    const join = (name: string, ip: string) => {
+      const s = joinViewer(access, name, { deviceId: name, ip });
+      s.joinedAt = clock.now() - 600_000;
+      const sock = new PipeSocket(s.id);
+      sockets.push(sock);
+      return { s, sock };
+    };
+    const ana = join('Ana', '198.51.100.1');
+    const viewer = join('Bia', '198.51.100.3');
+    const old = page(ChatSession042);
+    const current = page(ChatSession);
+    viewer.sock.pages.push(old, current);
+    const snap = hub.snapshot(viewer.s)!;
+    old.session.hello(snap);
+    current.session.hello(snap);
+    hub.helloSent(viewer.sock, snap, 0);
+    let n = 0;
+    const say = (text: string) => {
+      clock.advance(1100);
+      hub.frame(ana.s, ana.sock, JSON.stringify({ t: 'chat.send', n: ++n, text }));
+    };
+    const react = (who: { s: typeof ana.s; sock: PipeSocket }, c: number[]) => hub.frame(who.s, who.sock, JSON.stringify({ t: 'chat.react', c }));
+    // Act
+    say('oi');
+    react(ana, [2, 0, 1]);
+    react(viewer, [0, 1]);
+    hub.flushReactions();
+    say('que jogada');
+    hub.flush();
+    // The viewer's connection stalls through a window of reactions: it misses that rx, and nothing else.
+    viewer.sock.bufferedAmount = 100_000;
+    clock.advance(2000);
+    react(ana, [0, 0, 0, 0, 0, 3]);
+    hub.flushReactions();
+    hub.flush();
+    viewer.sock.bufferedAmount = 0;
+    clock.advance(2000);
+    react(ana, [1]);
+    hub.flushReactions();
+    say('voltei');
+    hub.flush();
+    // A reconnect: both pages get a delta hello, with no reaction in it.
+    const again = hub.snapshot(viewer.s, { after: old.session.lastSeq })!;
+    old.session.hello(again);
+    current.session.hello(again);
+    react(ana, [0, 0, 0, 1]);
+    hub.flushReactions();
+    say('fim');
+    hub.flush();
+    // Assert
+    expect(snap.settings.reactions).toBe(true);
+    expect(again.items.some((i) => (i as { k: string }).k === 'rx')).toBe(false);
+    expect(current.rx).toEqual([
+      [2, 1, 1, 0, 0, 0, 0, 0],
+      [1, 0, 0, 0, 0, 0, 0, 0],
+      [0, 0, 0, 1, 0, 0, 0, 0],
+    ]);
+    expect(old.rx).toEqual([]);
+    expect(current.shown).toEqual(old.shown);
+    expect(old.shown).toHaveLength(4);
+    expect(old.sent).toEqual([]);
+    expect(current.sent).toEqual([]);
+    expect(old.alarms).toEqual([]);
+    expect(current.alarms).toEqual([]);
+    expect(old.session.lastSeq).toBe(hub.lastSeq);
   });
 });
