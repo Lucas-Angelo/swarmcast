@@ -51,6 +51,7 @@ Tests: `bash scripts/test/run.sh` (macOS/Linux) and `scripts\test\run.ps1` (Wind
 | `run.sh`, `run.ps1`, `uninstall.sh`, `uninstall.ps1` (+ `make-fake-release.mjs`, `serve.mjs`) | the start and uninstall scripts against a fake release on 127.0.0.1 | anywhere (temp folders, fake HOME for the uninstallers) |
 | `lib/` | shared helpers: ports (`ports.mjs`), processes, waits, ffmpeg, loopback | used by the tests |
 | `chat/` | chat load bench (`bench.ts`, `bots.ts`, `scenarios.ts`) | anywhere (port 0, no data folder) |
+| `surge/` | many people joining or turning P2P on at once (`bench.ts`, `viewers.ts`, `source.ts`, `tunnel.ts`, `scenarios.ts`; [docs/TESTING.md](../docs/TESTING.md#surge-bench)) | anywhere (port 0, no data folder) |
 | `quality/` | quality experiments: `server.ts` + `bench.ts`, `simulate-controller.ts`, and by hand `debug-ladder.ts`, `probe-encoders.ts`, `install-ffmpeg.ts <dataDir>`, `menu-check.ts` | anywhere (own ports, temp data folders) |
 | `docker/` | Linux suites in Docker ([docker/README.md](test/docker/README.md)) | anywhere with Docker |
 | `tunnel-limit/` | measures a real quick tunnel's in-flight limit ([tunnel-limit/README.md](test/tunnel-limit/README.md)) | by hand (uses a real Cloudflare tunnel) |

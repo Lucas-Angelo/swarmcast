@@ -3,11 +3,12 @@ import { defineConfig } from 'vite';
 import { fontLicenses } from '@swarmcast/shared/web/font-licenses';
 import { startupGuard } from '@swarmcast/shared/web/startup-guard';
 import { emojiDataPlugin } from './scripts/emoji-data.mjs';
+import { precompress } from './scripts/precompress.mjs';
 
 // Multi-page build. No inline scripts are emitted but the startup guard (startupGuard writes it into
 // join.html and watch.html), which the server allows by its hash: strict CSP, no 'unsafe-inline'.
 export default defineConfig({
-  plugins: [fontLicenses(), emojiDataPlugin(), startupGuard()],
+  plugins: [fontLicenses(), emojiDataPlugin(), startupGuard(), precompress()],
   base: '/',
   build: {
     outDir: 'dist',

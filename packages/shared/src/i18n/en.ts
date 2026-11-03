@@ -414,6 +414,7 @@ export const en = {
   'watch.p2pOwnConnection': "P2P is off on the streamer's own connection, to keep their IP private. You can keep watching normally.",
   'watch.p2pChecking': 'P2P is paused for a moment while the connection is checked. You can keep watching normally.',
   'watch.peers': { one: '{count} peer', other: '{count} peers' },
+  'watch.p2pConnecting': 'P2P on · connecting to other viewers…',
   'watch.p2pStats': 'P2P on · {peers} · {share}% of your video came from peers · you shared {mb} MB',
   'watch.p2pStats.tip': 'Peers: other viewers you are connected to. The percentage is how much of your video came from them instead of the streamer. Shared: megabytes (MB) you sent to others.',
   'watch.watchingAs': 'Watching as',
