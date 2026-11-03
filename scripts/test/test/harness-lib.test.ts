@@ -11,8 +11,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.js';
-import { LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
+import { bareEnv, LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
 import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
+import { browserTempOnWorkDisk, userTempEnv } from '../lib/browser-temp.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
@@ -394,6 +395,60 @@ describe('waitForTunnelName', () => {
     // Assert
     expect(resolve4).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe('browserTempOnWorkDisk', () => {
+  const USER = 'C:\\Users\\runneradmin\\AppData\\Local\\Temp';
+  const WORK = 'D:\\a\\_temp';
+
+  it("on a Windows runner, puts the temporary folder, and with it Playwright's browser profiles, in RUNNER_TEMP on the local disk", () => {
+    // Arrange
+    const env: NodeJS.ProcessEnv = { RUNNER_TEMP: WORK, TEMP: USER, TMP: USER };
+
+    // Act
+    const dir = browserTempOnWorkDisk(env, 'win32');
+    browserTempOnWorkDisk(env, 'win32');
+
+    // Assert
+    expect(dir).toBe(WORK);
+    expect(env.TEMP).toBe(WORK);
+    expect(env.TMP).toBe(WORK);
+    expect(userTempEnv(env)).toEqual({ RUNNER_TEMP: WORK, TEMP: USER, TMP: USER });
+  });
+
+  it('changes nothing on a machine that is not a Windows CI runner', () => {
+    // Arrange
+    const local: NodeJS.ProcessEnv = { TEMP: 'C:\\Temp' };
+    const linux: NodeJS.ProcessEnv = { RUNNER_TEMP: '/home/runner/work/_temp', TMPDIR: '/tmp' };
+
+    // Act
+    const onLocal = browserTempOnWorkDisk(local, 'win32');
+    const onLinux = browserTempOnWorkDisk(linux, 'linux');
+
+    // Assert
+    expect(onLocal).toBeUndefined();
+    expect(local).toEqual({ TEMP: 'C:\\Temp' });
+    expect(userTempEnv(local)).toBe(local);
+    expect(onLinux).toBeUndefined();
+    expect(linux).toEqual({ RUNNER_TEMP: '/home/runner/work/_temp', TMPDIR: '/tmp' });
+  });
+
+  it("gives the app under test this machine's own temporary folder, not the one the harness moved for its browsers", () => {
+    // Arrange
+    const env: NodeJS.ProcessEnv = { RUNNER_TEMP: WORK, TEMP: USER, TMP: USER };
+    browserTempOnWorkDisk(env, 'win32');
+    for (const [k, v] of Object.entries(env)) vi.stubEnv(k, v);
+    onTestFinished(() => void vi.unstubAllEnvs());
+
+    // Act
+    const app = bareEnv();
+
+    // Assert
+    expect(process.env.TEMP).toBe(WORK);
+    expect(app.TEMP).toBe(USER);
+    expect(app.TMP).toBe(USER);
+    expect(Object.keys(app).filter((k) => k.startsWith('SC_USER_'))).toEqual([]);
   });
 });
 
