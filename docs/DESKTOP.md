@@ -13,9 +13,8 @@ releasing and the updater key: [RELEASING.md](RELEASING.md).
 - "Start with the computer" option, **off by default**.
 - OBS-style updates: the app finds the latest **stable** release, and after one click on "Update" it
   downloads, verifies, installs and reopens by itself. Settings are never lost.
-- The only way streamers install SwarmCast. Until 0.5.0 a script mode (start scripts, installer zips, a
-  Go tray helper) installed the same server into the same data folder; it was removed in 0.5.1, and the
-  app cleans up what it left ("First run in desktop mode" below).
+- The only way streamers install SwarmCast (a script mode, with start scripts, installer zips and a Go
+  tray helper, existed until 0.5.0 and was removed in 0.5.1: [DECISIONS.md](DECISIONS.md)).
 - Viewers are not affected: they keep watching in their browser.
 
 ## Why Tauri (and not Electron)
@@ -46,15 +45,14 @@ scripts/build/desktop.mjs (stage sidecar + resources from release/staging/<targe
 | Product name | `SwarmCast` |
 | Identifier | `io.github.lucas-angelo.swarmcast` |
 | App executable | Windows `SwarmCast.exe`, macOS `SwarmCast.app/Contents/MacOS/SwarmCast`, Linux `swarmcast-desktop` |
-| Server sidecar | `swarmcast-server[.exe]` = the same pkg binary the scripts install as `swarmcast` |
+| Server sidecar | `swarmcast-server[.exe]` = the pkg binary `scripts/build/package.mjs` stages as `swarmcast` |
 | Resources | `bin/` (mediamtx, cloudflared), `web/viewer`, `web/admin`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` (npm packages, binaries, fonts and the Rust crates of the app for that platform) |
 | Windows install dir | `%LOCALAPPDATA%\Programs\SwarmCast` (per user, no admin prompt) |
 | Data dir (unchanged) | `%LOCALAPPDATA%\SwarmCast`, `~/Library/Application Support/SwarmCast`, `~/.local/share/swarmcast` |
 
 The data dir holds config, secrets, logs, ffmpeg (`tools/`) and `system-check.json`. Installing,
 updating and uninstalling the app never touches it, except the uninstaller's optional "delete app data"
-checkbox. The old script mode used the same folder (its program copy in `<data>/app`, removed by the
-app at start).
+checkbox.
 
 ## Shell ↔ server protocol
 
@@ -287,13 +285,6 @@ scripts, which ran them before installing:
 - **ffmpeg**: automatic `installFfmpeg()` (existing, pinned + SHA-256), first try plus 3 retries after
   2 s, 5 s and 10 s (phase `retrying` in between); progress in the panel (quality card and tutorial);
   failures are not fatal (original quality only) and the panel offers "Try again".
-- **The old script-mode copy**: at every start, the server removes `<data>/app`, the program copy the
-  start scripts installed until 0.5.0, when it holds only their `current`, `previous`, `failed` and
-  `.staging-*` folders (otherwise it leaves the folder alone and logs why). Settings, the stream key, `tools/`
-  (ffmpeg) and the logs are never touched. The folder is first renamed to `<data>/.app-removing` in one
-  step, so it goes as a whole or not at all: while a file in it is in use (an old copy still running on
-  Windows) the rename fails and it stays for the next start; a delete cut short is finished at the next
-  start (`apps/server/src/desktop/old-install.ts`).
 
 ## Installers
 
@@ -341,8 +332,7 @@ installers for every target (windows-x64, macos-arm64 and macos-x64, both on App
 linux-arm64 on Ubuntu 22.04 for an older glibc; the Intel Mac image tests the macos-x64 build), two `tauri build`s per target: test build A (0.0.0-test.1,
 `--fast --insecure-updates --updater-pubkey`) and the real installers, signed with a key pair generated in
 the job. Its clean-machine job then runs `scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`,
-`.dmg` → `~/Applications`, `.deb` and the AppImage), launch over a data folder holding an old
-start-script copy (the app must remove it and nothing else), panel login (admin API), autostart on/off,
+`.dmg` → `~/Applications`, `.deb` and the AppImage), launch, panel login (admin API), autostart on/off,
 kill (the server and tools go too), quit, the NSIS uninstaller / `apt remove`,
 and an update from A to the real installers, served on 127.0.0.1 with a `latest.json` made in the job,
 with config and secrets kept. Pull requests build the release profile without LTO (16 codegen units);

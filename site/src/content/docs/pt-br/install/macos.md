@@ -42,10 +42,6 @@ A janela mostra **Abrindo o SwarmCast…** e depois um tutorial curto. Continue 
 
 Se o macOS perguntar se o SwarmCast pode aceitar conexões de rede (só no [modo direto](/swarmcast/pt-br/live/direct-mode/)), clique em **Permitir**. No modo seguro, que é o normal, ninguém se conecta ao seu Mac.
 
-## Usava os scripts de início?
-
-Feche antes a janela antiga do SwarmCast e depois instale o app como mostrado acima. As suas configurações e a chave de transmissão vêm junto, e o app apaga a cópia antiga sozinho. Mais em [Mude para o app](/swarmcast/pt-br/app/updates/#usava-os-scripts-de-início-mude-para-o-app).
-
 ## Deu algo errado?
 
 - **"O SwarmCast está danificado e não pode ser aberto":** apague o app e o `.dmg`, baixe de novo e repita. Se continuar, abra o **Terminal**, cole `xattr -dr com.apple.quarantine /Applications/SwarmCast.app`, aperte Enter e abra o SwarmCast de novo.

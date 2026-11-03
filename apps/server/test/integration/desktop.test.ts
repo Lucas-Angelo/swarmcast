@@ -319,31 +319,3 @@ describe.skipIf(!POSIX)('desktop mode: update channel ("Get beta versions")', ()
   });
 });
 
-// A streamer who used the old start scripts (script mode, gone in 0.5.1) installs the app: it
-// shares their data folder, and removes the program copy the scripts left in it (<data>/app) at
-// its start, keeping everything else (docs/DESKTOP.md "First run in desktop mode"). Every OS.
-describe('desktop mode over a data folder of the old start scripts', () => {
-  it('removes <data>/app at its start and keeps the settings and the logs', async () => {
-    // Arrange
-    const ports = await allocAppPorts();
-    const dataDir = tmpDir();
-    writeConfig(dataDir, ports);
-    for (const rel of ['app/current/VERSION', 'app/current/bin/mediamtx', 'app/previous/VERSION', 'logs/setup-2026-10-01.log']) {
-      fs.mkdirSync(path.dirname(path.join(dataDir, rel)), { recursive: true });
-      fs.writeFileSync(path.join(dataDir, rel), 'old');
-    }
-    const ports0 = JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8')).ports;
-    const server = desktop({ ports, dataDir, args: ['--no-autostart'], env: { SWARMCAST_WEB_DIR: webDir() } });
-    // Act
-    await server.next(isReady, 'ready');
-    await until(() => !fs.existsSync(path.join(dataDir, 'app')), { timeoutMs: 10_000, what: 'the old start-script copy to go', abortOn: [server.proc] });
-    server.send({ type: 'quit' });
-    const code = await server.exited;
-    // Assert
-    expect(code).toBe(0);
-    expect(fs.existsSync(path.join(dataDir, '.app-removing'))).toBe(false);
-    expect(fs.readFileSync(path.join(dataDir, 'logs', 'setup-2026-10-01.log'), 'utf8')).toBe('old');
-    expect(JSON.parse(fs.readFileSync(path.join(dataDir, 'config.json'), 'utf8')).ports).toEqual(ports0);
-    expect(fs.existsSync(path.join(dataDir, 'secrets.json'))).toBe(true);
-  });
-});

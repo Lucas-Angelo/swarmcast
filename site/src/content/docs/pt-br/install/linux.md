@@ -51,8 +51,4 @@ A janela mostra **Abrindo o SwarmCast…** e depois um tutorial curto. Continue 
 O Ubuntu já mostra o ícone. Em outros ambientes GNOME, instale a extensão "AppIndicator and KStatusNotifierItem Support" ou use só a janela do SwarmCast.
 :::
 
-## Usava os scripts de início?
-
-Feche antes a janela antiga do SwarmCast e depois instale o app como mostrado acima. As suas configurações e a chave de transmissão vêm junto, e o app apaga a cópia antiga sozinho. Mais em [Mude para o app](/swarmcast/pt-br/app/updates/#usava-os-scripts-de-início-mude-para-o-app).
-
 Mais respostas: [Problemas e dúvidas](/swarmcast/pt-br/help/troubleshooting/).

@@ -8,7 +8,6 @@ import { Autostart } from './desktop/autostart.js';
 import { createProtocolWriter, DesktopBridge, type ProtocolWriter } from './desktop/bridge.js';
 import { startDesktop } from './desktop/desktop.js';
 import { runDesktopFirstRun } from './desktop/first-run.js';
-import { removeOldScriptInstall } from './desktop/old-install.js';
 import { fatalCodeOf } from './desktop/protocol.js';
 import { probeIntl } from './chat/probe.js';
 
@@ -141,8 +140,6 @@ Usage: swarmcast [options]
     console.log(`Panel: ${app.adminUrl}\n`);
     app.live.scheduleSpeedTests();
     void runDesktopFirstRun(app, bridge, { signal: app.live.quitSignal }).catch((err: Error) => app.log.warn({ err: err.message }, 'desktop first run failed'));
-    // A streamer who used the old start scripts: their program copy in the data folder goes.
-    void removeOldScriptInstall(app.paths.dataDir, app.log);
     if (!flag('no-autostart')) {
       app.live.start().catch((err: Error) => {
         if (!app.live.quitSignal.aborted) console.error(`\n✗ Could not start: ${err.message}\n`);

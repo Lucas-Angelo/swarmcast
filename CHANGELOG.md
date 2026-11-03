@@ -32,8 +32,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **The start scripts and the installer zips are gone: SwarmCast now comes only as the desktop app.** Releases no longer have `start-windows.cmd`, `start-macos.command`, `start-linux.sh`, the uninstall scripts or the `-installer.zip` files. The app does everything they did, and more: it updates itself with one click, can start with the computer and has its own tray icon. To remove SwarmCast completely, follow [Uninstall](https://lucas-angelo.github.io/swarmcast/app/uninstall/).
-- **Used the start scripts? Switching takes a minute.** Close the old SwarmCast window, install the app for your system and open it: your settings and your stream key come along by themselves, so nothing changes in OBS. The app deletes the old copy the scripts installed (never your settings). You can then delete the zip and the folder you downloaded the scripts into. Step by step: [Switch to the app](https://lucas-angelo.github.io/swarmcast/app/updates/#used-the-old-start-scripts-switch-to-the-app). Until you switch, the old scripts keep starting the version you have, but they get no more updates.
+- **Script mode is gone: SwarmCast now comes only as the desktop app.** Releases no longer have the start and uninstall scripts or the installer zips.
 
 ### Fixed
 

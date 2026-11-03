@@ -23,9 +23,9 @@ name: desktop
 #   link rotation, "Stop everything", quit, nothing left behind, and playback through a real
 #   Cloudflare quick tunnel (scripts/test/preflight/verify.mjs). Not on the arm64 image (no
 #   Google Chrome there);
-# - desktop: the real installers: install, launch (removing an old start-script copy from the
-#   data folder), panel login, autostart, kill, quit, the uninstallers, and an update from build A
-#   to them with the settings kept (scripts/test/desktop/verify.mjs);
+# - desktop: the real installers: install, launch, panel login, autostart, kill, quit, the
+#   uninstallers, and an update from build A to them with the settings kept
+#   (scripts/test/desktop/verify.mjs);
 # - AppImage on a minimal host: bare ubuntu:22.04 and ubuntu:24.04 containers with only the
 #   libraries the install guide lists (scripts/test/docker/appimage.sh, also run weekly on more
 #   bases by linux-docker.yml). The runner image has Mesa, fonts and X already, so the desktop

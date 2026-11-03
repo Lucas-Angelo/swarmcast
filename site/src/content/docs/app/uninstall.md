@@ -19,22 +19,11 @@ Uninstalling never changes OBS. If you want, remove the SwarmCast target (Multip
 
 2. If **Start with the computer** is on, turn it off first in the panel ([Start with the computer](/swarmcast/app/autostart/)).
 3. Open **Applications** and drag **SwarmCast** to the Trash.
-4. Your settings stay in `~/Library/Application Support/SwarmCast`. To remove them too, see [Remove everything](#remove-everything) below.
+4. Your settings stay in `~/Library/Application Support/SwarmCast`.
 
 ## Linux
 
 - **.deb:** in a terminal, `sudo apt remove swarm-cast`.
 - **AppImage:** turn off **Start with the computer** in the panel, quit SwarmCast and delete the `.AppImage` file.
 
-Your settings stay in `~/.local/share/swarmcast`. To remove them too, see [Remove everything](#remove-everything) below.
-
-## Remove everything
-
-Your settings, your stream key, the logs and the video converter live in one SwarmCast folder. Delete it only if you never want to use the same stream key again.
-
-1. If you use Direct mode, click **Back to Secure mode** in the panel first: SwarmCast closes the router port it opened.
-2. Uninstall the app as shown above for your system.
-3. Delete the SwarmCast folder:
-   - **Windows:** tick **Delete the application data** in the uninstaller. Already uninstalled? Press **Windows + R**, type `%LOCALAPPDATA%`, press Enter and delete the **SwarmCast** folder.
-   - **macOS:** in Finder, click **Go** → **Go to Folder…**, type `~/Library/Application Support`, press Enter and move the **SwarmCast** folder to the Trash.
-   - **Linux:** in a terminal, `rm -rf ~/.local/share/swarmcast`.
+Your settings stay in `~/.local/share/swarmcast`.

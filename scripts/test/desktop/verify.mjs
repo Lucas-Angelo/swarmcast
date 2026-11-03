@@ -6,15 +6,13 @@
 //   node scripts/test/desktop/verify.mjs --installers release/desktop/<target> \
 //        [--update-from <dir A> --update-to <dir B with latest.json> --update-port 17811]
 //
-// 1. Installs the real installer (Windows NSIS /S, macOS .dmg -> ~/Applications, Linux .deb)
-//    over a data folder that holds an old start-script copy of SwarmCast (script mode, before
-//    0.5.1), starts the app, logs into the panel (admin API), checks that the app removed that
-//    copy and nothing else, checks /api/desktop, turns "Start with the computer" on and off (Run
-//    key / LaunchAgent / XDG entry), kills the app (its server and tools must go with it: the
+// 1. Installs the real installer (Windows NSIS /S, macOS .dmg -> ~/Applications, Linux .deb),
+//    starts the app, logs into the panel (admin API), checks /api/desktop, turns "Start with the
+//    computer" on and off (Run key / LaunchAgent / XDG entry), kills the app (its server and tools must go with it: the
 //    Windows Job object), starts it again, quits from the panel (nothing left running) and
 //    uninstalls (NSIS uninstaller / apt remove). Linux runs the AppImage first, before the .deb
-//    brings WebKitGTK onto the machine. Then the test removes what is left, as the website's
-//    Uninstall page tells people to (the app, the data folder).
+//    brings WebKitGTK onto the machine. Then the test removes what is left (the app copies, the
+//    data folder), so the next part starts from a clean machine.
 // 2. Update: installs build A (macOS: from its .app.tar.gz, Linux: the AppImage), serves build
 //    B and its latest.json on 127.0.0.1, starts A, clicks "Update now" through the panel API
 //    right after the login and expects B to come back by itself with config.json and
@@ -408,9 +406,8 @@ async function nativeUninstall() {
 }
 
 /**
- * What is left after the uninstall goes, by hand, as the website's Uninstall page says (the
- * macOS app and a Linux AppImage are files to delete; the data folder is kept by the
- * uninstallers unless asked): the next part starts from a clean machine.
+ * What is left after the uninstall goes (the macOS app and a Linux AppImage are files to delete;
+ * the uninstallers keep the data folder unless asked): the next part starts from a clean machine.
  */
 function removeTheRest(exe) {
   step('no autostart entry is left', !autostartPresent());
@@ -424,23 +421,6 @@ function removeTheRest(exe) {
   }
   fs.rmSync(dataDir, { recursive: true, force: true });
   console.log(`removed ${exe}, the data folder and every SwarmCast AppImage / app copy`);
-}
-
-/** The program copy the old start scripts (script mode, before 0.5.1) left in the data folder. */
-const OLD_COPY = ['app/current/VERSION', 'app/current/bin/mediamtx', 'app/previous/VERSION', 'app/.staging-ab12cd/VERSION'];
-/** A file of the user's that must stay. */
-const OLD_SETUP_LOG = 'logs/setup-2026-10-01.log';
-function seedOldScriptCopy() {
-  for (const rel of [...OLD_COPY, OLD_SETUP_LOG]) {
-    fs.mkdirSync(path.dirname(path.join(dataDir, rel)), { recursive: true });
-    fs.writeFileSync(path.join(dataDir, rel), 'from the old start scripts\n');
-  }
-}
-/** The app removes that copy at its start (apps/server/src/desktop/old-install.ts), nothing else. */
-async function checkOldScriptCopyRemoved() {
-  const gone = await until(() => !fs.existsSync(path.join(dataDir, 'app')), 30_000, 'the old start-script copy to go').then(() => true, () => false);
-  step('the app removes the old start-script copy from the data folder', gone, gone ? 'app/ gone' : fs.readdirSync(path.join(dataDir, 'app')).join(', '));
-  step('...and keeps everything else in the data folder', fs.existsSync(path.join(dataDir, OLD_SETUP_LOG)) && fs.existsSync(path.join(dataDir, 'secrets.json')), OLD_SETUP_LOG);
 }
 
 // ---------------------------------------------------------------- 1. the real installer
@@ -468,10 +448,8 @@ async function installerTest(dir) {
   // a library the AppImage should bundle but does not then fails here.
   const appImage = OS === 'linux' ? await appImageTest(dir) : null;
   console.log(`\n=== installer ${v} (${OS})`);
-  seedOldScriptCopy();
   const exe = await install(dir);
   let panel = await launch(exe);
-  await checkOldScriptCopyRemoved();
   await checkDesktopApi(panel, v);
   await checkAutostart(panel);
   await killApp('after killing the app');

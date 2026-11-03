@@ -133,7 +133,7 @@ npm run lint && npm run typecheck
   off the other harnesses' fixed ports (`scripts/test/lib/ports.mjs`): the server refuses an offset that
   does not.
 
-Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop, tray), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (install and build scripts).
+Layout: [apps/](../apps/README.md) (server, viewer, admin, desktop), [packages/](../packages/README.md) (shared types), [scripts/](../scripts/README.md) (build, release, CI and test scripts).
 
 ### Coverage
 

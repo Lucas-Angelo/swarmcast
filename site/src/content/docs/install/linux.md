@@ -51,8 +51,4 @@ The window shows **Starting SwarmCast…** and then a short tutorial. Continue w
 Ubuntu shows the icon by itself. On other GNOME desktops, install the "AppIndicator and KStatusNotifierItem Support" extension, or simply use the SwarmCast window.
 :::
 
-## Used the old start scripts?
-
-Close the old SwarmCast window first, then install the app as shown above. Your settings and your stream key come along, and the app removes the old copy by itself. More in [Switch to the app](/swarmcast/app/updates/#used-the-old-start-scripts-switch-to-the-app).
-
 More answers: [Troubleshooting](/swarmcast/help/troubleshooting/).

@@ -54,10 +54,6 @@ SwarmCast opens in its own window, with a shortcut on the desktop and in the Sta
 The first time you turn on Direct mode (emergencies only, see [Direct mode](/swarmcast/live/direct-mode/)), Windows may ask whether SwarmCast may use networks. Click **Allow** (Private networks).
 :::
 
-## Used the old start scripts?
-
-Close the old SwarmCast window first, then install the app as shown above. Your settings and your stream key come along, and the app removes the old copy by itself. More in [Switch to the app](/swarmcast/app/updates/#used-the-old-start-scripts-switch-to-the-app).
-
 ## Something went wrong?
 
 - **The download disappeared, or the browser says it is "not commonly downloaded":** in Edge open the downloads list (**Ctrl+J**), click **…** next to the file, then **Keep** → **Show more** → **Keep anyway**.

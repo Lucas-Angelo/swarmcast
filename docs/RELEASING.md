@@ -362,9 +362,7 @@ the categories in `.github/release.yml`; pull requests labelled `skip-changelog`
 Nothing else: the desktop app is the only way streamers install SwarmCast (site → **Download**), and the
 website is the only guide. Until 0.5.0, releases also carried the script mode (start and uninstall
 scripts, per-platform packages, installer zips with an offline HTML guide, `binaries.json`); it was
-removed in 0.5.1 ([DECISIONS.md](DECISIONS.md)). Old start scripts that are still run find no package
-for their system in the latest release and keep starting the copy they installed; the desktop app
-removes that copy (`<data>/app`) when it starts. Desktop details: [DESKTOP.md](DESKTOP.md).
+removed in 0.5.1 ([DECISIONS.md](DECISIONS.md)). Desktop details: [DESKTOP.md](DESKTOP.md).
 
 ## 6. GitHub Pages and usage numbers
 
