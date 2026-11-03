@@ -2,9 +2,11 @@
 // The join page's branding start (branding/loader.ts startJoinBranding): the page shows
 // (body.brand-known) once the branding is in or failed, or after JOIN_BRAND_WAIT_MS, and branding
 // that comes after that may not change the layout. startBrand is a fake whose refresh the test
-// settles; time is Vitest's fake clock.
+// settles; time is Vitest's fake clock. style.css also shows the page by itself (its 3 s fallback,
+// a CSS animation): a page shown that way counts as shown, whether the fallback ran before the
+// script, while it waited (animationend), or just before the branding was applied.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JOIN_BRAND_WAIT_MS, startJoinBranding, type StartBrand } from '../../src/branding/loader.js';
+import { JOIN_BRAND_WAIT_MS, JOIN_CSS_FALLBACK_ANIMATION, joinShownByCss, startJoinBranding, type StartBrand } from '../../src/branding/loader.js';
 
 /**
  * A fake startBrand: its refresh waits for `apply()` (the branding answer) or `fail()`, and
@@ -90,6 +92,66 @@ describe('startJoinBranding', () => {
     expect(debug).toHaveBeenCalledWith('branding: Error: chunk offline');
   });
 
+  it('a page style.css already showed (the script ran late) is shown: marked known at once, and the branding may not change the layout', async () => {
+    // Arrange
+    const b = fakeBranding();
+
+    // Act
+    void startJoinBranding({ loadStartBrand: async () => b.startBrand, shownByCss: () => true });
+    const knownAtOnce = shown();
+    b.apply();
+    await vi.waitFor(() => expect(b.layoutOpen()).not.toBeNull());
+
+    // Assert
+    expect(knownAtOnce).toBe(true);
+    expect(b.layoutOpen()).toBe(false);
+  });
+
+  it('marks the page known when style.css shows it while the branding is on the way; the branding may not change the layout then', async () => {
+    // Arrange
+    const b = fakeBranding();
+    let byCss = false;
+    void startJoinBranding({ loadStartBrand: async () => b.startBrand, shownByCss: () => byCss });
+
+    // Act
+    byCss = true;
+    document.dispatchEvent(Object.assign(new Event('animationend'), { animationName: JOIN_CSS_FALLBACK_ANIMATION }));
+    const known = shown();
+    b.apply();
+    await vi.waitFor(() => expect(b.layoutOpen()).not.toBeNull());
+
+    // Assert
+    expect(known).toBe(true);
+    expect(b.layoutOpen()).toBe(false);
+  });
+
+  it('another animation ending does not show the page', async () => {
+    // Arrange
+    const b = fakeBranding();
+    void startJoinBranding({ loadStartBrand: async () => b.startBrand, shownByCss: () => false });
+
+    // Act
+    document.dispatchEvent(Object.assign(new Event('animationend'), { animationName: 'sc-spin' }));
+
+    // Assert
+    expect(shown()).toBe(false);
+  });
+
+  it('branding applied just after style.css showed the page (its animationend not dispatched yet) may not change the layout', async () => {
+    // Arrange
+    const b = fakeBranding();
+    let byCss = false;
+    void startJoinBranding({ loadStartBrand: async () => b.startBrand, shownByCss: () => byCss });
+
+    // Act
+    byCss = true;
+    b.apply();
+    await vi.waitFor(() => expect(b.layoutOpen()).not.toBeNull());
+
+    // Assert
+    expect(b.layoutOpen()).toBe(false);
+  });
+
   it('shows the page at once when the branding answer fails', async () => {
     // Arrange
     const b = fakeBranding();
@@ -101,5 +163,50 @@ describe('startJoinBranding', () => {
 
     // Assert
     expect(shown()).toBe(true);
+  });
+});
+
+describe('joinShownByCss', () => {
+  afterEach(() => {
+    document.head.replaceChildren();
+    document.body.replaceChildren();
+  });
+
+  /** A join card under `css` (the page's rules for it). */
+  const cardUnder = (css: string): void => {
+    const style = document.createElement('style');
+    style.textContent = css;
+    document.head.append(style);
+    document.body.append(document.createElement('main'));
+  };
+
+  it('is false while style.css keeps the card invisible and untouchable', () => {
+    // Arrange
+    cardUnder('main { opacity: 0; pointer-events: none; }');
+
+    // Act
+    const byCss = joinShownByCss();
+
+    // Assert
+    expect(byCss).toBe(false);
+  });
+
+  it('is true once the card shows (the fallback ran, or no rule hides it)', () => {
+    // Arrange
+    cardUnder('main { opacity: 1; pointer-events: auto; }');
+
+    // Act
+    const byCss = joinShownByCss();
+
+    // Assert
+    expect(byCss).toBe(true);
+  });
+
+  it('is false on a page with no card', () => {
+    // Act
+    const byCss = joinShownByCss();
+
+    // Assert
+    expect(byCss).toBe(false);
   });
 });
