@@ -46,12 +46,19 @@ body:not(.watch) .site-head {
  * join-brand.ts marks its branding known (body.brand-known, after at most JOIN_BRAND_WAIT_MS; "Watch"
  * stays disabled until then too, join.ts pageShown):
  * the streamer's taller header, title and tagline must not move the form under a press
- * (branding/loader.ts startJoinBranding). Should the script never run, it shows after 3 s anyway.
+ * (branding/loader.ts startJoinBranding). Should the script be late or never run, it shows after
+ * 3 s anyway, and the script then leaves the layout as it is (startJoinBranding, joinShownByCss).
+ * The longhands are !important because the brand layer turns every animation off for reduced
+ * motion (brand.css, `animation: none !important`), which left the page invisible for good; this
+ * one moves nothing, it only shows the page. The play state stays free (tests pause it).
  */
 body:not(.watch):not(.brand-known) link[data-brand-theme] ~ :is(.site-head, main) {
   opacity: 0;
   pointer-events: none;
-  animation: sc-brand-known 0s linear 3s forwards;
+  animation-name: sc-brand-known !important;
+  animation-duration: 0s !important;
+  animation-delay: 3s !important;
+  animation-fill-mode: forwards !important;
 }
 @keyframes sc-brand-known {
   to {
