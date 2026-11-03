@@ -29,6 +29,8 @@ import {
 } from './player-config.js';
 import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
+import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
+import { p2pConnecting, type P2PConnectState } from './p2p-status.js';
 import { createQualityMenu } from './quality-menu.js';
 import { trackerMux } from './tracker-mux.js';
 import { createChatRouter } from './chat/loader.js';
@@ -465,8 +467,15 @@ async function main(): Promise<void> {
   // from peers (one random peer fetches each new segment over HTTPS and shares it); closer
   // ones are fetched over HTTPS directly. Latency buys P2P share.
   const profile = loadProfile();
+  // How soon each segment is needed, for the server's upload order (need-header.ts).
+  let needSource: NeedSource | null = null;
   const hls = new HlsWithP2P({
     ...hlsConfigFor(profile, { isMobile }),
+    xhrSetup: (xhr, url) => {
+      const headers = needSource ? Object.entries(needHeaders(needSource, url)) : [];
+      if (headers.length > 0 && !xhr.readyState) xhr.open('GET', url, true);
+      for (const [k, v] of headers) xhr.setRequestHeader(k, v);
+    },
     debug: debugMode,
     p2p: {
       core: {
@@ -482,10 +491,12 @@ async function main(): Promise<void> {
         segmentMemoryStorageLimit: isMobile ? 48 : 192,
         p2pMaxPeers: isMobile ? 6 : 15,
         simultaneousP2PDownloads: isMobile ? 2 : 3,
+        httpRequestSetup: needRequestSetup(() => needSource),
         ...p2pCoreConfigFor(profile),
       },
     },
   });
+  needSource = hls;
 
   const engine = hls.p2pEngine;
 
@@ -547,6 +558,8 @@ async function main(): Promise<void> {
   video.addEventListener('pause', fitLatency);
   video.addEventListener('play', fitLatency);
 
+  // "Connecting to other viewers…" until the first peer (p2p-status.ts).
+  const connect: Omit<P2PConnectState, 'enabled' | 'peers'> = { onAt: stats.p2pEnabled ? performance.now() : null, connectedOnce: false };
   // P2P must never starve playback: a fragment needed soon that the P2P core still holds is
   // fetched over HTTPS (p2p-fallback.ts), and peers that keep failing are dropped.
   const activity = new CoreActivity();
@@ -589,6 +602,7 @@ async function main(): Promise<void> {
   });
   engine.addEventListener('onPeerConnect', (p) => {
     stats.peers.add(p.peerId);
+    connect.connectedOnce = true;
     if (peerGuard.isBlocked(asciiToHex(p.peerId))) peerGuard.closePeer(asciiToHex(p.peerId));
   });
   engine.addEventListener('onPeerClose', (p) => {
@@ -697,7 +711,9 @@ async function main(): Promise<void> {
   });
 
   const setP2P = (on: boolean): void => {
+    const was = stats.p2pEnabled;
     stats.p2pEnabled = on && stats.p2pAllowed;
+    if (stats.p2pEnabled && !was) Object.assign(connect, { onAt: performance.now(), connectedOnce: false });
     engine.applyDynamicConfig({
       core: {
         isP2PDisabled: !stats.p2pEnabled,
@@ -716,6 +732,8 @@ async function main(): Promise<void> {
   const renderP2PLine = (): void => {
     if (!stats.p2pAllowed) {
       showP2PLine(t(p2pOffKey()));
+    } else if (p2pConnecting({ ...connect, enabled: stats.p2pEnabled, peers: stats.peers.size }, performance.now())) {
+      showP2PLine(t('watch.p2pConnecting'));
     } else if (stats.p2pEnabled) {
       const total = stats.httpBytes + stats.p2pDownBytes;
       const share = total > 0 ? Math.round((stats.p2pDownBytes / total) * 100) : 0;
