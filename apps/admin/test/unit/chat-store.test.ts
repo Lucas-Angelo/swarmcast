@@ -268,3 +268,43 @@ describe('panel chat store: replies (docs/CHAT.md "Replies and mentions")', () =
     expect(before.find((i) => i.s === 3)).toMatchObject({ re: { q: 'msg 1' } });
   });
 });
+
+describe('panel chat store: polls and predictions', () => {
+  const POLL = { id: 'p1', kind: 'poll' as const, q: 'Pizza?', o: ['Sim', 'Não'], st: 'open' as const, c: [0, 0], endsIn: 30_000, rn: 0 };
+
+  it('the poll and its counts (with the refused-by-network count); the end of voting on this computer\'s clock', () => {
+    // Arrange
+    const st = new ChatStore(500, () => 1_000_000);
+    // Act
+    st.apply(msg([{ k: 'poll', p: POLL }]));
+    const opened = st.view();
+    st.apply(msg([{ k: 'pt', id: 'p1', c: [3, 1], rn: 2 }, { k: 'pt', id: 'p9', c: [9, 9] }, { k: 'pt', id: 'p1', c: [1] }]));
+    const counted = st.view().poll;
+    st.apply(msg([{ k: 'poll', p: { ...POLL, st: 'closed', c: [4, 1] } }]));
+    const closed = st.view();
+    st.apply(msg([{ k: 'poll', p: null }]));
+    // Assert
+    expect(opened.poll).toEqual(POLL);
+    expect(opened.pollUntil).toBe(1_030_000);
+    expect(counted).toMatchObject({ c: [3, 1], rn: 2 });
+    expect(closed.poll?.st).toBe('closed');
+    expect(closed.pollUntil).toBeNull();
+    expect(st.view().poll).toBeNull();
+  });
+
+  it('GET /api/chat and a reset bring the current poll; a malformed one counts as none', () => {
+    // Arrange
+    const st = new ChatStore();
+    const state: AdminChatState = { settings: {} as AdminChatState['settings'], effective: {} as AdminChatState['effective'], roster: [], items: [], lastSeq: 0, sessions: [], counters, poll: POLL };
+    // Act
+    st.applyState(state);
+    const fromState = st.view().poll?.id;
+    st.apply(msg([], { reset: true }));
+    const afterReset = st.view().poll;
+    st.apply(msg([{ k: 'poll', p: { ...POLL, o: ['só uma'], c: [0] } }]));
+    // Assert
+    expect(fromState).toBe('p1');
+    expect(afterReset).toBeNull();
+    expect(st.view().poll).toBeNull();
+  });
+});

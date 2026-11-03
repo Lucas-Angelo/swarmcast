@@ -31,6 +31,11 @@ export interface Scenario {
   raid?: { bots: number; atS: number; overS: number };
   /** Every bot drops its socket at this second and reconnects at once. */
   reconnectAtS?: number;
+  /**
+   * A poll opens as the run starts (docs/CHAT.md "Polls and predictions") and every bot votes once
+   * within `voteWithinMs` of it, on top of its chat.
+   */
+  poll?: { options: number; voteWithinMs: number };
 }
 
 /** The highest rate a bot may send without being terminated (20 chat frames per 10 s). */
@@ -64,6 +69,19 @@ export const SCENARIOS: Scenario[] = [
     seconds: 40,
     uploadMbps: 10,
     chat: { slowModeS: 0, content: { text: true, emotes: true, gifs: true }, gif: { provider: 'klipy', key: 'benchkey_0123456789', rating: 'pg', consent: 'ask' } },
+  },
+  // vote-storm is lively chat plus the poll, so it gets lively's budget (960 kbps) for the same
+  // reason: at 10 Mbps (500 kbps) the chat alone used 90 % of the budget on a Windows runner (egress
+  // p95 452 kbps), the batcher held batches for the budget as it is meant to (up to 1 s), and the
+  // delivery p95 landed on 1001 ms (soak run 41542121131). The votes themselves add a few kilobytes.
+  {
+    name: 'vote-storm',
+    description: '120 viewers chatting; a poll opens and every one of them votes within 1 s',
+    bots: 120,
+    behaviour: { kind: 'chat', perBotPerS: 3 / 120 },
+    seconds: 20,
+    uploadMbps: 20,
+    poll: { options: 5, voteWithinMs: 1000 },
   },
   { name: 'reconnect-storm', description: '120 viewers drop and reconnect at the same moment', bots: 120, behaviour: { kind: 'chat', perBotPerS: 3 / 120 }, seconds: 30, uploadMbps: 10, reconnectAtS: 15 },
 ];

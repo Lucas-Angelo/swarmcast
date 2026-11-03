@@ -392,3 +392,183 @@
 .chat-muted-badge {
   margin-left: 4px;
 }
+
+/* ---- Polls and predictions, slash commands (docs/CHAT.md) ------------------------------------
+ * The poll card sits under the pinned message, above the feed; the form above the "Send as …" box.
+ * Bars are a transform of --p (set through the CSSOM), so new counts never relayout the column. */
+/* The card and the form share the column with the feed and the box, whose height is the window's:
+ * each one scrolls on its own past its share, and the form's Start row stays in view. */
+.chat-poll {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  max-height: 45%;
+  overflow: hidden;
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2) var(--sp-2);
+  border: 1px solid var(--sc-border);
+  border-top: 3px solid var(--sc-secondary);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface);
+  overflow-wrap: anywhere;
+}
+.chat-poll-head {
+  flex-wrap: wrap;
+}
+/* The state, the time and the buttons stay at the top; the question and the options scroll under them. */
+.chat-poll-actions-row {
+  flex: none;
+  margin-top: 2px;
+}
+.chat-poll-head {
+  flex: none;
+}
+.chat-poll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+.chat-poll-q {
+  margin: var(--sp-1) 0;
+  font-weight: var(--sc-weight-semibold);
+  overflow: clip;
+}
+.chat-poll-options {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 var(--sp-1);
+  padding: 0;
+  list-style: none;
+}
+.chat-poll-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  min-height: 30px;
+  padding: 2px var(--sp-2);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-sm);
+  overflow: clip;
+  isolation: isolate;
+}
+.chat-poll-row.win {
+  border: 2px solid var(--sc-success);
+}
+.chat-poll-bar {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--sc-accent-soft);
+  transform: scaleX(var(--p, 0));
+  transform-origin: left center;
+}
+.chat-poll-row.win .chat-poll-bar {
+  background: var(--tint-success);
+}
+.chat-poll-text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.chat-poll-count {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+.chat-feed.with-form .chat-list {
+  min-height: 3rem;
+}
+.chat-poll-form {
+  flex: none;
+  max-height: 60%;
+  overflow-y: auto;
+  display: grid;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-2);
+  padding: var(--sp-2);
+  border: 1px solid var(--sc-border);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface-2);
+}
+.chat-poll-actions {
+  position: sticky;
+  bottom: calc(-1 * var(--sp-2));
+  padding: var(--sp-1) 0;
+  background: var(--sc-surface-2);
+}
+.chat-poll-form fieldset {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.chat-poll-field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.chat-poll-field > span,
+.chat-poll-option > span {
+  flex: none;
+  min-width: 5.5em;
+}
+.chat-poll-field .text-input,
+.chat-poll-option {
+  flex: 1;
+  min-width: 0;
+}
+.chat-poll-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+}
+.chat-cmds li {
+  white-space: normal;
+}
+/* Over the feed, above the box (like the @ list): opening it never pushes the box out of the column. */
+.chat-cmd-help {
+  position: absolute;
+  z-index: 4;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  max-height: min(20rem, 55vh);
+  overflow-y: auto;
+  margin: 0 0 4px;
+  padding: var(--sp-2);
+  border: 1px solid var(--sc-border-strong);
+  border-radius: var(--sc-radius-md);
+  background: var(--sc-surface);
+  box-shadow: var(--sc-shadow-float);
+}
+.chat-cmd-help ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--sp-2);
+}
+.chat-cmd-help li {
+  display: grid;
+  gap: 2px;
+  justify-items: start;
+}
+.chat-cmd-help li > .small {
+  color: var(--sc-muted);
+}
+.chat-cmd-help p {
+  margin: 2px 0 var(--sp-1);
+}
+button.chat-cmd-pick {
+  max-width: 100%;
+  padding: 2px 6px;
+  background: transparent;
+  border-color: var(--sc-border);
+  font-weight: var(--sc-weight-regular);
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .chat-poll-bar {
+    transition: transform 0.3s ease-out;
+  }
+}

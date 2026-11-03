@@ -143,7 +143,14 @@ export function ChatLive({ panel }: { panel: ChatPanel }) {
         </div>
       </div>
 
-      <ChatFeed view={view} dark={dark} maxGraphemes={chat.settings.maxGraphemes} streamerName={chat.effective.streamerName || chat.settings.streamerName} enabled={chat.settings.enabled} />
+      <ChatFeed
+        view={view}
+        dark={dark}
+        maxGraphemes={chat.settings.maxGraphemes}
+        streamerName={chat.effective.streamerName || chat.settings.streamerName}
+        enabled={chat.settings.enabled}
+        commands={{ settings: chat.settings, saveSettings: panel.saveSettings, onClear: () => setConfirmClear(true) }}
+      />
     </aside>
   );
 }

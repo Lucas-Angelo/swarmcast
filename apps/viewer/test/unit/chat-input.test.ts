@@ -686,3 +686,50 @@ describe('ChatInput: replies and the @ list (docs/CHAT.md "Replies and mentions"
     expect([inWord, completed, nobody]).toEqual([[], [], []]);
   });
 });
+
+describe('ChatInput: slash commands (docs/CHAT.md, "Slash commands")', () => {
+  it('/help, /ajuda and /? open the help box on this page and send nothing; ✕ closes it', () => {
+    // Arrange
+    const { input, sent, type, key } = makeInput();
+    // Act
+    type('/help');
+    key('Enter');
+    const shown = !input.help.hidden;
+    const box = input.textarea.value;
+    input.help.querySelector<HTMLButtonElement>('[data-testid="chat-help-close"]')!.click();
+    const closed = input.help.hidden;
+    type('/AJUDA');
+    key('Enter');
+    const pt = !input.help.hidden;
+    // Assert
+    expect([shown, box, closed, pt]).toEqual([true, '', true, true]);
+    expect(sent).toEqual([]);
+    expect(input.help.querySelectorAll('li').length).toBe(4);
+  });
+
+  it('a streamer command typed by a viewer is not sent: the box keeps it and says only the streamer can', () => {
+    // Arrange
+    const { input, sent, type, key } = makeInput();
+    // Act
+    type('/poll Pizza? | sim | não');
+    key('Enter');
+    // Assert
+    expect(sent).toEqual([]);
+    expect(input.textarea.value).toBe('/poll Pizza? | sim | não');
+    expect(input.status.textContent).toBe('Only the streamer can use this command. Type /help to see what you can do.');
+    expect(input.status.classList.contains('error')).toBe(true);
+  });
+
+  it('"//text" sends "/text"; an unknown "/word" is sent as typed', () => {
+    // Arrange
+    const { sent, type, key, tick } = makeInput();
+    // Act
+    type('//poll é comando');
+    key('Enter');
+    tick(10_000);
+    type('/o/');
+    key('Enter');
+    // Assert
+    expect(sent).toEqual(['/poll é comando', '/o/']);
+  });
+});

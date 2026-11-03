@@ -104,6 +104,46 @@ describe('chat admin API', () => {
     for (const r of bad) expect(r.statusCode).toBe(400);
   });
 
+  it('polls: start, end, answer and cancel only through the panel, with validated bodies and coded errors', async () => {
+    // Arrange
+    const { headers, call } = await chatPanel();
+    const body = { kind: 'prediction', question: 'Quem ganha?', options: ['Ana', 'Bia'], seconds: 60 };
+    // Act
+    const noCookie = await call('POST', '/api/chat/poll', body, { host: headers.host, origin: headers.origin });
+    const foreign = await call('POST', '/api/chat/poll/end', {}, { host: headers.host, origin: 'http://evil.example', cookie: headers.cookie });
+    const started = await call('POST', '/api/chat/poll', body);
+    const second = await call('POST', '/api/chat/poll', { ...body, kind: 'poll' });
+    const tooEarly = await call('POST', '/api/chat/poll/resolve', { option: 0 });
+    const ended = await call('POST', '/api/chat/poll/end', {});
+    const noOption = await call('POST', '/api/chat/poll/resolve', { option: 4 });
+    const answered = await call('POST', '/api/chat/poll/resolve', { option: 1 });
+    const state = (await call('GET', '/api/chat')).json() as AdminChatState;
+    const cancelled = await call('POST', '/api/chat/poll/cancel', {});
+    const nothing = await call('POST', '/api/chat/poll/cancel', {});
+    const bad = await Promise.all([
+      call('POST', '/api/chat/poll', { ...body, options: ['só uma'] }),
+      call('POST', '/api/chat/poll', { ...body, seconds: 5 }),
+      call('POST', '/api/chat/poll', { ...body, kind: 'quiz' }),
+      call('POST', '/api/chat/poll', { ...body, extra: true }),
+      call('POST', '/api/chat/poll/resolve', { option: -1 }),
+    ]);
+    const dup = await call('POST', '/api/chat/poll', { ...body, options: ['Sim', 'sim'] });
+    // Assert
+    expect(noCookie.statusCode).toBe(401);
+    expect(foreign.statusCode).toBe(403);
+    expect(started.json()).toEqual({ ok: true, id: 'p1' });
+    expect(second.json()).toMatchObject({ code: 'admin.chat.err.pollOpen' });
+    expect(tooEarly.json()).toMatchObject({ code: 'admin.chat.err.pollState' });
+    expect(ended.json()).toEqual({ ok: true, id: 'p1' });
+    expect(noOption.json()).toMatchObject({ code: 'admin.chat.err.pollAnswer', params: { n: 5 } });
+    expect(answered.json()).toEqual({ ok: true, id: 'p1' });
+    expect(state.poll).toMatchObject({ id: 'p1', kind: 'prediction', st: 'resolved', win: 1, newOnly: true, rn: 0 });
+    expect(cancelled.json()).toEqual({ ok: true, id: 'p1' });
+    expect(nothing.json()).toMatchObject({ code: 'admin.chat.err.noPoll' });
+    for (const r of bad) expect(r.statusCode).toBe(400);
+    expect(dup.json()).toMatchObject({ code: 'admin.chat.err.pollDuplicate' });
+  });
+
   it('highlight, pin and unpin: only through the panel, with validated bodies and coded errors', async () => {
     // Arrange
     const { headers, call } = await chatPanel();
