@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { browserTempOnWorkDisk } from './scripts/test/lib/browser-temp.mjs';
 import { firefoxEnv, firefoxPrefs } from './scripts/test/lib/firefox.mjs';
 import { e2ePorts } from './scripts/test/lib/ports.mjs';
 
@@ -8,6 +9,9 @@ const chromiumChannel = process.env.PW_CHROMIUM_CHANNEL ?? 'chrome';
 // Dates the specs and the e2e server format (log file names, "muted until") do not depend on
 // the machine's timezone: the runner, its workers and the server it starts all use UTC.
 process.env.TZ = 'UTC';
+// On a Windows CI runner every browser profile goes on the runner's local disk, not on C:, where
+// Defender's signature update can stall a new Firefox for a minute (scripts/test/lib/browser-temp.mjs).
+browserTempOnWorkDisk();
 
 export default defineConfig({
   testDir: 'apps/server/test/e2e',
