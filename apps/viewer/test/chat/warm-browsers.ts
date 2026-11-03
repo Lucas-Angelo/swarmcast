@@ -1,8 +1,9 @@
 // Playwright globalSetup for the chat UI specs: start every engine of the config once and render
 // in it what the specs render (the watch page with the whole corpus, emoji and every script),
 // before any test's clock runs. The first start of a browser on a fresh CI runner is slow far
-// beyond the page under test (Windows scans the new binary and builds its font caches: Firefox
-// there took over 30 s to load the first page, and the next tests 17-19 s instead of under one).
+// beyond the page under test (Windows reads the new binary from disk and builds its font caches:
+// Firefox there took over 30 s to load the first page, and the next tests 17-19 s instead of under
+// one). Not Defender: its real-time protection is off on the runners, with C:\ and D:\ excluded.
 // The machine's first load of a system font is slow too, and it holds up every process that asks
 // for a font meanwhile: on a fresh Windows runner, Chrome's renderers lay text out with a blocking
 // call to the browser process's font service (FontDataService, over DirectWrite), so while the

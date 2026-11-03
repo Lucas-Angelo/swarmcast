@@ -13,7 +13,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.js';
 import { LIVE_LINK_WAIT_MS } from '../lib/app.mjs';
 import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
-import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
+import { browserTempOnWorkDisk, firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { serveDir } from '../lib/release-server.mjs';
@@ -394,6 +394,37 @@ describe('waitForTunnelName', () => {
     // Assert
     expect(resolve4).not.toHaveBeenCalled();
     expect(lookup).not.toHaveBeenCalled();
+  });
+});
+
+describe('browserTempOnWorkDisk', () => {
+  it("on a Windows runner, puts the temporary folder, and with it Playwright's browser profiles, in RUNNER_TEMP on the local disk", () => {
+    // Arrange
+    const env: NodeJS.ProcessEnv = { RUNNER_TEMP: 'D:\\a\\_temp', TEMP: 'C:\\Users\\runneradmin\\AppData\\Local\\Temp', TMP: 'C:\\Users\\runneradmin\\AppData\\Local\\Temp' };
+
+    // Act
+    const dir = browserTempOnWorkDisk(env, 'win32');
+
+    // Assert
+    expect(dir).toBe('D:\\a\\_temp');
+    expect(env.TEMP).toBe('D:\\a\\_temp');
+    expect(env.TMP).toBe('D:\\a\\_temp');
+  });
+
+  it('changes nothing on a machine that is not a Windows CI runner', () => {
+    // Arrange
+    const local: NodeJS.ProcessEnv = { TEMP: 'C:\\Temp' };
+    const linux: NodeJS.ProcessEnv = { RUNNER_TEMP: '/home/runner/work/_temp', TMPDIR: '/tmp' };
+
+    // Act
+    const onLocal = browserTempOnWorkDisk(local, 'win32');
+    const onLinux = browserTempOnWorkDisk(linux, 'linux');
+
+    // Assert
+    expect(onLocal).toBeUndefined();
+    expect(local).toEqual({ TEMP: 'C:\\Temp' });
+    expect(onLinux).toBeUndefined();
+    expect(linux).toEqual({ RUNNER_TEMP: '/home/runner/work/_temp', TMPDIR: '/tmp' });
   });
 });
 

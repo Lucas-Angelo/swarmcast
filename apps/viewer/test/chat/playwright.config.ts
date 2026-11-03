@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { defineConfig, devices } from '@playwright/test';
-import { firefoxEnv, firefoxPrefs } from '../../../../scripts/test/lib/firefox.mjs';
+import { browserTempOnWorkDisk, firefoxEnv, firefoxPrefs } from '../../../../scripts/test/lib/firefox.mjs';
 
 // The viewer chat UI against a mock hub (mock-hub.ts): the built watch page (npm run build -w
 // @swarmcast/viewer) is served by page.route from apps/viewer/dist and /control is a
@@ -8,6 +8,10 @@ import { firefoxEnv, firefoxPrefs } from '../../../../scripts/test/lib/firefox.m
 //   npx playwright test -c apps/viewer/test/chat/playwright.config.ts
 // The same flows against the real server: apps/server/test/e2e/chat.spec.ts.
 const root = path.resolve(import.meta.dirname, '..', '..', '..', '..');
+// On a Windows CI runner every browser profile goes on the runner's local disk, not on C:, where
+// Defender's signature update can stall a new Firefox for a minute (scripts/test/lib/firefox.mjs).
+// Before anything launches: globalSetup's browsers, the workers and theirs.
+browserTempOnWorkDisk();
 
 export default defineConfig({
   testDir: '.',
