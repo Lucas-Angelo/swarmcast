@@ -38,6 +38,7 @@ import { createScreenAwake, type WakeLockLike } from './wake-lock.js';
 import { createMediaSession, imageAsDataUrl } from './media-session.js';
 import { createShareControl, fetchShareLink } from './share.js';
 import { installPlayerExtras } from './player-extras.js';
+import { createSettingsMenu } from './settings-menu.js';
 import { mountPlayerControls, type PlayerControls } from './player-controls.js';
 import { exitFullscreen } from './player-caps.js';
 import fallbackArtworkUrl from '../../../assets/brand/favicon/favicon-512.png?url';
@@ -209,10 +210,10 @@ function tip(text: string): HTMLSpanElement {
 
 /**
  * The quality menu (Auto/1080p/720p/480p/360p/Audio only) in the player's control bar, and the
- * Stable / Lower-delay switch under the player, with its tooltip.
+ * Stable / Lower-delay switch in the Settings menu under the player, with its tooltip.
  */
 function mountSettings(hls: InstanceType<typeof Hls>, engine: Parameters<typeof applyProfile>[1], window: () => PlaylistWindow | null, onProfile: (id: PlaybackProfileId) => void, source: AudioOnlySwitch): void {
-  // Without the bar (it failed to build), the menu sits in the settings card as before.
+  // Without the bar (it failed to build), the menu sits in the Settings menu, next to Playback.
   const qualityHost = controls?.qualitySlot ?? playerControls.appendChild(Object.assign(document.createElement('div'), { className: 'control-group quality-group' }));
   createQualityMenu(
     hls,
@@ -370,6 +371,26 @@ installPlayerExtras({
   debug: (msg) => debugLog(msg),
   onAction: () => controls?.reveal(),
 });
+
+// Settings (settings-menu.ts): playback, P2P, the nickname, shortcuts and stats, in a menu under
+// the gear of the info row.
+createSettingsMenu({
+  doc: document,
+  button: $<HTMLButtonElement>('settings-open'),
+  menu: $<HTMLElement>('settings-menu'),
+  closeButton: $<HTMLButtonElement>('settings-close'),
+  closers: [$<HTMLElement>('stats-open')],
+});
+
+// The info row's real height (on a phone it wraps to two or three lines, with the buttons the live
+// shows): the chat under it fills the rest of the screen exactly, its message box in sight
+// (style.css "Chat"; without ResizeObserver the CSS estimate --info-h stays).
+{
+  const infoRow = document.querySelector<HTMLElement>('.info');
+  if (infoRow && typeof ResizeObserver === 'function') {
+    new ResizeObserver(() => document.body.style.setProperty('--info-row-h', `${Math.ceil(infoRow.getBoundingClientRect().height)}px`)).observe(infoRow);
+  }
+}
 
 // The "Unmute" button goes once the sound is on, whichever control turned it on, and comes back
 // when the viewer mutes again (as after the muted autoplay).

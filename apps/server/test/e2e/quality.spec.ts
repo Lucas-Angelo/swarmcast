@@ -25,7 +25,7 @@
 // The server goes back to one quality and the default feed at the next test's gate.
 import type { BrowserContext, Page } from '@playwright/test';
 import { ADAPTIVE_DELAY, type QualityState } from '@swarmcast/shared';
-import { adminApi, adminState, dropRendition, expect, ladderUpdate, playsOn, qualityMenu, reconnectObs, startStallMonitor, stallReport, stats, test, uid, waitPlaying } from './fixtures.js';
+import { adminApi, adminState, dropRendition, expect, ladderUpdate, openSettings, playsOn, qualityMenu, reconnectObs, startStallMonitor, stallReport, stats, test, uid, waitPlaying } from './fixtures.js';
 
 test.skip(({ browserName }) => browserName !== 'chromium', 'checked on Chromium');
 
@@ -100,7 +100,8 @@ test('with the quality ladder on, the viewer menu lists the renditions; switchin
   await expect(qualityMenu.checked(page)).toHaveText('360p');
   await expect(qualityMenu.button(page)).toHaveAccessibleName('Video quality: 360p');
 
-  // Act
+  // Act: the switch is in the Settings menu under the video
+  await openSettings(page);
   await page.check('.latency-toggle input[value="low-delay"]');
 
   // Assert

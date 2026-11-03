@@ -259,6 +259,15 @@ async function waitPlaying(page, seconds = 2) {
   );
 }
 
+/** Turns a viewer's P2P switch on or off, in the Settings menu under the video (closed again after). */
+async function setP2P(page, on) {
+  await page.getByTestId('settings-open').click();
+  await page.getByTestId('settings-menu').waitFor();
+  await (on ? page.check('#p2p') : page.uncheck('#p2p'));
+  await page.keyboard.press('Escape');
+  await page.getByTestId('settings-menu').waitFor({ state: 'hidden' });
+}
+
 async function joinViewer(browser, locale, nickname, contextOptions) {
   const context = await browser.newContext({ ...contextOptions, locale });
   const page = await context.newPage();
@@ -312,7 +321,8 @@ async function guideShot(page, target, section, lang, name, { pad = 24, callouts
       const badge = document.createElement('div');
       ring.dataset.guide = badge.dataset.guide = '1';
       Object.assign(ring.style, { position: 'absolute', left: `${b.x + scrollX - 3}px`, top: `${b.y + scrollY - 3}px`, width: `${b.width + 6}px`, height: `${b.height + 6}px`, border: '2.5px solid #e9a92c', borderRadius: '8px', zIndex: '2147483646', pointerEvents: 'none', boxSizing: 'border-box' });
-      Object.assign(badge.style, { position: 'absolute', left: `${b.x + scrollX - 20}px`, top: `${b.y + scrollY - 20}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
+      // Kept inside the page: a target at its top or left edge (the chat column) has no room outside it.
+      Object.assign(badge.style, { position: 'absolute', left: `${Math.max(2, b.x + scrollX - 20)}px`, top: `${Math.max(2, b.y + scrollY - 20)}px`, width: '22px', height: '22px', borderRadius: '50%', background: '#e9a92c', color: '#1d1a12', font: '700 13px/22px system-ui, sans-serif', textAlign: 'center', zIndex: '2147483647', pointerEvents: 'none', boxShadow: '0 0 0 2px #fff' });
       badge.textContent = String(b.n);
       document.body.append(ring, badge);
     }
@@ -463,7 +473,7 @@ async function captureBranding(browser, lang) {
     await guideShot(joinPage, joinPage.locator('main.card'), 'live', lang, 'your-page-join', { pad: 130 });
     await joinCtx.close();
 
-    // Watch page: header (1), support button (2), banner (3), About card with links (4).
+    // Watch page: the streamer's picture and name (1), support button (2), banner (3), About card with links (4).
     const v = await joinViewer(browser, lang, 'Bia', { viewport: { width: 1280, height: 1500 }, deviceScaleFactor: 1 });
     const p = v.page;
     await p.locator('#brand-head .sc-brand-name').waitFor({ timeout: 15_000 });
@@ -475,7 +485,8 @@ async function captureBranding(browser, lang) {
     await sleep(800);
     await guideShot(p, p.locator('body'), 'live', lang, 'your-page-watch', {
       pad: 0,
-      callouts: [p.locator('#brand-head'), p.getByTestId('brand-support'), p.locator('#brand-banner'), p.getByTestId('brand-about')],
+      // The header's box is `display: contents` (its picture and name are laid out by the info row): one outline around both.
+      callouts: [[p.locator('#brand-head .sc-brand-avatar'), p.locator('#brand-head .sc-brand-name')], p.getByTestId('brand-support'), p.locator('#brand-banner'), p.getByTestId('brand-about')],
     });
     // The GIF placeholder (nothing loads before the viewer agrees) and the GIF button.
     await guideShot(p, p.getByTestId('chat'), 'live', lang, 'gif-consent', {
@@ -772,11 +783,11 @@ async function fitViewport(page) {
 async function captureLocale(browser, lang) {
   log(`--- ${lang} ---`);
   const desktop = await joinViewer(browser, lang, 'Maria', DESKTOP);
-  await desktop.page.check('#p2p');
+  await setP2P(desktop.page, true);
   const phone = await joinViewer(browser, lang, 'Pedro', PHONE);
-  await phone.page.check('#p2p');
+  await setP2P(phone.page, true);
   const third = await joinViewer(browser, lang, 'Alex', DESKTOP);
-  await third.page.uncheck('#p2p');
+  await setP2P(third.page, false);
   await poll('3 viewers in the panel', async () => (await state()).viewers.length === 3, 30_000);
   // Give P2P a moment to connect, so "helping" and the peer stats have numbers.
   await poll('P2P helpers', async () => (await state()).stats.viewersHelping >= 1, 30_000).catch(() => log('no P2P helper yet'));
@@ -875,8 +886,9 @@ async function captureLocale(browser, lang) {
   }
 
   // (6c) The viewer pages for the "Watching" guide, whole: 1 Unmute, 2 the quality menu,
-  // 3 Help the stream (P2P), 4 Share. On the phone the chat (40 % of the screen) is hidden, as a viewer
-  // can, so the page fits.
+  // 3 Settings (Help the stream (P2P) is in it), 4 Share; then the Settings menu itself, open, with
+  // 1 the P2P switch (the "Watching" and P2P guides). On the phone the chat (the rest of the
+  // screen under the video) is hidden, as a viewer can, so the page fits.
   if ((await phone.page.getByTestId('chat-hide').count()) > 0) {
     await phone.page.getByTestId('chat-hide').click();
   }
@@ -889,9 +901,16 @@ async function captureLocale(browser, lang) {
     await showPlayerControls(page);
     await guideShot(page, page.locator('body'), 'viewers', lang, name, {
       pad: 0,
-      callouts: [page.locator('#unmute'), page.getByTestId('quality'), page.locator('label.toggle', { has: page.locator('#p2p') }), page.locator('#share')],
+      callouts: [page.locator('#unmute'), page.getByTestId('quality'), page.getByTestId('settings-open'), page.locator('#share')],
     });
   }
+  await desktop.page.getByTestId('settings-open').click();
+  await desktop.page.getByTestId('settings-menu').waitFor();
+  await guideShot(desktop.page, desktop.page.getByTestId('settings-menu'), 'viewers', lang, 'watch-settings', {
+    pad: 12,
+    callouts: [desktop.page.locator('label.toggle', { has: desktop.page.locator('#p2p') })],
+  });
+  await desktop.page.keyboard.press('Escape');
 
   // (6d) The panel's cards and the app's window with the setup tutorial (guide pictures).
   await capturePanelCards(browser, lang);
