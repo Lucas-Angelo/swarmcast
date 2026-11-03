@@ -294,14 +294,26 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     lastPointerAt = now();
     if (e instanceof PointerEvent) lastPointerType = e.pointerType || 'mouse';
   };
+  // Every pointer and touch listener here is passive (none cancels): Safari holds a touch on a
+  // region with a cancellable one until the page has run it, and only then makes it a tap, so on
+  // a busy phone a tap on the player could wait for the page or end in no click.
+  const passive = { passive: true } as const;
   for (const ev of ['pointerdown', 'pointerup', 'mousedown', 'touchstart', 'touchend']) root.addEventListener(ev, markPointer, { capture: true, passive: true });
 
-  player.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'mouse') visibility.activity();
-  });
-  player.addEventListener('pointerleave', (e) => {
-    if (e.pointerType === 'mouse') visibility.hide();
-  });
+  player.addEventListener(
+    'pointermove',
+    (e) => {
+      if (e.pointerType === 'mouse') visibility.activity();
+    },
+    passive,
+  );
+  player.addEventListener(
+    'pointerleave',
+    (e) => {
+      if (e.pointerType === 'mouse') visibility.hide();
+    },
+    passive,
+  );
   player.addEventListener(
     'pointerdown',
     (e) => {
@@ -315,11 +327,15 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
         touchRevealed = !visibility.visible;
       }
     },
-    { capture: true },
+    { capture: true, passive: true },
   );
-  player.addEventListener('pointercancel', () => {
-    swallowClick = false;
-  });
+  player.addEventListener(
+    'pointercancel',
+    () => {
+      swallowClick = false;
+    },
+    passive,
+  );
   root.addEventListener(
     'click',
     (e) => {
@@ -342,12 +358,20 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     else visibility.hide();
     touchRevealed = false;
   });
-  bar.addEventListener('pointerenter', (e) => {
-    if (e.pointerType === 'mouse') visibility.pin('hover', true);
-  });
-  bar.addEventListener('pointerleave', (e) => {
-    if (e.pointerType === 'mouse') visibility.pin('hover', false);
-  });
+  bar.addEventListener(
+    'pointerenter',
+    (e) => {
+      if (e.pointerType === 'mouse') visibility.pin('hover', true);
+    },
+    passive,
+  );
+  bar.addEventListener(
+    'pointerleave',
+    (e) => {
+      if (e.pointerType === 'mouse') visibility.pin('hover', false);
+    },
+    passive,
+  );
   // The keyboard focus inside the controls holds them; a focus that a mouse or finger press gave
   // a button does not (Chrome focuses a clicked button: the bar would never fade again).
   root.addEventListener('focusin', () => {

@@ -268,7 +268,10 @@ function recordInput(phone: Phone): Promise<void> {
           w.__input?.push(`${type}@${t?.id || t?.tagName?.toLowerCase() || '?'}${e.isTrusted ? '' : ' untrusted'}${e instanceof PointerEvent ? ` (${e.pointerType})` : ''}`);
           if (type === 'touchend' && e.isTrusted && t) w.__touched?.push(t);
         },
-        true,
+        // Passive (the viewer pages have no touch listeners of their own): WebKit treats a touch
+        // listener that may call preventDefault as a synchronous handler and holds the tap until
+        // the web process has run it. Window's touchstart is passive by default, touchend is not.
+        { capture: true, passive: true },
       );
     }
   });
