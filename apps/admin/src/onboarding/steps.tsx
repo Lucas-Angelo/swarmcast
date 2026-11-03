@@ -116,34 +116,30 @@ export type LeaveGuard = (strict: boolean) => Promise<boolean>;
 export function NameStep({ chat, guard }: { chat: ChatPanel; guard: { current: LeaveGuard | null } }) {
   const settings = chat.chat?.settings ?? null;
   const saved = settings?.streamerName ?? '';
+  // null until she types: the field then shows the starting name, which may still arrive.
   const [draft, setDraft] = useState<string | null>(null);
+  const [pageName, setPageName] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const input = useRef<HTMLInputElement>(null);
 
-  // Start from the saved name; without one, from the "Your page" name when it fits the rules.
+  // Without a saved name, start from the "Your page" name when it fits the rules. What she types
+  // always wins, also over an answer that comes in later.
+  const needPage = settings !== null && !saved.trim();
   useEffect(() => {
-    if (!settings || draft !== null) return;
-    if (saved.trim()) {
-      setDraft(saved);
-      return;
-    }
-    setDraft('');
+    if (!needPage) return;
     let stopped = false;
     brandingApi.load().then(
-      (b) => {
-        const name = initialChatName('', b.branding.name);
-        if (!stopped && name) setDraft((d) => (d === '' ? name : d));
-      },
+      (b) => !stopped && setPageName(b.branding.name ?? null),
       () => {},
     );
     return () => {
       stopped = true;
     };
-  }, [settings !== null]);
+  }, [needPage]);
 
-  const value = draft ?? '';
+  const value = draft ?? initialChatName(saved, pageName);
   const feedback = streamerNameFeedback(value);
   const save = async (name: string): Promise<boolean> => {
     if (!settings) return true;
@@ -161,8 +157,9 @@ export function NameStep({ chat, guard }: { chat: ChatPanel; guard: { current: L
     }
   };
   const leave: LeaveGuard = async (strict) => {
-    if (!settings || draft === null) return true;
-    const next = nameOnLeave(draft, saved);
+    if (!settings) return true;
+    // A "Your page" name shown as the start is saved too: she saw it and moved on.
+    const next = nameOnLeave(value, saved);
     if (next.do === 'keep') return true;
     if (next.do === 'save') return (await save(next.value)) || !strict;
     if (strict) input.current?.focus();

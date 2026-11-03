@@ -226,6 +226,64 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   expect(errors.filter((e) => /Content Security Policy|Refused/.test(e))).toEqual([]);
 });
 
+test('the name step starts from the "Your page" name; what the streamer types wins over a late answer', { tag: '@ui' }, async ({ page, chat }) => {
+  // Arrange: "Your page" has a name (served by this route), the chat name is empty. While
+  // `held` is set, the route answers only when `release` is called.
+  await admin('/api/onboarding', { done: true });
+  await chat.change({ streamerName: '' });
+  let held: Promise<void> | null = null;
+  let release = (): void => {};
+  await page.route('**/api/branding', async (route) => {
+    if (route.request().method() !== 'GET') return route.fallback();
+    const res = await route.fetch();
+    const body = (await res.json()) as { branding: Record<string, unknown> };
+    if (held) await held;
+    await route.fulfill({ response: res, json: { ...body, branding: { ...body.branding, name: 'Lucas Plays' } } });
+  });
+  await openPanel(page);
+  const nameInput = page.getByTestId('onb-name-input');
+  held = new Promise((r) => (release = r));
+  await page.getByTestId('redo-tutorial').click();
+  const late = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/branding' && r.request().method() === 'GET');
+
+  // Act
+  await page.getByTestId('onb-next').click();
+  await nameInput.fill('Ana Live');
+  release();
+  await (await late).finished();
+  await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+  // Assert
+  await expect(nameInput).toHaveValue('Ana Live');
+
+  // Act
+  await page.getByTestId('onb-next').click();
+
+  // Assert
+  await expect(page.getByTestId('onb-pc')).toBeVisible();
+  await expect.poll(savedChatName).toBe('Ana Live');
+
+  // Arrange
+  held = null;
+  await chat.change({ streamerName: '' });
+  await page.reload();
+  await page.getByTestId('redo-tutorial').click();
+
+  // Act
+  await page.getByTestId('onb-next').click();
+
+  // Assert
+  await expect(nameInput).toHaveValue('Lucas Plays');
+  await expect(page.getByTestId('onb-name-feedback')).toHaveAttribute('data-kind', 'ok');
+
+  // Act
+  await page.getByTestId('onb-next').click();
+
+  // Assert
+  await expect(page.getByTestId('onb-pc')).toBeVisible();
+  await expect.poll(savedChatName).toBe('Lucas Plays');
+});
+
 test('"Redo setup tutorial" reopens it; Escape asks before closing', { tag: '@ui' }, async ({ page }) => {
   // Arrange
   await admin('/api/onboarding', { done: true });
