@@ -26,7 +26,7 @@ A bar along the bottom of the video has the player's buttons. It looks the same 
 - **Audio only (saves data):** the last choice in the quality menu. You hear the live without the picture, and it uses much less data: about 85% less than 360p (roughly 50 to 70 MB per hour). Good on mobile data, or when you only want to listen. The video area shows the streamer's picture and name, or "Audio only". Pick a quality (or **Auto**) to see the picture again. Your browser remembers the choice for next time.
 - **Settings** (the gear under the video): Playback, Help the stream (P2P), your nickname, Keyboard shortcuts and Stats for nerds. Esc, a click outside or × closes it.
 
-  ![The Settings menu: Playback Stable or Lower delay, 1 the Help the stream (P2P) switch, turned on here, with how many peers help, your nickname, Keyboard shortcuts and Stats for nerds.](../../assets/guides/viewers/en/watch-settings.webp)
+  ![The Settings menu: Playback Stable or Lower delay, Chat on the video in full screen, 1 the Help the stream (P2P) switch, turned on here, with how many peers help, your nickname, Keyboard shortcuts and Stats for nerds.](../../assets/guides/viewers/en/watch-settings.webp)
 
 - **Playback: Stable or Lower delay** (in **Settings**). **Stable** (default) keeps more video ready, so short internet hiccups do not pause it. **Lower delay** is closer to live (6 to 10 seconds), good for chatting, but pauses more easily.
 - **Help the stream (P2P)** (in **Settings**): off by default; you can turn it on (see below).

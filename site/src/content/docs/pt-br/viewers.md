@@ -26,7 +26,7 @@ Uma barra na parte de baixo do vídeo tem os botões do player. Ela é igual em 
 - **Só o áudio (economiza dados):** a última opção do menu de qualidade. Você ouve a live sem a imagem, e ela gasta muito menos dados: cerca de 85% menos que 360p (mais ou menos 50 a 70 MB por hora). Bom no plano de dados do celular, ou quando você só quer ouvir. No lugar do vídeo aparecem a foto e o nome de quem transmite, ou "Só o áudio". Escolha uma qualidade (ou **Auto**) para ver a imagem de novo. O navegador lembra a escolha na próxima vez.
 - **Configurações** (a engrenagem embaixo do vídeo): Reprodução, Ajudar a transmissão (P2P), o seu apelido, Atalhos de teclado e Estatísticas para nerds. Esc, um clique fora ou × fecha.
 
-  ![O menu Configurações: Reprodução Estável ou Menos atraso, 1 a chave Ajudar a transmissão (P2P), ligada aqui, com quantos peers ajudam, o seu apelido, Atalhos de teclado e Estatísticas para nerds.](../../../assets/guides/viewers/pt-br/watch-settings.webp)
+  ![O menu Configurações: Reprodução Estável ou Menos atraso, Chat sobre o vídeo em tela cheia, 1 a chave Ajudar a transmissão (P2P), ligada aqui, com quantos peers ajudam, o seu apelido, Atalhos de teclado e Estatísticas para nerds.](../../../assets/guides/viewers/pt-br/watch-settings.webp)
 
 - **Reprodução: Estável ou Menos atraso** (em **Configurações**). **Estável** (o padrão) deixa mais vídeo guardado, então uma oscilação rápida da internet não trava a live. **Menos atraso** fica mais perto do ao vivo (de 6 a 10 segundos), bom para conversar no chat, mas trava com mais facilidade.
 - **Ajudar a transmissão (P2P)** (em **Configurações**): vem desligada por padrão; você pode ligar (veja abaixo).
