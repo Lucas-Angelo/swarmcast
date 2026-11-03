@@ -46,9 +46,9 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
         group: [ui, chat, media]
     runs-on: ${{ matrix.os }}
-    # Setup about 5 minutes, the group's Playwright step up to 13, the chat group's viewer chat UI
+    # Setup about 5 minutes, the group's Playwright step up to 20, the chat group's viewer chat UI
     # step up to 10, then the summary and coverage steps.
-    timeout-minutes: 32
+    timeout-minutes: 40
     defaults:
       run:
         shell: bash
@@ -118,12 +118,16 @@ jobs:
         timeout-minutes: 8
         if: runner.os == 'macOS'
         run: npx playwright install firefox webkit
-      # 13 minutes, a hang guard: about 7.2 min of tests per group on the slowest macOS runners seen
-      # (55 %); the first runs of the three groups took 5.9/4.3/6.0 min (ui/chat/media) on Ubuntu
-      # and 6.7/4.7/6.2 on macOS. A step that runs out fails, so the report and the logs are still
-      # uploaded (a job that runs out is cancelled and uploads nothing).
+      # 20 minutes, a hang guard. The first runs of the three groups took 5.9/4.3/6.0 min
+      # (ui/chat/media) on Ubuntu and 6.7/4.7/6.2 on macOS; with the 0.5.0 specs (audio only, the
+      # stream start, the player controls) the step took 6.4-9.0/6.7-8.2/10.8-12.8 on Ubuntu and
+      # 9.1-10.8/6.8-10.3/10.9-13.1 on macOS (pipeline runs 41530697721 to 41544170547), and the
+      # old 13-minute limit stopped a macOS media run 0.1 min after its last test passed (run
+      # 41543787536). Another group would need another macOS runner per pipeline, the scarcest
+      # runners. A step that runs out fails, so the report and the logs are still uploaded (a job
+      # that runs out is cancelled and uploads nothing).
       - name: Playwright, ${{ matrix.group }} group
-        timeout-minutes: 13
+        timeout-minutes: 20
         env:
           GROUP: ${{ matrix.group }}
           # Server-side coverage: every Node process writes its V8 coverage here when it exits.
