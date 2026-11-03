@@ -46,7 +46,9 @@ jobs:
         os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
         group: [ui, chat, media]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    # Setup about 5 minutes, the group's Playwright step up to 13, the chat group's viewer chat UI
+    # step up to 10, then the summary and coverage steps.
+    timeout-minutes: 32
     defaults:
       run:
         shell: bash
@@ -154,12 +156,14 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
       # The viewer chat UI against a mock hub (apps/viewer/test/chat: the built watch page, no
-      # server, no network): every engine plus an iPhone in 1-2.5 minutes, so it rides along with
-      # the chat group instead of a job of its own. The same flows against the real server are in
-      # apps/server/test/e2e/chat.spec.ts.
+      # server, no network): every engine plus an iPhone, so it rides along with the chat group
+      # instead of a job of its own. The same flows against the real server are in
+      # apps/server/test/e2e/chat.spec.ts. With the 0.5.0 player and chat specs (177 tests) it takes
+      # 2-3 minutes on Ubuntu and 3-5.2 minutes on macOS (5.2 in run 41543720366, where the old
+      # 5-minute limit stopped it after its last test passed), so the limit is twice the slowest.
       - name: Playwright, viewer chat UI (mock hub)
         if: ${{ !cancelled() && matrix.group == 'chat' }}
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --fail-on-flaky-tests
       - name: Results in the job summary
         if: ${{ !cancelled() }}
@@ -237,8 +241,9 @@ jobs:
       - name: Playwright Firefox
         timeout-minutes: 5
         run: npx playwright install firefox
+      # 2.2-3.9 minutes for the three browsers (runs 41526190584 to 41544935868); twice the slowest.
       - name: Playwright, viewer chat UI (mock hub)
-        timeout-minutes: 5
+        timeout-minutes: 8
         env:
           CHAT_EDGE: '1'
         run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --project=chromium --project=firefox --project=edge --fail-on-flaky-tests
