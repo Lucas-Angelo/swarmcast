@@ -191,6 +191,22 @@ describe('built over the video', () => {
   });
 });
 
+describe('touch', () => {
+  it('no pointer, touch or mouse listener of the controls can cancel (Safari would hold a tap for it)', () => {
+    // Arrange: the page's elements inherit addEventListener from happy-dom's own EventTarget.
+    let owner: object = HTMLElement.prototype;
+    while (!Object.prototype.hasOwnProperty.call(owner, 'addEventListener')) owner = Object.getPrototypeOf(owner) as object;
+    const add = vi.spyOn(owner as EventTarget, 'addEventListener');
+    // Act
+    setup();
+    // Assert
+    const input = add.mock.calls.filter(([type]) => /^(pointer|touch|mouse)/.test(type));
+    add.mockRestore();
+    expect(input.length).toBeGreaterThan(0);
+    for (const [type, , options] of input) expect({ type, passive: typeof options === 'object' && options.passive === true }).toEqual({ type, passive: true });
+  });
+});
+
 describe('play, pause and sound', () => {
   it('Play plays and becomes Pause; Pause pauses', async () => {
     // Arrange
