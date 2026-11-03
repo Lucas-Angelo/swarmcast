@@ -69,6 +69,10 @@ const fuzzFrame = fc.oneof(
       fc.oneof(fc.array(fc.string({ maxLength: 12 }), { maxLength: 6 }), fc.array(fc.constantFrom('1', '2', 'a', 'zz'), { maxLength: 4 }), fc.string({ maxLength: 12 }), fc.json({ maxDepth: 3 })),
     )
     .map(([re, mn]) => `{"t":"chat.send","n":1,"text":"@Ana oi","re":${JSON.stringify(re) ?? 'null'},"mn":${typeof mn === 'string' && mn.startsWith('{') ? mn : JSON.stringify(mn)}}`),
+  // Votes with hostile values (docs/CHAT.md, "Polls and predictions"): odd ids, options, nonces.
+  fc
+    .tuple(fc.oneof(fc.constantFrom('p1', 'p2', 'P1', 'p', 'p1x'), fc.string({ maxLength: 14 }), fc.integer()), fc.oneof(fc.integer({ min: -2, max: 6 }), fc.double(), fc.string({ maxLength: 3 }), fc.constant(null)), fc.oneof(fc.nat(), fc.constant(2 ** 40)))
+    .map(([id, o, n]) => `{"t":"chat.vote","n":${n},"id":${JSON.stringify(id)},"o":${JSON.stringify(o) ?? 'null'}}`),
 );
 
 /**
@@ -85,6 +89,8 @@ function frameFuzz({ hub, clock, connect }: ReturnType<typeof setup>) {
     const chat = kinds.filter((k) => k === 'chat').length;
     const react = kinds.filter((k) => k === 'react').length;
     for (const f of frames) expect(() => sock.receive(f)).not.toThrow();
+    // One viewer, one device: whatever it sends, a poll counts at most one vote from it.
+    expect((hub.poll?.c ?? []).reduce((a, b) => a + b, 0)).toBeLessThanOrEqual(1);
     if (chat <= 20 && react <= CHAT_REACT_FRAMES_MAX_PER_10S) expect(sock.terminate).not.toHaveBeenCalled();
     expect(hub.ringSize.items).toBeLessThanOrEqual(200);
     expect(hub.isBroken).toBe(false);
@@ -116,6 +122,23 @@ describe('chat on /control', () => {
     sock.receive('{"t":"chat.send","n":21,"text":"x"}');
     // Assert
     expect(sock.terminate).toHaveBeenCalledOnce();
+  });
+
+  it('a vote is a chat frame: votes and messages share the 20-per-10-s budget; the vote comes back as chat.voted on that socket', () => {
+    // Arrange
+    const { connect, hub } = setup({ slowModeS: 0 });
+    hub.startPoll({ kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 60 });
+    const sock = connect();
+    // Act
+    sock.receive('{"t":"chat.vote","n":1,"id":"p1","o":1}');
+    for (let i = 2; i <= 20; i++) sock.receive(i % 2 ? `{"t":"chat.vote","n":${i},"id":"p1","o":0}` : `{"t":"chat.send","n":${i},"text":"m${i}"}`);
+    const kept = !sock.terminate.mock.calls.length;
+    sock.receive('{"t":"chat.vote","n":21,"id":"p1","o":0}');
+    // Assert
+    expect(kept).toBe(true);
+    expect(sock.terminate).toHaveBeenCalledOnce();
+    expect(sock.sent.map((d) => JSON.parse(d) as { t: string })).toContainEqual({ t: 'chat.voted', n: 1, id: 'p1', o: 1, c: [0, 1] });
+    expect(hub.poll?.c).toEqual([0, 1]);
   });
 
   it('reaction frames have their own budget: 20 chat frames and 10 reaction frames in 10 s keep the socket', () => {

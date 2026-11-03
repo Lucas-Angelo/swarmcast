@@ -17,7 +17,8 @@ import { joinViewer } from './helpers-b.js';
 // for authors an item only refers to, and reaction frames the server ignores for now; and what
 // 0.5.0 sends: highlights and the pin (seq-less state items, a snapshot field), and replies and
 // mentions (optional fields of a message), which a v0.4.2 page simply does not show: it shows a
-// reply as the plain message it also is.
+// reply as the plain message it also is; and polls (a seq-less state item, ephemeral vote counts,
+// a snapshot field and the `chat.voted` answer), which a v0.4.2 page ignores entirely.
 
 interface Page {
   session: { hello(s: Parameters<ChatSession['hello']>[0]): void; frame(m: ChatServerMessage): void; connection(o: boolean): void; readonly lastSeq: number; readonly roster: Map<string, ChatAuthor> };
@@ -34,6 +35,8 @@ interface Page {
   text: Map<number, string | undefined>;
   replies: Map<number, { n: string; q?: string; gone?: boolean }>;
   mentions: Map<number, string[]>;
+  /** The poll the page shows (current pages only): id, state, counts and this device's vote. */
+  poll: { id: string; st: string; c: number[]; mine?: number } | null;
 }
 
 /** A page running `Session` (the current one or v0.4.2's) with a view that records what it shows. */
@@ -45,7 +48,7 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
   const text: Page['text'] = new Map();
   const replies: Page['replies'] = new Map();
   const mentions: Page['mentions'] = new Map();
-  const out = { pin: null as Page['pin'] };
+  const out = { pin: null as Page['pin'], poll: null as Page['poll'] };
   type Shown = { kind: string; s?: number; highlighted?: boolean; text?: string; reply?: { author: { n: string }; quote?: string; gone?: boolean }; mentions?: Array<{ n: string }> };
   const mark = (e: Shown[]) => {
     for (const x of e) {
@@ -76,6 +79,8 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     },
     highlight: (s: number, on: boolean) => void (on ? lit.add(s) : lit.delete(s)),
     pin: (p: { s: number; author: { n: string }; text?: string } | null) => void (out.pin = p ? { s: p.s, n: p.author.n, ...(p.text !== undefined ? { x: p.text } : {}) } : null),
+    poll: (p: { id: string; st: string; c: number[]; mine?: number } | null) => void (out.poll = p ? { id: p.id, st: p.st, c: [...p.c], ...(p.mine !== undefined ? { mine: p.mine } : {}) } : null),
+    tally: (_id: string, c: number[]) => void (out.poll = out.poll ? { ...out.poll, c: [...c] } : null),
     remove: (seqs: readonly number[]) => drop((s) => !seqs.includes(s)),
     clearUpTo: (upTo: number) => drop((s) => s > upTo),
     author: () => {},
@@ -102,6 +107,9 @@ function page(Session: typeof ChatSession | typeof ChatSession042): Page {
     mentions,
     get pin() {
       return out.pin;
+    },
+    get poll() {
+      return out.poll;
     },
   };
 }
@@ -367,5 +375,93 @@ describe('chat protocol v1: a v0.4.2 page and a current page on this server', ()
     expect(old.alarms).toEqual([]);
     expect(current.alarms).toEqual([]);
     expect(old.session.lastSeq).toBe(hub.lastSeq);
+  });
+
+  it('polls: both pages show the same messages without a resume through a whole poll and prediction (votes, counts, a slow socket, a reconnect); only the current page shows the poll', () => {
+    // Arrange
+    const clock = manualClock(1_000_000_000_000);
+    const access = new AccessControl(clock.now);
+    access.begin();
+    const settings: ChatSettings = { ...defaultChatSettings(), slowModeS: 0, duplicateWindowS: 0 };
+    const sockets: PipeSocket[] = [];
+    const host: ChatHost = { sockets: () => sockets, socketsOf: (id) => sockets.filter((s) => s.sessionId === id) };
+    const hub = new ChatHub({ access, host, settings: () => settings, uploadCapMbps: () => 10, viewers: () => 3, activity: new ActivityLog(), log: silentLog, now: clock.now, guard: { sample: () => ({ p99Ms: 10, elu: 0.1 }), intervalMs: 3_600_000 } });
+    hub.begin();
+    onTestFinished(() => hub.reset());
+    const join = (name: string, ip = '198.51.100.1') => {
+      const s = joinViewer(access, name, { deviceId: name, ip });
+      s.joinedAt = clock.now() - 600_000;
+      const sock = new PipeSocket(s.id);
+      sockets.push(sock);
+      return { s, sock };
+    };
+    const ana = join('Ana');
+    const caio = join('Caio', '198.51.100.2');
+    const viewer = join('Bia', '198.51.100.3');
+    const old = page(ChatSession042);
+    const current = page(ChatSession);
+    viewer.sock.pages.push(old, current);
+    const snap = hub.snapshot(viewer.s)!;
+    old.session.hello(snap);
+    current.session.hello(snap);
+    hub.helloSent(viewer.sock, snap, 0);
+    let n = 0;
+    const say = (text: string) => {
+      clock.advance(1100);
+      hub.frame(ana.s, ana.sock, JSON.stringify({ t: 'chat.send', n: ++n, text }));
+    };
+    const vote = (who: { s: typeof ana.s; sock: PipeSocket }, o: number) => hub.frame(who.s, who.sock, JSON.stringify({ t: 'chat.vote', n: ++n, id: hub.poll?.id, o }));
+    // Act
+    say('antes da enquete');
+    hub.startPoll({ kind: 'poll', question: 'Pizza?', options: ['Sim', 'Não'], seconds: 60 });
+    hub.flush();
+    vote(ana, 0);
+    vote(viewer, 1);
+    say('votei');
+    clock.advance(1000);
+    hub.pollTick();
+    hub.flush();
+    const live = current.poll;
+    // The viewer's connection stalls: it misses a count and the end of the poll.
+    viewer.sock.bufferedAmount = 100_000;
+    vote(caio, 0);
+    clock.advance(1000);
+    hub.pollTick();
+    hub.flush();
+    hub.endPoll();
+    hub.flush();
+    viewer.sock.bufferedAmount = 0;
+    say('acabou');
+    hub.flush();
+    const caughtUp = current.poll;
+    // A reconnect: both pages get a hello with the poll in it.
+    const again = hub.snapshot(viewer.s, { after: old.session.lastSeq })!;
+    old.session.hello(again);
+    current.session.hello(again);
+    hub.startPoll({ kind: 'prediction', question: 'Quem ganha?', options: ['Ana', 'Caio'], seconds: 30 });
+    hub.flush();
+    vote(viewer, 1);
+    clock.advance(30_000);
+    hub.pollTick();
+    hub.resolvePoll(1);
+    say('resposta');
+    hub.flush();
+    const resolved = current.poll;
+    hub.cancelPoll();
+    hub.flush();
+    // Assert
+    expect(live).toEqual({ id: 'p1', st: 'open', c: [1, 1], mine: 1 });
+    expect(caughtUp).toEqual({ id: 'p1', st: 'closed', c: [2, 1], mine: 1 });
+    expect(again.poll).toMatchObject({ id: 'p1', mine: 1 });
+    expect(resolved).toEqual({ id: 'p2', st: 'resolved', c: [0, 1], mine: 1 });
+    expect(current.poll).toBeNull();
+    expect(current.shown).toEqual(old.shown);
+    expect(old.shown).toHaveLength(4);
+    expect(old.sent).toEqual([]);
+    expect(current.sent).toEqual([]);
+    expect(old.alarms).toEqual([]);
+    expect(current.alarms).toEqual([]);
+    expect(old.session.lastSeq).toBe(hub.lastSeq);
+    expect(hub.lastSeq).toBe(4);
   });
 });

@@ -247,6 +247,11 @@ async function reset(o: { hard?: boolean; test?: string }): Promise<{ previous: 
     L.chat.setProtect('off');
     did.push('chat protection off');
   }
+  // A poll or prediction a test left open (one at a time: the next test could not open its own).
+  if (L.chat.poll) {
+    L.chat.cancelPoll();
+    did.push('chat poll removed');
+  }
   // "Your page": back to the stock SwarmCast page when a test left the streamer's page on.
   const b = L.branding.branding;
   if (b.name || b.tagline || b.about || b.links.length > 0 || b.tags.length > 0 || b.support.enabled || Object.keys(b.images).length > 0) {

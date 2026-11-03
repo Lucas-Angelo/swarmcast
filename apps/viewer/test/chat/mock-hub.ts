@@ -9,7 +9,10 @@
 // Replies and mentions too (docs/CHAT.md "Replies and mentions"): a `re` gets the server's quote (the
 // shared cutQuote), deleting a message wipes the quote of its replies, and a mention is kept only for
 // someone in the roster named "@" + nickname in the text (findMentionSpans).
-import { cutQuote, findMentionSpans, type ChatAuthor, type ChatItem, type ChatMessageItem, type ChatPin, type ChatPublicSettings, type ChatRejectCode, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou } from '@swarmcast/shared/chat';
+// Polls and predictions (docs/CHAT.md "Polls and predictions"): the poll as a state item and a
+// snapshot field (with this page's vote), counts as `pt` items, one vote per page (`chat.voted`, then
+// `chat.err.voted` with the option), refusals on demand (`rejectVote`).
+import { cutQuote, findMentionSpans, type ChatAuthor, type ChatItem, type ChatMessageItem, type ChatPin, type ChatPollPublic, type ChatPublicSettings, type ChatRejectCode, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou } from '@swarmcast/shared/chat';
 import type { ServerMessage } from '@swarmcast/shared';
 
 export function defaultSettings(over: Partial<ChatPublicSettings> = {}): ChatPublicSettings {
@@ -41,6 +44,11 @@ export class MockHub {
   seq = 0;
   /** The pinned message (null: none). */
   pinned: ChatPin | null = null;
+  /** The poll (null: none) and this page's vote in it. */
+  poll: ChatPollPublic | null = null;
+  pollMine: number | undefined;
+  /** Refuse the next vote with this code (once). */
+  rejectVote: ChatRejectCode | null = null;
   /** Frames the page sent (parsed). */
   received: Array<Record<string, unknown>> = [];
   /** The frames of type `t` the page sent, in order. */
@@ -64,7 +72,8 @@ export class MockHub {
   }
 
   snapshot(): ChatSnapshot {
-    return { v: 1, settings: this.settings, you: this.you, roster: [...this.roster.values()], items: this.items.slice(-50), lastSeq: this.seq, ...(this.pinned ? { pin: this.pinned } : {}) };
+    const poll = this.poll ? { ...this.poll, ...(this.pollMine !== undefined ? { mine: this.pollMine } : {}) } : null;
+    return { v: 1, settings: this.settings, you: this.you, roster: [...this.roster.values()], items: this.items.slice(-50), lastSeq: this.seq, ...(this.pinned ? { pin: this.pinned } : {}), ...(poll ? { poll } : {}) };
   }
 
   hello(sessionId = 's1'): ServerMessage {
@@ -160,6 +169,26 @@ export class MockHub {
     this.broadcast({ t: 'chat.batch', items: [{ k: 'pin', p: this.pinned }] });
   }
 
+  /** The streamer starts a poll or prediction (2–5 options), or changes it (`over`), or removes it (null). */
+  setPoll(p: Partial<ChatPollPublic> | null): void {
+    if (p === null) this.poll = null;
+    else {
+      const base: ChatPollPublic = this.poll ?? { id: 'p1', kind: 'poll', q: '?', o: ['a', 'b'], st: 'open', c: [0, 0], endsIn: 120_000 };
+      const next: ChatPollPublic = { ...base, ...p };
+      if (next.id !== this.poll?.id) this.pollMine = undefined;
+      if (next.st !== 'open') delete next.endsIn;
+      this.poll = next;
+    }
+    this.broadcast({ t: 'chat.batch', items: [{ k: 'poll', p: this.poll }] });
+  }
+
+  /** New counts for the poll (an ephemeral `pt` item). */
+  tally(c: number[]): void {
+    if (!this.poll) return;
+    this.poll = { ...this.poll, c };
+    this.broadcast({ t: 'chat.batch', items: [{ k: 'pt', id: this.poll.id, c }] });
+  }
+
   setSettings(over: Partial<ChatPublicSettings>): void {
     this.settings = { ...this.settings, ...over };
     this.broadcast({ t: 'chat.settings', settings: this.settings });
@@ -230,6 +259,30 @@ export class MockHub {
       case 'chat.resume':
         this.reply(send, { t: 'chat.reset', ...this.snapshot() });
         return;
+      case 'chat.vote': {
+        const n = Number(msg.n);
+        const p = this.poll;
+        if (this.rejectVote) {
+          const code = this.rejectVote;
+          this.rejectVote = null;
+          this.reply(send, { t: 'chat.reject', n, code });
+          return;
+        }
+        const o = Number(msg.o);
+        if (!p || msg.id !== p.id || p.st !== 'open' || !(o >= 0 && o < p.o.length)) {
+          this.reply(send, { t: 'chat.reject', n, code: 'chat.err.pollClosed' });
+          return;
+        }
+        if (this.pollMine !== undefined) {
+          this.reply(send, { t: 'chat.reject', n, code: 'chat.err.voted', params: { o: this.pollMine } });
+          return;
+        }
+        this.pollMine = o;
+        const c = p.c.map((x, i) => (i === o ? x + 1 : x));
+        this.poll = { ...p, c };
+        this.reply(send, { t: 'chat.voted', n, id: p.id, o, c });
+        return;
+      }
       case 'ping':
       case 'pong':
       case 'stats':

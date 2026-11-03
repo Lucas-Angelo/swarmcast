@@ -302,3 +302,77 @@ describe('chat over /control', () => {
     expect(fresh.hello.chat?.pin).toBeUndefined();
   });
 });
+
+describe('polls over /control (docs/CHAT.md, "Polls and predictions")', () => {
+  it('one vote per browser across tabs and sessions, a private window counts, counts reach watchers, late joiners get the poll, a kick takes the vote out, Stop wipes it', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const anaJar = new Jar(base);
+    const ana = await viewer(base, link, 'Ana', anaJar);
+    const anaTab = await openControl(base, anaJar);
+    const anaAgain = await viewer(base, link, 'Ana Dois', anaJar);
+    const bia = await viewer(base, link, 'Bia');
+    const watcher = await viewer(base, link, 'Cris');
+    // Act
+    const started = live.chat.startPoll({ kind: 'poll', question: 'Pizza ou hambúrguer?', options: ['Pizza', 'Hambúrguer'], seconds: 120 });
+    await watcher.until(() => watcher.items().some((i) => i.k === 'poll'), 'the poll at the watcher');
+    ana.send({ t: 'chat.vote', n: 1, id: 'p1', o: 1 });
+    const voted = await ana.next('chat.voted');
+    await anaTab.next('chat.voted');
+    await anaAgain.next('chat.voted');
+    anaAgain.send({ t: 'chat.vote', n: 2, id: 'p1', o: 0 });
+    const refused = await anaAgain.next('chat.reject', (m) => m.n === 2);
+    bia.send({ t: 'chat.vote', n: 3, id: 'p1', o: 0 });
+    await bia.next('chat.voted');
+    await watcher.until(() => watcher.items().some((i) => i.k === 'pt' && i.c[0] === 1 && i.c[1] === 1), 'the counts at the watcher');
+    const late = await viewer(base, link, 'Duda');
+    const back = await openControl(base, anaJar);
+    const biaSession = [...live.access.sessions.values()].find((s) => s.nickname === 'Bia')!;
+    live.kick(biaSession.id);
+    await watcher.until(() => watcher.items().filter((i) => i.k === 'pt').at(-1)?.c.join() === '0,1', 'the counts after the kick');
+    live.chat.cancelPoll();
+    live.chat.startPoll({ kind: 'prediction', question: 'Quem ganha?', options: ['Ana', 'Bia'], seconds: 15 });
+    live.chat.endPoll();
+    live.chat.resolvePoll(0);
+    await watcher.until(() => watcher.items().some((i) => i.k === 'poll' && i.p?.st === 'resolved'), 'the answer at the watcher');
+    await live.stop();
+    const next = await goLive(live);
+    const fresh = await viewer(next.base, next.link, 'Ana');
+    // Assert
+    expect(started).toEqual({ ok: true, id: 'p1' });
+    expect(voted).toEqual({ t: 'chat.voted', n: 1, id: 'p1', o: 1, c: [0, 1] });
+    expect(refused).toEqual({ t: 'chat.reject', n: 2, code: 'chat.err.voted', params: { o: 1 } });
+    expect(late.hello.chat?.poll).toMatchObject({ id: 'p1', st: 'open', c: [1, 1] });
+    expect(late.hello.chat?.poll).not.toHaveProperty('mine');
+    expect(late.hello.chat?.poll?.endsIn).toBeGreaterThan(0);
+    expect(back.hello.chat?.poll).toMatchObject({ id: 'p1', mine: 1 });
+    expect(watcher.items().filter((i) => i.k === 'poll').at(-1)).toMatchObject({ k: 'poll', p: { id: 'p2', st: 'resolved', win: 0 } });
+    expect(watcher.items().some((i) => i.k === 'sys')).toBe(false);
+    expect(fresh.hello.chat?.poll).toBeUndefined();
+  });
+
+  it('a burst of 120 vote frames from one network within a second: one vote per browser, ten per network, every browser answered, the counts settle', async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive();
+    const watcher = await viewer(base, link, 'Watcher');
+    // Every test viewer comes from 127.0.0.1, one network: 12 browsers, of which CHAT_POLL_VOTES_PER_NET (10) count.
+    const people = await Promise.all(Array.from({ length: 12 }, (_, i) => viewer(base, link, `Voter ${i + 1}`)));
+    live.chat.startPoll({ kind: 'poll', question: 'Rápido?', options: ['a', 'b', 'c'], seconds: 60 });
+    await watcher.until(() => watcher.items().some((i) => i.k === 'poll'), 'the poll');
+    // Act: ten vote frames from each browser at once (the first counts, the rest are refused).
+    for (let round = 0; round < 10; round++) for (const [i, p] of people.entries()) p.send({ t: 'chat.vote', n: round * 100 + i + 1, id: 'p1', o: i % 3 });
+    await Promise.all(people.map((p) => p.until(() => p.all('chat.voted').length + p.all('chat.reject').length >= 1, 'an answer')));
+    await watcher.until(() => watcher.items().some((i) => i.k === 'pt' && i.c.reduce((a, b) => a + b, 0) === 10), 'the final counts');
+    // Assert
+    const firsts = people.map((p) => p.messages.find((m) => m.t === 'chat.voted' || m.t === 'chat.reject'));
+    expect(firsts.filter((m) => m?.t === 'chat.voted')).toHaveLength(10);
+    expect(firsts.filter((m) => m?.t === 'chat.reject' && m.code === 'chat.err.pollNet')).toHaveLength(2);
+    for (const p of people) expect(p.all('chat.voted').length).toBeLessThanOrEqual(1);
+    expect(live.chat.poll).toMatchObject({ rn: 2 });
+    expect(live.chat.poll?.c.reduce((a, b) => a + b, 0)).toBe(10);
+    expect(live.chat.isBroken).toBe(false);
+    const totals = watcher.items().flatMap((i) => (i.k === 'pt' ? [i.c.reduce((a, b) => a + b, 0)] : []));
+    expect(totals).toEqual([...totals].sort((a, b) => a - b));
+    expect(totals.at(-1)).toBe(10);
+  });
+});
