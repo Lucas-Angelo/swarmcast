@@ -84,6 +84,23 @@ runs:
         echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
         echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
 
+    # The remote actions of this action (setup-node, setup-go, actions/cache) run from copies
+    # fetched with git at their pins (.github/actions/remote-pins), with tries: the runner's own
+    # download of a remote action is not tried again after a 404 (.github/workflows/README.md,
+    # "Remote actions"). actions/cache here only for the npm cache's save on main; cache-restore
+    # fetches it by itself.
+    - name: Remote actions (git fetch, with tries)
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/setup-node ${{ inputs.go == 'true' && 'actions/setup-go' || '' }}
+    - name: Remote actions for the caches (git fetch, with tries; main)
+      id: cache-action
+      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/cache
+        optional: 'true'
+
     # One npm cache for the root workspace and the website (site/ has its own lockfile), only in
     # jobs that run `npm ci`: a job without it saved an empty ~/.npm first under the same key, so
     # the npm caches on main held 677 B to 75 KB and every `npm ci` went to the registry. This
@@ -95,7 +112,7 @@ runs:
     # a failed download (run 41283774499: the download stalled at 0 of 79.7 MB, then setup-node
     # took 109 s more to exit). Saved from main only (pull requests that changed a lockfile each
     # saved ~380 MB, five OSes x 76 MB, toward the 10 GB limit: README.md, "Caches").
-    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+    - uses: ./.git/remote-actions/actions/setup-node
       with:
         node-version: 24.x
         package-manager-cache: false
@@ -109,12 +126,11 @@ runs:
         prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
         { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
     # Saved from main only, at the end of the job when main has no entry for the key yet: this
-    # step only looks the key up (lookup-only), its post step saves. It is also the job's
-    # reference to actions/cache, which ./.github/actions/cache-restore needs downloaded.
+    # step only looks the key up (lookup-only), its post step saves.
     - name: Save the npm cache at the end of the job (main)
-      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
+      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' && steps.cache-action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: ./.git/remote-actions/actions/cache
       with:
         path: ${{ steps.npm-cache.outputs.path }}
         key: ${{ steps.npm-cache.outputs.key }}
@@ -193,7 +209,7 @@ runs:
         } >> "$GITHUB_ENV"
 
     - if: inputs.go == 'true'
-      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      uses: ./.git/remote-actions/actions/setup-go
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
       with:

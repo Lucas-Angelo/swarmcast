@@ -6,7 +6,7 @@
 // *.blob.core.windows.net hung actions/cache/restore for 748 s with SEGMENT_DOWNLOAD_TIMEOUT_MINS=2
 // (soak/cache-stall-sim, run 41293309829), and a composite action's steps cannot have a
 // timeout-minutes. So this runs actions/cache's own restore code (its restore-only entry point,
-// which the runner downloaded for the job) as a child process, kills it after `timeoutMs`, and
+// in the copy ../fetch-remote fetched with git) as a child process, kills it after `timeoutMs`, and
 // tries once more when a try timed out or failed ("Failed to restore"); a plain miss is not
 // retried. A cache is a speed-up: every outcome is a hit or a miss, never an error.
 import { spawn, spawnSync } from 'node:child_process';
@@ -16,22 +16,10 @@ import path from 'node:path';
 
 const isWin = process.platform === 'win32';
 
-/** The restore-only entry point of the actions/cache versions the runner downloaded for this job. */
-export function findRestoreScript(actionsDir) {
-  let found = null;
-  let dirs;
-  try {
-    dirs = fs.readdirSync(path.join(actionsDir, 'actions', 'cache'));
-  } catch {
-    return null;
-  }
-  for (const d of dirs) {
-    const script = path.join(actionsDir, 'actions', 'cache', d, 'dist', 'restore-only', 'index.js');
-    if (!fs.existsSync(script)) continue;
-    const mtime = fs.statSync(script).mtimeMs;
-    if (!found || mtime > found.mtime) found = { script, mtime };
-  }
-  return found?.script ?? null;
+/** actions/cache's restore-only entry point in its copy at `actionDir`, or null. */
+export function restoreScriptIn(actionDir) {
+  const script = path.join(actionDir, 'dist', 'restore-only', 'index.js');
+  return fs.existsSync(script) ? script : null;
 }
 
 /** `name=value` lines and `name<<EOF` blocks of a GITHUB_OUTPUT file. */
