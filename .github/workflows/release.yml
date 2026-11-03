@@ -240,9 +240,15 @@ jobs:
       # and .sig files, latest.json (SHA256SUMS.txt is added next). Anything else stops here.
       - name: Nothing but the desktop installers and the updater's files
         run: |
-          bad="$(find release -mindepth 1 -maxdepth 1 ! -name '*.dmg' ! -name '*-setup.exe' ! -name '*.deb' ! -name '*.AppImage' \
-            ! -name '*.app.tar.gz' ! -name '*.sig' ! -name latest.json -printf '%f\n')"
-          if [ -n "$bad" ]; then echo "::error::unexpected release assets: $(echo "$bad" | xargs)"; exit 1; fi
+          bad=""
+          for f in release/* release/.[!.]*; do
+            [ -e "$f" ] || continue
+            case "${f#release/}" in
+              *.dmg | *-setup.exe | *.deb | *.AppImage | *.app.tar.gz | *.sig | latest.json) ;;
+              *) bad="$bad ${f#release/}" ;;
+            esac
+          done
+          if [ -n "$bad" ]; then echo "::error::unexpected release assets:$bad"; exit 1; fi
 
       - name: Generate SHA256SUMS.txt
         run: node scripts/build/checksums.mjs release
