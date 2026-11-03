@@ -170,7 +170,7 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
   const delay = doc.createElement('span');
   delay.className = 'pc-delay';
   delay.dataset.testid = 'controls-delay';
-  // The status bar under the player says it to screen readers already (#delay).
+  // The info row under the player says it to screen readers already (#delay).
   delay.setAttribute('aria-hidden', 'true');
   delay.hidden = true;
   left.append(play, sound);

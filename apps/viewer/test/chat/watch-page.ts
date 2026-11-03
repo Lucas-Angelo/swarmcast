@@ -128,8 +128,15 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
   });
 }
 
-/** Watch page options: the page's language and extra query string (starting with "&"). */
-type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string };
+/**
+ * Watch page options: the page's language, extra query string (starting with "&"), and the
+ * streamer's page (`brand`: the /api/brand answer; the theme is empty and every /brand/<hash>.webp
+ * is a small real WebP). Without `brand`, /api/brand is a 404: the stock SwarmCast page.
+ */
+type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string; brand?: unknown };
+
+/** A small real WebP for the streamer's pictures. */
+const brandPicture = (): Buffer => fs.readFileSync(path.resolve(DIST, '..', '..', '..', 'assets', 'brand', 'emotes', 'bee@2x.webp'));
 
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
 export async function openWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
@@ -153,6 +160,11 @@ export async function loadWatch(page: Page, hub: MockHub, o: WatchOptions = {}):
       });
     }
     if (url.pathname === '/api/session/refresh') return route.fulfill({ status: 204 });
+    if (o.brand !== undefined) {
+      if (url.pathname === '/api/brand') return route.fulfill({ json: o.brand });
+      if (url.pathname === '/brand/theme.css') return route.fulfill({ body: '/* */', contentType: 'text/css' });
+      if (/^\/brand\/[0-9a-f]{64}\.webp$/.test(url.pathname)) return route.fulfill({ body: brandPicture(), contentType: 'image/webp' });
+    }
     return false;
   });
   await page.routeWebSocket(`ws://chat.test/control`, (ws) => {

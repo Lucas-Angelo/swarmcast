@@ -39,7 +39,6 @@
   flex: 1 1 auto;
 }
 .brand-support {
-  margin-left: auto;
   flex: none;
 }
 
@@ -68,15 +67,16 @@
 }
 
 /*
- * Banner above the player: stage width, 4:1, at most a quarter of the screen tall. The box is its
- * own (it shows empty as soon as the branding is known): the picture, which comes after the first
- * fragment, fills it and never moves the player.
+ * Banner under the info row, at the top of the streamer's About (it used to sit above the player
+ * and push it down): the column's width, 4:1, at most 200 px tall. The box is its own (it shows
+ * empty as soon as the branding is known): the picture, which comes after the first fragment,
+ * fills it and moves nothing.
  */
 .brand-banner {
-  width: 100%;
+  width: calc(100% - 2 * var(--gutter, 0px));
   aspect-ratio: 4 / 1;
-  max-height: 25vh;
-  margin-bottom: var(--sp-4);
+  max-height: 200px;
+  margin: var(--sp-2) var(--gutter, 0) var(--sp-4);
   border-radius: var(--sc-radius-lg);
   overflow: hidden;
   background: var(--sc-surface-2);
@@ -88,14 +88,19 @@
   object-fit: cover;
 }
 
-/* About card under the player bar. */
+/* About card under the info row (and the banner). */
+.brand-about {
+  margin: 0 var(--gutter, 0);
+}
+.brand-banner[hidden] + .brand-about {
+  margin-top: var(--sp-2);
+}
 .sc-brand-about {
   contain: content;
   overflow: hidden;
   overflow: clip;
   overflow-wrap: anywhere;
   padding: var(--sp-4) var(--sp-5);
-  margin-bottom: var(--sp-4);
   background: var(--sc-surface);
   border: 1px solid var(--sc-border);
   border-radius: var(--sc-radius-lg);
@@ -187,10 +192,9 @@ button.sc-brand-more {
   white-space: nowrap;
 }
 
-/* "on SwarmCast" credit. */
+/* "on SwarmCast" credit: small, at the end of the page's column. */
 .brand-credit {
-  width: var(--stage-w);
-  margin: 0 auto var(--sp-8);
+  margin: var(--sp-4) var(--gutter, 0) var(--sp-6);
   text-align: center;
   font-size: var(--fs-sm);
   color: var(--sc-muted);

@@ -16,6 +16,16 @@ const videoState = (page: Page) =>
   });
 const faded = (page: Page): Promise<boolean> => page.locator('.player').evaluate((p) => p.classList.contains('pc-idle'));
 
+/**
+ * The mouse leaves the player: to the info row's empty left edge, just under the video (the
+ * player starts at the window's top-left corner, so the corner is on the video).
+ */
+async function awayFromPlayer(page: Page): Promise<void> {
+  const player = await page.locator('.player').boundingBox();
+  if (!player) throw new Error('the player is not laid out');
+  await page.mouse.move(player.x + 8, player.y + player.height + 8);
+}
+
 /** The mouse rests on the bar (it holds the bar while there), as a viewer reaching for a control. */
 async function onTheBar(page: Page): Promise<void> {
   const bar = await page.getByTestId('controls').boundingBox();
@@ -148,7 +158,7 @@ test('the bar fades while the live plays and comes back with the mouse; under re
   await onTheBar(page);
 
   // Act: the mouse leaves the player
-  await page.mouse.move(1, 1);
+  await awayFromPlayer(page);
 
   // Assert
   await expect.poll(() => faded(page)).toBe(true);
@@ -165,7 +175,7 @@ test('the bar fades while the live plays and comes back with the mouse; under re
 
   // Act
   await page.emulateMedia({ reducedMotion: 'reduce' });
-  await page.mouse.move(1, 1);
+  await awayFromPlayer(page);
 
   // Assert: nothing fades by itself for a viewer who asked for less motion
   expect(await faded(page)).toBe(false);
@@ -176,7 +186,7 @@ test('the keyboard reaches every control in order and presses it; the focus hold
   // Arrange
   const { page } = await viewers.join(uid('tabkeys'));
   await waitPlaying(page);
-  await page.mouse.move(1, 1);
+  await awayFromPlayer(page);
   await expect.poll(() => faded(page)).toBe(true);
   // WebKit on macOS (Safari) moves Tab only between text fields unless the viewer turns on "Press
   // Tab to highlight each item"; Option+Tab reaches every control, as a Safari keyboard user

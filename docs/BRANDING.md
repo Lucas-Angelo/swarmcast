@@ -26,9 +26,9 @@ Principles:
 |---|---|---|
 | Channel name | Join page ("Join {name}'s stream" / "Entrar na live de {name}"), watch header, tab title, link preview | empty: the stock SwarmCast header |
 | Picture or logo | Join page, watch header, favicon (32 px, 180 px for iOS home screens) | the SwarmCast symbol |
-| Banner | Above the player (1280 × 320, 640 × 160 on phones), loaded after the first video segment | none |
+| Banner | Under the video and its info row, at the top of the About (1280 × 320, 640 × 160 on phones), loaded after the first video segment | none |
 | One-line description (tagline) | Under the name; link preview description | empty |
-| About | An "About" card under the player (plain text, line breaks kept) | empty: no card |
+| About | An "About" card under the video, after the banner (plain text, line breaks kept) | empty: no card |
 | Tags | Chips in the About card (not clickable) | none |
 | Links | List in the About card, with a platform icon derived from the host | none |
 | Support button | Header and the ended screen; opens a link or a Pix sheet | off; label "Support" / "Apoiar" |

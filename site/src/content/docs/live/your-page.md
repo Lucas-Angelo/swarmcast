@@ -5,7 +5,7 @@ description: Put your name, picture, bio, links, colours and a support button or
 
 The panel's **Your page** card changes what your viewers see: your name, picture, a short bio, your links and your colours, on the join page and around the video. Only people with your stream link see it; anyone else who finds the address sees the plain "Link not valid" page.
 
-![A viewer's watch page with a streamer page: 1 the name and picture at the top, 2 the support button (here Pix), 3 the banner, 4 the About card with the bio, tags and links.](../../../assets/guides/live/en/your-page-watch.webp)
+![A viewer's watch page with a streamer page: 1 the name and picture under the video, 2 the support button (here Pix), 3 the banner under them, 4 the About card with the bio, tags and links.](../../../assets/guides/live/en/your-page-watch.webp)
 
 ![The Your page card: the Preview (watch page, join page or stream ended; computer or phone; light or dark) on the left, and on the right the steps 1 Name and picture, 2 About you, 3 Links and support, 4 Colours, 5 When the stream is shared or ends, then Save and Reset to SwarmCast defaults.](../../../assets/guides/live/en/your-page-card.webp)
 

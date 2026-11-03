@@ -4,7 +4,7 @@
 // through Playwright's keyboard, so they are trusted key presses like a viewer's: full screen and
 // play with sound need that.
 import type { Page } from '@playwright/test';
-import { chatMessage, chatReady, expect, test, uid, waitPlaying } from './fixtures.js';
+import { chatMessage, chatReady, expect, openSettings, test, uid, waitPlaying } from './fixtures.js';
 
 const video = (page: Page) =>
   page.evaluate(() => {
@@ -92,7 +92,8 @@ test('stats for nerds: off at first, then the numbers of the live, refreshed whi
   await expect(panel).toBeHidden();
   const stat = (id: string) => panel.locator(`[data-stat="${id}"] dd`);
 
-  // Act
+  // Act: the link is in the Settings menu under the video
+  await openSettings(page);
   await page.getByTestId('stats-open').click();
 
   // Assert
@@ -119,6 +120,7 @@ test('stats for nerds: off at first, then the numbers of the live, refreshed whi
 
   // Assert
   await expect(panel).toBeHidden();
-  await expect(page.getByTestId('stats-open')).toBeFocused();
+  // The menu closed when the panel opened: the focus goes back to its button.
+  await expect(page.getByTestId('settings-open')).toBeFocused();
   await expect(panel.locator('dl')).toHaveCount(0);
 });
