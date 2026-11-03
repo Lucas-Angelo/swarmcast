@@ -176,6 +176,14 @@ sideways layout; iOS: the sideways layout).
   pins version 37.2.12 (a known build, not whatever is newest). CI boots it the suite's
   way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
   leaves a core and its backtrace with the job's artifacts.
+- **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
+  saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
+  in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the
+  Mac's, and Health, Fitness, Siri and the widgets added theirs. A tap then reached the element and
+  no click followed. `setup.sh` and the suite turn those daemons off (`launchctl disable` in the
+  simulator; `ios.ts` `UNUSED_JOBS`), and the harness's touch listeners are passive, so WebKit does
+  not hold a tap for the page. Every tap's timing goes to `taps.log`, the Mac's load to
+  `host-load.log`.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a
