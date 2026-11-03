@@ -164,6 +164,7 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat (1). A
 - **Responder** em cada mensagem (apontando para ela, tocando nela no celular ou com as setas a partir do chat) e **@** na caixa de mensagem para mencionar alguém que escreveu.
 - **Enquetes e palpites** acima das mensagens, com o resultado ao vivo e o próprio voto. No celular a enquete começa recolhida numa linha, para o chat não perder espaço: um toque abre. Com o chat oculto, **Mostrar chat** diz **Enquete**.
 - **Reações**: a abelhinha ao lado da caixa de mensagem manda uma, e as de todo mundo flutuam sobre o vídeo.
+- **Chat sobre o vídeo** em tela cheia, se ligarem: as mensagens mais recentes no canto de baixo à esquerda do vídeo, com um botão pequeno para escrever dali.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
 - **Configurações do chat** para a cor do próprio nome, horários, **Destacar mensagens que me mencionam**, **Mostrar reações no vídeo** e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
 
