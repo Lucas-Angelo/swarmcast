@@ -42,12 +42,23 @@ runs:
     # repository's 10 GB cache limit). Every CARGO_* variable is part of the key, so set the build
     # profile overrides before this step.
     # A restore that fails is a warning (the build compiles everything instead); its download gives
-    # up after 2 minutes.
-    - if: inputs.cache-key != ''
+    # up after 2 minutes. rust-cache runs from a copy fetched with git at its pin
+    # (.github/actions/remote-pins), with tries: the runner's own download is not tried again after
+    # a 404, and pipeline run 41636784175 lost this job to one, in "Prepare all required actions"
+    # of this composite, before any step could run (.github/workflows/README.md, "Remote
+    # actions"). One that cannot be fetched is a warning too, and the build compiles everything.
+    - name: rust-cache (git fetch, with tries)
+      id: rust-cache-action
+      if: inputs.cache-key != ''
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: Swatinem/rust-cache
+        optional: 'true'
+    - if: inputs.cache-key != '' && steps.rust-cache-action.outputs.fetched == 'true'
       continue-on-error: true
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      uses: ./.git/remote-actions/Swatinem/rust-cache
       with:
         workspaces: apps/desktop/src-tauri -> target
         key: ${{ inputs.cache-key }}

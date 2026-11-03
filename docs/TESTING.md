@@ -71,6 +71,7 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
 | A registry hiccup on `docker pull` | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test |
 | A slow apt mirror, an artifact service hiccup | `.github/scripts/apt-retry.sh`, `.github/actions/fetch-artifact` | CI infrastructure |
+| A 404 from codeload for an action at a commit that exists | `.github/actions/fetch-remote` (our actions run their remote actions from a git fetch) | the runner's own download does not try again after a 404 (run 41636784175); CI infrastructure |
 | A port taken by another process between the probe and MediaMTX's bind | `bootApp` in apps/server/test/integration/helpers.ts | a race between concurrent runs, not SwarmCast behaviour: one logged retry on new ports |
 
 ### Measured windows
