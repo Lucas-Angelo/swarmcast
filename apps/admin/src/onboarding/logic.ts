@@ -1,8 +1,10 @@
 // Pure logic of the first-run setup tutorial (no DOM): step order, auto-open, OBS detection,
 // persistence calls. Kept separate from the Preact components so it can be unit-tested in Node.
-import type { AdminState, QualityState } from '@swarmcast/shared';
+import { validateStreamerName, type AdminState, type QualityState } from '@swarmcast/shared';
 
-export const STEPS = ['welcome', 'pc', 'output', 'choose', 'connect', 'test', 'share', 'tour', 'finish'] as const;
+// "name" comes right after the welcome, so a streamer who closes the tutorial early has already
+// been asked for her chat name (docs/CHAT.md, "The streamer's chat name").
+export const STEPS = ['welcome', 'name', 'pc', 'output', 'choose', 'connect', 'test', 'share', 'tour', 'finish'] as const;
 export type StepId = (typeof STEPS)[number];
 
 /** "both": another platform (Twitch, YouTube, Kick...) + SwarmCast with the Multiple RTMP outputs plugin; "only": Settings → Stream → Custom. */
@@ -117,4 +119,24 @@ export async function saveDone(post: Post, done: boolean): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// ---- "Your name in the chat" (the streamer's chat name, chat.streamerName) ----
+
+/**
+ * The name the step starts with: the chat name already saved, else the "Your page" channel name
+ * when it also follows the nickname rules (a channel name may have emoji or 40 characters, a chat
+ * name may not), else empty. `chat.streamerName` stays the one name the server reserves.
+ */
+export function initialChatName(chatName: string, pageName: string | null | undefined): string {
+  if (chatName.trim()) return chatName;
+  const page = validateStreamerName(pageName ?? '');
+  return page.ok ? page.value : '';
+}
+
+/** What leaving the step does with the draft: nothing (unchanged), save this value, or stay (invalid). */
+export function nameOnLeave(draft: string, saved: string): { do: 'keep' } | { do: 'save'; value: string } | { do: 'stay' } {
+  const r = validateStreamerName(draft);
+  if (!r.ok) return { do: 'stay' };
+  return r.value === saved ? { do: 'keep' } : { do: 'save', value: r.value };
 }

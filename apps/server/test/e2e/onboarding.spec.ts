@@ -1,5 +1,7 @@
 // The first-run setup tutorial in the panel (checked on Chromium): it opens by itself until it
-// is finished, walks through its nine steps (the OBS test step turns green because the e2e
+// is finished, walks through its ten steps (the chat name step checks the name as it is typed,
+// keeps an invalid one on screen and saves a valid one with the chat settings, where the Chat
+// card shows it; the OBS test step turns green because the e2e
 // server is live with a synthetic OBS stream; the stream key stays hidden until "Show"; the
 // "Only SwarmCast" route has the copy buttons too), keeps focus inside, asks before Escape
 // closes it, is translated, and its "Your PC check" step shows the installer's system check
@@ -11,7 +13,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
-import { admin, expect, liveLink, openPanel, serverEnv, test as base } from './fixtures.js';
+import type { AdminChatState } from '@swarmcast/shared';
+import { admin, adminApi, expect, liveLink, openPanel, serverEnv, test as base } from './fixtures.js';
 
 /** The installer's system check the "Your PC check" step reads; removed after the test. */
 const test = base.extend<{ systemCheckFile: string }>({
@@ -57,9 +60,14 @@ function consoleErrors(page: Page): string[] {
   return errors;
 }
 
-test('the first panel open shows the tutorial; finishing it keeps it closed on reload', { tag: '@ui' }, async ({ page }) => {
+/** The streamer's chat name the server keeps (and reserves). */
+const savedChatName = async (): Promise<string> => (await adminApi<AdminChatState>('GET', '/api/chat')).settings.streamerName;
+
+test('the first panel open shows the tutorial; finishing it keeps it closed on reload', { tag: '@ui' }, async ({ page, chat }) => {
   // Arrange
   await admin('/api/onboarding', { done: false });
+  // No chat name yet (the fixture puts the one before the test back afterwards).
+  await chat.change({ streamerName: '' });
   await liveLink();
   const errors = consoleErrors(page);
   const dialog = page.getByTestId('onboarding');
@@ -71,8 +79,54 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   // Assert
   await expect(dialog).toBeVisible();
   await expect(dialog).toHaveAttribute('data-step', 'welcome');
-  await expect(page.getByTestId('onb-progress')).toHaveText('Step 1 of 9');
+  await expect(page.getByTestId('onb-progress')).toHaveText('Step 1 of 10');
   await expect(page.locator('#onb-heading')).toBeFocused();
+
+  // Act
+  await next.click();
+  const nameInput = page.getByTestId('onb-name-input');
+  const feedback = page.getByTestId('onb-name-feedback');
+
+  // Assert
+  await expect(dialog).toHaveAttribute('data-step', 'name');
+  await expect(nameInput).toHaveValue('');
+  await expect(feedback).toHaveAttribute('data-kind', 'empty');
+  await expect(page.getByTestId('onb-name')).toContainText('Viewers cannot use this name or anything that looks like it.');
+
+  // Act
+  await nameInput.fill('Admin');
+
+  // Assert
+  await expect(feedback).toHaveAttribute('data-kind', 'error');
+  await expect(feedback).toContainText('leave it empty');
+
+  // Act
+  await next.click();
+
+  // Assert
+  await expect(dialog).toHaveAttribute('data-step', 'name');
+  await expect(nameInput).toBeFocused();
+  expect(await savedChatName()).toBe('');
+
+  // Act
+  await nameInput.fill('  Tutorial   Tester ');
+
+  // Assert
+  await expect(feedback).toHaveAttribute('data-kind', 'ok');
+  await expect(feedback).toHaveText('Your messages will show "Tutorial Tester".');
+
+  // Act
+  await next.click();
+
+  // Assert
+  await expect(page.getByTestId('onb-pc')).toBeVisible();
+  await expect.poll(savedChatName).toBe('Tutorial Tester');
+
+  // Act
+  await page.getByTestId('onb-back').click();
+
+  // Assert
+  await expect(nameInput).toHaveValue('Tutorial Tester');
 
   // Act
   await next.click();
@@ -150,6 +204,15 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   // Assert
   await expect(dialog).toBeHidden();
   await expect.poll(async () => (await page.request.get(new URL('/api/onboarding', page.url()).toString())).json()).toEqual({ done: true });
+  // The Chat card's settings, where she changes it later, show the name the tutorial saved.
+  await expect(page.getByTestId('chat-streamer-name')).toHaveValue('Tutorial Tester');
+
+  // Act
+  await page.getByTestId('chat-streamer-name').fill('Moderador');
+
+  // Assert: the same check as in the tutorial, before anything is sent.
+  await expect(page.getByTestId('chat-streamer-name-error')).toContainText('leave it empty');
+  await expect(page.getByTestId('chat-save')).toBeDisabled();
 
   // Act
   const decided = page.waitForResponse((r) => new URL(r.url()).pathname === '/api/onboarding' && r.request().method() === 'GET');
@@ -220,7 +283,7 @@ test.describe('in a pt-BR browser', () => {
 
     // Assert
     await expect(page.getByTestId('onboarding')).toBeVisible();
-    await expect(page.getByTestId('onb-progress')).toHaveText('Passo 1 de 9');
+    await expect(page.getByTestId('onb-progress')).toHaveText('Passo 1 de 10');
     await expect(page.getByTestId('onb-skip')).toHaveText('Pular tutorial');
 
     // Act
@@ -238,6 +301,8 @@ test('"Your PC check" shows the installer system check, with a fallback to live 
   await admin('/api/onboarding', { done: true });
   await openPanel(page);
   await page.getByTestId('redo-tutorial').click();
+  await page.getByTestId('onb-next').click();
+  await expect(page.getByTestId('onboarding')).toHaveAttribute('data-step', 'name');
 
   // Act
   await page.getByTestId('onb-next').click();

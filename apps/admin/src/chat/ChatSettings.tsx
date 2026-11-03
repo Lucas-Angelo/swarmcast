@@ -18,7 +18,7 @@ import {
 import { t } from '@swarmcast/shared/i18n';
 import { errorText } from '../api.js';
 import { Info } from '../Info.js';
-import { CONTENT_PRESETS, parseBlockedWords, presetNeedsGifs, presetOf, sameSettings } from './logic.js';
+import { CONTENT_PRESETS, parseBlockedWords, presetNeedsGifs, presetOf, sameSettings, streamerNameFeedback } from './logic.js';
 
 type Patch = (p: Partial<Settings>) => void;
 
@@ -43,7 +43,9 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
   const noContent = !v.content.text && !v.content.emotes && !v.content.gifs;
   const keyOk = v.gif.key === '' || GIF_KEY_RE.test(v.gif.key);
   const gifsNeedKey = v.content.gifs && v.gif.key === '';
-  const invalid = noContent || !keyOk || gifsNeedKey || blocked.tooLong.length > 0;
+  // The same rules as the setup tutorial and the server: an error shows while she types.
+  const name = streamerNameFeedback(v.streamerName);
+  const invalid = noContent || !keyOk || gifsNeedKey || blocked.tooLong.length > 0 || name.kind === 'error';
   const patch: Patch = (p) => {
     setSaved(false);
     setV({ ...v, ...p });
@@ -194,10 +196,16 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
                 size={CHAT_STREAMER_NAME_MAX}
                 placeholder={t('admin.chat.streamerName.placeholder')}
                 value={v.streamerName}
+                aria-invalid={name.kind === 'error'}
                 onInput={(e) => patch({ streamerName: (e.target as HTMLInputElement).value })}
               />
             </label>{' '}
             <Info text={t('admin.chat.streamerName.tip')} />
+            {name.kind === 'error' && (
+              <p class="err small" data-testid="chat-streamer-name-error">
+                {t(name.key, name.params)}
+              </p>
+            )}
           </div>
           <div class="field">
             <Check label="admin.chat.announceMutes" checked={v.announceMutes} testid="chat-announce" onChange={(c) => patch({ announceMutes: c })} /> <Info text={t('admin.chat.announceMutes.tip')} />

@@ -19,7 +19,7 @@ Everyone watching sees the nicknames in the chat. The join page says so before p
 - **Emoji and emotes:** the usual emoji from the phone or the picker, plus the bee emotes that come with SwarmCast (`:gg:`, `:love:`, `:wow:`…).
 - **GIFs:** only if you turn them on with your own free key. See [Get a GIF key](/swarmcast/live/gif-key/).
 
-Your own messages, sent from the box **Send as …** at the bottom of the Live chat, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", or with a look-alike of the name of someone already watching.
+Your own messages, sent from the box **Send as …** at the bottom of the Live chat, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", with your own name in the chat, or with a look-alike of any of these or of the name of someone already watching. Set your name in the chat in the setup tutorial or under **Chat settings** → **Looks**. If someone watching already has a name like the one you pick, they keep it until they join again.
 
 ## Keep the chat friendly
 
