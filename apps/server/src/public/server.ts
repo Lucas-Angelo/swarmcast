@@ -312,14 +312,16 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
     },
   );
 
+  /** This browser already passed the check at the level required now (signed cookie, bound to the device cookie). */
+  const verified = (req: FastifyRequest): boolean => sec.isVerified(req.cookies[VERIFIED_COOKIE], req.cookies[DEVICE_COOKIE]);
+
+  // A browser that will be asked for the check gets the page with "Checking your browser…" already
+  // shown (Pages.joinChecking), the same question /api/join/challenge answers just after.
   app.get('/join', async (req, reply) => {
     if (await sessionOf(req, reply)) return reply.redirect('/watch', 303);
     if (!(await access.verifyTicket(req.cookies[TICKET_COOKIE]))) return sendInvalid(reply);
-    return reply.type('text/html; charset=utf-8').send(pages.join);
+    return reply.type('text/html; charset=utf-8').send(sec.powLevel() > 0 && !verified(req) ? pages.joinChecking : pages.join);
   });
-
-  /** This browser already passed the check at the level required now (signed cookie, bound to the device cookie). */
-  const verified = (req: FastifyRequest): boolean => sec.isVerified(req.cookies[VERIFIED_COOKIE], req.cookies[DEVICE_COOKIE]);
 
   // Proof-of-work challenge for the join page (only when the browser check is on and this browser
   // has not passed it yet, or passed a lower level than the one asked for now).
@@ -542,6 +544,17 @@ export async function createPublicServer(deps: PublicDeps, opts: PublicServerOpt
 
 interface Pages {
   join: string;
+  /**
+   * The join page with its browser-check line ("Checking your browser…", #check) shown from the
+   * start, for a browser that will have to solve the check. Shown later by join-form.ts, once the
+   * challenge arrived, the line appeared while the page already took taps, and Mobile Safari drops
+   * the click of a tap during which clickable content appears (the line's "i" button): WebKit's
+   * content-change observer, watching from touchstart to the synthetic mouse move, takes the tap
+   * for a hover (WebPage::handleSyntheticClick, ContentChange::Visibility). On the iOS Simulator
+   * a tap on the nickname field landed as the line appeared and got touchstart and touchend but
+   * no click (Devices run 41566408164). The page hides the line when no check is needed after all.
+   */
+  joinChecking: string;
   watch: string;
   invalid: string;
   /** The invalid page explaining a public-blocklist refusal. */
@@ -564,8 +577,11 @@ function loadPages(dir: string): Pages {
   const blocked = invalidPage.includes('data-i18n="viewer.err.linkInvalid"')
     ? invalidPage.replace(/data-i18n="viewer\.err\.linkInvalid">[^<]*</, `data-i18n="viewer.err.blocked">${blockedText}<`)
     : invalidPage.replace(/<p>[^<]*<\/p>/, `<p>${blockedText}</p>`);
+  const join = read('join.html', invalid);
   return {
-    join: read('join.html', invalid),
+    join,
+    // The one `hidden` of the line's start tag (join.html: <p id="check" ... hidden>).
+    joinChecking: join.replace(/(<p\b[^>]*\bid="check"[^>]*?)\s+hidden(?=[\s>])/, '$1'),
     watch: read('watch.html', invalid),
     invalid: invalidPage,
     blocked,

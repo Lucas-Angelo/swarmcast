@@ -185,6 +185,12 @@ sideways layout; iOS: the sideways layout).
   simulator; `ios.ts` `UNUSED_JOBS`), and the harness's touch listeners are passive, so WebKit does
   not hold a tap for the page. Every tap's timing goes to `taps.log`, the Mac's load to
   `host-load.log`.
+- **iOS taps and content that appears:** WebKit on iOS watches the page from touchstart to the
+  synthetic mouse move and takes a tap for a hover, with no click, when clickable content appears
+  meanwhile (its content-change observer). The join page's "Checking your browser…" line (with its
+  "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
+  41566408164); the server now sends the page with the line already shown to a browser it will check
+  (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a

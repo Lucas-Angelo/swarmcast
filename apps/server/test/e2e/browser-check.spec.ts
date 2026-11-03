@@ -13,6 +13,11 @@
 // once the line was gone: no join was sent (stability soak: adaptive-delay.spec on WebKit/Ubuntu,
 // nickname filled, Watch focused, nothing posted for 240 s). The page clock holds the line until
 // the button is pressed, so the regression test does not depend on timing.
+//
+// A browser that will be checked gets the line shown with the page (server.ts Pages.joinChecking):
+// made visible by the page once the challenge arrived, it appeared while the page took taps, and
+// Mobile Safari drops the click of a tap during which clickable content (the line's "i" button)
+// appears (Devices run 41566408164: a tap on the nickname got touchstart and touchend, no click).
 import type { BrowserContext, Page } from '@playwright/test';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
 import { CHECK_MIN_VISIBLE_MS } from '../../../viewer/src/join-form.js';
@@ -20,20 +25,23 @@ import { admin, adminState, expect, forcePowLevel, liveLink, test, uid, viewerBy
 
 /**
  * Records, in every tab of `context`, whether its join page ever showed "Checking your
- * browser…" (#check). The page keeps it up at least CHECK_MIN_VISIBLE_MS (join-form.ts);
- * recording it as it happens does not depend on the test looking within that time, and the
- * tab's sessionStorage keeps the answer once the join has moved on to /watch.
+ * browser…" (#check), and whether the page itself made it appear (its `hidden` taken off) rather
+ * than getting it shown from the server. The page keeps it up at least CHECK_MIN_VISIBLE_MS
+ * (join-form.ts); recording it as it happens does not depend on the test looking within that
+ * time, and the tab's sessionStorage keeps the answer once the join has moved on to /watch.
  */
 async function recordCheckShown(context: BrowserContext): Promise<void> {
   await context.addInitScript(() => {
-    new MutationObserver(() => {
+    new MutationObserver((changes) => {
       const el = document.getElementById('check');
       if (el && !el.hidden) sessionStorage.setItem('e2e.checkShown', '1');
-    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'] });
+      if (el && !el.hidden && changes.some((c) => c.type === 'attributes' && c.target === el && c.oldValue !== null)) sessionStorage.setItem('e2e.checkAppeared', '1');
+    }).observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['hidden'], attributeOldValue: true });
   });
 }
 
 const checkWasShown = (page: Page): Promise<boolean> => page.evaluate(() => sessionStorage.getItem('e2e.checkShown') === '1');
+const checkAppeared = (page: Page): Promise<boolean> => page.evaluate(() => sessionStorage.getItem('e2e.checkAppeared') === '1');
 
 /**
  * Opens a link in `page` and joins; returns whether the page had to solve the browser check.
@@ -66,6 +74,7 @@ test('the browser check is on by default and asked once per browser', { tag: '@u
   // Assert
   expect(((await (await challenge).json()) as { required: boolean }).required).toBe(true);
   await expect.poll(() => checkWasShown(first)).toBe(true);
+  expect(await checkAppeared(first), 'the line came shown with the page, never appeared later').toBe(false);
   await expect(first.locator('#check')).toBeHidden();
   await expect(first.locator('#check-progress')).toHaveJSProperty('value', 1);
 
