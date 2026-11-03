@@ -193,35 +193,50 @@ async function hideSimulatorApp(): Promise<void> {
   await run('osascript', ['-e', 'tell application "System Events" to set visible of process "Simulator" to false']);
 }
 
-/** One event the tap delivered to the element: its type, its time stamp and when the page handled it (epoch ms). */
+/** The events a tap is recorded by (IosPhone.tap). */
+const TAP_TYPES = ['touchstart', 'touchend', 'click'] as const;
+
+/**
+ * One event the tap delivered: its type, the element it reached when that was not the tapped one,
+ * its time stamp and when the page handled it (epoch ms).
+ */
 interface TapEvent {
-  type: string;
+  type: (typeof TAP_TYPES)[number] | '?';
+  elsewhere?: string;
   stamp: number;
   handled: number;
 }
 
+/**
+ * The page's record (`type[>element]@stamp:handled ...`). It comes from the page, so the type is
+ * taken from TAP_TYPES and the times are numbers; only the name of an element hit elsewhere is the
+ * page's own text, and describeTap leaves it out of what is written to taps.log.
+ */
 function parseTapEvents(record: string): TapEvent[] {
   return record
     .split(' ')
     .filter(Boolean)
     .map((entry) => {
-      const [type = '', times = ''] = entry.split('@');
+      const [what = '', times = ''] = entry.split('@');
+      const [raw = '', elsewhere] = what.split('>');
       const [stamp = NaN, handled = NaN] = times.split(':').map(Number);
-      return { type, stamp, handled };
+      return { type: TAP_TYPES.find((t) => t === raw) ?? '?', ...(elsewhere === undefined ? {} : { elsewhere }), stamp, handled };
     });
 }
 
 /**
  * What a tap delivered and when, for the log and a failure message: the events in order, the
  * finger's time down (touchstart to touchend, by the events' time stamps and by when the page
- * handled them) and the click's delay after touchend. "click" appears only when one arrived.
+ * handled them) and the click's delay after touchend. "click" appears only when one arrived on the
+ * element; one elsewhere is "click>element", or "click>elsewhere" without `names` (for the file).
  */
-export function describeTap(events: readonly TapEvent[], started: number, performed: number): string {
-  const first = (type: string) => events.find((e) => e.type === type);
-  const down = first('touchstart');
-  const up = first('touchend');
-  const click = first('click');
-  const parts = [`events: ${events.map((e) => e.type).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
+export function describeTap(events: readonly TapEvent[], started: number, performed: number, names = true): string {
+  const own = (type: string) => events.find((e) => e.type === type && e.elsewhere === undefined);
+  const down = own('touchstart');
+  const up = own('touchend');
+  const click = own('click');
+  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : 'elsewhere'}`);
+  const parts = [`events: ${events.map(label).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
   if (down) parts.push(`touchstart ${down.handled - started} ms after the actions began`);
   if (down && up) parts.push(`finger down ${up.stamp - down.stamp} ms by time stamps, ${up.handled - down.handled} ms as handled`);
   if (up && click) parts.push(`then the click ${click.handled - up.handled} ms after touchend`);
@@ -477,13 +492,13 @@ export class IosPhone implements Phone {
     const started = Date.now();
     await this.session.perform(tapActions(point!.clientX, point!.clientY));
     const performed = Date.now();
-    let seen = '';
+    let events: TapEvent[] = [];
     // A finger's tap ends in a click. When it does not (the touch reached the element and no click
     // followed: runs 41184587941, 41190536745, the second with a tap that took 9.5 s to perform on
     // an overloaded simulator), the test fails here, with what arrived and its timing.
     try {
       await expect
-        .poll(async () => (seen = describeTap(parseTapEvents((await this.evaluate(() => sessionStorage.getItem('__tap'))) ?? ''), started, performed)), {
+        .poll(async () => describeTap((events = parseTapEvents((await this.evaluate(() => sessionStorage.getItem('__tap'))) ?? '')), started, performed), {
           message: `the tap on ${selector} ended in a click`,
         })
         // A click on the element itself (one elsewhere is listed as "click>element").
@@ -492,7 +507,7 @@ export class IosPhone implements Phone {
       (e as Error).message += `\n(${await this.device.tapLogs(new Date(started))})`;
       throw e;
     } finally {
-      this.device.noteTap(`${selector}: ${seen}`);
+      this.device.noteTap(`${selector}: ${describeTap(events, started, performed, false)}`);
     }
   }
 
