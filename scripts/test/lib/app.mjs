@@ -3,6 +3,7 @@
 // panel it prints, the live link it makes.
 // Node loads this TypeScript file itself (type stripping): it has no imports, on purpose.
 import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.ts';
+import { userTempEnv } from './browser-temp.mjs';
 import { poll, WaitError } from './wait.mjs';
 
 const win = process.platform === 'win32';
@@ -16,12 +17,13 @@ export function barePath() {
 
 /**
  * Environment for the start script and the app: the bare PATH, none of this machine's
- * SwarmCast, Node or npm variables, no pause and no browser at the end, and only the SwarmCast
- * variables asked for (`extra` last).
+ * SwarmCast, Node or npm variables, this machine's own TEMP and TMP (the harness may have moved
+ * its own to the runner's local disk: browser-temp.mjs), no pause and no browser at the end, and
+ * only the SwarmCast variables asked for (`extra` last).
  */
 export function bareEnv({ home, releaseUrl, extra = {} } = {}) {
   const drop = /^(path|swarmcast_.*|node_options|npm_.*)$/i;
-  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.test(k)));
+  const env = userTempEnv(Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.test(k))));
   env[win ? 'Path' : 'PATH'] = barePath();
   env.SWARMCAST_NO_PAUSE = '1';
   env.SWARMCAST_NO_OPEN = '1';
