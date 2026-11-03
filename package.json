@@ -54,9 +54,11 @@
   "overrides": {
     "ip": "$ip",
     "glob": "^14.0.2",
-    "minimatch": "^11.0.1"
+    "minimatch": "^11.0.1",
+    "node-datachannel": "$node-datachannel"
   },
   "dependencies": {
-    "ip": "file:apps/server/shims/ip"
+    "ip": "file:apps/server/shims/ip",
+    "node-datachannel": "file:apps/server/shims/node-datachannel"
   }
 }

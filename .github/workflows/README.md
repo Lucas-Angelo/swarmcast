@@ -132,6 +132,7 @@ schedules and releases are never cancelled.
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
+| `.github/scripts/npm-network-error.mjs` | tells `setup` whether a failed `npm ci` failed on the network (npm's own errors, or prebuild-install's download in an install script), so it runs once more (tested in `scripts/ci/test`) |
 | `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
@@ -341,7 +342,8 @@ working) and saves it from `main` with `actions/cache` in `lookup-only` mode (it
 when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` (the idle limit of
 its connections) to 60 s and `fetch-retries` to 4 for the job, and runs `npm ci` once more after a
 network error npm's own retries did not get past (npm does not retry a download that broke off
-mid-transfer); any other `npm ci` failure fails the step.
+mid-transfer), or a failed download of prebuild-install in an install script
+(`.github/scripts/npm-network-error.mjs`); any other `npm ci` failure fails the step.
 Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
 measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
 the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
@@ -353,6 +355,23 @@ Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage block
 disruption of the registry during `npm ci` (one in five connections stops after 100 kB), a plain
 `npm ci` failed with `ETIMEDOUT` after 110 s while `setup` took 201 s and passed (both restores cut
 off, `npm ci` failed on `ETIMEDOUT`, the second run took 5 s; run 41295992201).
+
+**Install scripts that download (2026-11-03).** `npm ci` on `main` after #102 (pipeline run
+41664754395, `desktop macos-x64 / clean-machine (macos-15-intel)`) failed in node-datachannel's
+install script: its prebuild-install download of the native binary from GitHub stopped at its 30 s
+limit ("prebuild-install warn install Request timed out"), the build from source it falls back to
+failed ("prebuild ERR! build TypeError: expected first argument to be an array") after installing
+the package's own development dependencies for 3 minutes, and the step's pattern knew npm's errors
+only. The npm cache would not have helped: prebuild-install keeps what it downloads in
+`<npm cache>/_prebuilds` (npm hands install scripts `npm_config_cache`), which the npm cache
+holds per OS and CPU, but #102 changed `setup/action.yml`, part of the key, and `main` restores
+only its exact key, so its first run was cold. node-datachannel is a native WebRTC addon that only
+bittorrent-tracker's client loads (through @thaunknown/simple-peer and webrtc-polyfill); SwarmCast
+runs `bittorrent-tracker/server` and viewers use their browser's WebRTC, so nothing ever loaded it.
+It is now a local stand-in (`apps/server/shims/node-datachannel`, an npm override like the `ip`
+shim) that throws when loaded, so no install script in our lockfiles downloads anything, and
+`scripts/ci/test/install-scripts.test.ts` fails on a new package with an install script until it
+is looked at. The prebuild-install pattern stays for the next one.
 
 ## Coverage
 
@@ -384,7 +403,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
   41636784175), the pinned
   downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
-  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error (`setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
+  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error, npm's or a prebuild-install download's (`setup`, `npm-network-error.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
   60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
