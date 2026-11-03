@@ -38,37 +38,6 @@ export function firefoxEnv(base = process.env) {
 }
 
 /**
- * On a GitHub-hosted Windows runner, points TEMP and TMP of this process at the job's own
- * folder on the runner's local disk (RUNNER_TEMP, D:), so that the profile Playwright creates
- * for every browser it launches (in os.tmpdir(), which reads TEMP on Windows) is not on the
- * system disk C:. The test workers and browsers this process starts inherit it. Elsewhere (not
- * Windows, or no RUNNER_TEMP: a developer's machine) nothing changes. Returns the folder now
- * used, or undefined.
- *
- * C: on these runners is a network disk with a throughput cap ("Virtual_Disk NVME Premium");
- * D: is the VM's own NVMe disk. A few minutes after a job starts, Windows updates Microsoft
- * Defender's signatures (MpSigStub, AM_Delta, then MsMpEng reading and writing 100-560 MB/s on
- * C:), even with real-time protection off. For the next 30-90 s a write to C: takes 0.3-0.9 s
- * (6 ms otherwise); D: stays under 30 ms. Firefox's parent process writes its new profile's
- * databases on its main thread, the one that answers Playwright and passes every request of a
- * page, and each SQLite commit waits for the disk (Gecko profile: 2.8 s in
- * `INSERT INTO moz_bookmarks` during a first page load). In soak 41543430258 the update fell on
- * two workers' first Firefox: 15.8 s to launch, a first `goto` that never loaded in 30 s, 14 s to
- * close. Cold Firefox launches in a loop (soak 41564352271): every slow one came inside that
- * window, none outside it.
- * @param {NodeJS.ProcessEnv} [env]
- * @param {NodeJS.Platform} [platform]
- * @returns {string | undefined}
- */
-export function browserTempOnWorkDisk(env = process.env, platform = process.platform) {
-  const dir = env.RUNNER_TEMP;
-  if (platform !== 'win32' || !dir) return undefined;
-  env.TEMP = dir;
-  env.TMP = dir;
-  return dir;
-}
-
-/**
  * The preferences for a Firefox the harnesses launch (Playwright's `firefoxUserPrefs`): `extra`
  * plus form history turned off.
  *
