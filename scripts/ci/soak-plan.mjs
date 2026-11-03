@@ -22,6 +22,8 @@ export const SUITES = {
   unit: { job: 'node', setup: 10, run: 5 },
   integration: { job: 'node', setup: 10, run: 8 },
   'chat-load': { job: 'node', setup: 10, run: 12 },
+  // scripts/test/surge/bench.ts: three bursts of about 2.5 min each.
+  surge: { job: 'node', setup: 10, run: 15 },
   e2e: { job: 'node', setup: 15, run: 30, inner: true },
   // The viewer chat UI against the mock hub (apps/viewer/test/chat): a fresh Playwright run, so
   // fresh browsers and globalSetup, every repetition, as in CI. `args` pick the projects (Windows:
