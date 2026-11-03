@@ -7,8 +7,10 @@ description: >-
   after 5 retries."; the cause is in its debug log only), and once one runner's download of one
   artifact started failing, it failed the same way for 3.5 minutes (pipeline run 41199245404: 15
   attempts, 14 of them over within milliseconds, too fast to have reached the blob storage).
-  Same inputs as download-artifact; the job needs `actions: read` (the REST API).
-  .github/workflows/README.md, "Artifact downloads".
+  download-artifact itself runs from a copy fetched with git (./.github/actions/fetch-remote); when
+  that cannot be fetched, the REST fallback runs straight away. Same inputs as download-artifact;
+  the job needs `actions: read` (the REST API). .github/workflows/README.md, "Artifact downloads"
+  and "Remote actions".
 
 inputs:
   name:
@@ -33,9 +35,20 @@ inputs:
 runs:
   using: composite
   steps:
+    # download-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins),
+    # with tries: the runner's own download of a remote action is not tried again after a 404
+    # (.github/workflows/README.md, "Remote actions"). If it cannot be fetched, the REST fallback
+    # downloads the artifacts.
+    - name: download-artifact (git fetch, with tries)
+      id: action
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/download-artifact
+        optional: 'true'
     - id: try1
+      if: steps.action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      uses: ./.git/remote-actions/actions/download-artifact
       with:
         name: ${{ inputs.name }}
         pattern: ${{ inputs.pattern }}
@@ -60,7 +73,7 @@ runs:
     - id: try2
       if: steps.try1.outcome == 'failure'
       continue-on-error: true
-      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      uses: ./.git/remote-actions/actions/download-artifact
       with:
         name: ${{ inputs.name }}
         pattern: ${{ inputs.pattern }}
@@ -68,7 +81,7 @@ runs:
         merge-multiple: ${{ inputs.merge-multiple }}
         run-id: ${{ inputs.run-id }}
         github-token: ${{ inputs.github-token }}
-    - if: steps.try2.outcome == 'failure'
+    - if: steps.try2.outcome == 'failure' || steps.action.outputs.fetched != 'true'
       shell: bash
       env:
         NAME: ${{ inputs.name }}
@@ -78,7 +91,12 @@ runs:
         RUN_ID: ${{ inputs.run-id || github.run_id }}
         REPO: ${{ github.repository }}
         TOKEN: ${{ inputs.github-token || github.token }}
+        NO_ACTION: ${{ steps.action.outputs.fetched != 'true' }}
       run: |
-        echo "::warning::artifact download failed (try 2 of 2); diagnostics, then the REST fallback"
-        bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 2
+        if [ "$NO_ACTION" = true ]; then
+          echo "::warning::download-artifact could not be fetched; the REST fallback"
+        else
+          echo "::warning::artifact download failed (try 2 of 2); diagnostics, then the REST fallback"
+          bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 2
+        fi
         bash "$GITHUB_ACTION_PATH/rest.sh" fetch

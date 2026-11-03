@@ -144,9 +144,18 @@ jobs:
         run: cargo clippy --locked --all-targets -- -D warnings
       # `cargo test --locked` instrumented by cargo-llvm-cov (scripts/coverage/desktop.mjs), then its
       # table and floors (scripts/coverage/floors.json) in the job summary.
+      # install-action runs from a copy fetched with git at its pin (.github/actions/remote-pins),
+      # with tries: the runner downloads a remote action of a job in "Set up job" and does not try
+      # again after a 404 (README.md, "Remote actions").
+      - name: install-action (git fetch, with tries)
+        if: ${{ !cancelled() }}
+        timeout-minutes: 4
+        uses: ./.github/actions/fetch-remote
+        with:
+          repos: taiki-e/install-action
       - name: cargo-llvm-cov
         if: ${{ !cancelled() }}
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        uses: ./.git/remote-actions/taiki-e/install-action
         with:
           tool: cargo-llvm-cov@0.9.1
       - name: cargo test

@@ -123,6 +123,8 @@ schedules and releases are never cancelled.
 | `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
+| `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
+| `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
@@ -184,6 +186,65 @@ runtime, and the fallback does not depend on that client.
 
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
+
+### Remote actions
+
+The remote actions our own actions run (setup-node, setup-go, actions/cache, download-artifact,
+Swatinem/rust-cache), and taiki-e/install-action in `_node.yml`, are not downloaded by the runner:
+`./.github/actions/fetch-remote` fetches each with git, at its pin, into
+`.git/remote-actions/<owner>/<repo>` of the workspace, and the step runs it from there
+(`uses: ./.git/remote-actions/Swatinem/rust-cache`, `./.git/remote-actions/actions/cache/save`).
+The pins are the `uses:` lines of `.github/actions/remote-pins/action.yml`, a composite action that
+never runs (each step is `if: false`), in that format so Dependabot keeps bumping the SHAs and
+their `# vX.Y.Z` comments; `scripts/ci/test/fetch-remote.test.ts` fails when one of our actions
+uses a remote action directly, when a fetched action has no pin or no fetch step before it, and
+when a workflow pins the same repository at another commit.
+
+Why: in 10x stability run 41636784175 (`soak/p10-0.5.0`), `desktop macos-arm64 / build
+(macos-latest)` failed in `setup-rust` before any of its steps ran:
+
+```
+Prepare all required actions
+Getting action download info
+Download action repository 'Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0' (SHA:d1527c8f67ef9af357290475d4af4b0fab8f12e0)
+##[error]An action could not be found at the URI 'https://codeload.github.com/Swatinem/rust-cache/tar.gz/d1527c8f67ef9af357290475d4af4b0fab8f12e0' (AF6A:3C6DDB:2098B:3F849:6AE9DB6B)
+##[error]Failed to download archive '...' after 1 attempts.
+```
+
+The commit exists (v2.9.3) and codeload served it again straight after. What the runner does
+(actions/runner v2.338.2, the version of that job, `src/Runner.Worker/ActionManager.cs`):
+
+- `DownloadRepositoryArchive` (line 1644) tries 3 times, 10-30 s apart, after a network error, a
+  5xx or a 20-minute timeout, but a 404 throws `ActionNotFoundException` at once ("It doesn't make
+  sense to retry in this case", line 1691): "after 1 attempts".
+- That one function downloads every remote action: the job's own steps in "Set up job"
+  (`JobExtension.cs` line 301, `PrepareActionsAsync`) and the steps of a local composite action
+  when it starts (`ActionRunner.cs` lines 83-92, "Handle Composite Local Actions"; it cannot be
+  done earlier, the composite's `action.yml` is in the repository, which is not checked out yet).
+  So moving a `uses:` from a composite action to the job would only move the same single try to
+  "Set up job", which fails the job just the same.
+- The one download it skips is from the runner image's action archive cache
+  (`ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE`, line 1232, a setting of the runner's own environment that
+  a workflow cannot set): a few first-party actions at their release commits (actions/action-versions:
+  checkout, cache, setup-node, upload-artifact, ...). Swatinem/rust-cache, setup-go,
+  download-artifact and install-action at our pins are not in it, and an action bumped to a release
+  newer than the image is not either.
+
+A git fetch goes to github.com (like actions/checkout), not codeload, and git checks every object
+against its hash, so the copy is exactly the pinned commit (for every pin, the same files as
+codeload's tarball). `fetch.mjs` tries 4 times, 5, 10 and 20 s apart, each git command limited to
+30 s (a fetch takes 0.7-1.6 s), with a warning for every failed try; an action already fetched in
+the job is not fetched again. One that only speeds the job up (actions/cache, rust-cache) is
+`optional`: if it cannot be fetched, the caches are skipped with a warning, where the runner's
+download failure used to fail the job even though the rust-cache step is `continue-on-error`.
+When download-artifact cannot be fetched, `fetch-artifact` goes straight to its REST fallback.
+Inside `.git`, the copies are out of the way of everything that reads the workspace (git status
+and clean, ESLint, a later checkout). Still downloaded by the runner, so still exposed to a 404:
+actions/checkout (it puts `fetch-remote` there in the first place) and actions/upload-artifact,
+both in the image's action archive cache at our pins, and, outside the pipeline, the
+github/codeql-action, actions/attest and GitHub Pages steps. How often: in the 485 failed jobs of
+the 192 failed runs before it (every failed run from 2026-10-25 to 2026-11-03), no action
+download had failed.
 
 ## Caches
 
@@ -271,8 +332,8 @@ run 41293187839, and `soak/cache-stall-sim`, run 41293309829):
   have `timeout-minutes` ("Unexpected value 'timeout-minutes'").
 
 So: every `actions/cache` restore goes through `./.github/actions/cache-restore`. It runs
-`actions/cache`'s own restore code (its `restore-only` entry point, which the runner downloads for
-any job that references `actions/cache`) as a child process, cuts a try off after 90 s (kills the
+`actions/cache`'s own restore code (its `restore-only` entry point, in the copy it fetches with
+git at the pin, see "Remote actions") as a child process, cuts a try off after 90 s (kills the
 process group, so its `tar` too, and clears what the try may have half-extracted), and tries
 once more after a try that timed out or failed; a plain miss is not retried. The npm cache is no
 longer setup-node's: `setup` restores it with the same key and path (so existing entries keep
@@ -319,7 +380,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), the pinned
+  then the REST fallback, each a warning), the remote actions our steps run (`fetch-remote`: a git
+  fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
+  41636784175), the pinned
   downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
   timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error (`setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
@@ -368,7 +431,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
   (`codeql.yml`: `security-events: write`; `cache-hygiene.yml`: `actions: write` to delete caches; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
-  Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
+  Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA (those run
+  from a git fetch, in `.github/actions/remote-pins/action.yml`; a new one of our actions that
+  needs a remote action fetches it with `fetch-remote`, see "Remote actions").
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
   (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
   Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
