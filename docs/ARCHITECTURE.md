@@ -291,7 +291,7 @@ flowchart TB
   - Source: [Service-Specific Terms](https://www.cloudflare.com/service-specific-terms-application-services/).
 - **altcha-lib 2.8** (MIT): join proof-of-work. The server uses `createChallenge`/`verifySolution` (SHA-256, deterministic counter with an HMAC key signature); the join page runs `solveChallenge` with `algorithms/web/sha` in a Vite-built same-origin worker. The `altcha` widget is not used (see `docs/SECURITY_RESEARCH.md`). Attack detection, reactions and public blocklists live in `apps/server/src/security/`.
 - **bittorrent-tracker 11.2.3** (ESM).
-  - Import `bittorrent-tracker/server`; this avoids the client's native webrtc dependency.
+  - Import `bittorrent-tracker/server`; this avoids the client's native webrtc dependency. That dependency, node-datachannel (through @thaunknown/simple-peer and webrtc-polyfill), is a local stand-in that throws when loaded (`apps/server/shims/node-datachannel`, an npm override), so `npm ci` never runs its install script, which downloads a binary from GitHub.
   - `filter(infoHash, params, cb)` runs for every announce, and `params` includes `socket` and `peer_id` (hex).
   - We hand our own `noServer` `ws` sockets to `server.onWebSocketConnection`.
   - Peer ids must be pinned per socket to stop spoofed "stopped" events.
