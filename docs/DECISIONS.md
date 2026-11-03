@@ -29,6 +29,7 @@ its area and add a row here in the same pull request.
 | ffmpeg is never shipped: each computer downloads the pinned build from its publisher and checks its SHA-256 | licence obligations of redistribution | [DEVELOPMENT.md](DEVELOPMENT.md#configuration) ("ffmpeg licensing"), [QUALITY.md](QUALITY.md) |
 | Third-party binaries pinned by SHA-256; npm `^` ranges with an exact lockfile; majors upgraded by hand | no surprise major release breaks a build | [DEVELOPMENT.md](DEVELOPMENT.md#version-policy) |
 | A run from the source checkout keeps its data in `<repo>/.cache/dev-data` | development never touches the real SwarmCast data of the computer | `apps/server/src/core/paths.ts`, [apps/server/README.md](../apps/server/README.md) |
+| The server makes `net.Socket#setTypeOfService` best effort at start (only the socket-option error is ignored), until the Node 24 line bundles undici with nodejs/undici#6076 | Node 24's `fetch` sets it on every new connection, and on macOS a connection the other side reset makes it throw outside the request: an uncaught exception that stopped the app; ignoring it makes that request fail on its own, as on Node 26 and on Windows | `apps/server/src/core/type-of-service.ts`, `apps/server/test/unit/type-of-service.test.ts` |
 
 ## Streaming and network
 
