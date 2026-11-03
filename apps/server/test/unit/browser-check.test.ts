@@ -1,15 +1,21 @@
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BROWSER_CHECK_TTL_S, VERIFIED_COOKIE } from '@swarmcast/shared';
 import { CookieJar } from '../../../../scripts/test/lib/cookie-jar.mjs';
 import type { LiveController } from '../../src/core/live.js';
+import { tempDir } from './helpers.js';
 import { inactiveDirect, startController } from './live-helpers.js';
 
 // The browser check (proof-of-work on join, security/pow.ts) against the real public server of a
 // live: a browser that passed is remembered by a signed cookie (security/verified.ts) across new
-// tabs, new links, "disconnect everyone" and new lives, at the level it solved.
+// tabs, new links, "disconnect everyone" and new lives, at the level it solved. The join page
+// comes with "Checking your browser…" already shown to a browser that will be checked
+// (server.ts Pages.joinChecking: shown by the page later, it appeared under a tap and Mobile Safari
+// dropped that tap's click).
 //
 // The server draws the PoW counter with crypto.randomInt; the stub below makes it draw the lowest
 // counter of each level, so every solve is the same bounded work (pow.test.ts solves random ones).
@@ -260,5 +266,47 @@ describe('browser check: on by default, remembered per browser', () => {
     // Assert
     expect(required).toBe(true);
     expect(joined.status).toBe(403);
+  });
+});
+
+describe('the join page shows "Checking your browser…" from the start to a browser that will be checked', () => {
+  /** A live serving the viewer's real join.html source. */
+  const liveWithJoinPage = async (): Promise<LiveController> => {
+    const viewerDir = tempDir();
+    fs.copyFileSync(path.join(import.meta.dirname, '..', '..', '..', 'viewer', 'join.html'), path.join(viewerDir, 'join.html'));
+    return (await startController(inactiveDirect(), { viewerDir })).live;
+  };
+
+  /** Opens the link and reads the join page: whether its browser-check line (#check) comes shown. */
+  const checkLine = async (b: Browser): Promise<'shown' | 'hidden'> => {
+    await b.open();
+    const res = await b.fetch('/join');
+    expect(res.status).toBe(200);
+    const tag = /<p\b[^>]*\bid="check"[^>]*>/.exec(await res.text())?.[0];
+    expect(tag, 'the join page has its browser-check line').toBeDefined();
+    return /\shidden(?=[\s>])/.test(tag!) ? 'hidden' : 'shown';
+  };
+
+  it('shown to a browser that has not passed the check', async () => {
+    // Arrange
+    const l = await liveWithJoinPage();
+    // Act
+    const line = await checkLine(new Browser(l));
+    // Assert
+    expect(line).toBe('shown');
+  });
+
+  it('hidden to a browser that already passed it, and to everyone once the check is off', async () => {
+    // Arrange
+    const l = await liveWithJoinPage();
+    const verified = await new Browser(l).verified('Ana');
+    l.access.disconnectAll();
+    // Act
+    const forVerified = await checkLine(verified);
+    l.updateSecurity({ ...l.securitySettings(), requireBrowserCheck: false });
+    const checkOff = await checkLine(new Browser(l));
+    // Assert
+    expect(forVerified).toBe('hidden');
+    expect(checkOff).toBe('hidden');
   });
 });
