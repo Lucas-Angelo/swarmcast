@@ -24,6 +24,8 @@ export type MountChat = (typeof import('./chat.js'))['mountChat'];
 export function createChatRouter(opts: {
   root: HTMLElement;
   showButton: HTMLButtonElement;
+  /** The player container: reactions float over the video inside it (absent: they are not drawn). */
+  player?: HTMLElement;
   nickname: () => string;
   send(msg: ClientFrame): boolean;
   debug?: (msg: string) => void;
@@ -56,7 +58,7 @@ export function createChatRouter(opts: {
     loading = true;
     loadMountChat()
       .then((mountChat) => {
-        controller = mountChat({ root: opts.root, showButton: opts.showButton, nickname: opts.nickname(), sendFrame: opts.send });
+        controller = mountChat({ root: opts.root, showButton: opts.showButton, ...(opts.player ? { player: opts.player } : {}), nickname: opts.nickname(), sendFrame: opts.send });
         controller.connection(open);
         const queued = pending;
         pending = [];

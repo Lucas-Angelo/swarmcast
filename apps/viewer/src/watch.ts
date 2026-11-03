@@ -119,6 +119,7 @@ for (const ev of ['loadeddata', 'playing'] as const) {
 const chat = createChatRouter({
   root: $<HTMLElement>('chat'),
   showButton: $<HTMLButtonElement>('chat-show'),
+  player: video.parentElement!,
   nickname: () => $('nick').textContent ?? '',
   send: (msg) => sendControl(msg),
   debug: (msg) => debugLog(msg),

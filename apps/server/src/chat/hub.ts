@@ -19,11 +19,16 @@ import {
   CHAT_POLL_TALLY_MS,
   CHAT_POLL_TALLY_MS_LARGE,
   CHAT_PROTOCOL_VERSION,
+  CHAT_REACT_BURST,
   CHAT_REACT_FRAME_PREFIX,
+  CHAT_REACT_REFILL_PER_S,
+  CHAT_REACT_WINDOW_MS,
+  CHAT_REACT_WINDOW_MS_LARGE,
   CHAT_RING_MAX_BYTES,
   CHAT_RING_MAX_ITEMS,
   canonicalizeChatText,
   chatColorSchema,
+  chatReactSchema,
   chatResumeSchema,
   chatSendSchema,
   chatVoteSchema,
@@ -66,6 +71,7 @@ import { AdaptiveSlowMode, ChatDetector, protectState, type ChatThreat } from '.
 import { EventLoopGuard, type GuardOptions, type GuardState } from './guard.js';
 import { ChatModeration, type ChatMember } from './moderation.js';
 import { ChatPolls } from './polls.js';
+import { ReactionTally, allowTaps, mergeReactions } from './reactions.js';
 import { Coalescer, effectiveChat, type EffectiveChat } from './settings.js';
 
 /** What the hub needs of the control channel. */
@@ -211,6 +217,11 @@ export class ChatHub {
   private pollTimer: NodeJS.Timeout | null = null;
   private pollTimerAt: number | null = null;
   private lastTallyAt = -Infinity;
+  /** Reactions over the video (docs/CHAT.md, "Reactions"): taps added up per window, per-device and per-address taps, the window's timer. */
+  private readonly reactions = new ReactionTally();
+  private readonly reactPaces = new KeyedBuckets<TokenBucket>(DEVICE_PACES, () => new TokenBucket(CHAT_REACT_BURST, CHAT_REACT_REFILL_PER_S, this.now()));
+  private readonly reactIps = new KeyedBuckets<TokenBucket>(IP_BUCKETS, () => new TokenBucket(CHAT_REACT_BURST, CHAT_REACT_REFILL_PER_S, this.now()));
+  private reactTimer: NodeJS.Timeout | null = null;
   private adminQueue: ChatItem[] = [];
   private adminTimer: NodeJS.Timeout | null = null;
   private readonly settingsPush: Coalescer;
@@ -278,6 +289,11 @@ export class ChatHub {
     this.pollTimer = null;
     this.pollTimerAt = null;
     this.lastTallyAt = -Infinity;
+    if (this.reactTimer) clearTimeout(this.reactTimer);
+    this.reactTimer = null;
+    this.reactions.reset();
+    this.reactPaces.clear();
+    this.reactIps.clear();
     this.announced.clear();
     this.paces.clear();
     this.ipBuckets.clear();
@@ -445,11 +461,14 @@ export class ChatHub {
 
   private onFrame(session: Session, socket: ChatSocket, text: string): void {
     const now = this.now();
+    // Reaction frames are not offered chat frames for the flood detector: an audience tapping
+    // reactions together (0.5 frames/s each) would read as a flood and slow everyone's chat down.
+    // Their own per-socket budget on /control and the tap buckets bound them; a script past that
+    // budget loses its socket, which the detector does count (terminated()).
+    if (text.startsWith(CHAT_REACT_FRAME_PREFIX)) return this.onReact(session, text, now);
     this.detector.frame(now);
     if (text.startsWith('{"t":"chat.send"')) return this.onSend(session, socket, text, now);
     if (text.startsWith('{"t":"chat.vote"')) return this.onVote(session, socket, text, now);
-    // Reaction frames (reserved for 0.5.0) have their own budget on /control and no handler yet.
-    if (text.startsWith(CHAT_REACT_FRAME_PREFIX)) return;
     if (!this.eff.enabled) return;
     let raw: unknown;
     try {
@@ -592,17 +611,79 @@ export class ChatHub {
     }
   }
 
+  /**
+   * Reaction taps (docs/CHAT.md, "Reactions"): fire-and-forget, so nothing is ever answered (a
+   * reply would cost more upload than the tap). Dropped silently unless reactions are on now and
+   * the viewer may take part (a muted viewer, a new viewer still waiting, lockdown and the guard's
+   * pause all mean no reactions). The device's and the address's tap buckets are checked before
+   * JSON.parse; a frame with more taps than they allow keeps as many as they do. Accepted taps
+   * only bump a counter per kind; the window's timer sends everyone one `rx` item.
+   */
+  private onReact(session: Session, text: string, now: number): void {
+    if (!this.eff.reactions || this.mayTakePart(session, now)) return;
+    const device = this.reactPaces.get(session.deviceId);
+    const ip = this.tapBucket(session, now);
+    const allowed = Math.floor(Math.min(device.available(now), ip.available(now)));
+    if (allowed < 1) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const parsed = chatReactSchema.safeParse(raw);
+    if (!parsed.success) return;
+    const { take, n } = allowTaps(parsed.data.c, allowed);
+    if (n === 0) return;
+    device.take(now, n);
+    ip.take(now, n);
+    this.reactions.add(take, now);
+    this.scheduleReactions();
+  }
+
+  /** The window's timer: CHAT_REACT_WINDOW_MS, or CHAT_REACT_WINDOW_MS_LARGE for a big audience or under pressure (as the vote counts). */
+  private scheduleReactions(): void {
+    if (this.reactTimer) return;
+    const large = this.d.viewers() > CHAT_BATCH_LARGE_AUDIENCE || this.guard.state !== 'ok' || this.protect !== 'off' || this.batcher.inDebt();
+    this.reactTimer = setTimeout(
+      () => {
+        this.reactTimer = null;
+        this.safe(() => this.flushReactions());
+      },
+      large ? CHAT_REACT_WINDOW_MS_LARGE : CHAT_REACT_WINDOW_MS,
+    );
+    this.reactTimer.unref?.();
+  }
+
+  /** The window is over: everyone gets its counts as one ephemeral `rx` (merged with one still waiting), the panel the counts before the cap. */
+  flushReactions(): void {
+    const w = this.reactions.take();
+    // Turned off (or the chat paused) since the taps came: they are dropped, like a tap now would be.
+    if (!w || !this.eff.reactions) return;
+    this.batcher.pushLatest('rx', { k: 'rx', c: w.c }, mergeReactions);
+    this.toAdmin({ k: 'rx', c: w.raw });
+  }
+
   /** Per-IP bucket: 2 msg/s × min(sessions behind that IP, 10), burst 10 (CGNAT-friendly). */
   private ipBucket(session: Session, now: number): TokenBucket {
+    return this.scaled(this.ipBuckets.get(session.ip), session, now, 2, 10);
+  }
+
+  /** Per-IP tap bucket: CHAT_REACT_REFILL_PER_S × min(sessions behind that IP, 10), as the message one (CGNAT-friendly). */
+  private tapBucket(session: Session, now: number): TokenBucket {
+    return this.scaled(this.reactIps.get(session.ip), session, now, CHAT_REACT_REFILL_PER_S, CHAT_REACT_BURST);
+  }
+
+  /** Scales an address's bucket with the sessions behind it (at most 10): `rate` per second and session, at least `burst` tokens. */
+  private scaled(b: TokenBucket, session: Session, now: number, rate: number, burst: number): TokenBucket {
     if (now - this.ipCountsAt > 1000) {
       this.ipCounts = new Map();
       for (const s of this.d.access.sessions.values()) this.ipCounts.set(s.ip, (this.ipCounts.get(s.ip) ?? 0) + 1);
       this.ipCountsAt = now;
     }
-    const b = this.ipBuckets.get(session.ip);
     const k = Math.min(10, Math.max(1, this.ipCounts.get(session.ip) ?? 1));
-    b.ratePerS = 2 * k;
-    b.capacity = Math.max(10, 2 * k);
+    b.ratePerS = rate * k;
+    b.capacity = Math.max(burst, rate * k);
     return b;
   }
 
@@ -1303,6 +1384,7 @@ export class ChatHub {
       protect: this.protect,
       ...(this.protect !== 'off' ? { protectReason: this.manualProtect ? 'chat.protect.reason.manual' : this.detector.level > 0 ? 'chat.protect.reason.flood' : 'chat.protect.reason.shield' } : {}),
       broken: this.broken,
+      reactions: this.reactions.lastMinute(now),
     };
   }
 
