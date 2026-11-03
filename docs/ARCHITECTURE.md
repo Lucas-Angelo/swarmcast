@@ -8,7 +8,6 @@
 | MediaMTX (child) | 127.0.0.1:1935 (RTMP), 127.0.0.1:8888 (HLS) | Receives OBS and produces fMP4 HLS |
 | cloudflared (child) | — (outbound only) | Quick tunnel `https://<random>.trycloudflare.com` → 127.0.0.1:8080 |
 | `swarmcast --reaper <pid>` (child) | — | Watchdog: kills the other children if the app dies |
-| `swarmcast-tray` (child, Go) | — | Tray / menu bar icon over stdin/stdout JSON lines |
 
 ```mermaid
 flowchart TB
@@ -21,7 +20,7 @@ flowchart TB
       acc["Access control<br/>link · ticket · session"]
       ws["WebSockets<br/>/tracker + /control"]
     end
-    admin["Admin panel :8081<br/>+ tray helper"]
+    admin["Admin panel :8081"]
     reaper["Reaper watchdog"]
     cfd["cloudflared child<br/>outbound only"]
   end
@@ -63,7 +62,6 @@ Source map (`apps/server/src`):
 - `quality/` holds the quality ladder (ffmpeg renditions), encoder probing and the adaptive upload cap; see [QUALITY.md](QUALITY.md). `speedtest/` measures the connection.
 - `desktop/` is desktop mode (the stdio protocol, autostart, the first-run system check); see [DESKTOP.md](DESKTOP.md).
 - `diagnostics/` keeps the logs for a limited time and writes the anonymised "Export logs" ZIP.
-- `tray/tray.ts` drives the tray helper.
 
 ## Media path
 
@@ -266,7 +264,7 @@ flowchart TB
 
 ## Packaging
 
-`@yao-pkg/pkg` embeds the Node 24 runtime. It was chosen over Node SEA because official SEA is still in active development and untested upstream on macOS x64. Each release package contains `swarmcast[.exe]`, `bin/{mediamtx,cloudflared,swarmcast-tray}`, `web/{viewer,admin}`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` and `VERSION`. MediaMTX and cloudflared are downloaded by `scripts/build/fetch-binaries.mjs` and pinned by SHA-256 in `scripts/build/versions.json`.
+`@yao-pkg/pkg` embeds the Node 24 runtime. It was chosen over Node SEA because official SEA is still in active development and untested upstream on macOS x64. `scripts/build/package.mjs` stages `release/staging/<target>/`: `swarmcast[.exe]`, `bin/{mediamtx,cloudflared}`, `web/{viewer,admin}`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` and `VERSION`. It is not published on its own: `scripts/build/desktop.mjs` turns it into the desktop app's sidecar and resources ([DESKTOP.md](DESKTOP.md)). MediaMTX and cloudflared are downloaded by `scripts/build/fetch-binaries.mjs` and pinned by SHA-256 in `scripts/build/versions.json`.
 
 ## Verified facts (2026-10-25)
 
@@ -318,7 +316,7 @@ flowchart TB
   - Recommended setup when also streaming to another platform (Twitch, YouTube, Kick…): keep that platform in Settings → Stream and add SwarmCast with the [Multiple RTMP outputs](https://obsproject.com/forum/resources/multiple-rtmp-outputs-plugin.964/) or [Aitum Multistream](https://obsproject.com/forum/resources/aitum-multistream.1991/) plugin. OBS 33 changed plugin locations, so check that the plugin is compatible.
   - Keyframe interval: Settings → Output → Advanced → Streaming → 2 s.
 - **Node.js**: Node 24 (LTS, in maintenance since 2026-10-20, EOL 2028-04) is the runtime embedded via @yao-pkg/pkg. Node 26 becomes Active LTS on 2026-10-28. Official SEA is at stability "1.1 active development" and is not tested on macOS x64 upstream.
-- **Tray**: there is no maintained pure-Node cross-platform tray library (systray2's macOS helper is x86_64 only). We use our own Go helper with fyne.io/systray v1.12.2: cgo on macOS, pure Go on Windows and Linux. On Linux it uses the DBus StatusNotifierItem protocol and needs a tray host; GNOME needs the AppIndicator extension, otherwise the app runs with the panel only.
+- **Tray**: the desktop shell draws the tray / menu bar icon (Tauri's tray, [DESKTOP.md](DESKTOP.md)). On Linux it uses the DBus StatusNotifierItem protocol and needs a tray host; GNOME needs the AppIndicator extension, otherwise the app runs with its window only.
 - **Port mapping**: we wrote our own minimal UPnP-IGD and NAT-PMP clients so they can be tested against a mock IGD. PCP is not implemented.
 
 ## Quick tunnel limit (measured 2026-10-26)

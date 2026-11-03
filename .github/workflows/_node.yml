@@ -4,19 +4,10 @@ name: node
 # `quick`), the integration tests (the parallel `integration` project, then the serial
 # `integration-media` one: vitest.integration.config.ts), and the desktop shell's Rust checks
 # (clippy, cargo test, crate licences, the glib advisory guard). Uses web-dist from _build.yml.
-# When they changed (input scripts): the start and uninstall scripts against a fake release on
-# 127.0.0.1 (scripts/test/run.sh; run.ps1 on Windows PowerShell 5.1). They need only Node.js and
-# run here rather than in the clean-machine jobs, which are on the pipeline's critical path.
-# Vitest writes its own job summary; cargo test and the script tests go through
-# .github/scripts/test-summary.mjs. Test steps have their own time limit (2 to 7 times their
+# Vitest writes its own job summary; cargo test goes through .github/scripts/test-summary.mjs. Test steps have their own time limit (2 to 7 times their
 # slowest run), so a hung one fails and the steps that upload its results still run.
 on:
   workflow_call:
-    inputs:
-      scripts:
-        description: Also run the install-script tests.
-        type: boolean
-        default: true
 
 permissions:
   contents: read
@@ -34,7 +25,7 @@ env:
 
 jobs:
   node:
-    name: unit, integration, rust${{ inputs.scripts && ', install scripts' || '' }} (${{ matrix.os }})
+    name: unit, integration, rust (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -178,35 +169,12 @@ jobs:
         if: ${{ !cancelled() }}
         run: node scripts/build/crate-licenses.mjs --check
 
-      # ---- start and uninstall scripts ----
-      - name: Install scripts (macOS / Linux)
-        if: ${{ !cancelled() && inputs.scripts && runner.os != 'Windows' }}
-        timeout-minutes: 6
-        run: |
-          {
-            bash scripts/test/run.sh
-            bash scripts/test/uninstall.sh
-          } 2>&1 | tee "$RUNNER_TEMP/install-scripts.log"
-      # From Git Bash (as soak.yml runs them), so the output also goes to the log for the summary.
-      - name: Install scripts (Windows PowerShell 5.1)
-        if: ${{ !cancelled() && inputs.scripts && runner.os == 'Windows' }}
-        timeout-minutes: 6
-        run: |
-          {
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\test\run.ps1'
-            powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\test\uninstall.ps1'
-          } 2>&1 | tee "$RUNNER_TEMP/install-scripts.log"
-      - name: Results in the job summary (cargo test, install scripts)
+      - name: Results in the job summary (cargo test)
         if: ${{ !cancelled() }}
         continue-on-error: true
         env:
           OS: ${{ matrix.os }}
-          SCRIPTS: ${{ inputs.scripts }}
-        run: |
-          node .github/scripts/test-summary.mjs --title "cargo test ($OS)" --cargo "$RUNNER_TEMP/cargo-test.log"
-          if [ "$SCRIPTS" = true ]; then
-            node .github/scripts/test-summary.mjs --title "Start and uninstall scripts ($OS)" --lines "$RUNNER_TEMP/install-scripts.log"
-          fi
+        run: node .github/scripts/test-summary.mjs --title "cargo test ($OS)" --cargo "$RUNNER_TEMP/cargo-test.log"
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3

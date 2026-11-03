@@ -2,13 +2,13 @@ import { createApp, type App } from './app.js';
 import { openBrowser } from './core/notify.js';
 import { isAlive, runReaper } from './process/children.js';
 import { appVersion } from './core/version.js';
-import { startTray } from './tray/tray.js';
 import { isListening } from './core/ports.js';
 import { runCleanupCommand } from './direct/cleanup.js';
 import { Autostart } from './desktop/autostart.js';
 import { createProtocolWriter, DesktopBridge, type ProtocolWriter } from './desktop/bridge.js';
 import { startDesktop } from './desktop/desktop.js';
 import { runDesktopFirstRun } from './desktop/first-run.js';
+import { removeOldScriptInstall } from './desktop/old-install.js';
 import { fatalCodeOf } from './desktop/protocol.js';
 import { probeIntl } from './chat/probe.js';
 
@@ -30,7 +30,8 @@ async function main(): Promise<void> {
     runReaper(Number(value('reaper')));
     return;
   }
-  // Used by the uninstallers: remove a router port left open by a crash, then exit.
+  // Used by the desktop app's Windows uninstaller (hooks.nsh): remove a router port left open by
+  // a crash, then exit.
   if (flag('cleanup')) {
     process.exit(await runCleanupCommand(value('data-dir')));
   }
@@ -49,10 +50,9 @@ async function main(): Promise<void> {
 Usage: swarmcast [options]
   --no-tunnel      Do not open the public tunnel (local testing / CI)
   --no-open        Do not open the panel in the browser
-  --no-tray        Do not show the tray / menu bar icon
   --no-autostart   Do not start the stream automatically
   --desktop        Run inside the SwarmCast desktop app (JSON lines on stdin/stdout; implies
-                   --no-open and --no-tray; quits when stdin closes). See docs/DESKTOP.md
+                   --no-open; quits when stdin closes). See docs/DESKTOP.md
   --smoke-test     Start everything (no tunnel), verify, stop, exit
   --cleanup        Remove a router port left open by a crash (used by the uninstaller), exit
   --data-dir DIR   Use DIR for config, secrets and logs
@@ -141,6 +141,8 @@ Usage: swarmcast [options]
     console.log(`Panel: ${app.adminUrl}\n`);
     app.live.scheduleSpeedTests();
     void runDesktopFirstRun(app, bridge, { signal: app.live.quitSignal }).catch((err: Error) => app.log.warn({ err: err.message }, 'desktop first run failed'));
+    // A streamer who used the old start scripts: their program copy in the data folder goes.
+    void removeOldScriptInstall(app.paths.dataDir, app.log);
     if (!flag('no-autostart')) {
       app.live.start().catch((err: Error) => {
         if (!app.live.quitSignal.aborted) console.error(`\n✗ Could not start: ${err.message}\n`);
@@ -149,8 +151,8 @@ Usage: swarmcast [options]
     return;
   }
 
-  const tray = flag('no-tray') ? null : startTray(app);
-  // SWARMCAST_NO_OPEN=1: automated tests run the real installer without popping up a browser.
+  // Outside the desktop app: a run from the source checkout (npm run dev) or a test harness.
+  // SWARMCAST_NO_OPEN=1: automated tests run it without popping up a browser.
   if (!flag('no-open') && process.env.SWARMCAST_NO_OPEN !== '1') openBrowser(app.adminLoginUrl);
   console.log(`\nSwarmCast ${appVersion()}`);
   console.log(`Panel: ${app.adminLoginUrl}`);
@@ -171,7 +173,6 @@ Usage: swarmcast [options]
     }
   };
   app.live.on('state', printLink);
-  tray?.update();
 
   app.live.scheduleSpeedTests();
   if (!flag('no-autostart')) {

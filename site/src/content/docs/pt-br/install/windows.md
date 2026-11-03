@@ -43,6 +43,10 @@ O SwarmCast abre na própria janela, com um atalho na área de trabalho e no men
 Na primeira vez que você ligar o modo direto (só para emergências, veja [Modo direto](/swarmcast/pt-br/live/direct-mode/)), o Windows pode perguntar se o SwarmCast pode usar as redes. Clique em **Permitir** (redes privadas).
 :::
 
+## Usava os scripts de início?
+
+Feche antes a janela antiga do SwarmCast e depois instale o app como mostrado acima. As suas configurações e a chave de transmissão vêm junto, e o app apaga a cópia antiga sozinho. Mais em [Mude para o app](/swarmcast/pt-br/app/updates/#usava-os-scripts-de-início-mude-para-o-app).
+
 ## Deu algum problema?
 
 - **O download sumiu, ou o navegador diz que o arquivo "não é baixado com frequência":** no Edge, abra a lista de downloads (**Ctrl+J**), clique em **…** ao lado do arquivo e depois em **Manter** → **Mostrar mais** → **Manter mesmo assim**.

@@ -19,27 +19,22 @@ Desinstalar nunca mexe no OBS. Se quiser, apague você mesmo o destino do SwarmC
 
 2. Se **Iniciar com o computador** estiver ligado, desligue antes no painel ([Iniciar com o computador](/swarmcast/pt-br/app/autostart/)).
 3. Abra **Aplicativos** e arraste o **SwarmCast** para o Lixo.
-4. As suas configurações continuam em `~/Library/Application Support/SwarmCast`. Para apagar tudo, use o script de desinstalação abaixo.
+4. As suas configurações continuam em `~/Library/Application Support/SwarmCast`. Para apagar também, veja [Apagar tudo](#apagar-tudo) abaixo.
 
 ## Linux
 
 - **.deb:** no terminal, `sudo apt remove swarm-cast`.
 - **AppImage:** desligue **Iniciar com o computador** no painel, feche o SwarmCast e apague o arquivo `.AppImage`.
 
-As suas configurações continuam em `~/.local/share/swarmcast`. Para apagar tudo, use o script de desinstalação abaixo.
+As suas configurações continuam em `~/.local/share/swarmcast`. Para apagar também, veja [Apagar tudo](#apagar-tudo) abaixo.
 
-## Apagar tudo (script de desinstalação)
+## Apagar tudo
 
-O script de desinstalação tira o SwarmCast por completo: o app, a entrada de "iniciar com o computador", as configurações, a chave de transmissão e os logs. Ele também fecha uma porta do roteador que o modo direto possa ter deixado aberta. Ele não pergunta nada.
+As suas configurações, a chave de transmissão, os logs e o conversor de vídeo ficam numa pasta só do SwarmCast. Apague essa pasta só se você nunca mais quiser usar a mesma chave de transmissão.
 
-1. Baixe o desinstalador do seu sistema na [versão mais recente](https://github.com/Lucas-Angelo/swarmcast/releases/latest) (ele também vem dentro dos zips de instalação da [instalação por script](/swarmcast/pt-br/advanced/script-install/)):
-   - Windows: `uninstall-windows.cmd` **e** `uninstall-windows.ps1` (deixe os dois na mesma pasta)
-   - macOS: `uninstall-macos.command`
-   - Linux: `uninstall-linux.sh`
-2. Rode:
-   - **Windows:** dê dois cliques em `uninstall-windows.cmd`. Se aparecer "O Windows protegeu o computador", clique em **Mais informações** → **Executar assim mesmo**.
-   - **macOS:** dê dois cliques em `uninstall-macos.command`. Se o macOS bloquear, libere como o app: **Ajustes do Sistema** → **Privacidade e Segurança** → **Abrir Mesmo Assim** (em versões mais antigas do macOS: botão direito no arquivo → **Abrir** → **Abrir**).
-   - **Linux:** num terminal nessa pasta: `bash uninstall-linux.sh`
-3. A janela mostra o resultado. No Windows, aperte uma tecla para fechar.
-
-Quer reinstalar depois com a mesma chave de transmissão? Acrescente `--keep-settings`, por exemplo `uninstall-windows.cmd --keep-settings` ou `bash uninstall-linux.sh --keep-settings` num terminal.
+1. Se você usa o modo direto, clique antes em **Voltar ao modo seguro** no painel: o SwarmCast fecha a porta do roteador que ele abriu.
+2. Desinstale o app como mostrado acima para o seu sistema.
+3. Apague a pasta do SwarmCast:
+   - **Windows:** marque **Remover dados do programa** no desinstalador. Já desinstalou? Aperte **Windows + R**, digite `%LOCALAPPDATA%`, aperte Enter e apague a pasta **SwarmCast**.
+   - **macOS:** no Finder, clique em **Ir** → **Ir para a Pasta…**, digite `~/Library/Application Support`, aperte Enter e mova a pasta **SwarmCast** para o Lixo.
+   - **Linux:** no terminal, `rm -rf ~/.local/share/swarmcast`.

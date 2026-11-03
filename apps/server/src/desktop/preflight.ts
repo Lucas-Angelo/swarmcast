@@ -13,10 +13,9 @@ export async function swarmcastAnswers(port: number, timeoutMs = 1500): Promise<
 }
 
 /**
- * Desktop mode refuses to start next to another SwarmCast (a start script in a terminal, or
- * a copy started by hand) instead of running a second panel that cannot go live: the shell
- * shows the `fatal` message. The start scripts keep their behaviour (panel on the next free
- * port, the live start explains the busy port).
+ * Desktop mode refuses to start next to another SwarmCast (an old start-script copy in a
+ * terminal, or a copy started by hand) instead of running a second panel that cannot go live:
+ * the shell shows the `fatal` message.
  */
 export async function desktopPreflight(ports: { admin: number; rtmp: number }): Promise<void> {
   if (await swarmcastAnswers(ports.admin)) {

@@ -71,23 +71,19 @@ const NOT_AUTHORIZED = {
   en: {
     title: 'SwarmCast panel',
     heading: 'Open the panel from the SwarmCast app',
-    lead: 'For your safety, the SwarmCast panel only opens from the SwarmCast app or window on this computer. This page is not signed in to the panel.',
+    lead: 'For your safety, the SwarmCast panel only opens from the SwarmCast app on this computer. This page is not signed in to the panel.',
     how: 'How to open it again',
     appLabel: 'SwarmCast app',
     app: 'Open SwarmCast from the Start menu, the Applications folder or your apps menu. If it is already running, click the SwarmCast icon in the tray or menu bar and choose “Open SwarmCast”.',
-    scriptLabel: 'Started with a start script',
-    script: 'Click the SwarmCast icon in the tray or menu bar and choose “Open panel”, or run the start script again.',
     note: 'The panel gets a new key every time SwarmCast starts, so a bookmark, an old tab or a link copied from another computer cannot open it.',
   },
   'pt-BR': {
     title: 'Painel do SwarmCast',
     heading: 'Abra o painel pelo aplicativo SwarmCast',
-    lead: 'Para sua segurança, o painel do SwarmCast só abre pelo aplicativo ou pela janela do SwarmCast neste computador. Esta página não está conectada ao painel.',
+    lead: 'Para sua segurança, o painel do SwarmCast só abre pelo aplicativo SwarmCast neste computador. Esta página não está conectada ao painel.',
     how: 'Como abrir de novo',
     appLabel: 'Aplicativo SwarmCast',
     app: 'Abra o SwarmCast pelo menu Iniciar, pela pasta Aplicativos ou pelo menu de aplicativos. Se ele já estiver aberto, clique no ícone do SwarmCast na bandeja ou na barra de menus e escolha “Abrir o SwarmCast”.',
-    scriptLabel: 'Iniciado pelo script de início',
-    script: 'Clique no ícone do SwarmCast na bandeja ou na barra de menus e escolha “Open panel”, ou rode o script de início de novo.',
     note: 'O painel ganha uma chave nova toda vez que o SwarmCast abre, então um favorito, uma aba antiga ou um link copiado de outro computador não abre o painel.',
   },
 } as const;
@@ -101,7 +97,6 @@ export function notAuthorizedPage(acceptLanguage: string | undefined, head: stri
 <h2>${m.how}</h2>
 <ul class="gate-steps">
 <li><strong>${m.appLabel}</strong>${m.app}</li>
-<li><strong>${m.scriptLabel}</strong>${m.script}</li>
 </ul>
 <p class="gate-note">${m.note}</p>`);
 }

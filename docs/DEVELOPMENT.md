@@ -48,23 +48,14 @@ Details: [ARCHITECTURE.md](ARCHITECTURE.md).
 
   Full list: [THREAT_MODEL.md](THREAT_MODEL.md).
 
-## Install scripts (script mode)
+## Installing
 
-The desktop app ([DESKTOP.md](DESKTOP.md)) is the normal way to install SwarmCast. The start scripts in
-[`scripts/`](../scripts/README.md) remain for advanced users and servers; the streamer-facing steps are on the
-website ("Advanced: install with a script"), and the offline guide inside the installer zips is generated from
-the same website pages by `scripts/build/guide-html.mjs`.
-
-The same script does everything:
-- checks the computer and runs a short speed test;
-- installs or updates SwarmCast (from the installer zip next to it, or online) for the current user, with no admin rights (`%LOCALAPPDATA%\SwarmCast`, `~/Library/Application Support/SwarmCast` or `~/.local/share/swarmcast`);
-- verifies the SHA-256 checksums;
-- downloads the free video converter (ffmpeg) for the extra viewer qualities straight from its publisher, checks its SHA-256 and keeps it in `<data>/tools/ffmpeg` (re-downloaded only when the pinned build changes; skipped with a note when offline, and SwarmCast still works with the original quality);
-- updates atomically, retries failed steps a few times (2 s, 5 s, 10 s), and rolls back to the previous version if the update fails or the new version does not start;
-- saves the computer check to `<data>/system-check.json` for the panel;
-- starts the app. It never asks questions in the terminal (a below-minimum computer gets a warning, not a prompt); on errors the window stays open with what to do.
-
-Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest`, `--no-ffmpeg`, `--ask` (ask before continuing on a below-minimum computer), `--yes` (answers `--ask` questions; kept for compatibility) — on Windows also `-NoTunnel`, `-NoFfmpeg`, `-Ask`, `-Yes`, and so on.
+Streamers install the desktop app ([DESKTOP.md](DESKTOP.md); the steps are on the website). It installs for
+the current user, with no admin rights, and keeps its data (config, secrets, logs, ffmpeg in `tools/`,
+`system-check.json`) in `%LOCALAPPDATA%\SwarmCast`, `~/Library/Application Support/SwarmCast` or
+`~/.local/share/swarmcast`. On its first start it checks the computer, runs a short speed test and
+downloads the free video converter (ffmpeg) from its publisher, SHA-256 checked. Until 0.5.0 a script mode
+(start scripts and installer zips) did the same; it was removed in 0.5.1 ([DECISIONS.md](DECISIONS.md)).
 
 **Requirements:** at least 4 GB RAM, 2 CPU cores and 10 Mbps upload. Recommended: 8 GB, 4 cores, 50 Mbps+ upload.
 
@@ -105,21 +96,21 @@ Script flags: `--no-tunnel`, `--install-only`, `--smoke-test`, `--skip-speedtest
 | `quality.ladder.encoder` | `auto` | Force one encoder (`h264_nvenc`, `h264_qsv`, `h264_amf`, `h264_videotoolbox`, `h264_vaapi`, `libx264`, `libopenh264`) (panel, Advanced) |
 | `quality.upload.mode` / `otherStreamKbps` / `headroomPercent` | `auto` / null / 15 | Adaptive upload cap, bitrate you send to other platforms (null = detect), share of the upload kept free (panel) |
 | `quality.obsWebsocket.enabled` / `url` / `password` | false / `ws://127.0.0.1:4455` / — | Read the main stream's health from OBS (loopback only) (panel) |
-| `ffmpegPath` | — | ffmpeg for the extra qualities. Unset: `bin/ffmpeg` if a packager bundled it, else `<data>/tools/ffmpeg/ffmpeg[.exe]` (installed by the start scripts or the panel). `SWARMCAST_FFMPEG` overrides it; `"ffmpeg"` uses the one on PATH (source checkouts only) |
+| `ffmpegPath` | — | ffmpeg for the extra qualities. Unset: `bin/ffmpeg` if a packager bundled it, else `<data>/tools/ffmpeg/ffmpeg[.exe]` (installed by the desktop app's first start or the panel). `SWARMCAST_FFMPEG` overrides it; `"ffmpeg"` uses the one on PATH (source checkouts only) |
 | `onboardingDone` | false | The panel's first-run tutorial was finished or skipped (it opens until then) |
 | `chat` | on, GIFs off, slow mode 2 s | The chat settings (the panel's Chat card): what viewers may send, slow mode, limits, blocked words, links, protection, GIFs (the streamer's own provider key). Keys and defaults: [CHAT.md](CHAT.md#settings-and-defaults) |
 | `branding` | empty | "Your page" (panel: Your page card); its pictures are in `<data>/branding/`. Fields and limits: [BRANDING.md](BRANDING.md#data-model) |
 | `updates.channel` | — | Desktop app only: `beta` (panel: "Get beta versions") or `stable`. Unset: beta when the installed app is a pre-release, else stable ([DESKTOP.md](DESKTOP.md#updates)) |
 
-**ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (published with each release as `binaries.json`) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. (CI downloads the macOS archives from byte-identical copies in the `ci-deps` pre-release first; see [RELEASING.md](RELEASING.md).) See [QUALITY.md](QUALITY.md).
+**ffmpeg licensing.** SwarmCast does not ship or redistribute ffmpeg. The user's own computer downloads the build pinned in `scripts/build/versions.json` (compiled into the server) straight from its publisher (BtbN LGPL builds on Windows/Linux, Martin Riedl builds on macOS) and checks its SHA-256. (CI downloads the macOS archives from byte-identical copies in the `ci-deps` pre-release first; see [RELEASING.md](RELEASING.md).) See [QUALITY.md](QUALITY.md).
 
 `secrets.json` holds the stream key and the Ed25519 signing key. It is generated on first run with mode 0600 and is never logged. The other data files are `state.json` (last direct-mode IP, open router mapping), `blocklists/` (cached public IP lists with their download date), `system-check.json` (the computer check shown by the setup tutorial), `tools/ffmpeg/`, `branding/` (the pictures of "Your page"), `exports/` (log exports when the Downloads folder cannot be used), `run/` (files of the running app, such as the tray icons and the desktop app's update marker) and `logs/` (daily `swarmcast-YYYY-MM-DD.log` files, plus `desktop.log` from the desktop app; [apps/server/README.md](../apps/server/README.md) has the rotation, retention and "Export logs" details).
 
-App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-tray`, `--no-autostart`, `--desktop` (run inside the desktop app, [DESKTOP.md](DESKTOP.md)), `--cleanup` (remove a router port left open by a crash, then exit), `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_WEB_DIR`, `SWARMCAST_LOG_LEVEL`, `SWARMCAST_NO_OPEN=1` (do not open the panel in the browser), `SWARMCAST_NO_NOTIFY=1` (no desktop notifications), `SWARMCAST_NO_PARENT_WATCH=1` (keep running when the terminal or window that started it closes), `SWARMCAST_DOWNLOADS_DIR` (where "Export logs" writes instead of the Downloads folder), `SWARMCAST_LOCALE`, `SWARMCAST_FFMPEG`. The desktop app sets more (`SWARMCAST_DESKTOP_EXE`, `SWARMCAST_DESKTOP_VERSION`, …) and its tests use `SWARMCAST_NO_FFMPEG_INSTALL=1`, `SWARMCAST_UPDATE_URL` / `SWARMCAST_BETA_UPDATE_URL`, `SWARMCAST_SPEEDTEST_URL` and `SWARMCAST_TEST_LOGIN_FILE` ([DESKTOP.md](DESKTOP.md#shell--server-protocol)). Test-only: `SWARMCAST_TEST_HOOKS=1`, `FFMPEG_BIN`, `SWARMCAST_E2E_PORT_OFFSET`, `PW_CHROMIUM_CHANNEL`, `SITE_E2E_PORT`, `CHAT_EXHAUSTIVE=1`, `CHAT_FUZZ_RUNS` ([TESTING.md](TESTING.md)).
+App flags (`swarmcast --help`): `--no-tunnel`, `--no-open`, `--no-autostart`, `--desktop` (run inside the desktop app, [DESKTOP.md](DESKTOP.md)), `--cleanup` (remove a router port left open by a crash, then exit), `--smoke-test`, `--data-dir DIR`, `--version`. Environment variables: `SWARMCAST_DATA_DIR`, `SWARMCAST_BIN_DIR`, `SWARMCAST_WEB_DIR`, `SWARMCAST_LOG_LEVEL`, `SWARMCAST_NO_OPEN=1` (do not open the panel in the browser), `SWARMCAST_NO_NOTIFY=1` (no desktop notifications), `SWARMCAST_NO_PARENT_WATCH=1` (keep running when the terminal or window that started it closes), `SWARMCAST_DOWNLOADS_DIR` (where "Export logs" writes instead of the Downloads folder), `SWARMCAST_LOCALE`, `SWARMCAST_FFMPEG`. The desktop app sets more (`SWARMCAST_DESKTOP_EXE`, `SWARMCAST_DESKTOP_VERSION`, …) and its tests use `SWARMCAST_NO_FFMPEG_INSTALL=1`, `SWARMCAST_UPDATE_URL` / `SWARMCAST_BETA_UPDATE_URL`, `SWARMCAST_SPEEDTEST_URL` and `SWARMCAST_TEST_LOGIN_FILE` ([DESKTOP.md](DESKTOP.md#shell--server-protocol)). Test-only: `SWARMCAST_TEST_HOOKS=1`, `FFMPEG_BIN`, `SWARMCAST_E2E_PORT_OFFSET`, `PW_CHROMIUM_CHANNEL`, `SITE_E2E_PORT`, `CHAT_EXHAUSTIVE=1`, `CHAT_FUZZ_RUNS` ([TESTING.md](TESTING.md)).
 
 ## Development
 
-Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. To build the tray helper you need Go 1.23 or later (`go.mod`; CI builds with 1.27.x, [apps/tray/README.md](../apps/tray/README.md)); the desktop app needs Rust (the toolchain pinned in `apps/desktop/src-tauri/rust-toolchain.toml`, which rustup installs by itself) and the Tauri prerequisites ([apps/desktop/README.md](../apps/desktop/README.md)).
+Requires Node 24 (`.nvmrc`). The integration and E2E tests also need `ffmpeg`, and the E2E Chromium project uses Google Chrome. The desktop app needs Rust (the toolchain pinned in `apps/desktop/src-tauri/rust-toolchain.toml`, which rustup installs by itself) and the Tauri prerequisites ([apps/desktop/README.md](../apps/desktop/README.md)).
 
 ```sh
 npm ci
@@ -175,7 +166,6 @@ npm run test:e2e   # Playwright against the built site (SITE_E2E_PORT moves its 
 ```
 
 - Branding (logo, favicon, mascot): `site/src/brand.mjs`. Colours, fonts, radii: the brand tokens in `assets/brand/tokens.css` ([assets/brand/README.md](../assets/brand/README.md)), mapped onto Starlight in `site/src/styles/`.
-- Offline guide pages and order: `site/offline-guide.json`; `node scripts/build/guide-html.mjs out.html --lang en|pt-BR`.
 - Usage numbers without telemetry: `scripts/stats/` and `.github/workflows/stats.yml` (data on the `stats` branch),
   explained to visitors on the site's "Privacy and usage numbers" page.
 - Deploy: `.github/workflows/site.yml` (GitHub Pages, source "GitHub Actions").
@@ -186,10 +176,10 @@ Everything is pinned so a surprise major release cannot break a build, while bug
 
 - **npm:** `^` ranges in `package.json` (minor + patch, never a new major) and an exact `package-lock.json`; `npm ci` installs exactly the lockfile. Dependabot groups minor/patch updates weekly and ignores majors, which are upgraded deliberately.
 - **MediaMTX / cloudflared:** exact versions with SHA-256 in [`scripts/build/versions.json`](../scripts/build/versions.json). `node scripts/build/update-binaries.mjs --check` (also a scheduled CI job) reports newer releases within the same major; running it without `--check` rewrites the pins and hashes.
-- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Go `1.27.x` in CI for the tray helper (`go.mod` needs 1.23 or later), Rust `1.99.1` for the desktop app (`apps/desktop/src-tauri/rust-toolchain.toml`, bumped deliberately), Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
+- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Rust `1.99.1` for the desktop app (`apps/desktop/src-tauri/rust-toolchain.toml`, bumped deliberately), Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
 
 ## Releases
 
-Pushing a tag `vX.Y.Z` (or `vX.Y.Z-beta.N`) runs the release workflow. Every version ships as at least two betas first (`X.Y.0` is refused until its beta is published) ([RELEASING.md](RELEASING.md#4-ship-a-release)). The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`) and `latest.json`, the script-mode packages, one installer zip per target, the start and uninstall scripts, `binaries.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
+Pushing a tag `vX.Y.Z` (or `vX.Y.Z-beta.N`) runs the release workflow. Every version ships as at least two betas first (`X.Y.0` is refused until its beta is published) ([RELEASING.md](RELEASING.md#4-ship-a-release)). The full test suites gate it; then it publishes the desktop installers for Windows, macOS and Linux with their update signatures (`.sig`), `latest.json` and `SHA256SUMS.txt` to GitHub Releases. CI runs automatically on pull requests and on `main`. Maintainer guide: [RELEASING.md](RELEASING.md).
 
-**Binaries are not code-signed by default** (signing certificates are paid). Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper blocks the first open (**System Settings → Privacy & Security → Open Anyway**). The website's install pages walk through both. Desktop updates are always signed with the updater key, and code signing of the script-mode binaries switches on when the signing secrets are set (see [RELEASING.md](RELEASING.md)).
+**Binaries are not code-signed by default** (signing certificates are paid). Windows SmartScreen shows "Windows protected your PC" (click **More info → Run anyway**). macOS Gatekeeper blocks the first open (**System Settings → Privacy & Security → Open Anyway**). The website's install pages walk through both. Desktop updates are always signed with the updater key (see [RELEASING.md](RELEASING.md)).

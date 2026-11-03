@@ -25,7 +25,7 @@ Without telemetry, we cannot know exactly how many people use SwarmCast. The hom
 
 ### Downloads
 
-The sum of the download counters of the installers (Windows, macOS and Linux) and the script-install packages of every release. It also counts:
+The sum of the download counters of the installers (Windows, macOS and Linux) of every release, plus the script-install packages that releases before 0.5.1 also had. It also counts:
 
 - the same person downloading twice;
 - updates the app downloads by itself on Windows and Linux (AppImage).

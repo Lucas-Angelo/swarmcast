@@ -109,7 +109,7 @@ function startSwarmCast({ shim = false } = {}) {
   const logFile = path.join(ARTIFACTS, shim ? 'swarmcast.log' : 'swarmcast-noshim.log');
   const fd = fs.openSync(logFile, 'w');
   const preload = shim ? ['--import', path.join(here, 'dns-negative-cache-shim.mjs')] : [];
-  sc = spawn(process.execPath, [...preload, '--import', 'tsx', 'apps/server/src/main.ts', '--data-dir', dataDir, '--no-open', '--no-tray'], {
+  sc = spawn(process.execPath, [...preload, '--import', 'tsx', 'apps/server/src/main.ts', '--data-dir', dataDir, '--no-open'], {
     cwd: repoRoot,
     stdio: ['ignore', fd, fd],
   });

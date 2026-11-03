@@ -2,10 +2,12 @@
 // Real OBS Studio on a Windows runner (no GPU: D3D11 falls back to WARP).
 // OBS 33.0.0 portable zip (pinned SHA-256), configured through files + obs-websocket exactly
 // like scripts/test/obs-e2e/setup-obs.mjs (Advanced output, x264 CBR 2500, keyframe 2 s,
-// Custom service rtmp://127.0.0.1:1935/live + key), a looping Media Source, streaming into
-// SwarmCast installed by the start script; the panel must show OBS sending and a viewer plays.
+// Custom service rtmp://127.0.0.1:1935/live + key), a looping Media Source, streaming into the
+// staged SwarmCast server (the desktop app's sidecar, run outside the app); the panel must show
+// OBS sending and a viewer plays; quitting SwarmCast while OBS streams leaves OBS and its
+// settings alone.
 //
-// Usage: node scripts/test/windows/obs.mjs --work <dir from make-release.mjs> [--out results.json]
+// Usage: node scripts/test/windows/obs.mjs [--staging release/staging/windows-x64] [--out results.json]
 import { spawn, execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -13,18 +15,17 @@ import path from 'node:path';
 import WebSocket from 'ws';
 import { download } from '../../build/fetch-binaries.mjs';
 import {
-  ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, onCleanup, openPanel, opt, ps,
-  quitAndVerify, readText, uninstallAndVerify, uploadCapCheck, repoRoot, section, serve, sha256File, startApp, until, waitLiveLink, waitPhase,
+  addSweepPath, ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, onCleanup, openPanel, ps,
+  quitAndVerify, readText, uploadCapCheck, section, sha256File, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
 const OBS = { version: '33.0.0', url: 'https://github.com/obsproject/obs-studio/releases/download/33.0.0/OBS-Studio-33.0.0-Windows-x64.zip', sha256: '3369a3ecd67b5669a8a08d77357f87cc786d1fba42fbbd1054d841a69f6271a7' };
-const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
-const relDir = path.join(work, 'rel');
 const obsRoot = 'C:\\obs-portable';
 const obsCfg = path.join(obsRoot, 'config', 'obs-studio');
 const obsExe = path.join(obsRoot, 'bin', '64bit', 'obs64.exe');
 const media = path.join(obsRoot, 'testsrc-540p30.mp4');
 const home = 'C:\\SC obs\\SwarmCast';
+addSweepPath(home);
 const PROFILE = 'SwarmCast';
 const SCENE = 'SwarmCast';
 const WS_PORT = 4455;
@@ -143,11 +144,9 @@ await section('1. OBS 33.0.0 portable: download (pinned SHA-256), configure, gen
   check('OBS configured (Advanced output, x264 CBR 2000, keyframe 2 s, 960x540@30, obs-websocket on)', fs.existsSync(media));
 });
 
-await section('2. SwarmCast installed by the start script, OBS streams into it, a viewer plays', async () => {
+await section('2. OBS streams into SwarmCast, a viewer plays', async () => {
   must('OBS prepared', fs.existsSync(obsExe));
-  const srv = await serve(relDir);
-  onCleanup(() => srv.close());
-  const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home, args: ['-Yes', '-SkipSpeedtest', '-NoTunnel'], label: 'obs' });
+  const app = await startApp({ home, args: ['--no-tunnel'], label: 'obs' });
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
 
@@ -223,10 +222,10 @@ await section('2. SwarmCast installed by the start script, OBS streams into it, 
     () => check('panel notices OBS stopped', true),
     () => check('panel notices OBS stopped', false),
   );
-  // Uninstall while OBS is open and streaming into SwarmCast: SwarmCast goes away, OBS and its
+  // Quit SwarmCast while OBS is open and streaming into it: SwarmCast goes away, OBS and its
   // settings stay. Streaming means OBS's output is active and SwarmCast sees OBS again.
   await obs.call('StartStream').catch(() => {});
-  await until(async () => (await obs.call('GetStreamStatus')).outputActive && (await app.state()).obsConnected, 60_000, 'OBS streaming into SwarmCast again').catch((e) => info('before the uninstall', e.message));
+  await until(async () => (await obs.call('GetStreamStatus')).outputActive && (await app.state()).obsConnected, 60_000, 'OBS streaming into SwarmCast again').catch((e) => info('before the quit', e.message));
   const snap = () => {
     const files = [];
     (function walk(d) {
@@ -240,16 +239,15 @@ await section('2. SwarmCast installed by the start script, OBS streams into it, 
     return files.sort();
   };
   const before = snap();
-  await uninstallAndVerify({ dir: relDir, home, label: 'uninstall while OBS streams into SwarmCast' });
+  await quitAndVerify(app, home, 'quit while OBS streams into SwarmCast');
   const after = snap();
   const changed = after.filter((x) => !before.includes(x)).concat(before.filter((x) => !after.includes(x)));
-  check('OBS settings untouched by the uninstaller', changed.length === 0, changed.length ? changed.join(', ') : `${before.length} OBS config files identical`);
-  check('OBS is still running after the uninstall', exitCodeOf(obsProc) === null);
+  check('OBS settings untouched by SwarmCast', changed.length === 0, changed.length ? changed.join(', ') : `${before.length} OBS config files identical`);
+  check('OBS is still running after SwarmCast quit', exitCodeOf(obsProc) === null);
   await obs.call('StopStream').catch(() => {});
   obs.close();
   ps(`$p = Get-Process -Id ${obsProc.pid} -ErrorAction SilentlyContinue; if ($p) { [void]$p.CloseMainWindow() }`, { allowFail: true });
   await until(() => exitCodeOf(obsProc) !== null, 20_000, 'OBS quits').catch(() => killTree(obsProc.pid));
-  if (!fs.existsSync(path.join(relDir, 'uninstall-windows.cmd'))) await quitAndVerify(app, home, 'after OBS');
   copyAppLogs(home, 'obs');
   log('done');
 });

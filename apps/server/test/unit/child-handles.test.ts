@@ -5,8 +5,8 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 import { isAlive } from '../../src/process/children.js';
 import { killIfRunning } from './helpers.js';
 
-// Inherited output handles: when SwarmCast's output is redirected (start script > log file, a support
-// step; the installer test's wrapper), a process SwarmCast starts must not keep that output open
+// Inherited output handles: when SwarmCast's output is redirected (a log file, a support step, a test
+// harness's pipe), a process SwarmCast starts must not keep that output open
 // after SwarmCast exits, or whoever waits for the end of the output (PowerShell's `& $exe`,
 // cmd's `>>`) hangs until that process exits too. The suspects: the browser launch
 // (`cmd /c start`, openBrowser), the toast's powershell.exe (notify) and the reaper.

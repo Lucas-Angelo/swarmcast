@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { isListening } from '../../src/core/ports.js';
-import { allocAppPorts, bootApp, isAlive, POSIX, SCRIPT_MODE, ServerProcess, stopTracked, tmpDir, until, writeConfig, type Ports } from './helpers.js';
+import { allocAppPorts, bootApp, isAlive, POSIX, BROWSER_MODE, ServerProcess, stopTracked, tmpDir, until, writeConfig, type Ports } from './helpers.js';
 
 // How SwarmCast ends: a crash (SIGKILL: its reaper takes MediaMTX down), Ctrl+C (SIGINT: a clean
 // stop, exit 0), and the automatic stop when OBS sends no video. The signal tests need POSIX
@@ -21,11 +21,11 @@ function processName(pid: number): string {
   }
 }
 
-/** SwarmCast in script mode on `ports`, with its own data folder. */
+/** SwarmCast (browser panel, no desktop app) on `ports`, with its own data folder. */
 function startServer(ports: Ports): ServerProcess {
   const dataDir = tmpDir();
   writeConfig(dataDir, ports);
-  return new ServerProcess({ args: SCRIPT_MODE, dataDir });
+  return new ServerProcess({ args: BROWSER_MODE, dataDir });
 }
 
 /** The pid of the MediaMTX this SwarmCast started (its own child, by name), once it listens: not just "the port answers". */

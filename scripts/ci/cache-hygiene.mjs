@@ -56,7 +56,6 @@ export const KEY_INPUTS = [
   { what: 'npm cache (setup-node)', files: ['package-lock.json', 'site/package-lock.json', '.github/actions/setup/action.yml'] },
   { what: 'package-lock.json (sc-pkg, apt-debs-playwright)', files: ['package-lock.json'] },
   { what: 'versions.json (sc-downloads)', files: ['scripts/build/versions.json'] },
-  { what: 'go.sum (setup-go)', files: ['apps/tray/go.sum'] },
 ];
 
 /**

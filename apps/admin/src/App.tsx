@@ -72,7 +72,7 @@ export function App() {
       ),
     [],
   );
-  // Desktop app only (null in script mode: its card and banner stay hidden).
+  // Desktop app only (null outside it, in development and tests: its card and banner stay hidden).
   useEffect(() => {
     void loadDesktop((p, m) => api(p, m)).then((d) => {
       if (d) setDesktop(d);

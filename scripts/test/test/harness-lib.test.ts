@@ -1,13 +1,11 @@
-// The shared helpers of the system harnesses (scripts/test/lib): the release server, the waits
+// The shared helpers of the system harnesses (scripts/test/lib): the waits
 // that return a value or end at a deadline, the port probe, the JUnit view of a harness's
 // results, the cookie jar of the fetch-based browsers and the environment of a launched Firefox. Servers listen on 127.0.0.1 port 0 (no
 // collision, no firewall prompt) and every folder and server a test makes is removed by
 // onTestFinished, servers before their folder.
-import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.js';
@@ -16,27 +14,8 @@ import { CookieJar, parseSetCookie } from '../lib/cookie-jar.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
-import { serveDir } from '../lib/release-server.mjs';
 import { waitForTunnelName } from '../lib/viewer.mjs';
 import { orTimeout, poll, WaitError } from '../lib/wait.mjs';
-
-/** A fresh folder holding `files`, removed after the test. */
-function releaseFolder(files: Record<string, string>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-harness-lib-'));
-  onTestFinished(() => fs.rmSync(root, { recursive: true, force: true }));
-  for (const [name, text] of Object.entries(files)) {
-    fs.mkdirSync(path.dirname(path.join(root, name)), { recursive: true });
-    fs.writeFileSync(path.join(root, name), text);
-  }
-  return root;
-}
-
-/** serveDir(root, o), closed after the test (before its folder goes: onTestFinished runs in reverse). */
-async function served(root: string, o?: Parameters<typeof serveDir>[1]) {
-  const server = await serveDir(root, o);
-  onTestFinished(() => server.close());
-  return server;
-}
 
 /** A process that waits can depend on (wait.mjs Owner), which exits when `exit()` is called. */
 function owner() {
@@ -44,55 +23,6 @@ function owner() {
   const exited = new Promise<{ code: number; signal: null }>((resolve) => (exit = () => resolve({ code: 3, signal: null })));
   return { exit, proc: { name: 'fake app', exited, tail: () => 'last line of the fake app' } };
 }
-
-describe('serveDir', () => {
-  it('serves the files of its folder on 127.0.0.1', async () => {
-    // Arrange
-    const server = await served(releaseFolder({ 'SHA256SUMS.txt': 'abc  pkg.tar.gz\n' }));
-
-    // Act
-    const res = await fetch(`${server.url}/SHA256SUMS.txt`);
-
-    // Assert
-    expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe('abc  pkg.tar.gz\n');
-  });
-
-  it('answers 404 for a missing file, a folder and a path out of its folder', async () => {
-    // Arrange
-    const root = releaseFolder({ 'sub/inside.txt': 'x' });
-    fs.writeFileSync(path.join(path.dirname(root), `${path.basename(root)}-outside.txt`), 'secret');
-    onTestFinished(() => fs.rmSync(path.join(path.dirname(root), `${path.basename(root)}-outside.txt`), { force: true }));
-    const server = await served(root);
-
-    // Act
-    const statuses = await Promise.all(['/missing.txt', '/sub', `/..%2F${path.basename(root)}-outside.txt`].map(async (p) => (await fetch(server.url + p)).status));
-
-    // Assert
-    expect(statuses).toEqual([404, 404, 404]);
-  });
-
-  it('reports every request, and answers a name with the file `resolve` gives', async () => {
-    // Arrange
-    const seen: Array<{ method: string; path: string; status: number }> = [];
-    const server = await served(releaseFolder({ 'latest.json': '{"version":"9.9.9"}' }), { resolve: (n) => (n === '/beta.json' ? 'latest.json' : n), onRequest: (r) => seen.push(r) });
-
-    // Act
-    const beta = await fetch(`${server.url}/beta.json`);
-    const head = await fetch(`${server.url}/latest.json`, { method: 'HEAD' });
-    const missing = await fetch(`${server.url}/stable.json`);
-
-    // Assert
-    expect(await beta.json()).toEqual({ version: '9.9.9' });
-    expect([head.status, head.headers.get('content-length'), missing.status]).toEqual([200, '19', 404]);
-    expect(seen).toEqual([
-      { method: 'GET', path: '/beta.json', status: 200 },
-      { method: 'HEAD', path: '/latest.json', status: 200 },
-      { method: 'GET', path: '/stable.json', status: 404 },
-    ]);
-  });
-});
 
 describe('poll', () => {
   it('resolves with the first truthy value, a throw meaning "not yet"', async () => {
@@ -424,15 +354,5 @@ describe('how long the harnesses wait for the live link', () => {
     const wait = LIVE_LINK_WAIT_MS;
     // Assert
     expect(wait).toBe(TUNNEL_START_BUDGET_MS + 60_000);
-  });
-
-  it.skipIf(process.platform === 'win32')('docker/run.sh reads the same limit from the source', () => {
-    // Arrange
-    const root = path.resolve(import.meta.dirname, '../../..');
-    // Act: bash itself picks run.sh's line and runs it from the repository folder (the command
-    // is a constant string with no path in it).
-    const out = execFileSync('bash', ['-c', 'ROOT=.; eval "$(grep "^TUNNEL_BUDGET_MS=" scripts/test/docker/run.sh)"; echo "$TUNNEL_BUDGET_MS"'], { cwd: root, encoding: 'utf8' });
-    // Assert
-    expect(Number(out.trim())).toBe(TUNNEL_START_BUDGET_MS);
   });
 });

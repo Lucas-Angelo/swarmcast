@@ -140,7 +140,7 @@ export function PcStep({ s }: { s: AdminState }) {
       if (timer) clearTimeout(timer);
     };
   }, [reload]);
-  // Installer check (start scripts, or the desktop app's first start); null = none -> live panel data only.
+  // The desktop app's first-start check; null = none -> live panel data only.
   const desktop = useDesktop();
   const checking = desktop?.systemCheck === 'running';
   const [sys, setSys] = useState<SystemCheck | null | undefined>(undefined);
@@ -245,7 +245,7 @@ function checkedAt(at: string | number): string {
   return Number.isNaN(d.getTime()) ? String(at) : d.toLocaleString(getLang(), { dateStyle: 'short', timeStyle: 'short' });
 }
 
-/** The start script's system check: one row per item, value vs minimum/recommended, what to do. */
+/** The first-start system check: one row per item, value vs minimum/recommended, what to do. */
 export function SystemCheckView({ c }: { c: SystemCheck }) {
   const rows = checkRows(c);
   return (

@@ -55,16 +55,7 @@ export function commandsFor(row) {
     // The surge bench (docs/QUALITY.md "Many people at once"): every scenario once per run, one PASS/FAIL line each.
     surge: [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/surge/bench.ts --out "$RUN_DIR/surge-bench" ${A}`, parse: lineChecks }],
     rust: [{ name: 'cargo test', cmd: `cd apps/desktop/src-tauri && cargo test --locked ${A}`, parse: cargoChecks }],
-    preflight: [{ name: 'verify.mjs', cmd: `node scripts/test/preflight/verify.mjs --release-dir release --chrome ${A}`, parse: lineChecks }],
-    scripts: isWin
-      ? [
-          { name: 'run.ps1', cmd: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\\test\\run.ps1' ${A}`, parse: lineChecks },
-          { name: 'uninstall.ps1', cmd: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File 'scripts\\test\\uninstall.ps1'`, parse: lineChecks },
-        ]
-      : [
-          { name: 'run.sh', cmd: `bash scripts/test/run.sh ${A}`, parse: lineChecks },
-          { name: 'uninstall.sh', cmd: 'bash scripts/test/uninstall.sh', parse: lineChecks },
-        ],
+    preflight: [{ name: 'verify.mjs', cmd: `node scripts/test/preflight/verify.mjs --staging "release/staging/${row.target}" --chrome ${A}`, parse: lineChecks }],
     'desktop-test': [
       {
         name: 'verify.mjs',
@@ -86,11 +77,11 @@ export function commandsFor(row) {
       { name: 'apt-get install --download-only', cmd: `.github/scripts/apt-retry.sh install -y --no-install-recommends --download-only ${A || APT_PACKAGES}` },
     ],
   };
-  for (const s of ['installer', 'app', 'direct', 'quality', 'obs']) {
+  for (const s of ['app', 'direct', 'quality', 'obs']) {
     COMMANDS[`windows-${s}`] = [
       {
         name: `${s}.mjs`,
-        cmd: `SC_ARTIFACTS="$RUN_DIR" node scripts/test/windows/${s}.mjs --work release/win-e2e \${SC_NEWER:+--newer "$SC_NEWER"} --out "$RUN_DIR/results.json" ${A}`,
+        cmd: `SC_ARTIFACTS="$RUN_DIR" node scripts/test/windows/${s}.mjs --staging release/staging/windows-x64 --out "$RUN_DIR/results.json" ${A}`,
         parse: windowsChecks,
       },
     ];

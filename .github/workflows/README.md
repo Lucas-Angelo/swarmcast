@@ -9,14 +9,14 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | Workflow | Runs on | What |
 |---|---|---|
 | `pipeline.yml` | pull requests, push to `main`, monthly, by hand, called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
-| `release.yml` | push of a `v*` tag | the pipeline in release flavour, then sign and publish the GitHub release |
+| `release.yml` | push of a `v*` tag | the pipeline in release flavour (desktop installers signed with the updater key), then publish the GitHub release |
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
-| `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Go, Rust, the workflows |
+| `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Rust, the workflows |
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates; fails on any single failed run |
 | `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
 | `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
 | `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
-| `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
+| `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`); pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 | `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
 
@@ -27,8 +27,8 @@ organization-owned repositories only, and this one belongs to a user.
 ## The pipeline
 
 ```
-changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×5 ──────────────┐
-         ├─ build (web + windows pkgs) ─┤                                             ├─ ci-ok
+changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×4 ──────────────┐
+         ├─ build (web + windows pkg) ──┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
          ├─ site (when the site changed) ─────────────────────────────────────────────┤
          └─ docker (when the Docker suites or what they run changed) ─────────────────┘
@@ -36,19 +36,19 @@ changes ─┬─ quick ──────────────────�
 
 | Stage | File | Jobs | What |
 |---|---|---|---|
-| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts`, `docker`; and that `ci-ok` waits for every job |
-| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
-| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64`; both checked for development dependencies first |
-| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the package and the installers checked for development dependencies first |
+| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
+| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
+| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first |
+| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
+| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
 | e2e | `_e2e.yml` | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced so each takes about 7 minutes on the slowest macOS runners; the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 1-2.5 minutes), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
-| windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
-| site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
-| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
+| windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
+| site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
+| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
-That is 30 jobs for a change to the app (8 on macOS, 7 on Windows), 31 when it also touches the
+That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
 5 of them on macOS.
 
@@ -62,19 +62,18 @@ site, 12 more when it touches the Docker suites or what they run. GitHub Free ru
 | Rust: clippy, `cargo test`, crate licences | 24.04 | | ✓ | | ✓ |
 | e2e (Playwright: Chrome, Firefox, WebKit) | 24.04 | Docker (Chromium, Firefox) | ✓ | | |
 | viewer chat UI, mock hub | 24.04 (+ phones) | | ✓ (+ phones) | | Chrome, Edge, Firefox |
-| Windows suites (installer, app, quality, direct, obs) | | | | | ✓ |
-| preflight (package, stream, watch, P2P, tunnel) | 22.04, 24.04 | | ✓ | ✓ | ✓ |
+| Windows suites (app, quality, direct, obs) | | | | | ✓ |
+| preflight (staged server: stream, watch, P2P, tunnel) | 22.04, 24.04 | | ✓ | ✓ | ✓ |
 | desktop app: install, update, uninstall | 22.04, 24.04 | 24.04 | ✓ | ✓ | ✓ |
 | AppImage on a minimal host | 22.04 (+ Docker bases) | 24.04 (+ Docker bases) | | | |
-| start and uninstall scripts | 24.04 (+ the start script on the Docker bases) | the start script on the Docker bases | ✓ | | ✓ (PowerShell 5.1) |
 | OBS Studio | Docker | Docker | | | ✓ |
 | website | 24.04 | | | | |
 
 "Docker" is the `docker` stage (Ubuntu 22.04, 24.04 and Debian 12 containers on native x64 and arm64
 runners, no emulation). The monthly run adds `ubuntu-latest` to the node and e2e jobs as a canary.
 
-**Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` six times (two
-Windows packages, one per macOS and Linux target) and `tauri build` ten times (A and the real build
+**Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` five times (one
+staged server per target) and `tauri build` ten times (A and the real build
 per target). Every test job downloads those artifacts, so all of them test the same bytes.
 The artifacts are tar files, because `upload-artifact` drops the executable bit;
 `.github/actions/get-build` downloads and unpacks them. They are kept 3 days for pull requests and 14 days
@@ -94,9 +93,7 @@ locally); it never picks up a key file by itself.
   Docker suites, CodeQL, stats, Dependabot, issue forms). Without it every app stage is skipped.
 - `site` is `site/`, `scripts/releases/` (the beta update feed is built with the site), the screenshots, the brand assets, the shared translations, the actions and
   these workflow files.
-- `scripts` is `scripts/` (not `scripts/ci` or `scripts/test/docker`), the actions and the
-  node workflow (where those tests run): the install-script tests run only then, as before.
-- `docker` is `scripts/test/docker/`, the Linux start and uninstall scripts, `_docker.yml`,
+- `docker` is `scripts/test/docker/`, `_docker.yml`,
   `linux-docker.yml` and `pipeline.yml`, the e2e specs and server (`apps/server/test/e2e/`) and
   `playwright.config.ts`. A Docker suite that fails then fails `ci-ok`, so it cannot turn `main`
   red after the merge.
@@ -120,7 +117,7 @@ schedules and releases are never cancelled.
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
@@ -200,7 +197,6 @@ again (a cold run). What is saved, all from `main` unless noted:
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
 | `sc-pkg-*` | `setup/save`: pkg's Node.js binaries | 3 | 0.13 GB |
-| `setup-go-*` | setup-go, per OS (also on other branches) | 4 | 0.08 GB |
 | `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
 
 That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
@@ -218,7 +214,7 @@ nobody restores again, and prints each deletion with its reason and the size bef
   (`node-cache-Linux-x64-npm-*`, `v0-rust-checks-node-Linux-x64-*-*`, `codeql-trap-1-*-javascript-*`).
   It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
   the workflows compute: the npm cache's three files, `package-lock.json`,
-  `scripts/build/versions.json`, `apps/tray/go.sum`, and `main`'s commit for CodeQL), the newest
+  `scripts/build/versions.json`, and `main`'s commit for CodeQL), the newest
   or the most recently used entry of a family, nor an older entry still used after the newest was
   saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
   image version still being rolled out). An older entry last used before the newest was saved is
@@ -283,7 +279,7 @@ network error npm's own retries did not get past (npm does not retry a download 
 mid-transfer); any other `npm ci` failure fails the step.
 Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
 measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
-the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
+the step's 8-minute limit. Not covered: the restore built into Swatinem/rust-cache
 (`setup-rust`), which cannot be wrapped; `setup-rust`'s step limit applies to them.
 
 Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage blocked for the first
@@ -328,8 +324,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   images are the test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's
   mirror), and a mirror serving a half-synchronised archive is outside our control: pipeline run
   41273197813 lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds
-  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there: the start script's own
-  `apt-get install curl` (`run.sh` part b) runs once.
+  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there.
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
   at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
   artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long
@@ -358,11 +353,11 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   workspace's `devDependencies`, an `@types/*` package, or a first-party test file shows up in: the
   server bundle's inputs and run-time requires (`apps/server/dist/meta.json`), the viewer's and the
   panel's module graphs (their Vite builds, and `apps/*/dist` must be exactly those builds), a
-  package (`release/staging/<target>`: the files in the server executable's pkg snapshot, no
+  staged server (`release/staging/<target>`: the files in the server executable's pkg snapshot, no
   `node_modules`, `web/` the checked dist), or a desktop installer (each unpacked: the sidecar's
   snapshot, `web/`, no `node_modules`). It runs in `_build.yml` and `_desktop.yml` before their
-  artifacts are uploaded, and in `release.yml` on the signed packages and their archives. Run it
-  locally after `npm run build` and `node scripts/build/package.mjs --target <host> --no-archive`:
+  artifacts are uploaded, so the release publishes only checked installers. Run it locally after
+  `npm run build` and `node scripts/build/package.mjs --target <host>`:
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so

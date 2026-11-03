@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Build the desktop app (apps/desktop, Tauri) for one target from a staged release package:
 //
-//   release/staging/<target>/ (made by package.mjs --no-archive)
+//   release/staging/<target>/ (made by package.mjs)
 //     swarmcast[.exe]            → sidecar  src-tauri/staged/binaries/swarmcast-server-<rust triple>[.exe]
-//     bin/mediamtx, cloudflared  → resource bin/   (not the Go tray helper: the shell draws the tray)
+//     bin/mediamtx, cloudflared  → resource bin/
 //     web/viewer, web/admin      → resource web/
 //     LICENSE                    → resource
 //   + THIRD_PARTY_LICENSES.txt   → resource, made here: the package's list plus the Rust crates
@@ -81,11 +81,11 @@ const rel = (p) => path.relative(root, p);
 // 1. The staged release package.
 const staging = path.join(root, 'release', 'staging', target);
 if (flag('package')) {
-  execFileSync(process.execPath, [path.join(here, 'package.mjs'), '--target', target, '--version', version, '--no-archive'], { stdio: 'inherit' });
+  execFileSync(process.execPath, [path.join(here, 'package.mjs'), '--target', target, '--version', version], { stdio: 'inherit' });
 }
 for (const f of [exe('swarmcast'), `bin/${exe('mediamtx')}`, `bin/${exe('cloudflared')}`, 'web/admin/index.html', 'web/viewer/watch.html', 'LICENSE']) {
   if (!fs.existsSync(path.join(staging, f))) {
-    throw new Error(`${rel(staging)}/${f} is missing. Run: npm run build && node scripts/build/package.mjs --target ${target} --version ${version} --no-archive (or pass --package)`);
+    throw new Error(`${rel(staging)}/${f} is missing. Run: npm run build && node scripts/build/package.mjs --target ${target} --version ${version} (or pass --package)`);
   }
 }
 const stagedVersion = fs.existsSync(path.join(staging, 'VERSION')) ? fs.readFileSync(path.join(staging, 'VERSION'), 'utf8').trim() : '?';

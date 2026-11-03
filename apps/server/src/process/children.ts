@@ -147,7 +147,7 @@ function runTaskkill(pid: number, capMs = 5000): Promise<void> {
  *
  * - Windows: `taskkill /T /F` (always forced; `signal` does not apply). Only `pid` itself can be
  *   checked afterwards; a grandchild whose parent had already exited is not part of the tree
- *   any more (the end state is a Job Object for script mode too, as in the desktop app).
+ *   any more (the desktop app's Job Object ends those).
  * - POSIX: `signal` to the process group (our children are spawned detached, as group leaders),
  *   then waits until no member of the group is left; falls back to the process alone.
  */

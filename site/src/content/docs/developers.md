@@ -24,6 +24,6 @@ This site is for streamers and viewers. The technical documentation lives with t
 
 ## This website
 
-The site is built with [Astro Starlight](https://starlight.astro.build/) from the [`site/` folder](https://github.com/Lucas-Angelo/swarmcast/tree/main/site). Every page exists in English (`site/src/content/docs/`) and Brazilian Portuguese (`site/src/content/docs/pt-br/`). The offline guide inside the installer zips is generated from the same pages by `scripts/build/guide-html.mjs`, so there is only one place to edit.
+The site is built with [Astro Starlight](https://starlight.astro.build/) from the [`site/` folder](https://github.com/Lucas-Angelo/swarmcast/tree/main/site). Every page exists in English (`site/src/content/docs/`) and Brazilian Portuguese (`site/src/content/docs/pt-br/`).
 
 Found a mistake on a page? Use the **Edit page** link at the bottom of it.

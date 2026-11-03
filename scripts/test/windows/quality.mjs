@@ -1,32 +1,28 @@
 #!/usr/bin/env node
-// Quality ladder on a GPU-less Windows runner: ffmpeg download + SHA-256 (installer or panel
-// API), encoder probe (no hardware encoder), the CPU fallback decision, a manual rendition
-// with a multivariant playlist (>= 2 levels, ABR switch under throttling), and no ffmpeg left
-// behind after stop, quit or taskkill /F.
+// Quality ladder on a GPU-less Windows runner, with the staged server (the desktop app's
+// sidecar) run outside the desktop app: ffmpeg download + SHA-256 through the panel's "Install
+// the video converter" (what the desktop app's first start runs too), encoder probe (no hardware
+// encoder), the CPU fallback decision, a manual rendition with a multivariant playlist (>= 2
+// levels, ABR switch under throttling), and no ffmpeg left behind after stop, quit or taskkill /F.
 //
-// Usage: node scripts/test/windows/quality.mjs --work <dir from make-release.mjs> [--out results.json]
+// Usage: node scripts/test/windows/quality.mjs [--staging release/staging/windows-x64] [--out results.json]
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
-  appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, installerResult, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
-  opt, orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, runInstaller, section, serve, startApp, uninstallAndVerify, until, waitLiveLink, waitPhase,
+  addSweepPath, appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
+  orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, section, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
-const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
-const relDir = path.join(work, 'rel');
 const home = 'C:\\SC quality\\SwarmCast';
-const srv = await serve(relDir);
+addSweepPath(home);
 const pin = JSON.parse(readText(path.join(repoRoot, 'scripts', 'build', 'versions.json'))).ffmpeg;
 const pinWin = pin.assets['windows-x64'];
-const script = readText(path.join(relDir, 'start-windows.ps1'));
-const installerFfmpeg = /ffmpeg/i.test(script);
-const noFfmpegFlag = /NoFfmpeg/i.test(script) ? '-NoFfmpeg' : null;
-// Where the start script and the panel put ffmpeg: <data>\tools\ffmpeg (outside app\, kept across updates).
+// Where the panel (and the desktop app's first start) put ffmpeg: <data>\tools\ffmpeg, kept across updates.
 const ffmpegExe = (h) => path.join(h, 'tools', 'ffmpeg', 'ffmpeg.exe');
 const why = (plan) => (plan?.reasons ?? []).map((r) => r.text ?? r.code ?? String(r)).join(' ');
 const ffmpegLeft = () => processesUnder(home).filter((p) => /ffmpeg/i.test(p.name));
-const start = (label, extra = {}) => startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home, args: ['-Yes', '-SkipSpeedtest', '-NoTunnel'], label, ...extra });
+const start = (label, extra = {}) => startApp({ home, args: ['--no-tunnel'], label, ...extra });
 
 async function quality(app) {
   return app.api('/api/quality');
@@ -44,35 +40,22 @@ async function putQuality(app, mut) {
 let app;
 await section('0. environment', async () => {
   for (const [k, v] of Object.entries(environmentFacts())) info(k, v);
-  info('installer and ffmpeg', installerFfmpeg ? `start-windows.ps1 mentions ffmpeg; opt-out flag: ${noFfmpegFlag ?? 'none'}` : 'start-windows.ps1 does not install ffmpeg on this commit: using the panel install API');
 });
 
-await section('1. ffmpeg download + SHA-256 verification', async () => {
+await section('1. ffmpeg download + SHA-256 verification (panel "Install the video converter")', async () => {
   fs.rmSync(path.dirname(home), { recursive: true, force: true });
-  if (installerFfmpeg && noFfmpegFlag) {
-    const h2 = 'C:\\SC quality noffmpeg\\SwarmCast';
-    fs.rmSync(path.dirname(h2), { recursive: true, force: true });
-    const r = await installerResult(runInstaller({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home: h2, args: ['-Yes', '-SkipSpeedtest', '-InstallOnly', noFfmpegFlag], label: 'noffmpeg' }));
-    check(`${noFfmpegFlag}: installs SwarmCast without ffmpeg`, r.code === 0 && !fs.existsSync(ffmpegExe(h2)), `exit ${r.code}`);
-  }
-  const r = await installerResult(runInstaller({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home, args: ['-Yes', '-SkipSpeedtest', '-InstallOnly'], label: 'install' }), 1_200_000);
-  must('installed', r.code === 0, `exit ${r.code}`);
-  if (installerFfmpeg) {
-    check('installer downloaded ffmpeg into tools\\ffmpeg', fs.existsSync(ffmpegExe(home)), ffmpegExe(home));
-    check('installer recorded the pin (version + SHA-256)', readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim() === `${pin.version} ${pinWin.sha256}`, readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim());
-    info('installer ffmpeg lines', r.out.split(/\r?\n/).filter((l) => /ffmpeg|video converter/i.test(l)).join(' | ').slice(0, 800));
-  }
   app = await start('quality', { persist: true }); // stays up for sections 2-5
   let q = await quality(app);
-  if (!q.ffmpeg.available) {
-    const r2 = await app.api('/api/quality/ffmpeg/install', {});
-    check('panel "Install the video converter" accepted', r2.__status === 200, JSON.stringify(r2.install ?? r2).slice(0, 200));
-    q = await until(async () => {
-      const x = await quality(app);
-      if (x.install?.phase === 'error') throw new Error(x.install.message);
-      return x.install?.phase === 'done' && x.ffmpeg.available ? x : null;
-    }, 900_000, 'ffmpeg install', 3000);
-  }
+  check('a fresh data folder has no video converter yet', !q.ffmpeg.available, q.ffmpeg.path ?? 'none');
+  const r2 = await app.api('/api/quality/ffmpeg/install', {});
+  check('panel "Install the video converter" accepted', r2.__status === 200, JSON.stringify(r2.install ?? r2).slice(0, 200));
+  q = await until(async () => {
+    const x = await quality(app);
+    if (x.install?.phase === 'error') throw new Error(x.install.message);
+    return x.install?.phase === 'done' && x.ffmpeg.available ? x : null;
+  }, 900_000, 'ffmpeg install', 3000);
+  check('ffmpeg downloaded into tools\\ffmpeg', fs.existsSync(ffmpegExe(home)), ffmpegExe(home));
+  check('the pin is recorded (version + SHA-256)', readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim() === `${pin.version} ${pinWin.sha256}`, readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim());
   check('ffmpeg available to the app', q.ffmpeg.available, q.ffmpeg.path);
   check('ffmpeg installed in the data folder (not on PATH)', (q.ffmpeg.path ?? '').toLowerCase().startsWith(home.toLowerCase()), q.ffmpeg.path);
   const source = readText(path.join(path.dirname(q.ffmpeg.path ?? ffmpegExe(home)), 'SOURCE.txt'));
@@ -285,17 +268,4 @@ await section('6. quit during conversion leaves nothing', async () => {
   copyAppLogs(home, 'quality');
 });
 
-await section('7. uninstall-windows.cmd while converting', async () => {
-  app = await start('quality-uninstall');
-  onCleanup(() => killUnder(home));
-  const s0 = await waitLiveLink(app);
-  const feed = pushStream(s0.rtmpUrl, s0.streamKey, { size: '1280x720', kbps: 2500 });
-  await until(async () => (await quality(app)).transcoder.status === 'running', 120_000, 'transcoder running', 2000);
-  info('running before uninstall', describeProcs(processesUnder(home)));
-  await uninstallAndVerify({ dir: relDir, home, label: 'uninstall while ffmpeg converts' });
-  check('the downloaded ffmpeg is gone with the data folder', !fs.existsSync(ffmpegExe(home)));
-  feed.stop();
-});
-
-await srv.close();
 finish();

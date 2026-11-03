@@ -255,7 +255,7 @@ export function spawnTracked(command, args, o = {}) {
 
 /**
  * What a wait needs of a process it depends on (an Owner of wait.mjs), for a child that is not
- * tracked (a start script whose whole output a test reads): its exit, and the last lines of
+ * tracked (a server whose whole output a test reads): its exit, and the last lines of
  * `output()`.
  */
 export function ownerOf(child, name, output) {

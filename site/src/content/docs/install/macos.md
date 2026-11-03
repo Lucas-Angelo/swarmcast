@@ -49,6 +49,10 @@ The window shows **Starting SwarmCast…**, then a short tutorial. Continue with
 
 If macOS asks whether SwarmCast may accept incoming network connections (only in [Direct mode](/swarmcast/live/direct-mode/)), click **Allow**. In the normal Secure mode, viewers never connect to your Mac.
 
+## Used the old start scripts?
+
+Close the old SwarmCast window first, then install the app as shown above. Your settings and your stream key come along, and the app removes the old copy by itself. More in [Switch to the app](/swarmcast/app/updates/#used-the-old-start-scripts-switch-to-the-app).
+
 ## Something went wrong?
 
 - **"SwarmCast is damaged and can't be opened":** delete the app and the `.dmg`, download again and repeat. If it still says so, open **Terminal**, paste `xattr -dr com.apple.quarantine /Applications/SwarmCast.app`, press Enter, and open SwarmCast again.

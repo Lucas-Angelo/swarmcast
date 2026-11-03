@@ -46,9 +46,16 @@ The version you have keeps working. SwarmCast retries the download a few times b
 - **AppImage:** updates itself like on Windows and macOS.
 - **.deb:** if the app cannot install the update by itself, it opens the download page. Download the new `.deb` and install it the same way as the first time ([Install on Linux](/swarmcast/install/linux/)). Your settings are kept.
 
-## Script install
+## Used the old start scripts? Switch to the app
 
-If you installed with a script, run the same script (or the one from a new installer zip) again. It updates SwarmCast and keeps your settings. See [Advanced: install with a script](/swarmcast/advanced/script-install/).
+The start scripts (`start-windows.cmd`, `start-macos.command`, `start-linux.sh`) and the installer zips are gone since version 0.5.1. They no longer get updates: the app is now the only way to install and update SwarmCast.
+
+1. Close the old SwarmCast window (the one that says "Keep this window open while you stream"), or click its tray icon → **Quit**.
+2. Download and install the app: [Windows](/swarmcast/install/windows/), [macOS](/swarmcast/install/macos/) or [Linux](/swarmcast/install/linux/).
+3. Open the app. Your settings and your stream key come along by themselves: you do not need to change anything in OBS.
+4. The app removes the old copy that the scripts installed. You can delete the zip and the folder you downloaded the scripts into.
+
+Want to remove SwarmCast completely instead? See [Uninstall](/swarmcast/app/uninstall/).
 
 ## How SwarmCast checks (privacy)
 

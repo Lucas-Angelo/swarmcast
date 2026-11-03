@@ -46,7 +46,7 @@ export interface AdminOptions {
   onQuit: () => void;
   checkDirect: () => Promise<CheckResult>;
   cleanupStale: () => Promise<boolean>;
-  /** <data>/system-check.json written by the start scripts (shown in the setup tutorial). */
+  /** <data>/system-check.json written by the desktop app's first start (shown in the setup tutorial). */
   systemCheckFile?: string;
   /** Desktop mode only (`--desktop`): autostart, updates, first-run check. */
   desktop?: DesktopBridge;
