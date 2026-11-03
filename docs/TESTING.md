@@ -97,6 +97,7 @@ Real time that a test measures, on purpose:
 | Start and uninstall scripts | `scripts/test/run.sh`, `uninstall.sh`, `run.ps1`, `uninstall.ps1` | their own | `bash scripts/test/run.sh` (macOS, Linux); `powershell -File scripts\test\run.ps1` |
 | System (real installers and packages) | `scripts/test/windows`, `preflight`, `desktop`, `docker` | their own (below) | CI only: they install and start the real app on a clean machine |
 | Chat load | `scripts/test/chat` | its own | `SWARMCAST_NO_OPEN=1 node --import tsx scripts/test/chat/bench.ts --scenario quiet,lively` |
+| Surge (many people at once) | `scripts/test/surge` | its own | `SWARMCAST_NO_OPEN=1 node --import tsx scripts/test/surge/bench.ts --scenario join-burst` (after `npm run build -w @swarmcast/viewer`) |
 | Soak | `scripts/ci/soak-*.mjs`, `.github/soak-plan.json` | `soak.yml` | CI only |
 
 ### Unit tests
@@ -262,6 +263,26 @@ measurement details matter:
   dropped, and waits until every observer has it. Every message has then arrived or been reported
   as skipped. The bots also keep under the server's per-socket ceiling of 20 chat frames per 10 s
   with a one-second margin, so a jittered send rate can never get a socket closed.
+
+### Surge bench
+
+[scripts/test/surge/bench.ts](../scripts/test/surge/bench.ts) measures what a burst does to a live:
+many people joining within a few seconds, or many turning P2P on at once
+([QUALITY.md](QUALITY.md#5-many-people-at-once)). It runs the real public server in its own process,
+fed by a synthetic HLS ladder ([source.ts](../scripts/test/surge/source.ts): random bytes of the
+right sizes, one 2 s segment per rendition every 2 s, the 40 s window full from the start) instead of
+MediaMTX, behind [tunnel.ts](../scripts/test/surge/tunnel.ts), an emulation of the quick tunnel
+(200 requests in flight with WebSockets, a 60 ms round trip) and of the streamer's uplink (the cap
+is 85 % of it, and the pages' scripts share it with the video). The viewers are protocol-level
+players in their own processes ([viewers.ts](../scripts/test/surge/viewers.ts)): the real join
+flow with the browser check and the pages' assets, `/control`, then hls.js' Stable profile (20 s
+behind live, one fragment at a time, its two-EWMA ABR, 1× playback with stalls, p2p-media-loader's
+3 s no-bytes abort and retries, `X-SC-Need`); "P2P on" opens the tracker channel and announces
+with 5 offers, answering every offer (no media over WebRTC: Node has none). Each run is real time
+(about 2.5 min per scenario), so results vary from run to run: compare several runs per variant.
+Its checks are structural, never thresholds on stall counts: everyone joins, every newcomer gets a
+first picture, the server closes no `/control` socket, and the attack shield does not take the
+burst for an attack. The soak suite `surge` runs it.
 
 ### Soak
 

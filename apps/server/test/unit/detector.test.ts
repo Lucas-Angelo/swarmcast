@@ -109,6 +109,26 @@ describe('attack detector', () => {
     expect(d.state).toBe('attack');
   });
 
+  it('many people joining while the upload is full is a popular moment, not an attack (surge bench)', () => {
+    // Arrange: 15 watching; 30 join within 3 s (two join attempts each: the link, then /api/join),
+    // and the upload sits at its cap because they all start watching.
+    const { d, run } = setup();
+    // Act
+    run(3, () => d.record('joins', 20), 15, 1);
+    run(10, () => {}, 45, 1);
+    // Assert: suspicious (the light browser check), never the attack reactions.
+    expect(d.state).toBe('suspicious');
+  });
+
+  it('a join flood at the attack floor is still an attack, upload full or not', () => {
+    // Arrange
+    const { d, run } = setup();
+    // Act
+    run(10, () => d.record('joins', 30), 15, 1);
+    // Assert
+    expect(d.state).toBe('attack');
+  });
+
   it('needs the level to persist before escalating (one spike is ignored)', () => {
     // Arrange
     const { d, run } = setup({ windowS: 1 });
