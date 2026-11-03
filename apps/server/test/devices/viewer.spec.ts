@@ -25,7 +25,7 @@
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, viewport } from './phone.js';
+import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState } from './phone.js';
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
 const WATCHING_S = 1.5;
@@ -78,7 +78,12 @@ test('the chat sits under the player; a message goes from the phone to another v
   const player = await box(phone, '.player');
   const chat = await box(phone, '[data-testid="chat"]');
   expect(chat!.y).toBeGreaterThanOrEqual(player!.y + player!.height - 1);
-  expect(chat!.x + chat!.width).toBeLessThanOrEqual((await viewport(phone)).innerWidth);
+  // Edge to edge, as wide as the page: the page's own width, not innerWidth, which is rounded to
+  // a whole pixel (412 for a 412.19 px wide page on a 2.625× Android screen). Nothing scrolls sideways.
+  const page = await phone.evaluate(() => ({ width: document.documentElement.getBoundingClientRect().width, scrollWidth: document.documentElement.scrollWidth, innerWidth }));
+  expect(Math.abs(chat!.x)).toBeLessThan(0.5);
+  expect(Math.abs(chat!.x + chat!.width - page.width)).toBeLessThan(0.5);
+  expect(page.scrollWidth).toBeLessThanOrEqual(page.innerWidth);
   // Act
   await tapToType(phone, '[data-testid="chat-input"]');
   // Assert

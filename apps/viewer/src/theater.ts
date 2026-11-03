@@ -1,9 +1,10 @@
 /**
- * Theater mode: a wider player on a computer (style.css, `.watch.theater`). The stage takes the
- * whole width of the window and the video as much height as fits above the status bar; the chat
- * stays beside it on a wide screen (under it on a narrower one) and the player's own controls and
- * the bar under it stay where they are. Phones already show the video across the whole width, so
- * there the button is hidden and the mode changes nothing.
+ * Theater mode: the video as big as the window on a computer (style.css, `.watch.theater`). The
+ * page already gives the video the whole width beside the chat; theater mode also gives it the
+ * whole height of the window (black around the picture), with the info row and the rest a scroll
+ * away and the chat still beside it. Where the chat is under the video (phones, narrow windows)
+ * the video already takes the whole width, so there the button is hidden and the mode changes
+ * nothing.
  *
  * The button says whether the mode is on (aria-pressed); the T key toggles it too (shortcuts.ts).
  * The choice is remembered in this browser.

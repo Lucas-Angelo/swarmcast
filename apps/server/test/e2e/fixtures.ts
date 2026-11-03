@@ -554,8 +554,19 @@ export async function stats(page: Page): Promise<ViewerStats> {
   return page.evaluate(() => (window as unknown as { __swarmcast: { stats: ViewerStats } }).__swarmcast.stats);
 }
 
+/**
+ * Opens the watch page's Settings menu (Playback, Help the stream (P2P), shortcuts, stats) under
+ * the video, unless it is open already.
+ */
+export async function openSettings(page: Page): Promise<void> {
+  const menu = page.getByTestId('settings-menu');
+  if (!(await menu.isVisible())) await page.getByTestId('settings-open').click();
+  await expect(menu).toBeVisible();
+}
+
 /** Turns P2P on (it is off by default, opt-in; `check` is a no-op when already checked). */
 export async function enableP2P(page: Page): Promise<void> {
+  await openSettings(page);
   await page.check('#p2p');
   await expect(page.locator('#p2p')).toBeChecked();
 }

@@ -5,7 +5,7 @@ description: Coloque seu nome, foto, bio, links, cores e um botão de apoio ou P
 
 O cartão **Sua página** do painel muda o que quem assiste vê: seu nome, foto, uma bio curta, seus links e suas cores, na página de entrada e em volta do vídeo. Só quem tem o link da sua live vê; qualquer outra pessoa que achar o endereço vê a página comum de "Link inválido".
 
-![A página da live de quem assiste com uma página do streamer: 1 o nome e a foto no topo, 2 o botão de apoio (aqui Pix), 3 o banner, 4 o cartão Sobre com a bio, as tags e os links.](../../../../assets/guides/live/pt-br/your-page-watch.webp)
+![A página da live de quem assiste com uma página do streamer: 1 o nome e a foto embaixo do vídeo, 2 o botão de apoio (aqui Pix), 3 o banner logo abaixo, 4 o cartão Sobre com a bio, as tags e os links.](../../../../assets/guides/live/pt-br/your-page-watch.webp)
 
 ![O cartão Sua página: a Prévia (página da live, página de entrada ou fim da live; computador ou celular; claro ou escuro) à esquerda e, à direita, os passos 1 Nome e foto, 2 Sobre você, 3 Links e apoio, 4 Cores, 5 Quando a live é compartilhada ou acaba, depois Salvar e Voltar ao padrão do SwarmCast.](../../../../assets/guides/live/pt-br/your-page-card.webp)
 

@@ -19,7 +19,7 @@ import { createSettingsPopover } from './settings-popover.js';
 
 export interface MountOptions {
   root: HTMLElement;
-  /** "Show chat" button outside the column (in the bar under the player). */
+  /** "Show chat" button outside the column (in the info row under the player). */
   showButton: HTMLButtonElement;
   /** The viewer's nickname (for their own messages before the roster has them). */
   nickname: string;
