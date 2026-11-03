@@ -11,9 +11,9 @@ type Guarded = net.Socket & { [GUARDED]?: true };
  * Node 24's built-in fetch (undici 7.x) calls `socket.setTypeOfService(0)` before the first
  * request on every new connection. On macOS, `setsockopt` answers EINVAL on a socket the peer
  * has already reset, and Node throws that synchronously inside the socket's `connect` event:
- * an uncaught exception, not a rejected fetch. Measured on macOS with Node 24.22.1 (the Node
- * the release builds bundle): about 6 in 100 fetches to a server that resets each connection
- * threw it. Node already ignores the error on Windows; undici fixed it upstream the same way
+ * an uncaught exception, not a rejected fetch. Measured on macOS: 6 to 15 in 100 fetches to a
+ * server that resets each connection threw it, on Node 24.19.0 to 24.22.2 (24.22.1 is the Node
+ * the release builds bundle). Node already ignores the error on Windows; undici fixed it upstream the same way
  * (nodejs/undici#5544, fix #5547 in 8.x = Node 26; 7.x backport #6076, not in a Node 24 release
  * yet). Remove this once the Node 24 line bundles undici with #6076.
  *

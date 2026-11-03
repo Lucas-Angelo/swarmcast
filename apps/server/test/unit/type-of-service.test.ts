@@ -86,7 +86,7 @@ describe('guardTypeOfService', () => {
   });
 
   it('fetches to a server that resets every connection all reject, and nothing is thrown', async () => {
-    // Arrange: a real reset each time. On macOS without the guard about 6 in 100 of these threw
+    // Arrange: a real reset each time. On macOS without the guard 6 to 15 in 100 of these threw
     // "setTypeOfService EINVAL" out of the socket (Node 24.19 to 24.22.2), so 300 always hit it.
     restores.push(guardTypeOfService());
     const port = await resettingServer();
