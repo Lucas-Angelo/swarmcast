@@ -1,4 +1,4 @@
-/* Stable / Lower-delay switch (latency-toggle.ts) in the settings card under the player; the
+/* Stable / Lower-delay switch (latency-toggle.ts) in the Settings menu under the player; the
  * quality menu is in the player's control bar (player-controls.css).
  * Tokens only (mapping: packages/shared/web/brand.css). */
 .player-controls {

@@ -246,7 +246,7 @@ export function mountStatsPanel(d: StatsPanelDeps): StatsPanel {
     d.onClose();
   };
   doc.addEventListener('keydown', onKey);
-  // The link is under the video (the settings card): bring the video, with the panel on it, into view.
+  // The link is under the video (the Settings menu): bring the video, with the panel on it, into view.
   host.scrollIntoView?.({ block: 'nearest' });
   close.focus({ preventScroll: true });
 
