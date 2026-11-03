@@ -8,9 +8,12 @@
  * muted autoplay, and the viewer must have something to press).
  *
  * - Full screen is the player container (player-caps.ts), so these controls, the status and
- *   stats overlays (and later the chat over the video) stay in it. An iPhone before iOS 26 can
- *   only show the video in iOS's own full-screen player: there the button opens that, and our
- *   controls come back when the viewer leaves it (state resynced on webkitendfullscreen).
+ *   stats overlays, the reactions and the chat over the video stay in it. An iPhone before iOS 26
+ *   can only show the video in iOS's own full-screen player: there the button opens that, and our
+ *   controls come back when the viewer leaves it (state resynced on webkitendfullscreen). While
+ *   the viewer wants the chat over the video (`fillScreen`), it fills the page instead (`pc-fill`:
+ *   the player fixed over the whole window, Escape or the button again to leave), since iOS's
+ *   player shows nothing of the page over the picture (docs/CHAT.md, "Chat over the video").
  * - The controls fade out while the video plays and come back with the pointer, a touch, the
  *   keyboard focus or a shortcut (controls-visibility.ts has the rules). Faded, they stay in the
  *   page for screen readers and the Tab key; a touch on a faded control only shows the controls
@@ -78,6 +81,11 @@ export interface PlayerControlsDeps {
   ended?: () => boolean;
   /** play() was refused (autoplay rules): watch.ts shows its Unmute button. */
   onPlayRefused?: () => void;
+  /**
+   * Where only the video itself can go full screen (`video-native`), fill the page with the player
+   * instead (the chat over the video is on). Absent: always the video's own full screen.
+   */
+  fillScreen?: () => boolean;
 }
 
 export interface PlayerControls {
@@ -90,6 +98,12 @@ export interface PlayerControls {
   playPause(): void;
   toggleMute(): void;
   toggleFullscreen(): boolean;
+  /** The player fills the page now (`pc-fill`). */
+  readonly filled: boolean;
+  /** Leaves the page-filling mode (the live ended). */
+  exitFill(): void;
+  /** Adds a button to the right of the bar, before full screen (the chat over the video). */
+  addButton(b: HTMLButtonElement): void;
   togglePip(): boolean;
   /** Show the controls for a moment (a shortcut was used). */
   reveal(): void;
@@ -219,6 +233,8 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
   }
 
   // ---- state ---------------------------------------------------------------------------------
+  /** The player fills the page (`pc-fill`), the iPhone's stand-in for full screen with our layers on it. */
+  let filled = false;
   const playingNow = (): boolean => !video.paused || held();
   const sync = (): void => {
     const playing = playingNow();
@@ -235,9 +251,9 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     const percent = silent ? 0 : Math.round(video.volume * 100);
     if (volume.value !== String(percent)) volume.value = String(percent);
     volume.setAttribute('aria-valuetext', L.volumeValue(percent));
-    const fs = isFullscreen(video, doc);
+    const fs = isFullscreen(video, doc) || filled;
     const containerFs = (doc.fullscreenElement ?? (doc as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement) === player;
-    player.classList.toggle('is-fullscreen', containerFs);
+    player.classList.toggle('is-fullscreen', containerFs || filled);
     fsBtn.classList.toggle('pc-ico-fullscreen-exit', fs);
     fsBtn.classList.toggle('pc-ico-fullscreen', !fs);
     name(fsBtn, fs ? L.exitFullscreen : L.fullscreen, L.withKey(fs ? L.exitFullscreen : L.fullscreen, 'F'));
@@ -275,7 +291,30 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     pipBtn.hidden = true;
   };
   pipBtn.addEventListener('click', () => togglePip(video, doc, dropPip));
-  fsBtn.addEventListener('click', () => toggleFullscreen(player, video, doc));
+  const setFilled = (next: boolean): void => {
+    if (next === filled) return;
+    filled = next;
+    player.classList.toggle('pc-fill', next);
+    doc.body.classList.toggle('player-filled', next);
+    sync();
+    player.dispatchEvent(new Event('sc-fillchange'));
+  };
+  // There is no browser bar to leave the page-filling mode with: Escape does it, as for full screen.
+  doc.addEventListener('keydown', (e) => {
+    if (filled && e.key === 'Escape') setFilled(false);
+  });
+  const toggleFs = (): boolean => {
+    if (filled) {
+      setFilled(false);
+      return true;
+    }
+    if (fsMode === 'video-native' && d.fillScreen?.() === true && !isFullscreen(video, doc)) {
+      setFilled(true);
+      return true;
+    }
+    return toggleFullscreen(player, video, doc);
+  };
+  fsBtn.addEventListener('click', () => toggleFs());
 
   for (const ev of ['play', 'pause', 'playing', 'waiting', 'ended', 'volumechange', 'loadeddata', 'emptied', 'enterpictureinpicture', 'leavepictureinpicture', 'webkitpresentationmodechanged', 'webkitbeginfullscreen', 'webkitendfullscreen']) {
     video.addEventListener(ev, sync);
@@ -396,9 +435,17 @@ export function mountPlayerControls(d: PlayerControlsDeps): PlayerControls {
     playPause,
     toggleMute,
     toggleFullscreen: () => {
-      const done = toggleFullscreen(player, video, doc);
+      const done = toggleFs();
       visibility.activity();
       return done;
+    },
+    get filled() {
+      return filled;
+    },
+    exitFill: () => setFilled(false),
+    addButton: (b) => {
+      b.classList.add('pc-btn');
+      right.insertBefore(b, fsBtn);
     },
     togglePip: () => (pip === 'none' || pipGone ? false : togglePip(video, doc, dropPip)),
     reveal: () => visibility.activity(),

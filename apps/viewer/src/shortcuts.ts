@@ -54,7 +54,7 @@ export function actionForKey(key: string): ShortcutAction | null {
 /**
  * Where the viewer is typing or working a control that takes keys of its own: text fields, text
  * areas, lists, editable text, menus and sliders, the whole chat column (its box, its pickers, its
- * menus) and any dialog.
+ * menus), the chat over the video and any dialog.
  */
 const OWN_KEYS = [
   'input',
@@ -70,6 +70,8 @@ const OWN_KEYS = [
   '[role="spinbutton"]',
   'dialog',
   '#chat',
+  // The chat over the video (chat/overlay.ts): its message box and pickers, while they are there.
+  '.chat-overlay',
 ].join(', ');
 
 /** Controls that Space presses by itself. */

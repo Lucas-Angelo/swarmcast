@@ -78,6 +78,19 @@
                 <button id="settings-close" type="button" class="settings-close" data-testid="settings-close" aria-label="Close settings" data-i18n-aria-label="watch.settings.close">×</button>
               </div>
               <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
+              <!-- The chat over the video in full screen (overlay-mode.ts): shown once the live has a chat. -->
+              <div class="toggle-row" id="chat-overlay-row" hidden>
+                <label class="toggle">
+                  <input id="chat-overlay" type="checkbox" data-testid="chat-overlay-setting" />
+                  <span data-i18n="watch.chatOverlay.setting">Chat on the video in full screen</span>
+                </label>
+                <span class="tip"
+                  ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-chat-overlay">i</button
+                  ><span class="tip-bubble" role="tooltip" id="tip-chat-overlay" data-i18n="watch.chatOverlay.setting.tip"
+                    >While the video fills the screen, the latest chat messages show over its bottom left corner for a few seconds each, above the controls. A small button there opens the message box. Off by default; your browser remembers the choice.</span
+                  ></span
+                >
+              </div>
               <div class="toggle-row">
                 <label class="toggle">
                   <input id="p2p" type="checkbox" />
