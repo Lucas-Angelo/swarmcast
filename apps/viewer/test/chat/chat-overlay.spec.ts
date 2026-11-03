@@ -172,8 +172,10 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
     await page.getByTestId('fullscreen').click();
     await expect.poll(() => fullscreen(page)).toBe(false);
 
-    // Assert
-    expect(await page.getByTestId('chat-input').evaluate((el) => !!el.closest('#chat'))).toBe(true);
+    // Assert: the box moves back on the fullscreenchange event, which WebKit fires after
+    // document.fullscreenElement already reads null (soak 41573178939: 2 of 5 runs on Ubuntu read
+    // it in between). So this waits for the box itself, not for the full-screen state.
+    await expect.poll(() => page.getByTestId('chat-input').evaluate((el) => !!el.closest('#chat'))).toBe(true);
     await expect(page.getByTestId('chat-input')).toBeVisible();
   });
 
