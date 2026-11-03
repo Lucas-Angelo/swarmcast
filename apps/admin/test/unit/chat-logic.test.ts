@@ -16,6 +16,11 @@ import {
   mutedText,
   parseBlockedWords,
   PIN_CHOICES,
+  pollPercents,
+  pollRequest,
+  resolvePerson,
+  runCommand,
+  type CommandApi,
   presetNeedsGifs,
   presetOf,
   readableName,
@@ -275,5 +280,151 @@ describe('replies and mentions in the panel (docs/CHAT.md "Replies and mentions"
     expect(parts?.map((p) => (p.mention ? `[${p.mention}]` : p.tokens.map((t) => (t.k === 'e' ? `:${t.code}:` : t.v)).join('')))).toEqual(['oi ', '[k1]', ' e ', '[k0]', ' :love:']);
     expect(unsafe).toBeNull();
     expect(mentionCandidates([lu]).map((c) => c.n)).toEqual(['Streamer', 'Transmissão']);
+  });
+});
+
+describe('slash commands in the panel (docs/CHAT.md, "Slash commands")', () => {
+  const sessions = [
+    { sessionId: 's1', a: 'k1', nickname: 'Ana', color: '#e5484d', colorLocked: false, mutedUntil: null, tag: 'K3QF' },
+    { sessionId: 's2', a: 'k2', nickname: 'ana', color: '#46a758', colorLocked: false, mutedUntil: null, tag: 'ZZ2A' },
+    { sessionId: 's3', a: 'k3', nickname: 'João Pedro', color: '#0090ff', colorLocked: false, mutedUntil: null, tag: 'AB7C' },
+  ];
+  /** A fake API recording every call. */
+  const fakeApi = () => {
+    const calls: unknown[][] = [];
+    const rec =
+      (name: string, ret: unknown = { ok: true }) =>
+      (...args: unknown[]) => {
+        calls.push([name, ...args]);
+        return Promise.resolve(ret);
+      };
+    const api: CommandApi = {
+      startPoll: rec('startPoll'),
+      endPoll: rec('endPoll'),
+      resolvePoll: rec('resolvePoll'),
+      cancelPoll: rec('cancelPoll'),
+      send: rec('send', { s: 42 }) as CommandApi['send'],
+      pin: rec('pin'),
+      unpin: rec('unpin'),
+      mute: rec('mute'),
+      unmute: rec('unmute'),
+      protect: rec('protect'),
+      slow: rec('slow'),
+    };
+    return { api, calls };
+  };
+  const ctx = { sessions, replyTo: null };
+
+  it('resolves a person by name without case, accents or separators; a tag picks one of two look-alikes', () => {
+    // Act
+    const one = resolvePerson('joao pedro', sessions);
+    const at = resolvePerson('JOÃO-PEDRO', sessions);
+    const many = resolvePerson('Ana', sessions);
+    const tagged = resolvePerson('ana#zz2a', sessions);
+    const nobody = resolvePerson('Caio', sessions);
+    // Assert
+    expect(one).toEqual({ ok: true, sessionId: 's3', nickname: 'João Pedro' });
+    expect(at).toEqual(one);
+    expect(many).toEqual({ ok: false, key: 'chat.cmd.err.many', params: { names: 'Ana #K3QF, ana #ZZ2A', example: 'Ana#K3QF' } });
+    expect(tagged).toEqual({ ok: true, sessionId: 's2', nickname: 'ana' });
+    expect(nobody).toEqual({ ok: false, key: 'chat.cmd.err.noOne', params: { name: 'Caio' } });
+  });
+
+  it('each command makes the same call as its button, and says what it did', async () => {
+    // Arrange
+    const { api, calls } = fakeApi();
+    // Act
+    const out = [
+      await runCommand({ id: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 30 }, ctx, api),
+      await runCommand({ id: 'prediction', question: 'Q?', options: ['a', 'b'], seconds: 60 }, ctx, api),
+      await runCommand({ id: 'end' }, ctx, api),
+      await runCommand({ id: 'answer', option: 1 }, ctx, api),
+      await runCommand({ id: 'cancel' }, ctx, api),
+      await runCommand({ id: 'pin', text: 'Bem-vindos!' }, ctx, api),
+      await runCommand({ id: 'unpin' }, ctx, api),
+      await runCommand({ id: 'slow', seconds: 10 }, ctx, api),
+      await runCommand({ id: 'slow', seconds: 0 }, ctx, api),
+      await runCommand({ id: 'mute', name: 'João Pedro', minutes: null }, ctx, api),
+      await runCommand({ id: 'unmute', name: 'joão pedro' }, ctx, api),
+      await runCommand({ id: 'protect', mode: 'lockdown' }, ctx, api),
+    ];
+    // Assert
+    expect(calls).toEqual([
+      ['startPoll', { kind: 'poll', question: 'Q?', options: ['a', 'b'], seconds: 30 }],
+      ['startPoll', { kind: 'prediction', question: 'Q?', options: ['a', 'b'], seconds: 60 }],
+      ['endPoll'],
+      ['resolvePoll', 1],
+      ['cancelPoll'],
+      ['send', 'Bem-vindos!'],
+      ['pin', 42, null],
+      ['unpin'],
+      ['slow', 10],
+      ['slow', 0],
+      ['mute', 's3', null],
+      ['unmute', 's3'],
+      ['protect', 'lockdown'],
+    ]);
+    expect(out.map((o) => ('done' in o ? o.done.key : JSON.stringify(o)))).toEqual([
+      'admin.chat.cmd.done.poll',
+      'admin.chat.cmd.done.prediction',
+      'admin.chat.cmd.done.end',
+      'admin.chat.cmd.done.answer',
+      'admin.chat.cmd.done.cancel',
+      'admin.chat.cmd.done.pin',
+      'admin.chat.cmd.done.unpin',
+      'admin.chat.cmd.done.slow',
+      'admin.chat.cmd.done.slowOff',
+      'admin.chat.cmd.done.mute',
+      'admin.chat.cmd.done.unmute',
+      'admin.chat.cmd.done.protect',
+    ]);
+  });
+
+  it('help, clear and the poll forms are the panel\'s to show (clear asks first: nothing is called); "//text" is sent as text', async () => {
+    // Arrange
+    const { api, calls } = fakeApi();
+    // Act
+    const out = await Promise.all([runCommand({ id: 'help' }, ctx, api), runCommand({ id: 'clear' }, ctx, api), runCommand({ id: 'poll', form: true }, ctx, api), runCommand({ id: 'prediction', form: true }, ctx, api), runCommand({ id: 'say', text: '/poll' }, ctx, api)]);
+    // Assert
+    expect(out).toEqual([{ ui: 'help' }, { ui: 'clear' }, { ui: 'poll' }, { ui: 'prediction' }, { say: '/poll' }]);
+    expect(calls).toEqual([]);
+  });
+
+  it('/pin alone pins the message being replied to, or says to reply first; an unknown or ambiguous name calls nothing', async () => {
+    // Arrange
+    const { api, calls } = fakeApi();
+    // Act
+    const replying = await runCommand({ id: 'pin' }, { sessions, replyTo: 7 }, api);
+    const notReplying = await runCommand({ id: 'pin' }, ctx, api);
+    const ambiguous = await runCommand({ id: 'mute', name: 'Ana', minutes: 10 }, ctx, api);
+    const unknown = await runCommand({ id: 'unmute', name: 'Caio' }, ctx, api);
+    // Assert
+    expect(replying).toEqual({ done: { key: 'admin.chat.cmd.done.pin' } });
+    expect(notReplying).toEqual({ error: { key: 'chat.cmd.err.noReply' } });
+    expect(ambiguous).toMatchObject({ error: { key: 'chat.cmd.err.many' } });
+    expect(unknown).toMatchObject({ error: { key: 'chat.cmd.err.noOne' } });
+    expect(calls).toEqual([['pin', 7, null]]);
+  });
+
+  it('a failed call throws, as the buttons\' calls do', async () => {
+    // Arrange
+    const { api } = fakeApi();
+    api.endPoll = () => Promise.reject(new Error('admin.chat.err.noPoll'));
+    // Act
+    const run = runCommand({ id: 'end' }, ctx, api);
+    // Assert
+    await expect(run).rejects.toThrow('admin.chat.err.noPoll');
+  });
+
+  it('the poll form: trimmed request, or what is missing first', () => {
+    // Act
+    const good = pollRequest('prediction', '  Quem ganha? ', [' Ana ', 'Bia'], 60, true);
+    const noQuestion = pollRequest('poll', '   ', ['a', 'b'], 60, false);
+    const emptyOption = pollRequest('poll', 'Q', ['a', ' '], 60, false);
+    // Assert
+    expect(good).toEqual({ ok: true, body: { kind: 'prediction', question: 'Quem ganha?', options: ['Ana', 'Bia'], seconds: 60, newOnly: true } });
+    expect(noQuestion).toEqual({ ok: false, key: 'admin.chat.err.pollQuestion', params: { max: 80 } });
+    expect(emptyOption).toEqual({ ok: false, key: 'admin.chat.err.pollOption', params: { n: 2, max: 30 } });
+    expect(pollPercents([1, 1, 2])).toEqual([25, 25, 50]);
   });
 });

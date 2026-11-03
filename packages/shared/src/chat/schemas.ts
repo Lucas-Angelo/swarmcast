@@ -20,6 +20,12 @@ import {
   CHAT_MUTE_MAX_MIN,
   CHAT_NEW_VIEWER_WAIT_MAX_S,
   CHAT_PIN_MAX_MIN,
+  CHAT_POLL_OPTION_MAX_UNITS,
+  CHAT_POLL_OPTIONS_MAX,
+  CHAT_POLL_OPTIONS_MIN,
+  CHAT_POLL_QUESTION_MAX_UNITS,
+  CHAT_POLL_SECONDS_MAX,
+  CHAT_POLL_SECONDS_MIN,
   CHAT_SLOW_MODE_DEFAULT_S,
   CHAT_SLOW_MODE_MAX_S,
   CHAT_TEXT_MAX_UNITS,
@@ -100,8 +106,23 @@ export const chatColorSchema = z.object({ t: z.literal('chat.color'), color: hex
 /** viewer → server: I missed items after `after` (a gap or a reconnect). */
 export const chatResumeSchema = z.object({ t: z.literal('chat.resume'), after: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
 
+/** A poll's id ("p1", "p2"…, docs/CHAT.md "Polls and predictions"). */
+export const chatPollIdSchema = z.string().regex(/^p[0-9a-z]{1,10}$/);
+
+/** viewer → server: my vote in poll `id` (option `o`, from 0). Votes are final: one per device and poll. */
+export const chatVoteSchema = z.strictObject({
+  t: z.literal('chat.vote'),
+  n: chatNonceSchema,
+  id: chatPollIdSchema,
+  o: z
+    .number()
+    .int()
+    .min(0)
+    .max(CHAT_POLL_OPTIONS_MAX - 1),
+});
+
 /** Every viewer → server chat message (added to clientMessageSchema). */
-export const chatClientSchemas = [chatSendSchema, chatColorSchema, chatResumeSchema] as const;
+export const chatClientSchemas = [chatSendSchema, chatColorSchema, chatResumeSchema, chatVoteSchema] as const;
 
 /** Raw-frame prefix of a chat message: the viewer always serialises `t` first (plan §4.1). */
 export const CHAT_FRAME_PREFIX = '{"t":"chat.';
@@ -214,3 +235,26 @@ export const chatHighlightSchema = z.strictObject({ s: chatSeqSchema, on: z.bool
 
 /** Pin a message at the top of everyone's chat, until unpinned (`minutes` absent or null) or for 1…120 minutes. */
 export const chatPinSchema = z.strictObject({ s: chatSeqSchema, minutes: z.number().int().min(1).max(CHAT_PIN_MAX_MIN).nullable().optional() });
+
+/**
+ * Start a poll or a prediction (docs/CHAT.md, "Polls and predictions"). The server runs question
+ * and options through the chat's Unicode pipeline (80 and 30 graphemes) and refuses duplicates.
+ * `newOnly` absent: on for a prediction, off for a poll.
+ */
+export const chatPollCreateSchema = z.strictObject({
+  kind: z.enum(['poll', 'prediction']),
+  question: z.string().max(CHAT_POLL_QUESTION_MAX_UNITS),
+  options: z.array(z.string().max(CHAT_POLL_OPTION_MAX_UNITS)).min(CHAT_POLL_OPTIONS_MIN).max(CHAT_POLL_OPTIONS_MAX),
+  seconds: z.number().int().min(CHAT_POLL_SECONDS_MIN).max(CHAT_POLL_SECONDS_MAX),
+  newOnly: z.boolean().optional(),
+});
+export type ChatPollCreate = z.infer<typeof chatPollCreateSchema>;
+
+/** The right answer of a prediction whose guesses ended (option index, from 0). */
+export const chatPollResolveSchema = z.strictObject({
+  option: z
+    .number()
+    .int()
+    .min(0)
+    .max(CHAT_POLL_OPTIONS_MAX - 1),
+});

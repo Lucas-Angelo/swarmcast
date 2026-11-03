@@ -12,7 +12,12 @@
 // Replies and mentions are fields of a message (`re`, `mn`; docs/CHAT.md, "Replies and mentions"):
 // the entry carries the quoted message's author and the server's quote, and the people mentioned.
 // A `d` for the quoted message wipes the quote here too ("Original message deleted").
-import { CHAT_MENTIONS_MAX, CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPublicSettings, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+//
+// Polls and predictions (docs/CHAT.md, "Polls and predictions"): the poll is a seq-less state item
+// (`poll`, and `poll` in snapshots, with this device's vote as `mine`); vote counts are ephemeral
+// `pt` items for that poll's id; `chat.voted` is the answer to this device's vote (also from another
+// tab). None of them takes a seq or causes a resume.
+import { CHAT_MENTIONS_MAX, CHAT_POLL_OPTIONS_MAX, CHAT_POLL_OPTIONS_MIN, CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPollPublic, type ChatPublicSettings, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
 /** A chat frame this page sends on /control (the shared protocol type). */
@@ -45,6 +50,22 @@ export interface PinnedEntry {
   gif?: GifRef;
 }
 
+/** The poll or prediction as the page shows it: the server's, with this device's vote kept across updates. */
+export interface PollEntry {
+  id: string;
+  kind: ChatPollPublic['kind'];
+  q: string;
+  o: string[];
+  st: ChatPollPublic['st'];
+  c: number[];
+  /** While open: ms of voting left when it came. */
+  endsIn?: number;
+  win?: number;
+  newOnly: boolean;
+  /** The option this device voted for. */
+  mine?: number;
+}
+
 export interface ChatView {
   /** A new snapshot: forget what is shown and show these. */
   reset(entries: ChatEntry[]): void;
@@ -55,6 +76,12 @@ export interface ChatView {
   highlight(s: number, on: boolean): void;
   /** The pinned message changed (null: nothing pinned). */
   pin(p: PinnedEntry | null): void;
+  /** The poll changed (opened, ended, answered, this device voted) or is gone (null). */
+  poll?(p: PollEntry | null): void;
+  /** New vote counts of the poll on screen (`id`). */
+  tally?(id: string, c: number[]): void;
+  /** The server counted this device's vote (`n`: its nonce, when this page sent it). */
+  voted?(n: number | undefined, id: string, o: number): void;
   /** An author's nickname or colour changed. */
   author(a: ChatAuthor): void;
   settings(s: ChatPublicSettings | null): void;
@@ -86,6 +113,8 @@ export class ChatSession {
   private readonly highlights = new Map<number, boolean>();
   /** The pinned message as the server last said (null: none). */
   pinned: ChatPin | null = null;
+  /** The poll as the server last said (null: none). */
+  poll: PollEntry | null = null;
   private open = false;
 
   constructor(
@@ -144,7 +173,26 @@ export class ChatSession {
       case 'chat.reject':
         this.view.reject(msg.n, msg.code, msg.params, msg.retryMs);
         break;
+      case 'chat.voted': {
+        const p = this.poll;
+        if (!p || msg.id !== p.id || !Number.isInteger(msg.o) || msg.o < 0 || msg.o >= p.o.length) break;
+        // Without `endsIn`: the time left came with the poll, and the page counts down from then on.
+        const { endsIn: _endsIn, ...rest } = p;
+        this.poll = { ...rest, mine: msg.o, ...(isCounts(msg.c, p.o.length) ? { c: msg.c } : {}) };
+        this.view.poll?.(this.poll);
+        this.view.voted?.(typeof msg.n === 'number' ? msg.n : undefined, p.id, msg.o);
+        break;
+      }
     }
+  }
+
+  /** A poll from the server (an item or a snapshot field); anything malformed counts as none. This device's vote stays for the same poll. */
+  private setPoll(p: unknown): void {
+    const next = toPoll(p);
+    if (next === null && this.poll === null) return;
+    const mine = next?.mine ?? (next && this.poll?.id === next.id ? this.poll.mine : undefined);
+    this.poll = next ? { ...next, ...(mine !== undefined && mine < next.o.length ? { mine } : {}) } : null;
+    this.view.poll?.(this.poll);
   }
 
   private applySnapshot(s: ChatSnapshot): void {
@@ -162,6 +210,7 @@ export class ChatSession {
       this.batch([...s.roster.map((au): ChatItem => ({ k: 'u', au })), ...s.items]);
       this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
       this.setPin(s.pin ?? null);
+      this.setPoll(s.poll ?? null);
       return;
     }
     this.dropHeld();
@@ -179,6 +228,7 @@ export class ChatSession {
     this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
     this.view.reset(entries);
     this.setPin(s.pin ?? null);
+    this.setPoll(s.poll ?? null);
   }
 
   /** A pin from the server (an item or a snapshot field); anything malformed counts as no pin. */
@@ -334,6 +384,16 @@ export class ChatSession {
       case 'pin':
         this.setPin(item.p);
         return;
+      case 'poll':
+        this.setPoll(item.p);
+        return;
+      case 'pt': {
+        const p = this.poll;
+        if (!p || item.id !== p.id || !isCounts(item.c, p.o.length)) return;
+        this.poll = { ...p, c: item.c };
+        this.view.tally?.(p.id, item.c);
+        return;
+      }
       case 'd': {
         if (!Array.isArray(item.s)) return;
         for (const s of item.s) {
@@ -386,4 +446,34 @@ function isPin(p: unknown): p is ChatPin {
   if (!Number.isSafeInteger(v.s) || typeof v.a !== 'string' || typeof v.at !== 'number') return false;
   // A GIF is checked where it is drawn (gifMediaUrl), like a message's.
   return typeof v.x === 'string' ? v.g === undefined : typeof v.g === 'object' && v.g !== null;
+}
+
+/** Vote counts for `n` options: whole numbers, none negative. */
+function isCounts(c: unknown, n: number): c is number[] {
+  return Array.isArray(c) && c.length === n && c.every((x) => Number.isSafeInteger(x) && x >= 0);
+}
+
+const POLL_STATES: ReadonlySet<string> = new Set(['open', 'closed', 'locked', 'resolved']);
+
+/** A poll as the server sends it, or null: id, kind, question, 2–5 options, state and counts of the right shape. */
+function toPoll(p: unknown): PollEntry | null {
+  if (p === null || typeof p !== 'object') return null;
+  const v = p as Partial<ChatPollPublic>;
+  if (typeof v.id !== 'string' || (v.kind !== 'poll' && v.kind !== 'prediction') || typeof v.q !== 'string' || typeof v.st !== 'string' || !POLL_STATES.has(v.st)) return null;
+  if (!Array.isArray(v.o) || v.o.length < CHAT_POLL_OPTIONS_MIN || v.o.length > CHAT_POLL_OPTIONS_MAX || !v.o.every((x) => typeof x === 'string')) return null;
+  if (!isCounts(v.c, v.o.length)) return null;
+  const n = v.o.length;
+  const idx = (x: unknown): x is number => Number.isInteger(x) && (x as number) >= 0 && (x as number) < n;
+  return {
+    id: v.id,
+    kind: v.kind,
+    q: v.q,
+    o: [...v.o],
+    st: v.st,
+    c: [...v.c],
+    ...(typeof v.endsIn === 'number' && Number.isFinite(v.endsIn) && v.endsIn >= 0 ? { endsIn: v.endsIn } : {}),
+    ...(idx(v.win) ? { win: v.win } : {}),
+    newOnly: v.newOnly === true,
+    ...(idx(v.mine) ? { mine: v.mine } : {}),
+  };
 }

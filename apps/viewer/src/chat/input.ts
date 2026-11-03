@@ -6,6 +6,11 @@
 // with the quote the server will show and ✕ (Escape cancels too); typing "@" lists the people who
 // already wrote in the chat (never everyone watching), and the people a message mentions are worked
 // out from its text when it is sent (mentionKeys), so a picked name deleted again is not sent.
+//
+// Slash commands (docs/CHAT.md, "Slash commands"): a viewer has only /help (/ajuda, /?), answered on
+// this page with a short list of what they can do; it is never sent. A streamer command typed here
+// ("/poll …") is not sent either (it would show the line to everyone): the box keeps it and says
+// only the streamer can use it. "//text" sends "/text".
 import { getLang, t, tc } from '@swarmcast/shared/i18n';
 import {
   applyMention,
@@ -18,6 +23,7 @@ import {
   CHAT_TEXT_MAX_UNITS,
   measureChatText,
   mentionQuery,
+  parseCommand,
   suggestMentions,
   type ChatAuthor,
   type ChatPublicSettings,
@@ -108,6 +114,8 @@ export class ChatInput {
   private readonly now: () => number;
   /** "Replying to …" above the box, and the @ list. */
   readonly replyBar: HTMLDivElement;
+  /** What a viewer can do (/help), above the box until closed. */
+  readonly help: HTMLDivElement;
   readonly suggestions: HTMLUListElement;
   private reply: ReplyEntry | null = null;
   private offered: Suggestion[] = [];
@@ -156,7 +164,8 @@ export class ChatInput {
     this.suggestions.dataset.testid = 'chat-mentions';
     this.textarea.setAttribute('aria-autocomplete', 'list');
     this.textarea.setAttribute('aria-controls', this.suggestions.id);
-    this.form.append(this.suggestions, this.replyBar, row, this.counter, this.status);
+    this.help = this.buildHelp();
+    this.form.append(this.help, this.suggestions, this.replyBar, row, this.counter, this.status);
 
     this.textarea.addEventListener('keydown', (e) => {
       if (e.isComposing) return;
@@ -219,9 +228,59 @@ export class ChatInput {
     this.update();
   }
 
+  /** The /help box: title, a few lines on what viewers can do, and Close. */
+  private buildHelp(): HTMLDivElement {
+    const box = document.createElement('div');
+    box.className = 'chat-help';
+    box.hidden = true;
+    box.dataset.testid = 'chat-help';
+    box.setAttribute('role', 'region');
+    box.setAttribute('aria-label', t('chat.viewer.help.title'));
+    const head = document.createElement('div');
+    head.className = 'chat-help-head';
+    const title = document.createElement('strong');
+    title.textContent = t('chat.viewer.help.title');
+    const close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'chat-tool chat-help-close';
+    close.textContent = '✕';
+    close.setAttribute('aria-label', t('chat.viewer.help.close'));
+    close.title = t('chat.viewer.help.close');
+    close.dataset.testid = 'chat-help-close';
+    close.addEventListener('click', () => {
+      box.hidden = true;
+      this.textarea.focus();
+    });
+    head.append(title, close);
+    const list = document.createElement('ul');
+    for (const key of ['chat.viewer.help.reply', 'chat.viewer.help.mention', 'chat.viewer.help.poll', 'chat.viewer.help.settings'] as const) {
+      const li = document.createElement('li');
+      li.textContent = t(key);
+      list.append(li);
+    }
+    box.append(head, list);
+    return box;
+  }
+
   submit(): void {
-    const text = this.textarea.value.trim();
-    if (!text || this.sendButton.disabled) return;
+    const typed = this.textarea.value.trim();
+    if (!typed) return;
+    // Commands are read here and never sent (the server never reads text as a command).
+    const cmd = parseCommand(typed, 'viewer');
+    if (cmd && !cmd.ok) {
+      this.errorText = t(cmd.code, cmd.params);
+      this.update();
+      return;
+    }
+    if (cmd?.ok && cmd.cmd.id === 'help') {
+      this.help.hidden = false;
+      this.textarea.value = '';
+      this.errorText = null;
+      this.update();
+      return;
+    }
+    const text = cmd?.ok && cmd.cmd.id === 'say' ? cmd.cmd.text : typed;
+    if (this.sendButton.disabled) return;
     const reply = this.reply;
     const n = this.deps.send(text, reply);
     if (n === null) {

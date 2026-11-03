@@ -264,7 +264,8 @@ export async function createAdminServer(o: AdminOptions): Promise<FastifyInstanc
       // The chat as its own message type: the state snapshot never carries chat.
       const ring = L.chat.adminState();
       const pin = ring.pin ? [{ k: 'pin' as const, p: ring.pin }] : [];
-      ws.send(JSON.stringify({ type: 'chat', reset: true, items: [...ring.roster.map((au) => ({ k: 'u' as const, au })), ...ring.items, ...pin], sessions: L.chat.adminSessions(), counters: ring.counters } satisfies AdminChatMessage));
+      const poll = ring.poll ? [{ k: 'poll' as const, p: ring.poll }] : [];
+      ws.send(JSON.stringify({ type: 'chat', reset: true, items: [...ring.roster.map((au) => ({ k: 'u' as const, au })), ...ring.items, ...pin, ...poll], sessions: L.chat.adminSessions(), counters: ring.counters } satisfies AdminChatMessage));
     });
   });
   let pending: NodeJS.Timeout | null = null;

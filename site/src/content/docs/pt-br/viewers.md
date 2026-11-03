@@ -71,6 +71,7 @@ Curioso para saber o que o player está fazendo? **Estatísticas para nerds**, e
 Ao lado do vídeo no computador (uma coluna da altura da janela) e embaixo dele no celular fica o chat da live. Digite uma mensagem e aperte Enter. Todo mundo na live vê o seu apelido e as suas mensagens; as mensagens de quem transmite têm o selo **Transmissão**.
 
 - **Responda** a uma mensagem pelo botão que aparece ao apontar para ela (toque nela no celular; pelo teclado, as setas percorrem as mensagens): a sua resposta mostra um trecho dela. Digite **@** para mencionar alguém que escreveu no chat; uma mensagem que menciona você aparece marcada só para você, sem som nenhum (dá para desligar a marca em **Configurações do chat**).
+- **Enquetes e palpites** de quem transmite aparecem acima das mensagens do chat: toque numa resposta para votar. O seu voto é definitivo e anônimo (um por navegador), e o resultado aparece ao vivo. No celular a enquete começa recolhida numa linha: toque para abrir. Digite **/ajuda** na caixa do chat para ver uma lista curta do que dá para fazer.
 - **Ocultar chat** esconde o chat neste aparelho (a escolha fica lembrada); **Mostrar chat** traz de volta.
 - **Configurações do chat** deixa escolher a cor do seu nome, mostrar os horários e aumentar o texto. A sua cor sempre aparece legível para todo mundo.
 - Se uma mensagem for recusada, um aviso curto diz o motivo (modo lento, silenciado, longa demais…). Quem transmite pode apagar mensagens e silenciar pessoas.
