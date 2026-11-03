@@ -52,6 +52,8 @@ export function commandsFor(row) {
     ],
     // The chat load bench (docs/CHAT.md): every scenario once per run, one PASS/FAIL line each.
     'chat-load': [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/chat/bench.ts --out "$RUN_DIR/chat-bench" ${A}`, parse: lineChecks }],
+    // The surge bench (docs/QUALITY.md "Many people at once"): every scenario once per run, one PASS/FAIL line each.
+    surge: [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/surge/bench.ts --out "$RUN_DIR/surge-bench" ${A}`, parse: lineChecks }],
     rust: [{ name: 'cargo test', cmd: `cd apps/desktop/src-tauri && cargo test --locked ${A}`, parse: cargoChecks }],
     preflight: [{ name: 'verify.mjs', cmd: `node scripts/test/preflight/verify.mjs --release-dir release --chrome ${A}`, parse: lineChecks }],
     scripts: isWin
