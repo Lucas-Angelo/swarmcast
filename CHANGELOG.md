@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The app window no longer stays on the splash screen.** On Linux, the app window could, rarely, stay on "Starting SwarmCast…" for good, although SwarmCast had started, until you closed the app. If the panel has not opened 5 seconds after SwarmCast is ready, the app now opens it again by itself (on every system).
-- **The poll form keeps the kind you pick.** Clicking **Prediction** right after opening the form with **Poll** could switch it back to a poll on its own a moment later, so a prediction could start as a plain poll. It now stays on what you clicked.
+- **The poll form keeps what you do right after opening it.** Clicking **Prediction** at once could switch the form back to a poll a moment later, so a prediction could start as a plain poll; and on a Mac or on Linux, a click on an answer box right away could send what you typed into the question instead. Both now stay where you clicked.
 - **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
 
 ## [0.5.0] - 2026-11-05

@@ -140,6 +140,32 @@ test('chat poll form: a choice made the moment the form appears stays chosen', {
   await expect(form.getByTestId('chat-poll-newonly')).toBeChecked();
 });
 
+test('chat poll form: the question has the focus as the form appears, and a field clicked right away keeps it', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  const live = await openChat(page);
+
+  // Act: open the form; in the same task as its first render, read where the focus is, then move
+  // it to the first option as a quick click would. Then wait for the browser's next rendering
+  // update (where `autofocus` would be applied) and the task after it.
+  const focus = await live.evaluate(async (root) => {
+    const at = (): string | null => (document.activeElement as HTMLElement | null)?.dataset.testid ?? null;
+    root.querySelector<HTMLButtonElement>('[data-testid="chat-poll-new"]')!.click();
+    let option: HTMLInputElement | null = null;
+    for (let i = 0; i < 50 && option === null; i++) {
+      await Promise.resolve(); // Preact renders in a microtask
+      option = root.querySelector<HTMLInputElement>('[data-testid="chat-poll-option-input"]');
+    }
+    if (option === null) throw new Error('the poll form did not render');
+    const first = at();
+    option.focus();
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+    return { first, later: at() };
+  });
+
+  // Assert
+  expect(focus).toEqual({ first: 'chat-poll-question', later: 'chat-poll-option-input' });
+});
+
 test('chat prediction: guesses from people already watching, the right answer picked in the panel, who got it right', { tag: '@ui' }, async ({ page, viewers, bots }) => {
   // Arrange
   const live = await openChat(page);
