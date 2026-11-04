@@ -1,0 +1,26 @@
+name: Fetch pinned remote actions
+description: >-
+  Fetches remote actions with git, at their pins in .github/actions/remote-pins/action.yml, into
+  .git/remote-actions/<owner>/<repo> of the workspace, so the next steps run them from there
+  (`uses: ./.git/remote-actions/<owner>/<repo>[/<path>]`) instead of the runner downloading them.
+  The runner's download from codeload.github.com is not tried again after a 404 (pipeline run
+  41636784175 lost a job to one for a commit that exists); this tries 4 times, 5, 10 and 20 s
+  apart, each git command limited to 30 s, with a warning for every failed try. An action that is
+  there already is not fetched again. Fails the step when one cannot be fetched, unless
+  `optional`. Run actions/checkout first. .github/workflows/README.md, "Remote actions".
+
+inputs:
+  repos:
+    description: The repositories (`owner/repo`, separated by spaces or new lines), each pinned in .github/actions/remote-pins/action.yml.
+    required: true
+  optional:
+    description: '`true` for actions that only speed the job up (caches): one that cannot be fetched is a warning, and `fetched` says `false`.'
+    default: 'false'
+
+outputs:
+  fetched:
+    description: '`true` when every one of `repos` is in place.'
+
+runs:
+  using: node24
+  main: main.mjs

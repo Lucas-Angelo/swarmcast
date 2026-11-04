@@ -1,4 +1,6 @@
 /target/
+# Extra Cargo target dirs (CARGO_TARGET_DIR=target-<name>, e.g. a parallel build).
+/target-*/
 /gen/schemas/
 # Staged by scripts/build/desktop.mjs (server sidecar, MediaMTX, cloudflared, web apps).
 /staged/

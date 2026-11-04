@@ -1,0 +1,18 @@
+{
+  "name": "node-datachannel",
+  "version": "0.32.3-swarmcast.0",
+  "private": true,
+  "description": "Stand-in for node-datachannel, the native WebRTC addon that bittorrent-tracker's client pulls in (through @thaunknown/simple-peer and webrtc-polyfill). SwarmCast runs only bittorrent-tracker/server, which never loads it. The real package's install script downloads a prebuilt binary from GitHub and, when that fails, builds it from source, which fails too (pipeline run 41664754395). Loading this stand-in throws.",
+  "license": "MIT",
+  "exports": {
+    ".": {
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    },
+    "./polyfill": {
+      "import": "./index.mjs",
+      "require": "./index.cjs"
+    }
+  },
+  "main": "index.cjs"
+}
