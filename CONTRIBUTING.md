@@ -29,7 +29,7 @@ SwarmCast keeps a few promises to its users. A change that breaks one of them wi
   counters.
 - **Private by default.** Members-only links, the stream key and viewers' data stay protected
   ([docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)).
-- **Made for lay users.** Installers and scripts never ask questions. Every text in the panel, the viewer
+- **Made for lay users.** Installers never ask questions. Every text in the panel, the viewer
   pages, the desktop app and the website is in **English and Brazilian Portuguese** (with tooltips in the
   panel). The strings are in `packages/shared/src/i18n/`.
 
@@ -58,7 +58,7 @@ Playwright or Vitest retries, no re-running a CI job until it is green), and a s
 fix at its cause. How the suites work and how stability is measured: [docs/TESTING.md](docs/TESTING.md).
 
 **Run things safely.** A run from the source checkout keeps its data in `.cache/dev-data`, never in your
-real SwarmCast folder. Give anything else you start (a package, an installer test) its own folder with
+real SwarmCast folder. Give anything else you start (a staged server, an installer test) its own folder with
 `SWARMCAST_DATA_DIR="$(mktemp -d)"`, set `SWARMCAST_NO_OPEN=1` so nothing opens a browser, and move the
 e2e ports with `SWARMCAST_E2E_PORT_OFFSET` when another copy may be running. Some system tests change the
 machine and are for CI only ([scripts/README.md](scripts/README.md)).
@@ -93,7 +93,7 @@ type(scope): short summary in plain English
 
 - **Types:** `feat`, `fix`, `perf`, `refactor`, `docs`, `test`, `build`, `ci`, `chore`, `revert`,
   `deps`.
-- **Scopes** (optional): `server`, `viewer`, `panel`, `desktop`, `tray`, `scripts`, `site`, `shared`,
+- **Scopes** (optional): `server`, `viewer`, `panel`, `desktop`, `scripts`, `site`, `shared`,
   `release`, `deps`, or another short area name.
 - Add `!` after the type or scope for a breaking change: `feat(server)!: …`.
 - Keep it within 72 characters.

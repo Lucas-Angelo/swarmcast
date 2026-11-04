@@ -27,8 +27,6 @@ export interface AppPaths {
   binDir: string;
   viewerDir: string;
   adminDir: string;
-  /** Directory holding tray icons (generated at runtime). */
-  iconsDir: string;
 }
 
 /** True when running as the packaged single executable (built with @yao-pkg/pkg). */
@@ -63,7 +61,7 @@ export const DEV_DATA_DIR = path.join('.cache', 'dev-data');
 
 /**
  * The data folder of a run that was not given one (`--data-dir`): `SWARMCAST_DATA_DIR`, else the
- * per-user folder for the packaged app (start scripts, desktop app), else `<repo>/.cache/dev-data`
+ * per-user folder for the packaged app (the desktop app), else `<repo>/.cache/dev-data`
  * for a source checkout.
  */
 export function runDataDir(env: NodeJS.ProcessEnv = process.env, packaged = isPackaged(), root = repoRoot()): string {
@@ -100,7 +98,6 @@ export function resolvePaths(dataDirOption?: string, env: NodeJS.ProcessEnv = pr
     binDir,
     viewerDir: webRoot ? path.join(webRoot, 'viewer') : path.join(installDir, 'apps', 'viewer', 'dist'),
     adminDir: webRoot ? path.join(webRoot, 'admin') : path.join(installDir, 'apps', 'admin', 'dist'),
-    iconsDir: path.join(dataDir, 'run', 'icons'),
   };
 }
 

@@ -89,7 +89,7 @@ export class MediaMtx {
 
   async start(): Promise<void> {
     if (!fs.existsSync(this.opts.binary)) {
-      throw new Error(`MediaMTX was not found at ${this.opts.binary}. Run the start script again to repair the installation.`);
+      throw new Error(`MediaMTX was not found at ${this.opts.binary}. Reinstall SwarmCast to repair it.`);
     }
     fs.mkdirSync(this.opts.runDir, { recursive: true, mode: 0o700 });
     const cfgPath = path.join(this.opts.runDir, 'mediamtx.yml');

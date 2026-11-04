@@ -452,7 +452,7 @@ describe('diagnostics admin API', () => {
     expect(badBody.statusCode).toBe(400);
   });
 
-  it('exports to the given folder, anonymised, in script mode', async () => {
+  it('exports to the given folder, anonymised, outside the desktop app', async () => {
     // Arrange
     const { downloads, post } = await diagnosticsPanel();
     // Act

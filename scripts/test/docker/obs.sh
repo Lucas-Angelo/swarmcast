@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# Section 2: real OBS Studio (Ubuntu 24.04 package) streaming to the real SwarmCast package,
-# both inside one container, OBS headless under Xvfb with Mesa llvmpipe.
+# Real OBS Studio (Ubuntu 24.04 package) streaming to the staged SwarmCast server (the
+# executable the desktop app runs as its sidecar), both inside one container, OBS headless under
+# Xvfb with Mesa llvmpipe.
 #
-#   scripts/test/docker/obs.sh [--release DIR] [--no-build] [--platform linux/amd64] [--simple]
+#   scripts/test/docker/obs.sh [--staging DIR] [--no-build] [--platform linux/amd64] [--simple]
 #
+#   --staging DIR  release/staging/linux-<arch> (package.mjs) for the container's architecture
+#                  (default: release/staging/<this machine's linux target>)
 #   --simple  keep OBS Simple output mode defaults (no 2 s keyframe setting) instead of
 #             Advanced output with x264 keyint 2 s (what the SwarmCast panel asks for)
 set -u
@@ -13,28 +16,25 @@ ROOT="$(cd "$DIR/../../.." && pwd)"
 . "$DIR/pull.sh"
 # shellcheck source-path=SCRIPTDIR source=build.sh
 . "$DIR/build.sh"
-RELEASE="${RELEASE_DIR:-}"
+STAGING=""
 BUILD=1
 PLATFORM=""
 MODE=advanced
 while [ $# -gt 0 ]; do
   case "$1" in
-    --release) RELEASE="$2"; shift ;;
+    --staging) STAGING="$2"; shift ;;
     --no-build) BUILD=0 ;;
     --platform) PLATFORM="$2"; shift ;;
     --simple) MODE=simple ;;
-    -h | --help) sed -n '2,9p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "Unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
-if [ -z "$RELEASE" ]; then
-  common="$(git -C "$ROOT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"
-  for c in "$ROOT/release" "${common%/.git}/release"; do
-    [ -f "$c/SHA256SUMS.txt" ] && { RELEASE="$c"; break; }
-  done
+if [ -z "$STAGING" ]; then
+  case "$(uname -m)" in aarch64 | arm64) STAGING="$ROOT/release/staging/linux-arm64" ;; *) STAGING="$ROOT/release/staging/linux-x64" ;; esac
 fi
-[ -f "$RELEASE/SHA256SUMS.txt" ] || { echo "Release folder not found. Use --release DIR." >&2; exit 2; }
+[ -x "$STAGING/swarmcast" ] || { echo "No staged server in $STAGING (node scripts/build/package.mjs --target linux-<arch>). Use --staging DIR." >&2; exit 2; }
 IMAGE="swarmcast-test-obs${PLATFORM:+-${PLATFORM##*/}}"
 if [ "$BUILD" = 1 ]; then
   pull_image ubuntu:24.04 "$PLATFORM" || exit 2
@@ -42,6 +42,6 @@ if [ "$BUILD" = 1 ]; then
 fi
 # --shm-size: OBS and Mesa use shared memory; the 64 MB default is tight.
 docker run --rm --init --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \
-  -v "$(cd "$RELEASE" && pwd):/release:ro" -v "$DIR:/tests:ro" \
+  -v "$(cd "$STAGING" && pwd):/server:ro" -v "$DIR:/tests:ro" \
   -e "OUTPUT_MODE=$MODE" \
   "$IMAGE" bash /tests/obs-test.sh

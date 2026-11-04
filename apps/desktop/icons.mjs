@@ -8,7 +8,7 @@
 // src-tauri/icons/gen.mjs. The small sizes of the Windows .ico (16–48 px) and 32x32.png come from the
 // hand-simplified glyphs in assets/brand/icon/sizes/ when present, since a plain downscale of the
 // 1024 px art blurs at those sizes. Tray icons (32×32 PNG: off, waiting, live):
-// assets/brand/tray/tray-<state>-32.png if they exist, else apps/tray/icons/<state>.png.
+// assets/brand/tray/tray-<state>-32.png.
 // Commit the results.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -43,11 +43,9 @@ if (fs.existsSync(sizes)) {
 
 const brandTray = path.join(brand, 'tray');
 for (const state of ['off', 'waiting', 'live']) {
-  const fromBrand = path.join(brandTray, `tray-${state}-32.png`);
-  const from = fs.existsSync(fromBrand) ? fromBrand : path.join(root, 'apps', 'tray', 'icons', `${state}.png`);
-  fs.copyFileSync(from, path.join(iconsDir, 'tray', `${state}.png`));
+  fs.copyFileSync(path.join(brandTray, `tray-${state}-32.png`), path.join(iconsDir, 'tray', `${state}.png`));
 }
-console.log(`✓ app icons from ${path.relative(root, source)}, tray icons from ${path.relative(root, fs.existsSync(brandTray) ? brandTray : path.join(root, 'apps', 'tray', 'icons'))}`);
+console.log(`✓ app icons from ${path.relative(root, source)}, tray icons from ${path.relative(root, brandTray)}`);
 
 /** An .ico file whose images are stored as PNG (one directory entry per size). */
 function buildIco(entries) {

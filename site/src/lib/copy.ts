@@ -77,7 +77,7 @@ export interface Copy {
     why: { title: string; text: string[] };
     verify: { title: string; steps: string[]; windowsCmd: string; unixCmd: string; windowsLabel: string; unixLabel: string };
     req: { title: string; minimum: string; recommended: string; rows: [string, string, string][]; obs: string };
-    other: { title: string; script: string; scriptText: string; source: string; sourceText: string };
+    other: { title: string; source: string; sourceText: string };
   };
 }
 
@@ -227,9 +227,7 @@ const en: Copy = {
       obs: 'You also need OBS Studio (free). Viewers only need a browser.',
     },
     other: {
-      title: 'Other ways to install',
-      script: 'Install with a script',
-      scriptText: 'For advanced users and servers: an installer zip or a single command.',
+      title: 'More downloads',
       source: 'All files and source code',
       sourceText: 'Every release, its notes and SHA256SUMS.txt on GitHub.',
     },
@@ -382,9 +380,7 @@ const pt: Copy = {
       obs: 'Você também precisa do OBS Studio (gratuito). Quem assiste só precisa de um navegador.',
     },
     other: {
-      title: 'Outros jeitos de instalar',
-      script: 'Instalar com script',
-      scriptText: 'Para quem tem experiência e para servidores: um zip de instalação ou um comando só.',
+      title: 'Mais downloads',
       source: 'Todos os arquivos e o código-fonte',
       sourceText: 'Todas as versões, as notas e o SHA256SUMS.txt no GitHub.',
     },

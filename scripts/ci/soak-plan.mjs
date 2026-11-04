@@ -30,13 +30,11 @@ export const SUITES = {
   // --project=chromium --project=firefox --project=edge) and may add --repeat-each.
   'chat-ui': { job: 'node', setup: 15, run: 10 },
   rust: { job: 'rust', setup: 20, run: 5 },
-  'windows-installer': { job: 'windows', setup: 15, run: 20 },
   'windows-app': { job: 'windows', setup: 15, run: 20 },
   'windows-direct': { job: 'windows', setup: 15, run: 15 },
   'windows-quality': { job: 'windows', setup: 15, run: 15 },
   'windows-obs': { job: 'windows', setup: 15, run: 15 },
   preflight: { job: 'preflight', setup: 15, run: 15 },
-  scripts: { job: 'scripts', setup: 5, run: 10 },
   'desktop-test': { job: 'desktop_test', setup: 10, run: 20 },
   'desktop-dmg': { job: 'desktop_dmg', setup: 50, run: 10 },
   apt: { job: 'apt', setup: 5, run: 15 },

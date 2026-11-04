@@ -8,7 +8,7 @@ import { defaultDataDir, resolvePaths, runDataDir } from '../../src/core/paths.j
  * The data folder of a run that was not given one. A run from the source checkout (`npm run dev`,
  * `node --import tsx apps/server/src/main.ts`) must never read or change the real SwarmCast data of
  * the computer it runs on, so it uses `<repo>/.cache/dev-data`, which git ignores (the folder holds
- * the stream key and the signing keys). Packaged builds (start scripts, desktop app) keep the
+ * the stream key and the signing keys). Packaged builds (the desktop app) keep the
  * per-user folder, and SWARMCAST_DATA_DIR wins for both.
  */
 

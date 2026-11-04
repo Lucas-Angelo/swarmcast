@@ -18,7 +18,7 @@ export function readSystemCheck(file: string): SystemCheck | null {
 
 /**
  * Installer system check (admin panel only), shown in the setup tutorial's "Your PC check" step.
- *   GET /api/system-check  SystemCheck, or 404 when the start script did not write one
+ *   GET /api/system-check  SystemCheck, or 404 when none was written (not the desktop app, or its check has not run yet)
  */
 export function registerSystemCheckRoutes(app: FastifyInstance, file: string | undefined, auth: Handler): void {
   app.get('/api/system-check', { preHandler: auth }, async (_req, reply) => {

@@ -1,11 +1,12 @@
 // Shared helpers for the Windows end-to-end matrix (.github/workflows/_windows.yml).
 //
-// Every suite (installer.mjs, app.mjs, quality.mjs, direct.mjs, obs.mjs) records each check
-// with record()/check(), keeps going after a failed section, and at the end writes
-// <out>.json plus a Markdown table to $GITHUB_STEP_SUMMARY. Exit code 1 when any check failed.
+// Every suite (app.mjs, quality.mjs, direct.mjs, obs.mjs) records each check with
+// record()/check(), keeps going after a failed section, and at the end writes <out>.json plus a
+// Markdown table to $GITHUB_STEP_SUMMARY. Exit code 1 when any check failed.
 //
-// The installer and the app always run with a bare-OS PATH (System32, Windows, Wbem,
-// WindowsPowerShell), never with the runner's Git/Node/Chocolatey tooling.
+// Each suite runs the staged server (release/staging/windows-x64, the desktop app's sidecar)
+// outside the desktop app, from a copy in its data folder, always with a bare-OS PATH (System32,
+// Windows, Wbem, WindowsPowerShell), never with the runner's Git/Node/Chocolatey tooling.
 //
 // No check is retried and nothing sleeps to let things settle: every wait is for its condition
 // (poll, orTimeout, Playwright's waits), with a deadline. The one infra recovery is the name of
@@ -26,7 +27,6 @@ import { writeJunit } from '../lib/junit.mjs';
 import { mdCell } from '../lib/markdown.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
-import { serveDir } from '../lib/release-server.mjs';
 import { joinIn, pageState, playerStats, probeHealth, waitPlaying as waitPlayingIn } from '../lib/viewer.mjs';
 import { formatExit, orTimeout, poll } from '../lib/wait.mjs';
 
@@ -51,11 +51,11 @@ export const opt = (n, d) => {
 };
 export const flag = (n) => args.includes(`--${n}`);
 
-// Section loops for targeted soaks (one install, then the chosen sections N times):
+// Section loops for targeted soaks (one setup, then the chosen sections N times):
 //   --sections 13          only section 13 (plus section 0 / "environment", which always runs once)
 //   --sections 0,5,X button  numbers match the section number, other words part of its name
 //   --repeat 100           every section that runs (except section 0) runs 100 times
-// Sections a chosen one depends on (an install, a running app) must be listed too.
+// Sections a chosen one depends on (a running app) must be listed too.
 const SECTIONS = (opt('sections') ?? '')
   .split(',')
   .map((s) => s.trim())
@@ -226,10 +226,10 @@ export function closeStrayBrowsers(list = null) {
 
 // Path-based sweep at the end of every section. taskkill /T follows parent pids and misses
 // orphans whose parent already exited, so anything whose executable or command line points into
-// the artifacts folder, the work folder or a folder a suite adds (addSweepPath) is ended: console
-// helpers, cmd /c wrappers, a start script a cleanup missed. Never this harness or its ancestors,
-// nor what a suite keeps across sections (keepAcrossSections) and everything below it.
-const sweepPaths = new Set([ART, path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')))]);
+// the artifacts folder or a folder a suite adds (addSweepPath, e.g. its data folder) is ended:
+// console helpers, cmd /c wrappers, a server a cleanup missed. Never this harness or its
+// ancestors, nor what a suite keeps across sections (keepAcrossSections) and everything below it.
+const sweepPaths = new Set([ART]);
 const keptPids = new Set();
 export const addSweepPath = (p) => sweepPaths.add(path.resolve(p));
 export const keepAcrossSections = (pid) => pid && keptPids.add(pid);
@@ -470,7 +470,7 @@ export function psJson(script, opts) {
 export function processes() {
   return psJson('Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="ppid";e={$_.ParentProcessId}},@{n="name";e={$_.Name}},@{n="path";e={$_.ExecutablePath}},@{n="cmd";e={$_.CommandLine}}').map((p) => ({ ...p, path: p.path ?? '', cmd: p.cmd ?? '' }));
 }
-/** Processes whose executable lives under `dir` (SwarmCast, its reaper, MediaMTX, cloudflared, tray, ffmpeg). */
+/** Processes whose executable lives under `dir` (SwarmCast, its reaper, MediaMTX, cloudflared, ffmpeg). */
 export function processesUnder(dir) {
   const d = path.resolve(dir).toLowerCase() + path.sep;
   return processes().filter((p) => p.path && p.path.toLowerCase().startsWith(d));
@@ -531,40 +531,42 @@ export function peSubsystem(file) {
 }
 
 // ---------------------------------------------------------------------------
-// Release server
-// ---------------------------------------------------------------------------
-
-/** The release folder `root` on 127.0.0.1 (lib/release-server.mjs): { url, port, close }. */
-export const serve = (root) => serveDir(root);
-
-// ---------------------------------------------------------------------------
-// Installer / app
+// The server
 // ---------------------------------------------------------------------------
 
 export const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
 export const powershellExe = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-export const cmdExe = path.join(systemRoot, 'System32', 'cmd.exe');
 
-let instCount = 0;
 /**
- * Starts the installer.
- *   entry 'ps'   powershell.exe (5.1) -NoProfile -ExecutionPolicy Bypass -File start-windows.ps1 <args>
- *   entry 'cmd'  cmd.exe /d /s /c ""<dir>\start-windows.cmd" <args>"  (what a double-click runs)
- *   entry 'iex'  powershell.exe -NoProfile -Command "irm <url>/start-windows.ps1 | iex"
+ * The staged server package (scripts/build/package.mjs: release/staging/windows-x64), whose
+ * swarmcast.exe the desktop app ships as its sidecar. --staging picks another folder.
  */
-export function runInstaller({ entry = 'ps', dir, releaseUrl, home, args = [], iexUrl, extraEnv = {}, label = entry }) {
-  const env = bareEnv({ home, releaseUrl, extra: extraEnv });
-  const n = ++instCount;
-  const logFile = path.join(ART, `${SUITE}-installer-${String(n).padStart(2, '0')}-${label}.log`.replace(/[^\w.\\:-]+/g, '_'));
-  let child;
-  if (entry === 'ps') {
-    child = spawn(powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(dir, 'start-windows.ps1'), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  } else if (entry === 'cmd') {
-    const line = `""${path.join(dir, 'start-windows.cmd')}"${args.length ? ' ' + args.join(' ') : ''}"`;
-    child = spawn(cmdExe, ['/d', '/s', '/c', line], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: true });
-  } else if (entry === 'iex') {
-    child = spawn(powershellExe, ['-NoProfile', '-Command', `irm ${iexUrl}/start-windows.ps1 | iex`], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-  } else throw new Error(`unknown entry ${entry}`);
+export const STAGING = path.resolve(opt('staging', path.join(repoRoot, 'release', 'staging', 'windows-x64')));
+/** Where a suite puts its copy of the staged server: inside the data folder, so processesUnder(home) sees everything it runs. */
+export const serverDir = (home) => path.join(home, 'server');
+export const serverExe = (home) => path.join(serverDir(home), 'swarmcast.exe');
+
+/** A fresh copy of the staged server in `<home>\server` (the data folder is left as it is). */
+export function installServer(home) {
+  if (!fs.existsSync(path.join(STAGING, 'swarmcast.exe'))) throw new Error(`no staged server in ${STAGING} (node scripts/build/package.mjs --target windows-x64)`);
+  fs.rmSync(serverDir(home), { recursive: true, force: true });
+  fs.mkdirSync(home, { recursive: true });
+  fs.cpSync(STAGING, serverDir(home), { recursive: true });
+}
+
+let serverCount = 0;
+/**
+ * Starts the server installed in `<home>\server` on the data folder `home`, outside the desktop
+ * app (browser panel, no desktop protocol), with a bare-OS PATH and no browser
+ * (SWARMCAST_NO_OPEN). `args` come after `--data-dir <home>` (e.g. --no-tunnel); with
+ * `defaultDataDir` there is no --data-dir, and the server picks %LOCALAPPDATA%\SwarmCast itself
+ * (then `home` must be that folder).
+ */
+export function runServer({ home, args = [], extraEnv = {}, label = 'server', defaultDataDir = false }) {
+  const env = bareEnv({ extra: extraEnv });
+  const n = ++serverCount;
+  const logFile = path.join(ART, `${SUITE}-server-${String(n).padStart(2, '0')}-${label}.log`.replace(/[^\w.\\:-]+/g, '_'));
+  const child = spawn(serverExe(home), [...(defaultDataDir ? [] : ['--data-dir', home]), ...args], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
   let out = '';
   const onData = (d) => {
     out += d;
@@ -573,97 +575,51 @@ export function runInstaller({ entry = 'ps', dir, releaseUrl, home, args = [], i
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
   const exit = new Promise((r) => child.on('exit', (c) => r(c)));
-  log(`installer #${n} (${label}) pid ${child.pid}: ${entry} ${args.join(' ')} home=${home ?? '(default)'} url=${releaseUrl ?? iexUrl ?? '(none)'}`);
-  // `owner`: a wait on this start script (its panel URL, the live link) fails at once when it exits.
-  return { child, out: () => out, exit, logFile, exited: () => child.exitCode !== null, owner: ownerOf(child, `start script #${n} (${label})`, () => out) };
-}
-
-/** Waits for the installer to finish (non-starting runs). */
-export async function installerResult(inst, timeoutMs = 300_000) {
-  const code = await orTimeout(inst.exit, timeoutMs, 'timeout');
-  if (code === 'timeout') inst.child.kill();
-  return { code, out: inst.out() };
+  log(`server #${n} (${label}) pid ${child.pid}: ${args.join(' ')} home=${home}`);
+  // `owner`: a wait on this server (its panel URL, the live link) fails at once when it exits.
+  return { child, out: () => out, exit, logFile, exited: () => child.exitCode !== null, owner: ownerOf(child, `server #${n} (${label})`, () => out) };
 }
 
 /**
  * Parses "Panel: http://127.0.0.1:<port>/auth/<token>" from `text()`, logs in, returns an API
  * client (lib/app.mjs loginFromOutput). Fails at once when a process of `abortOn` exits first.
  */
-export const adminLogin = (text, timeoutMs = 300_000, abortOn = []) => loginFromOutput(text, { timeoutMs, abortOn });
+export const adminLogin = (text, timeoutMs = 120_000, abortOn = []) => loginFromOutput(text, { timeoutMs, abortOn });
 
-/** Starts the installed app through the installer and logs into the panel. */
+/**
+ * Starts the server of `home` (installed first when `<home>\server` has none) and logs into the
+ * panel: { inst, base, api, state, ... }. Stopped with the section, unless `persist`.
+ */
 export async function startApp(o) {
-  const inst = runInstaller(o);
-  const home = o.home ?? path.join(process.env.LOCALAPPDATA ?? '', 'SwarmCast');
+  const { home } = o;
+  if (!fs.existsSync(serverExe(home))) installServer(home);
+  const inst = runServer(o);
   // Registered first, so it runs after the section's other cleanups (process kills).
   onCleanup(() => copyAppLogs(home, `${o.label ?? 'app'}-${inst.child.pid}`));
-  // The start script restarts SwarmCast when it exits within 10 s: stop the script itself too,
-  // unless the app is meant to outlive this section (o.persist).
   if (!o.persist) onCleanup(() => inst.child.exitCode === null && killTree(inst.child.pid));
   else keepAcrossSections(inst.child.pid);
   try {
-    const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 300_000, [inst.owner]);
+    const admin = await adminLogin(inst.out, o.loginTimeoutMs ?? 120_000, [inst.owner]);
     return { inst, ...admin };
   } catch (e) {
     inst.child.kill();
-    throw new Error(`${e.message}\n--- installer output tail ---\n${inst.out().slice(-3000)}`, { cause: e });
+    throw new Error(`${e.message}\n--- server output tail ---\n${inst.out().slice(-3000)}`, { cause: e });
   }
 }
 
-/** The state with the live link (lib/app.mjs): fails at once on a failed start or when the start script exits. */
+/** The state with the live link (lib/app.mjs): fails at once on a failed start or when the server exits. */
 export const waitLiveLink = (app, timeoutMs = LIVE_LINK_WAIT_MS) => waitLiveLinkOf(app, timeoutMs, app.inst ? [app.inst.owner] : []);
 
 /** Quits through the panel API and checks: exit code, no process under home, ports closed. */
 export async function quitAndVerify(app, home, label, { via = 'api' } = {}) {
   if (via === 'api') await app.api('/api/app/quit', {}).catch(() => {});
   const code = await orTimeout(app.inst.exit, 60_000, 'timeout');
-  check(`${label}: app quits cleanly (installer exit code 0)`, code === 0, `exit ${code}`);
+  check(`${label}: app quits cleanly (exit code 0)`, code === 0, `exit ${code}`);
   const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 15_000, 'no leftovers').catch(() => processesUnder(home));
-  check(`${label}: no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg/tray process left`, left.length === 0, describeProcs(left));
+  check(`${label}: no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg process left`, left.length === 0, describeProcs(left));
   check(`${label}: port 1935 closed`, !(await listening(1935)));
   if (code === 'timeout') killTree(app.inst.child.pid);
   killUnder(home);
-}
-
-/**
- * Runs `cmd /c uninstall-windows.cmd [args]` (double-click equivalent, SWARMCAST_NO_PAUSE) from
- * `dir` and verifies: exit 0, no SwarmCast/reaper/MediaMTX/cloudflared/ffmpeg/tray process,
- * the data folder gone (or only config.json + secrets.json with -KeepSettings), ports free.
- * `envHome: false` leaves SWARMCAST_HOME unset (default %LOCALAPPDATA%\SwarmCast).
- */
-export async function uninstallAndVerify({ dir, home, args = [], label, envHome = true, alsoPorts = [] }) {
-  const cmdFile = path.join(dir, 'uninstall-windows.cmd');
-  if (!fs.existsSync(cmdFile)) {
-    record(`${label}: uninstaller`, 'skip', 'uninstall-windows.cmd not in this release');
-    return null;
-  }
-  const before = processesUnder(home);
-  const env = bareEnv({ home: envHome ? home : undefined });
-  const line = `""${cmdFile}"${args.length ? ' ' + args.join(' ') : ''}"`;
-  const child = spawn(cmdExe, ['/d', '/s', '/c', line], { env, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, windowsVerbatimArguments: true });
-  let out = '';
-  child.stdout.on('data', (d) => (out += d));
-  child.stderr.on('data', (d) => (out += d));
-  const t0 = Date.now();
-  const code = await orTimeout(new Promise((r) => child.on('exit', (c) => r(c))), 240_000, 'timeout');
-  const secs = Math.round((Date.now() - t0) / 1000);
-  fs.writeFileSync(path.join(ART, `${SUITE}-uninstall-${label}.log`.replace(/[^\w.\\:-]+/g, '_')), out);
-  if (code === 'timeout') killTree(child.pid);
-  const keep = args.some((a) => /keep-?settings/i.test(a));
-  check(`${label}: uninstall-windows.cmd${args.length ? ' ' + args.join(' ') : ''} exits 0`, code === 0, `exit ${code} after ${secs} s; was running: ${describeProcs(before) || 'nothing'}; ${(/SwarmCast uninstall finished: .*/.exec(out) ?? [''])[0]}`);
-  const left = await until(async () => (processesUnder(home).length === 0 ? [] : null), 10_000, 'no process').catch(() => processesUnder(home));
-  check(`${label}: no SwarmCast/MediaMTX/cloudflared/ffmpeg/tray process left`, left.length === 0, describeProcs(left));
-  if (keep) {
-    const kept = fs.existsSync(home) ? fs.readdirSync(home).sort() : [];
-    check(`${label}: -KeepSettings keeps only config.json + secrets.json`, JSON.stringify(kept) === JSON.stringify(['config.json', 'secrets.json']), kept.join(', ') || '(folder gone)');
-  } else {
-    check(`${label}: data folder removed`, !fs.existsSync(home), fs.existsSync(home) ? fs.readdirSync(home).join(', ') : home);
-  }
-  const busy = [];
-  for (const p of [1935, 8080, 8081, 8888, ...alsoPorts]) if (await listening(p)) busy.push(p);
-  check(`${label}: ports free after uninstall`, busy.length === 0, busy.length ? `still listening: ${busy.join(', ')}` : `1935 8080 8081 8888${alsoPorts.length ? ' ' + alsoPorts.join(' ') : ''}`);
-  check(`${label}: uninstaller says OBS settings were not changed`, /OBS settings were not changed/.test(out));
-  return { code, out };
 }
 
 /**

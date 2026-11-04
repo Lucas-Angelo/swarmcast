@@ -24,5 +24,3 @@ O menu também tem **Iniciar a live** / **Encerrar a live**, **Procurar atualiza
 - Se você moveu ou reinstalou o SwarmCast, o cartão pode dizer **Está abrindo uma cópia antiga do SwarmCast**. Clique em **Corrigir**.
 - AppImage no Linux: deixe o arquivo sempre no mesmo lugar, porque a opção guarda onde ele está.
 - Desinstalar o SwarmCast tira ele da lista de inicialização.
-
-Essa opção só existe no app, não na [instalação por script](/swarmcast/pt-br/advanced/script-install/).

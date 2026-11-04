@@ -22,14 +22,14 @@ const DESKTOP_KEYS = ['desktop.title', 'desktop.autostart', 'desktop.autostart.t
 afterEach(() => setDesktop(null));
 
 describe('desktop app state', () => {
-  it('only a real desktop answer counts (script mode, older servers and errors do not)', () => {
+  it('only a real desktop answer counts (outside the desktop app, older servers and errors do not)', () => {
     // Act
     const answers = [isDesktopInfo(info()), isDesktopInfo({ desktop: false }), isDesktopInfo(null)];
     // Assert
     expect(answers).toEqual([true, false, false]);
   });
 
-  it('loads the state with GET /api/desktop, and hides the section in script mode, on older servers and on errors', async () => {
+  it('loads the state with GET /api/desktop, and hides the section outside the desktop app, on older servers and on errors', async () => {
     // Arrange
     const get = vi.fn(async () => info());
     // Act
