@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The poll form keeps what you do right after opening it.** Clicking **Prediction** at once could switch the form back to a poll a moment later, so a prediction could start as a plain poll; and on a Mac or on Linux, a click on an answer box right away could send what you typed into the question instead. Both now stay where you clicked.
+- **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
 
 ## [0.5.0] - 2026-11-05
 

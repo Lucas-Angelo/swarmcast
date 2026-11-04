@@ -262,6 +262,32 @@ export async function openPanel(page: Page, lang?: 'en' | 'pt-BR'): Promise<void
 }
 
 /**
+ * Makes the page click the checkbox `[data-testid=<testid>]` in the same task as the render
+ * that first adds it (a MutationObserver runs in the microtask right after Preact's commit), before
+ * Preact runs that render's effects (after the next frame or a 35 ms timer), as a fast click on a
+ * busy page can. Then it waits for those effects: they were scheduled first, so they run before
+ * this frame's own callback and the task it queues. Call it before opening the page; the returned
+ * function tells whether the box was checked before the click and once the effects have run.
+ */
+export async function clickOnFirstRender(page: Page, testid: string): Promise<() => Promise<{ before: boolean; after: boolean }>> {
+  await page.addInitScript((id) => {
+    const w = window as unknown as { __clickOnFirstRender?: Promise<{ before: boolean; after: boolean }> };
+    w.__clickOnFirstRender = new Promise((resolve) => {
+      const added = new MutationObserver(() => {
+        const box = document.querySelector<HTMLInputElement>(`[data-testid="${id}"]`);
+        if (box === null) return;
+        added.disconnect();
+        const before = box.checked;
+        box.click();
+        requestAnimationFrame(() => setTimeout(() => resolve({ before, after: box.checked })));
+      });
+      added.observe(document, { childList: true, subtree: true });
+    });
+  }, testid);
+  return () => page.evaluate(() => (window as unknown as { __clickOnFirstRender: Promise<{ before: boolean; after: boolean }> }).__clickOnFirstRender);
+}
+
+/**
  * Waits until the panel's viewers table lists `nickname`. The table sits above the Chat card and
  * gains a row per new session: a click aimed at a card below it while a join is still on its
  * way to the panel lands wherever the card was before the row pushed it down.

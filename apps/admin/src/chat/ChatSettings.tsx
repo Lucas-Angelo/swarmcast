@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useLayoutEffect, useState } from 'preact/hooks';
 import {
   CHAT_BLOCKED_WORDS_MAX,
   CHAT_DUPLICATE_WINDOW_MAX_S,
@@ -32,7 +32,11 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
-  useEffect(() => {
+  // The saved settings replace the form when they change (a save, a /slow command, the other
+  // window). In the commit, not in a useEffect: Preact runs those after the next frame (or a 35 ms
+  // timer), and on the first render that one put the saved settings back over a change made in
+  // the meantime.
+  useLayoutEffect(() => {
     setV(settings);
     setWords(settings.blockedWords.join('\n'));
   }, [JSON.stringify(settings)]);
@@ -302,7 +306,10 @@ function Check({ label, checked, onChange, testid, disabled }: { label: MessageK
 /** A whole number in [min, max]: any text may be typed, only valid values reach the settings; blur shows the value in force. */
 function Num({ value, min, max, onChange, testid, unit }: { value: number; min: number; max: number; onChange: (n: number) => void; testid: string; unit?: MessageKey }) {
   const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
+  // In the commit, not in a useEffect. Preact runs those after the next frame, and a render before
+  // then runs the pending one first, with the value of its own render: while she types "123" the
+  // "1" came back over the "12", and the next key made it "13".
+  useLayoutEffect(() => setText(String(value)), [value]);
   return (
     <>
       <input
