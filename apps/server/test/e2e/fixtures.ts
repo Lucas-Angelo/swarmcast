@@ -416,10 +416,11 @@ export interface JoinPageOptions extends BrowserOptions {
  * player before its context changed nothing. WebKitGTK 2.52 (GNOME Web's engine) loses such loads
  * too.
  *
- * Only that first request: with every request of a WebKit test routed, the audio-only player
- * stalled 5-22 s after the ladder fell back in 4 runs of 28 of audio-only.spec.ts's ladder test
- * (soak, Linux), and a page closed under a `route.continue` that had waited 29 s. A spec's own
- * routes come first and work as before. Other engines are left alone.
+ * Only that first request, so the rest of the page loads as it would without the fixtures: a
+ * route sends every request through this process and turns the HTTP cache off, and once a
+ * context's close() is called Playwright answers no route, so a request still in flight then
+ * stayed held (the screenshot Playwright takes of each page at close waited 5 s for its fonts).
+ * A spec's own routes come first and work as before. Other engines are left alone.
  */
 function routeFirstRequestOfEachPage(context: BrowserContext): void {
   if (context.browser()?.browserType().name() !== 'webkit') return;
