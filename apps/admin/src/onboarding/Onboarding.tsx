@@ -5,14 +5,16 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import type { AdminState } from '@swarmcast/shared';
 import { t, type MessageKey } from '@swarmcast/shared/i18n';
 import { api, post } from '../api.js';
+import type { ChatPanel } from '../chat/panel.js';
 import { clampStep, isLastStep, loadDone, nextStep, OPEN_EVENT, prevStep, saveDone, shouldAutoOpen, STEPS, type Route, type StepId } from './logic.js';
-import { ChooseStep, ConnectStep, FinishStep, OutputStep, PcStep, ShareStep, TestStep, TourStep, WelcomeStep } from './steps.js';
+import { ChooseStep, ConnectStep, FinishStep, NameStep, OutputStep, PcStep, ShareStep, TestStep, TourStep, WelcomeStep, type LeaveGuard } from './steps.js';
 import type { AreaId } from './tour.js';
 import { clearSpot } from './tour.js';
 import './onboarding.css';
 
 const TITLES: Record<StepId, (route: Route) => MessageKey> = {
   welcome: () => 'onb.welcome.title',
+  name: () => 'onb.name.title',
   pc: () => 'onb.pc.title',
   output: () => 'onb.output.title',
   choose: () => 'onb.choose.title',
@@ -38,7 +40,7 @@ export function RedoTutorialButton() {
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-export function Onboarding({ state }: { state: AdminState }) {
+export function Onboarding({ state, chat }: { state: AdminState; chat: ChatPanel }) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState(0);
   const [route, setRoute] = useState<Route>('both');
@@ -46,6 +48,9 @@ export function Onboarding({ state }: { state: AdminState }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  // Set by the step on screen when leaving it has to do something first (the name step saves).
+  const leaveGuard = useRef<LeaveGuard | null>(null);
+  const moving = useRef(false);
 
   // Auto-open on first run.
   useEffect(() => {
@@ -88,6 +93,8 @@ export function Onboarding({ state }: { state: AdminState }) {
   }, [id]);
 
   const close = (): void => {
+    // Closing never waits: a valid name change is still saved, an invalid one is dropped.
+    void leaveGuard.current?.(false);
     clearSpot();
     setArea(null);
     setOpen(false);
@@ -137,7 +144,21 @@ export function Onboarding({ state }: { state: AdminState }) {
 
   if (!open) return null;
 
-  const go = (i: number): void => setStep(clampStep(i));
+  const go = (i: number): void => {
+    const to = clampStep(i);
+    if (to === step || moving.current) return;
+    const guard = leaveGuard.current;
+    if (!guard) {
+      setStep(to);
+      return;
+    }
+    moving.current = true;
+    void guard(true)
+      .then((ok) => ok && setStep(to))
+      .finally(() => {
+        moving.current = false;
+      });
+  };
   const last = isLastStep(step);
   const title = t(TITLES[id](route));
   const docked = id === 'tour' && area !== null;
@@ -169,6 +190,7 @@ export function Onboarding({ state }: { state: AdminState }) {
 
         <div class="onb-body" data-testid={`onb-step-${id}`}>
           {id === 'welcome' && <WelcomeStep />}
+          {id === 'name' && <NameStep chat={chat} guard={leaveGuard} />}
           {id === 'pc' && <PcStep s={state} />}
           {id === 'output' && <OutputStep />}
           {id === 'choose' && <ChooseStep route={route} onRoute={setRoute} />}

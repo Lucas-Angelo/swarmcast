@@ -1,12 +1,15 @@
 // Content of each tutorial step. Short texts, one idea per step, live data from the panel state.
 import type { ComponentChildren } from 'preact';
-import { useEffect, useState } from 'preact/hooks';
-import type { AdminState, QualityState } from '@swarmcast/shared';
+import { useEffect, useRef, useState } from 'preact/hooks';
+import { CHAT_STREAMER_NAME_MAX, type AdminState, type QualityState } from '@swarmcast/shared';
 import { formatNumber, getLang, t, tc } from '@swarmcast/shared/i18n';
-import { api, post } from '../api.js';
+import { api, errorText, post } from '../api.js';
+import { brandingApi } from '../branding/api.js';
+import { streamerNameFeedback } from '../chat/logic.js';
+import type { ChatPanel } from '../chat/panel.js';
 import { useDesktop } from '../desktop.js';
 import { Info } from '../Info.js';
-import { converterInstall, keyframeProblem, testStatus, videoSupport, type InstallLike, type Route, type VideoSupport } from './logic.js';
+import { converterInstall, initialChatName, keyframeProblem, nameOnLeave, testStatus, videoSupport, type InstallLike, type Route, type VideoSupport } from './logic.js';
 import { belowMinimum, checkRows, loadSystemCheck, type SystemCheck } from './systemcheck.js';
 import { AREAS, clearSpot, findArea, spotlight, type AreaId } from './tour.js';
 import imgDocksMenu from './img/obs-docks-menu.png';
@@ -96,7 +99,132 @@ export function WelcomeStep() {
   );
 }
 
-// ---- 2. PC check ----
+// ---- 2. Your name in the chat ----
+
+/**
+ * Called by the dialog before it leaves the name step. `strict` (Next, Back, a step dot): an
+ * invalid name keeps the step open with its error; otherwise (closing the tutorial) a valid
+ * change is saved and an invalid one is left as it was. Resolves to "may leave".
+ */
+export type LeaveGuard = (strict: boolean) => Promise<boolean>;
+
+/**
+ * The streamer's chat name (chat.streamerName), asked once at the start: prefilled from the
+ * saved name or the "Your page" name, checked as she types with the viewers' nickname rules,
+ * saved with the chat settings (PUT /api/chat/settings) when she moves on or presses Enter.
+ */
+export function NameStep({ chat, guard }: { chat: ChatPanel; guard: { current: LeaveGuard | null } }) {
+  const settings = chat.chat?.settings ?? null;
+  const saved = settings?.streamerName ?? '';
+  // null until she types: the field then shows the starting name, which may still arrive.
+  const [draft, setDraft] = useState<string | null>(null);
+  const [pageName, setPageName] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState<unknown>(null);
+  const input = useRef<HTMLInputElement>(null);
+
+  // Without a saved name, start from the "Your page" name when it fits the rules. What she types
+  // always wins, also over an answer that comes in later.
+  const needPage = settings !== null && !saved.trim();
+  useEffect(() => {
+    if (!needPage) return;
+    let stopped = false;
+    brandingApi.load().then(
+      (b) => !stopped && setPageName(b.branding.name ?? null),
+      () => {},
+    );
+    return () => {
+      stopped = true;
+    };
+  }, [needPage]);
+
+  const value = draft ?? initialChatName(saved, pageName);
+  const feedback = streamerNameFeedback(value);
+  const save = async (name: string): Promise<boolean> => {
+    if (!settings) return true;
+    setBusy(true);
+    setErr(null);
+    try {
+      await chat.saveSettings({ ...settings, streamerName: name });
+      setDone(true);
+      return true;
+    } catch (e) {
+      setErr(e);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+  const leave: LeaveGuard = async (strict) => {
+    if (!settings) return true;
+    // A "Your page" name shown as the start is saved too: she saw it and moved on.
+    const next = nameOnLeave(value, saved);
+    if (next.do === 'keep') return true;
+    if (next.do === 'save') return (await save(next.value)) || !strict;
+    if (strict) input.current?.focus();
+    return !strict;
+  };
+  // Set on every render, so the dialog always calls the guard with the current draft.
+  guard.current = leave;
+  useEffect(
+    () => () => {
+      guard.current = null;
+    },
+    [],
+  );
+
+  if (!settings) {
+    return chat.loadErr ? <p class="err small">{errorText(chat.loadErr)}</p> : <p class="muted">{t('onb.name.loading')}</p>;
+  }
+  const invalid = feedback.kind === 'error';
+  return (
+    <form
+      class="onb-name"
+      data-testid="onb-name"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void leave(true);
+      }}
+    >
+      <p>{t('onb.name.intro')}</p>
+      <label class="onb-field">
+        <span class="onb-field-label">{t('onb.name.label')}</span>
+        <input
+          ref={input}
+          class="text-input"
+          type="text"
+          data-testid="onb-name-input"
+          maxLength={100}
+          size={CHAT_STREAMER_NAME_MAX}
+          autoComplete="nickname"
+          placeholder={t('admin.chat.streamerName.placeholder')}
+          value={value}
+          aria-invalid={invalid}
+          aria-describedby="onb-name-feedback"
+          onInput={(e) => {
+            setDraft((e.target as HTMLInputElement).value);
+            setDone(false);
+          }}
+        />
+      </label>
+      <p id="onb-name-feedback" class={`small ${invalid ? 'err' : 'muted'}`} role="status" aria-live="polite" data-testid="onb-name-feedback" data-kind={feedback.kind}>
+        {feedback.kind === 'error' ? t(feedback.key, feedback.params) : feedback.kind === 'ok' ? t('onb.name.ok', { name: feedback.value }) : t('onb.name.empty')}
+        {busy && <span> {t('onb.name.saving')}</span>}
+        {done && !busy && feedback.kind !== 'error' && <span class="ok strong" data-testid="onb-name-saved"> {t('onb.name.saved')}</span>}
+      </p>
+      {err !== null && (
+        <p class="err small" role="alert">
+          {errorText(err)}
+        </p>
+      )}
+      <p class="onb-callout small">{t('onb.name.reserved')}</p>
+      <p class="muted small">{t('onb.name.later')}</p>
+    </form>
+  );
+}
+
+// ---- 3. PC check ----
 type QualityLike = (Partial<QualityState> & { install?: InstallLike | null }) | null;
 
 function videoText(v: VideoSupport): string {
@@ -277,7 +405,7 @@ export function SystemCheckView({ c }: { c: SystemCheck }) {
   );
 }
 
-// ---- 3. OBS output settings ----
+// ---- 4. OBS output settings ----
 export function OutputStep() {
   return (
     <>
@@ -296,7 +424,7 @@ export function OutputStep() {
   );
 }
 
-// ---- 4. Choose the route ----
+// ---- 5. Choose the route ----
 export function ChooseStep({ route, onRoute }: { route: Route; onRoute: (r: Route) => void }) {
   const opt = (r: Route, title: string, desc: string, badge?: string) => (
     <label class={`onb-choice ${route === r ? 'selected' : ''}`} data-testid={`onb-route-${r}`}>
@@ -318,7 +446,7 @@ export function ChooseStep({ route, onRoute }: { route: Route; onRoute: (r: Rout
   );
 }
 
-// ---- 5. Connect OBS (plugin or custom service) ----
+// ---- 6. Connect OBS (plugin or custom service) ----
 export function ConnectStep({ s, route }: { s: AdminState; route: Route }) {
   if (route === 'only') {
     return (
@@ -376,7 +504,7 @@ export function ConnectStep({ s, route }: { s: AdminState; route: Route }) {
   );
 }
 
-// ---- 6. Test it ----
+// ---- 7. Test it ----
 export function TestStep({ s, route, onFixKeyframes }: { s: AdminState; route: Route; onFixKeyframes: () => void }) {
   const [busy, setBusy] = useState(false);
   const status = testStatus(s);
@@ -439,7 +567,7 @@ export function TestStep({ s, route, onFixKeyframes }: { s: AdminState; route: R
   );
 }
 
-// ---- 7. Share the link ----
+// ---- 8. Share the link ----
 export function ShareStep({ s }: { s: AdminState }) {
   const [copied, copy] = useCopy();
   return (
@@ -470,7 +598,7 @@ export function ShareStep({ s }: { s: AdminState }) {
   );
 }
 
-// ---- 8. Panel tour ----
+// ---- 9. Panel tour ----
 const AREA_TEXT: Record<AreaId, { title: Parameters<typeof t>[0]; desc: Parameters<typeof t>[0] }> = {
   top: { title: 'onb.tour.top', desc: 'onb.tour.top.desc' },
   chat: { title: 'onb.tour.chat', desc: 'onb.tour.chat.desc' },
@@ -521,7 +649,7 @@ export function TourStep({ area, onArea }: { area: AreaId | null; onArea: (a: Ar
   );
 }
 
-// ---- 9. Finish ----
+// ---- 10. Finish ----
 export function FinishStep({ s }: { s: AdminState }) {
   return (
     <>

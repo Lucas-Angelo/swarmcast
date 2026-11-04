@@ -451,7 +451,7 @@ export function App() {
       </div>
 
       {directOpen && <DirectModal onClose={() => setDirectOpen(false)} />}
-      <Onboarding state={s} />
+      <Onboarding state={s} chat={chatPanel} />
     </div>
   );
 }
