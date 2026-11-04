@@ -6,7 +6,9 @@
 // - a 404 on the audio-only playlist (the stream has no separate audio) goes back to video for the
 //   page and keeps the saved choice;
 // - reading the audio-only playlist again because a media playlist it listed went away keeps the
-//   element's MediaSource (a new one for sound alone can crash Linux WebKit);
+//   element's MediaSource (a new one for sound alone can crash Linux WebKit), plays on what it
+//   holds until the first segment of the new read is buffered, then moves into it and flushes the
+//   rest (the old buffer and playhead sit on the timeline of the window the viewer joined);
 // - the quality menu offers "Audio only" only when the stream has separate audio, keeps the video
 //   qualities on offer while audio only plays (hls.levels is then one level without a height), and
 //   picking one of them goes back to video at that height;
@@ -222,11 +224,57 @@ describe('a vanished media playlist while audio only plays', () => {
  * detaches it and gives the element a new MediaSource (hls.js loadSource), which Linux WebKit
  * can crash on for sound alone; `transferMedia` hands the MediaSource over instead.
  */
+/** Time ranges from [start, end] pairs. */
+const ranges = (r: Array<[number, number]>) => ({ length: r.length, start: (i: number) => r[i]![0], end: (i: number) => r[i]![1] });
+
+/** The element hls.js hands over: what it holds (the read before: 46-70 s), its playhead (66 s) and the seeks made. */
+class KeptElement {
+  held: Array<[number, number]> = [[46, 70]];
+  seeking = false;
+  seeks: number[] = [];
+  private t = 66;
+  get buffered() {
+    return ranges(this.held);
+  }
+  get currentTime(): number {
+    return this.t;
+  }
+  set currentTime(t: number) {
+    this.seeks.push(t);
+    this.t = t;
+  }
+}
+
 class ReloadHls {
   calls: string[] = [];
   mediaSources = 1;
+  startPosition = -1;
+  readonly element = new KeptElement();
   attached: unknown = 'media';
-  constructor(public url: string | null, private readonly canTransfer = true) {}
+  readonly flushes: Array<{ startOffset: number; endOffset: number; type: null }> = [];
+  private readonly handlers = new Map<string, Array<(e: string, d: unknown) => void>>();
+  constructor(
+    public url: string | null,
+    private readonly canTransfer = true,
+  ) {}
+  on(e: string, fn: (e: string, d: unknown) => void): void {
+    this.handlers.set(e, [...(this.handlers.get(e) ?? []), fn]);
+  }
+  off(e: string, fn: (e: string, d: unknown) => void): void {
+    this.handlers.set(e, (this.handlers.get(e) ?? []).filter((f) => f !== fn));
+  }
+  trigger(e: string, d: { startOffset: number; endOffset: number; type: null }): boolean {
+    if (e === RELOAD_EVENTS.BUFFER_FLUSHING) this.flushes.push(d);
+    return true;
+  }
+  /** hls.js buffered a fragment (`type` main) of the playlist it read, at [start, end]. */
+  buffered(start: number, end: number, type = 'main'): void {
+    this.element.held.push([start, end]);
+    for (const fn of this.handlers.get(RELOAD_EVENTS.FRAG_BUFFERED) ?? []) fn(RELOAD_EVENTS.FRAG_BUFFERED, { frag: { type, start, end } });
+  }
+  listeners(): number {
+    return (this.handlers.get(RELOAD_EVENTS.FRAG_BUFFERED) ?? []).length;
+  }
   loadSource(url: string): void {
     if (this.attached) {
       // hls.js: remove and re-create the MediaSource.
@@ -235,10 +283,10 @@ class ReloadHls {
     this.url = new URL(url, BASE).href;
     this.calls.push(`loadSource ${new URL(url, BASE).pathname}`);
   }
-  transferMedia(): unknown {
+  transferMedia() {
     this.calls.push('transferMedia');
     if (!this.canTransfer) return null;
-    const kept = { media: this.attached, mediaSource: 'kept' };
+    const kept = { media: this.element, mediaSource: 'kept' };
     this.attached = null;
     return kept;
   }
@@ -249,37 +297,101 @@ class ReloadHls {
 }
 
 const BASE = 'https://viewer.test/watch';
+const RELOAD_EVENTS = { FRAG_BUFFERED: 'hlsFragBuffered', BUFFER_FLUSHING: 'hlsBufferFlushing' } as const;
+const reload = (hls: ReloadHls, url: string) => reloadAudioOnlyInPlace(hls, url, { base: BASE, events: RELOAD_EVENTS });
+const audioOnly = () => new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href);
 
 describe('reading the audio-only playlist again (a media playlist it listed went away)', () => {
-  it('keeps the MediaSource: hands it over, reads the playlist, takes it back', () => {
+  it('keeps the MediaSource: hands it over, reads the playlist, takes it back, and plays on what it holds meanwhile', () => {
     // Arrange
-    const hls = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href);
+    const hls = audioOnly();
     // Act
-    const done = reloadAudioOnlyInPlace(hls, AUDIO_ONLY_URL, BASE);
-    // Assert
+    const done = reload(hls, AUDIO_ONLY_URL);
+    // Assert: emptied now, the element would wait with nothing buffered (the adaptive delay holds playback for that)
     expect(done).toBe(true);
     expect(hls.calls).toEqual(['transferMedia', `loadSource ${AUDIO_ONLY_URL}`, 'attachMedia']);
     expect(hls.mediaSources).toBe(1);
-    expect(hls.attached).toEqual({ media: 'media', mediaSource: 'kept' });
+    expect(hls.attached).toMatchObject({ media: hls.element, mediaSource: 'kept' });
+    expect([hls.element.seeks, hls.flushes]).toEqual([[], []]);
+  });
+
+  it('once the first segment of the playlist read again is buffered, moves the playhead into it, where hls.js starts, and flushes what the read before left', () => {
+    // Arrange: the playhead at 66 s on the timeline of the window the viewer joined; the window
+    // read again starts at 0, hls.js at its live sync position 21.7 s
+    const hls = audioOnly();
+    reload(hls, AUDIO_ONLY_URL);
+    hls.startPosition = 21.7;
+    // Act
+    hls.buffered(20.05, 22.04, 'audio');
+    hls.buffered(20.05, 22.04);
+    hls.buffered(22.04, 24.06);
+    // Assert: once, for the first segment of the main playlist
+    expect(hls.element.seeks).toEqual([21.7]);
+    expect(hls.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(hls.listeners()).toBe(0);
+  });
+
+  it('flushes what the read before left on both sides of the new segment', () => {
+    // Arrange: the window had moved on a little, so the old media spans the new segment
+    const hls = audioOnly();
+    hls.element.held = [[10, 30]];
+    reload(hls, AUDIO_ONLY_URL);
+    hls.startPosition = 26.2;
+    // Act
+    hls.buffered(26, 28);
+    // Assert
+    expect(hls.element.seeks).toEqual([26.2]);
+    expect(hls.flushes).toEqual([
+      { startOffset: 0, endOffset: 26, type: null },
+      { startOffset: 28, endOffset: Number.POSITIVE_INFINITY, type: null },
+    ]);
+  });
+
+  it('moves the playhead to the start of the segment when hls.js starts a little before it', () => {
+    // Arrange
+    const hls = audioOnly();
+    reload(hls, AUDIO_ONLY_URL);
+    hls.startPosition = 20;
+    // Act
+    hls.buffered(20.05, 22.04);
+    // Assert
+    expect(hls.element.seeks).toEqual([20.05]);
+  });
+
+  it('leaves the playhead alone when hls.js moved it itself or it is in the new segment, and still flushes the rest', () => {
+    // Arrange: hls.js seeks a playhead that is before its start position (stream-controller seekToStartPos)
+    const seeking = audioOnly();
+    const inside = audioOnly();
+    for (const hls of [seeking, inside]) {
+      reload(hls, AUDIO_ONLY_URL);
+      hls.startPosition = 21.7;
+    }
+    seeking.element.seeking = true;
+    // Act
+    seeking.buffered(20.05, 22.04);
+    inside.buffered(64.1, 68.13);
+    // Assert
+    expect([seeking.element.seeks, inside.element.seeks]).toEqual([[], []]);
+    expect(seeking.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(inside.flushes).toEqual([
+      { startOffset: 0, endOffset: 64.1, type: null },
+      { startOffset: 68.13, endOffset: Number.POSITIVE_INFINITY, type: null },
+    ]);
   });
 
   it('does nothing for video, for a switch between video and audio only, or when hls.js cannot hand the media over', () => {
     // Arrange
     const video = new ReloadHls(new URL('/hls/index.m3u8', BASE).href);
     const toAudio = new ReloadHls(new URL('/hls/index.m3u8', BASE).href);
-    const toVideo = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href);
+    const toVideo = audioOnly();
     const noTransfer = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href, false);
     // Act
-    const done = [
-      reloadAudioOnlyInPlace(video, '/hls/index.m3u8', BASE),
-      reloadAudioOnlyInPlace(toAudio, AUDIO_ONLY_URL, BASE),
-      reloadAudioOnlyInPlace(toVideo, '/hls/index.m3u8', BASE),
-      reloadAudioOnlyInPlace(noTransfer, AUDIO_ONLY_URL, BASE),
-    ];
+    const done = [reload(video, '/hls/index.m3u8'), reload(toAudio, AUDIO_ONLY_URL), reload(toVideo, '/hls/index.m3u8'), reload(noTransfer, AUDIO_ONLY_URL)];
     // Assert: the caller loads those as usual.
     expect(done).toEqual([false, false, false, false]);
     expect([video.calls, toAudio.calls, toVideo.calls]).toEqual([[], [], []]);
     expect(noTransfer.calls).toEqual(['transferMedia']);
+    expect([video, toAudio, toVideo, noTransfer].map((h) => h.listeners())).toEqual([0, 0, 0, 0]);
   });
 });
 
