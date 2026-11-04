@@ -72,6 +72,7 @@ Next to the video on a computer (a column as tall as the window) and under it on
 
 - **Reply** to a message with the button that shows when you point at it (tap it on a phone; from the keyboard, the arrow keys go through the messages): your answer shows a short quote of it. Type **@** to mention someone who wrote in the chat; a message that mentions you is marked for you only, without any sound (you can turn the mark off in **Chat settings**).
 - **Polls and predictions** from the streamer show above the chat messages: tap an answer to vote. Your vote is final and anonymous (one per browser), and the results show live. On a phone the poll starts folded to one line: tap it to open it. Type **/help** in the chat box for a short list of what you can do.
+- **Reactions**: tap the bee next to the message box and pick one (Love, Fire, GG…): it floats over the video for everyone for a moment. Everyone's reactions float by too; **Show reactions on the video** in **Chat settings** hides them on your screen (remembered). If your device is set to reduce motion, a small counter in the corner of the video counts them instead.
 - **Hide chat** hides it on this device (your choice is remembered); **Show chat** brings it back.
 - **Chat settings** lets you pick your name colour, show the times and make the text larger. Your colour is always shown readable for everyone.
 - If a message is refused, a short note says why (slow mode, muted, too long…). The streamer can delete messages and mute people.

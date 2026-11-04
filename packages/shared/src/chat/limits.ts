@@ -59,13 +59,42 @@ export const CHAT_BURST_REFILL_PER_S = 0.5;
 export const CHAT_MAX_FRAMES_PER_10S = 20;
 
 /**
- * Reaction frames (`chat.react`, reserved for 0.5.0) per socket per 10 s. They have a counter of
- * their own and never count against CHAT_MAX_FRAMES_PER_10S, so tapping reactions while chatting can
- * never cost a viewer the socket (which also carries P2P). Frames past the first limit are ignored;
- * past the second (only scripts get there) the socket is terminated.
+ * Reaction frames (`chat.react`) per socket per 10 s. They have a counter of their own and never
+ * count against CHAT_MAX_FRAMES_PER_10S, so tapping reactions while chatting can never cost a viewer
+ * the socket (which also carries P2P). Frames past the first limit are ignored; past the second
+ * (only scripts get there) the socket is terminated.
  */
 export const CHAT_REACT_FRAMES_PER_10S = 10;
 export const CHAT_REACT_FRAMES_MAX_PER_10S = 20;
+
+/**
+ * Reactions over the video (docs/CHAT.md, "Reactions"): the bee emotes a viewer can tap, by index.
+ * The index is the wire format (`chat.react` counts, `rx` items): append only, never reorder.
+ * Every code is a built-in emote (BUILTIN_EMOTE_CODES), drawn from our own origin.
+ */
+export const CHAT_REACTIONS = ['love', 'hype', 'lol', 'wow', 'gg', 'fire', 'sad', 'hi'] as const;
+export type ChatReactionCode = (typeof CHAT_REACTIONS)[number];
+/**
+ * A page sends at most one reaction frame per this many ms (the first tap at once, the taps after
+ * it together): at most 5 per 10 s, half of CHAT_REACT_FRAMES_PER_10S, so timer jitter never gets there.
+ */
+export const CHAT_REACT_FRAME_MS = 2000;
+/** Taps one reaction frame may carry (all kinds together). */
+export const CHAT_REACT_PER_FRAME_MAX = 10;
+/** Taps per device: a bucket of 10, refilled at 2 per second (the page keeps the same one, so its own floaters never lie). */
+export const CHAT_REACT_BURST = 10;
+export const CHAT_REACT_REFILL_PER_S = 2;
+/**
+ * The server adds up everyone's taps for this long, then sends one `rx` item with the counts
+ * (CHAT_REACT_WINDOW_MS_LARGE above CHAT_BATCH_LARGE_AUDIENCE viewers or under pressure), each count
+ * capped at CHAT_REACT_BROADCAST_MAX_PER_KIND.
+ */
+export const CHAT_REACT_WINDOW_MS = 1000;
+export const CHAT_REACT_WINDOW_MS_LARGE = 2000;
+export const CHAT_REACT_BROADCAST_MAX_PER_KIND = 20;
+/** A page starts at most this many floating reactions per `rx` (sampled by the counts) and keeps at most CHAT_FLOATERS_MAX on screen. */
+export const CHAT_FLOATERS_SPAWN_PER_WINDOW = 8;
+export const CHAT_FLOATERS_MAX = 24;
 
 /** Seconds between two GIFs from one viewer. */
 export const CHAT_GIF_INTERVAL_S = 30;

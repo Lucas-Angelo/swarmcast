@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Reactions over the video.** Viewers tap the bee next to the chat box and pick one of eight reactions (Love, Hype, Funny, Wow, GG, Fire, Sad, Hi): it floats up over the video for a moment for everyone, also in full screen. SwarmCast adds up everyone's taps and sends them once a second, so even a big moment uses almost none of your internet and never fills the screen. Muted people cannot react, and reactions pause by themselves while the chat is locked to current viewers or your computer is busy. The **Live chat** shows a small count of the last minute ("Fire 12 · Love 3"); untick **Reactions on the video** in the chat settings to turn them off. Each viewer can hide them on their own screen, and people who asked their device for less motion see a small counter instead of floating bees. Pages left open from an older version simply do not show them.
+
 ### Changed
 
 - **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.

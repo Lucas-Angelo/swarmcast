@@ -214,6 +214,9 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
           <div class="field">
             <Check label="admin.chat.announceMutes" checked={v.announceMutes} testid="chat-announce" onChange={(c) => patch({ announceMutes: c })} /> <Info text={t('admin.chat.announceMutes.tip')} />
           </div>
+          <div class="field">
+            <Check label="admin.chat.reactions" checked={v.reactions} testid="chat-reactions" onChange={(c) => patch({ reactions: c })} /> <Info text={t('admin.chat.reactions.tip')} />
+          </div>
         </fieldset>
 
         <fieldset class="chat-group">

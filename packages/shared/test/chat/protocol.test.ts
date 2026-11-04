@@ -10,6 +10,10 @@ import {
   chatPollResolveSchema,
   chatSettingsSchema,
   chatVoteSchema,
+  chatReactSchema,
+  CHAT_REACT_FRAME_PREFIX,
+  CHAT_REACTIONS,
+  BUILTIN_EMOTE_CODES,
   isChatSeqItem,
   clientMessageSchema,
   defaultChatSettings,
@@ -159,6 +163,7 @@ describe('chat settings', () => {
       autoProtect: true,
       budgetShare: 0.05,
       gif: { provider: 'klipy', key: '', rating: 'pg', consent: 'ask' },
+      reactions: true,
     });
   });
 
@@ -282,6 +287,39 @@ describe('polls and predictions: wire shapes', () => {
     // Assert
     expect(direct).toBe(ok);
     expect(union).toBe(ok);
+  });
+
+  it.each([
+    ['{"t":"chat.react","c":[1]}', true],
+    ['{"t":"chat.react","c":[0,0,0,0,0,0,0,10]}', true],
+    ['{"t":"chat.react","c":[3,0,2,0,5]}', true],
+    ['{"t":"chat.react","c":[]}', false],
+    ['{"t":"chat.react","c":[0]}', false],
+    ['{"t":"chat.react","c":[6,5]}', false],
+    ['{"t":"chat.react","c":[11]}', false],
+    ['{"t":"chat.react","c":[0,0,0,0,0,0,0,0,1]}', false],
+    ['{"t":"chat.react","c":[-1,2]}', false],
+    ['{"t":"chat.react","c":[1.5]}', false],
+    ['{"t":"chat.react","c":["1"]}', false],
+    ['{"t":"chat.react","c":[1],"n":1}', false],
+    ['{"t":"chat.react"}', false],
+  ])('reaction frame %s accepted: %s', (frame, ok) => {
+    // Act
+    const direct = chatReactSchema.safeParse(JSON.parse(frame)).success;
+    const union = clientMessageSchema.safeParse(JSON.parse(frame)).success;
+    // Assert
+    expect(direct).toBe(ok);
+    expect(union).toBe(ok);
+  });
+
+  it('a reaction frame starts with the reaction prefix; every reaction is a built-in emote; rx is seq-less', () => {
+    // Act
+    const frame = JSON.stringify({ t: 'chat.react', c: [1] });
+    // Assert
+    expect(frame.startsWith(CHAT_REACT_FRAME_PREFIX)).toBe(true);
+    expect(CHAT_REACTIONS.every((c) => BUILTIN_EMOTE_CODES.includes(c))).toBe(true);
+    expect(CHAT_REACTIONS).toEqual(['love', 'hype', 'lol', 'wow', 'gg', 'fire', 'sad', 'hi']);
+    expect(isChatSeqItem({ k: 'rx', c: [1] } satisfies ChatItem)).toBe(false);
   });
 
   it('a vote frame starts with the chat prefix', () => {

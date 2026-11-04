@@ -11,7 +11,8 @@
 // someone in the roster named "@" + nickname in the text (findMentionSpans).
 // Polls and predictions (docs/CHAT.md "Polls and predictions"): the poll as a state item and a
 // snapshot field (with this page's vote), counts as `pt` items, one vote per page (`chat.voted`, then
-// `chat.err.voted` with the option), refusals on demand (`rejectVote`).
+// `chat.err.voted` with the option), refusals on demand (`rejectVote`). Reactions: `chat.react` frames
+// recorded and never answered, everyone's counts as `rx` items (`reactions`).
 import { cutQuote, findMentionSpans, type ChatAuthor, type ChatItem, type ChatMessageItem, type ChatPin, type ChatPollPublic, type ChatPublicSettings, type ChatRejectCode, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou } from '@swarmcast/shared/chat';
 import type { ServerMessage } from '@swarmcast/shared';
 
@@ -182,6 +183,11 @@ export class MockHub {
     this.broadcast({ t: 'chat.batch', items: [{ k: 'poll', p: this.poll }] });
   }
 
+  /** Everyone's reaction taps of one window (an ephemeral `rx` item, docs/CHAT.md "Reactions"). */
+  reactions(c: number[]): void {
+    this.broadcast({ t: 'chat.batch', items: [{ k: 'rx', c }] });
+  }
+
   /** New counts for the poll (an ephemeral `pt` item). */
   tally(c: number[]): void {
     if (!this.poll) return;
@@ -283,6 +289,8 @@ export class MockHub {
         this.reply(send, { t: 'chat.voted', n, id: p.id, o, c });
         return;
       }
+      // Fire-and-forget, as on the server: recorded (framesOf), never answered.
+      case 'chat.react':
       case 'ping':
       case 'pong':
       case 'stats':

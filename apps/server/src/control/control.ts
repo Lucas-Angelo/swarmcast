@@ -265,7 +265,7 @@ export class ControlChannel implements ChatHost {
   }
 
   /**
-   * Reaction frames (reserved for 0.5.0): a budget of their own, so a viewer who taps reactions
+   * Reaction frames (docs/CHAT.md, "Reactions"): a budget of their own, so a viewer who taps reactions
    * while chatting never reaches the chat budget that terminates the socket (and its P2P channel).
    * Past CHAT_REACT_FRAMES_PER_10S they are ignored; past CHAT_REACT_FRAMES_MAX_PER_10S (scripts
    * only) the socket is terminated. Oversized ones are ignored before decoding (no reply: a

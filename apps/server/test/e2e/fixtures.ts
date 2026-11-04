@@ -806,6 +806,11 @@ export class ScriptedViewer {
     return n;
   }
 
+  /** Reaction taps per kind (docs/CHAT.md, "Reactions"): fire-and-forget, never answered. */
+  react(c: number[]): void {
+    this.ws.send(JSON.stringify({ t: 'chat.react', c }));
+  }
+
   /** The server's answer to a vote: the option it counted, or the reject code. */
   async voteAnswer(n: number): Promise<{ o?: number; code?: string }> {
     let found: { o?: number; code?: string } | undefined;
