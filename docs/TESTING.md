@@ -124,13 +124,14 @@ run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-o
 
 E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each test, and
 fixtures put back what a test changes. Get browsers, scripted viewers, chat and branding from the
-fixtures. In WebKit every context the fixtures open routes all its requests through unchanged, since
-WebKit can lose a page's first navigation to a COOP page otherwise; a spec that closes a context
-itself uses `closeContext` (fixtures.ts, `routeWebKitRequests`). Test bodies hold only
-Arrange/Act/Assert comments. The only real-time wait is `measuredWindow()`, for measured windows. Names come from `uid()`, which is unique per test. Never
-retry. Run with `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e
-ports are 11080 (public), 11081 (panel), 11082 (test control), 11083 (MediaMTX HLS) and 11935 (RTMP),
-plus the offset; the server refuses an offset that moves one out of 10000–19999, onto another
+fixtures. In WebKit the first request of every page the fixtures' contexts open goes through a route
+that lets it through unchanged, since WebKit can lose a page's first navigation to a COOP page
+otherwise (fixtures.ts, `routeFirstRequestOfEachPage`). Test bodies hold only Arrange/Act/Assert
+comments. The only real-time wait is `measuredWindow()`, for measured windows. Names come from
+`uid()`, which is unique per test. Never retry. Run with
+`SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e ports are 11080
+(public), 11081 (panel), 11082 (test control), 11083 (MediaMTX HLS) and 11935 (RTMP), plus the
+offset; the server refuses an offset that moves one out of 10000–19999, onto another
 harness's port or into this machine's ephemeral range.
 
 **Ports.** A test server listens on port 0 when nothing needs its number in advance, or takes one from
