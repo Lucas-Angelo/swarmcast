@@ -28,8 +28,8 @@ export function ffmpegPin(target = platformTag()): FfmpegPin | undefined {
 }
 
 /**
- * Where the start scripts and the panel's "Install the video converter" button put ffmpeg:
- * `<data>/tools/ffmpeg/`, outside `app/`, so app updates never download it again.
+ * Where the desktop app's first start and the panel's "Install the video converter" button put
+ * ffmpeg: `<data>/tools/ffmpeg/`, in the data folder, so app updates never download it again.
  */
 export function toolsFfmpegDir(dataDir: string): string {
   return path.join(dataDir, 'tools', 'ffmpeg');
@@ -39,7 +39,7 @@ export function installedFfmpegPath(dataDir: string): string {
   return path.join(toolsFfmpegDir(dataDir), exe('ffmpeg'));
 }
 
-/** Pin stamp written next to the binary (same format as the start scripts): "<version> <sha256>". */
+/** Pin stamp written next to the binary: "<version> <sha256>". */
 export function pinStamp(pin: FfmpegPin, version = FFMPEG_SPEC.version): string {
   return `${version} ${pin.sha256}`;
 }
@@ -57,7 +57,7 @@ export function installedPinMatches(dataDir: string, pin = ffmpegPin()): boolean
 /**
  * Which ffmpeg to use, in order: `SWARMCAST_FFMPEG`, the config's `ffmpegPath`, bin/ffmpeg
  * shipped next to MediaMTX (a packager may bundle it), `<data>/tools/ffmpeg/ffmpeg[.exe]`
- * (start scripts or the panel), the older panel location `<data>/bin/ffmpeg-<version>/`.
+ * (the app's first start or the panel), the older panel location `<data>/bin/ffmpeg-<version>/`.
  * Null when none.
  */
 export function resolveFfmpeg(o: { configPath?: string; binDir: string; dataDir: string; env?: NodeJS.ProcessEnv }): string | null {
@@ -106,7 +106,7 @@ async function mustRun(command: string, args: string[], o: CommandOptions): Prom
 /**
  * Download the pinned ffmpeg build for this platform straight from its publisher, verify the
  * SHA-256, extract only the ffmpeg binary and check that it runs. Started by the streamer
- * from the panel, by the start scripts' setup, or by the desktop app's first start (its
+ * from the panel or by the desktop app's first start (its
  * installer step): SwarmCast itself does not redistribute ffmpeg (docs/QUALITY.md).
  */
 export async function installFfmpeg(

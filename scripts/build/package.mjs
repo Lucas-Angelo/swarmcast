@@ -1,22 +1,22 @@
 #!/usr/bin/env node
-// Assemble a release package for one target:
+// Stage the server package of one target, which desktop.mjs turns into the desktop app
+// (the sidecar and its resources):
 //   release/staging/<target>/
 //     swarmcast[.exe]            (server bundle + embedded Node 24, via @yao-pkg/pkg)
 //     bin/mediamtx[.exe]         (verified against versions.json)
 //     bin/cloudflared[.exe]      (verified against versions.json)
-//     bin/swarmcast-tray[.exe]   (optional, built by apps/tray/build.mjs)
 //     web/viewer, web/admin      (Vite builds)
 //     LICENSE, THIRD_PARTY_LICENSES.txt, VERSION
-// Then archives it unless --no-archive is given (see archive.mjs).
+// The test harnesses (scripts/test/windows, preflight, docker/obs.sh) also run this staged
+// executable directly. Nothing here is published on its own.
 //
-// Usage: node scripts/build/package.mjs [--target macos-arm64] [--version 0.2.0] [--no-archive]
+// Usage: node scripts/build/package.mjs [--target macos-arm64] [--version 0.2.0]
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fetchBinaries, hostTarget } from './fetch-binaries.mjs';
 import { writeThirdPartyLicenses } from './licenses.mjs';
-import { archive } from './archive.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
@@ -90,17 +90,7 @@ for (const f of fs.readdirSync(path.join(staging, 'bin'))) {
   if (f.endsWith('.version')) fs.rmSync(path.join(staging, 'bin', f));
 }
 
-// 4. Tray helper (optional: panel-only without it).
-const trayCandidates = [path.join(root, 'apps/tray/bin', target, exe('swarmcast-tray')), path.join(root, 'vendor', target, exe('swarmcast-tray'))];
-const tray = trayCandidates.find((p) => fs.existsSync(p));
-if (tray) {
-  fs.copyFileSync(tray, path.join(staging, 'bin', exe('swarmcast-tray')));
-  if (!isWin) fs.chmodSync(path.join(staging, 'bin', exe('swarmcast-tray')), 0o755);
-} else {
-  console.warn(`⚠ tray helper for ${target} not found (build it with: node apps/tray/build.mjs --target ${target}); the package will run without a tray icon`);
-}
-
-// 5. Licenses and version.
+// 4. Licenses and version.
 fs.copyFileSync(path.join(root, 'LICENSE'), path.join(staging, 'LICENSE'));
 writeThirdPartyLicenses(path.join(staging, 'THIRD_PARTY_LICENSES.txt'));
 fs.writeFileSync(path.join(staging, 'VERSION'), `${version}\n`);
@@ -109,7 +99,3 @@ fs.writeFileSync(path.join(staging, 'VERSION'), `${version}\n`);
 if (!isWin) for (const f of [exe('swarmcast'), `bin/${exe('mediamtx')}`, `bin/${exe('cloudflared')}`]) fs.chmodSync(path.join(staging, f), 0o755);
 
 console.log(`✓ staged ${path.relative(root, staging)} (v${version})`);
-if (!process.argv.includes('--no-archive')) {
-  const out = await archive(target, version);
-  console.log(`✓ ${path.relative(root, out)}`);
-}

@@ -11,18 +11,18 @@ name: desktop
 # CARGO_PROFILE_RELEASE_*, so `tauri bundle` still finds target/<triple>/release), and sign the
 # updater artifacts with a key pair made in the job. A release (release: true, from release.yml)
 # builds with the profile in Cargo.toml (fat LTO) and signs with TAURI_SIGNING_PRIVATE_KEY from
-# the `release` environment; A then trusts the release key. The macOS and Linux builds also make
-# their script-mode package (pkg-<target>: the tray helper needs cgo on macOS, pkg's macOS
-# binaries need a Mac to be signed) from web-dist; Windows takes release/staging/windows-x64 from
+# the `release` environment; A then trusts the release key. The macOS and Linux builds first
+# stage their server package (release/staging/<target>, pkg-<target>: pkg's macOS binaries need
+# a Mac to be signed) from web-dist; Windows takes release/staging/windows-x64 from
 # pkg-windows-x64 (_build.yml).
 #
 # clean-machine: one job per runner image of the target, each a fresh machine that gets, as
-# separate steps, whatever applies to it (the install-script tests run in _node.yml, off this
-# path):
-# - preflight: the real script-mode package installed by the real start script into an empty data
-#   folder, a synthetic OBS feed, Google Chrome watching, P2P, kick, link rotation, "Stop
-#   everything", quit, nothing left behind, and playback through a real Cloudflare quick tunnel
-#   (scripts/test/preflight/verify.mjs). Not on the arm64 image (no Google Chrome there);
+# separate steps, whatever applies to it:
+# - preflight: the staged server (the same executable the installers carry as their sidecar)
+#   started on an empty data folder, a synthetic OBS feed, Google Chrome watching, P2P, kick,
+#   link rotation, "Stop everything", quit, nothing left behind, and playback through a real
+#   Cloudflare quick tunnel (scripts/test/preflight/verify.mjs). Not on the arm64 image (no
+#   Google Chrome there);
 # - desktop: the real installers: install, launch, panel login, autostart, kill, quit, the
 #   uninstallers, and an update from build A to them with the settings kept
 #   (scripts/test/desktop/verify.mjs);
@@ -33,7 +33,7 @@ name: desktop
 # Each check's PASS/FAIL lines go to the job summary (.github/scripts/test-summary.mjs).
 #
 # What ships carries no development dependency and no test code (.github/scripts/no-dev-deps.mjs):
-# the build checks this target's package and its real installers before uploading them.
+# the build checks this target's staged package and its real installers before uploading them.
 on:
   workflow_call:
     inputs:
@@ -73,10 +73,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One entry: this call's target. macos-x64 is cross-built on Apple silicon (Rust, the cgo
-        # tray helper, pkg and the .dmg all target x86_64 from there): the Intel image took 14-25
-        # min for these builds, Apple silicon about a third; the Intel Mac runs these exact bytes
-        # in the clean-machine job below and in release.yml's smoke test. Linux builds on the
+        # One entry: this call's target. macos-x64 is cross-built on Apple silicon (Rust, pkg and
+        # the .dmg all target x86_64 from there): the Intel image took 14-25 min for these builds,
+        # Apple silicon about a third; the Intel Mac runs these exact bytes in the clean-machine
+        # job below. Linux builds on the
         # oldest supported Ubuntu (glibc), so the .deb/.AppImage run on newer ones too.
         include: >-
           ${{ fromJSON('{
@@ -125,7 +125,6 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
-          go: ${{ runner.os != 'Windows' }}
           downloads: ${{ runner.os != 'Windows' }}
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       # Before setup-rust: rust-cache puts every CARGO_* variable into its key, so test builds and
@@ -147,17 +146,12 @@ jobs:
       - name: Version
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
-      # ---- the script-mode package of this target (macOS and Linux) ----
-      - name: Tray helper and go vet (macOS, Linux)
-        if: runner.os != 'Windows'
-        run: |
-          node apps/tray/build.mjs --target "$TARGET" --vendor
-          if [ "$RUNNER_OS" = macOS ]; then (cd apps/tray && go vet ./...); fi
+      # ---- the staged server package of this target (macOS and Linux) ----
       - name: Package ${{ matrix.target }} (macOS, Linux)
         if: runner.os != 'Windows'
         run: |
           node scripts/build/package.mjs --target "$TARGET" --version "$VERSION"
-          tar -cf "$RUNNER_TEMP/pkg-$TARGET.tar" "release/staging/$TARGET" "release/SwarmCast-v$VERSION-$TARGET.tar.gz"
+          tar -cf "$RUNNER_TEMP/pkg-$TARGET.tar" "release/staging/$TARGET"
       # The bundle package.mjs just rebuilt (meta.json), the executable's snapshot, web/ = web-dist.
       - name: No development dependencies in the ${{ matrix.target }} package (macOS, Linux)
         if: runner.os != 'Windows'
@@ -312,14 +306,7 @@ jobs:
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
         if: ${{ !cancelled() && matrix.preflight }}
         timeout-minutes: 11
-        run: |
-          # pkg-windows-x64 also holds the installer suite's "newer" package: only this version here.
-          find release -maxdepth 1 -name 'SwarmCast-v*' ! -name "SwarmCast-v$VERSION-*" -print -delete
-          cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
-          cp scripts/start-macos.command release/start-macos.sh
-          node scripts/build/checksums.mjs release
-          ls -la release
-          node scripts/test/preflight/verify.mjs --release-dir release --tunnel --chrome 2>&1 | tee "$RUNNER_TEMP/preflight.log"
+        run: node scripts/test/preflight/verify.mjs --staging "release/staging/$TARGET" --tunnel --chrome 2>&1 | tee "$RUNNER_TEMP/preflight.log"
 
       # ---------------------------------------------------------------- desktop app
       - uses: ./.github/actions/fetch-artifact

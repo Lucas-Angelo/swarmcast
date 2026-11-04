@@ -2,8 +2,7 @@
 
 The website at <https://lucas-angelo.github.io/swarmcast/>: the landing page, the download page and the
 **only guide for streamers and viewers** (install, OBS, going live, protection, updates, uninstall,
-troubleshooting), in English and Brazilian Portuguese. The offline guide inside the installer zips is
-generated from the same pages, and the panel's "Help" link points here.
+troubleshooting), in English and Brazilian Portuguese. The panel's "Help" link points here.
 
 Built with [Astro](https://astro.build/) + [Starlight](https://starlight.astro.build/). It is a
 standalone project with its own `package-lock.json`, not a root workspace, so the app's builds never
@@ -52,7 +51,6 @@ npm run og         # re-render the social preview cards (public/og/), see "Link 
 | `astro.config.mjs` | Locales, sidebar (with the pt-BR labels), link validator, head tags |
 | `src/brand.mjs` | The one place for branding on the site: logo files, favicon, mascot, and the public URLs (repo, releases) |
 | `src/styles/` | `tokens.css` (brand tokens + fonts + layout scale), `ui.css` (the site's components), `starlight.css` (Starlight mapped onto the tokens) |
-| `offline-guide.json` | Which pages, in which order, make the offline guide (`scripts/build/guide-html.mjs`) |
 | `src/lib/seo.ts`, `src/route-data.ts` | Link-preview and search tags (Open Graph, Twitter, JSON-LD), see below |
 | `src/pages/404.astro` | The "page not found" page, in both languages |
 | `scripts/social-cards.mjs` | Renders the social preview cards into `public/og/` |
@@ -71,8 +69,7 @@ dialogs (`live/tray`, `live/close-dialog`, `app/update-latest`).
 English is the root locale (`/swarmcast/…`), Brazilian Portuguese is `pt-br` (`/swarmcast/pt-br/…`).
 Every page must exist in both: the link validator fails the build on a link that points across
 locales, and the sidebar labels have their translations in `astro.config.mjs`. When you add or rename a
-page, do it in both folders and update the sidebar (and `offline-guide.json` if it belongs in the
-offline guide).
+page, do it in both folders and update the sidebar.
 
 On the first visit, a browser in Portuguese is sent to the pt-BR page (`src/lang-redirect.mjs`); after
 that the last language read is remembered in `localStorage`, so the language switcher always wins.

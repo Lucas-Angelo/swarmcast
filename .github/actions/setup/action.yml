@@ -1,6 +1,6 @@
 name: Set up SwarmCast build tools
 description: >-
-  Node.js (with the npm cache), optionally Go for the tray helper and ffmpeg for the tests,
+  Node.js (with the npm cache), optionally ffmpeg for the tests,
   then `npm ci`. Run actions/checkout first. A cache is a speed-up, never a requirement: every
   cache restore here goes through ./.github/actions/cache-restore, which cuts a try off after
   90 s and tries once more (a stalled download hung actions/cache/restore for 12 minutes in a
@@ -8,9 +8,6 @@ description: >-
   the cache; the job then downloads or installs what it needs.
 
 inputs:
-  go:
-    description: Also install Go (tray helper, apps/tray).
-    default: 'false'
   ffmpeg:
     description: Also install ffmpeg for the tests (the app never ships it). Sets FFMPEG_BIN.
     default: 'false'
@@ -84,7 +81,7 @@ runs:
         echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
         echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
 
-    # The remote actions of this action (setup-node, setup-go, actions/cache) run from copies
+    # The remote actions of this action (setup-node, actions/cache) run from copies
     # fetched with git at their pins (.github/actions/remote-pins), with tries: the runner's own
     # download of a remote action is not tried again after a 404 (.github/workflows/README.md,
     # "Remote actions"). actions/cache here only for the npm cache's save on main; cache-restore
@@ -92,7 +89,7 @@ runs:
     - name: Remote actions (git fetch, with tries)
       uses: ./.github/actions/fetch-remote
       with:
-        repos: actions/setup-node ${{ inputs.go == 'true' && 'actions/setup-go' || '' }}
+        repos: actions/setup-node
     - name: Remote actions for the caches (git fetch, with tries; main)
       id: cache-action
       if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
@@ -214,14 +211,6 @@ runs:
           echo "SC_PKG_CACHE_KEY=$PKG_KEY"
           echo "SC_PKG_CACHE_HIT=${PKG_HIT:-false}"
         } >> "$GITHUB_ENV"
-
-    - if: inputs.go == 'true'
-      uses: ./.git/remote-actions/actions/setup-go
-      env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
-      with:
-        go-version: 1.27.x
-        cache-dependency-path: apps/tray/go.sum
 
     # The same pinned GPL ffmpeg on every OS (scripts/build/versions.json "ffmpeg-test": BtbN on
     # Linux and Windows, Martin Riedl on macOS, the publishers of the app's own ffmpeg pins),

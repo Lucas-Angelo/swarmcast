@@ -478,7 +478,7 @@ export interface DesktopInfo {
   systemCheck: DesktopSystemCheckRun;
 }
 
-/** GET /api/desktop: `{ desktop: false }` when SwarmCast was started by a start script. */
+/** GET /api/desktop: `{ desktop: false }` when SwarmCast runs outside the desktop app (development, tests). */
 export type DesktopInfoResponse = DesktopInfo | { desktop: false };
 
 export interface AdminState {

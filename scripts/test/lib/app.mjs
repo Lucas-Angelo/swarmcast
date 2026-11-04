@@ -1,6 +1,6 @@
-// An installed SwarmCast started by its real start script, for the system harnesses
-// (scripts/test/windows, scripts/test/preflight): the bare-OS environment it runs with, the
-// panel it prints, the live link it makes.
+// The staged SwarmCast server (scripts/build/package.mjs: the desktop app's sidecar) run outside
+// the desktop app by the system harnesses (scripts/test/windows, scripts/test/preflight): the
+// bare-OS environment it runs with, the panel it prints, the live link it makes.
 // Node loads this TypeScript file itself (type stripping): it has no imports, on purpose.
 import { TUNNEL_START_BUDGET_MS } from '../../../apps/server/src/tunnel/start-budget.ts';
 import { userTempEnv } from './browser-temp.mjs';
@@ -16,30 +16,27 @@ export function barePath() {
 }
 
 /**
- * Environment for the start script and the app: the bare PATH, none of this machine's
- * SwarmCast, Node or npm variables, this machine's own TEMP and TMP (the harness may have moved
- * its own to the runner's local disk: browser-temp.mjs), no pause and no browser at the end, and
- * only the SwarmCast variables asked for (`extra` last).
+ * Environment for the server: the bare PATH, none of this machine's SwarmCast, Node or npm
+ * variables, this machine's own TEMP and TMP (the harness may have moved its own to the runner's
+ * local disk: browser-temp.mjs), no browser (SWARMCAST_NO_OPEN), and only the SwarmCast variables
+ * asked for (`extra` last). The data folder goes on the command line (--data-dir).
  */
-export function bareEnv({ home, releaseUrl, extra = {} } = {}) {
+export function bareEnv({ extra = {} } = {}) {
   const drop = /^(path|swarmcast_.*|node_options|npm_.*)$/i;
   const env = userTempEnv(Object.fromEntries(Object.entries(process.env).filter(([k]) => !drop.test(k))));
   env[win ? 'Path' : 'PATH'] = barePath();
-  env.SWARMCAST_NO_PAUSE = '1';
   env.SWARMCAST_NO_OPEN = '1';
-  if (home) env.SWARMCAST_HOME = home;
-  if (releaseUrl) env.SWARMCAST_RELEASE_URL = releaseUrl;
   return { ...env, ...extra };
 }
 
 /**
- * The panel of an app whose start script printed "Panel: http://127.0.0.1:<port>/auth/<token>"
+ * The panel of a server that printed "Panel: http://127.0.0.1:<port>/auth/<token>"
  * in `text()`: logs in and returns { base, port, loginUrl, cookie, api, state }. `api(path)` GETs,
  * `api(path, body)` POSTs (`method` for PUT), and the JSON answer carries its HTTP status in a
  * hidden `__status`. Fails at once when a process in `abortOn` exits first.
  */
 export async function loginFromOutput(text, { timeoutMs = 300_000, abortOn = [] } = {}) {
-  const m = await poll(() => /Panel: (http:\/\/127\.0\.0\.1:(\d+))\/auth\/(\S+)/.exec(text()), { timeoutMs, abortOn, what: 'the panel URL in the start script output' });
+  const m = await poll(() => /Panel: (http:\/\/127\.0\.0\.1:(\d+))\/auth\/(\S+)/.exec(text()), { timeoutMs, abortOn, what: 'the panel URL in the server output' });
   const base = m[1];
   const loginUrl = `${base}/auth/${m[3]}`;
   const res = await fetch(loginUrl, { redirect: 'manual' });

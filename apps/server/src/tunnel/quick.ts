@@ -91,7 +91,7 @@ export class QuickTunnel extends TunnelProvider {
 
   async start(localPort: number, opts: TunnelStartOptions = {}): Promise<string> {
     if (!fs.existsSync(this.binary)) {
-      throw new Error(`cloudflared was not found at ${this.binary}. Run the start script again to repair the installation.`);
+      throw new Error(`cloudflared was not found at ${this.binary}. Reinstall SwarmCast to repair it.`);
     }
     this.wanted = true;
     this.localPort = localPort;

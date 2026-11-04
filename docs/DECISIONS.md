@@ -12,8 +12,9 @@ its area and add a row here in the same pull request.
 | Decision | Why | Details |
 |---|---|---|
 | Free, no accounts, no telemetry; usage numbers only from GitHub's public download counters | the promises to streamers and viewers | [CONTRIBUTING.md](../CONTRIBUTING.md#ground-rules-for-changes), [RELEASING.md §6](RELEASING.md#6-github-pages-and-usage-numbers) |
-| Every text in English and Brazilian Portuguese; installers and scripts never ask questions | the users are not technical, many are in Brazil | [CONTRIBUTING.md](../CONTRIBUTING.md#ground-rules-for-changes), [scripts/README.md](../scripts/README.md) |
-| The website is the only guide for streamers and viewers; the offline guide in the installer zips is generated from it | one place to edit, both always say the same | [site/README.md](../site/README.md), [RELEASING.md §5](RELEASING.md#5-what-a-release-publishes) |
+| Every text in English and Brazilian Portuguese; installers never ask questions | the users are not technical, many are in Brazil | [CONTRIBUTING.md](../CONTRIBUTING.md#ground-rules-for-changes) |
+| The website is the only guide for streamers and viewers | one place to edit, nothing to keep in sync | [site/README.md](../site/README.md) |
+| Script mode removed in 0.5.1 (start and uninstall scripts, installer zips, per-platform packages, the Go tray helper): the desktop app is the only install | one install path to support, test and explain; the app updates itself (signed) and has its own tray and autostart; script mode doubled the release assets, the CI suites and the guide, and nobody used it | [DESKTOP.md](DESKTOP.md), [RELEASING.md §5](RELEASING.md#5-what-a-release-publishes) |
 | Forest & Cream palette, colours only through the brand tokens, no purple | calm and trustworthy, kept apart from other brands | [assets/brand/README.md](../assets/brand/README.md#palette-forest--cream-chosen), [site/DESIGN.md](../site/DESIGN.md) |
 | Watch page laid out like the big streaming sites: the video edge to edge and as tall as leaves the info row in view, the chat a column fixed on the right (`position: fixed`, not a grid row: a spanning grid item made the rows grow), playback and P2P in a Settings menu, the banner under the video | the video was small with empty margins and the settings always took room; the patterns viewers know, without any follow / subscribe | [apps/viewer/README.md](../apps/viewer/README.md), `apps/viewer/src/style.css` "Watch page" |
 
@@ -23,7 +24,6 @@ its area and add a row here in the same pull request.
 |---|---|---|
 | One executable built with `@yao-pkg/pkg` (embedded Node 24), not Node SEA | SEA is still in active development and untested upstream on macOS x64 | [ARCHITECTURE.md](ARCHITECTURE.md#packaging) |
 | A reaper child (`swarmcast --reaper`) kills the children if the app dies, instead of Job Objects or `PR_SET_PDEATHSIG` | works from a single executable without native addons | [ARCHITECTURE.md](ARCHITECTURE.md#live-lifecycle) |
-| Own Go tray helper (fyne.io/systray) for script mode | no maintained cross-platform tray library for Node | [ARCHITECTURE.md](ARCHITECTURE.md#verified-facts-2026-10-25) |
 | Desktop app on Tauri 2, not Electron, around the same server | the server already embeds Node; Tauri uses the OS webview and adds ~10 MB | [DESKTOP.md](DESKTOP.md#why-tauri-and-not-electron) |
 | Release profile keeps `panic = "unwind"` plus a hook that aborts on any Rust panic | WebKit's Objective-C exceptions must be catchable on macOS | `apps/desktop/src-tauri/Cargo.toml`, `src/main.rs` |
 | ffmpeg is never shipped: each computer downloads the pinned build from its publisher and checks its SHA-256 | licence obligations of redistribution | [DEVELOPMENT.md](DEVELOPMENT.md#configuration) ("ffmpeg licensing"), [QUALITY.md](QUALITY.md) |

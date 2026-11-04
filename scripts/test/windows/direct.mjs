@@ -2,23 +2,24 @@
 // Direct mode on Windows (GitHub runners have no UPnP/NAT-PMP router):
 //  1. the direct-mode unit tests (mock IGD, NAT-PMP, ACME) under Windows,
 //  2. DirectMode + the mock UPnP gateway binding 0.0.0.0 for real (direct-igd.ts),
-//  3. the installed app through the panel API with "manual port forward": HTTPS on a random
-//     high port on 0.0.0.0 with a self-signed certificate, a viewer plays over it, back to the
-//     secure mode closes the port; Windows Firewall state and rules are recorded.
+//  3. the staged server (the desktop app's sidecar, run outside the app) through the panel API
+//     with "manual port forward": HTTPS on a random high port on 0.0.0.0 with a self-signed
+//     certificate, a viewer plays over it, back to the secure mode closes the port; Windows
+//     Firewall state and rules are recorded;
+//  4. quitting with direct mode on closes the port.
 //
-// Usage: node scripts/test/windows/direct.mjs --work <dir from make-release.mjs> [--out results.json]
+// Usage: node scripts/test/windows/direct.mjs [--staging release/staging/windows-x64] [--out results.json]
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import {
-  ART, appProcess, check, copyAppLogs, environmentFacts, finish, info, joinAndPlay, killUnder, launchBrowser, listening, must, onCleanup, opt, ps, pushStream,
-  quitAndVerify, record, repoRoot, section, serve, socketsOf, startApp, uninstallAndVerify, waitLiveLink, waitPhase,
+  addSweepPath, ART, appProcess, check, copyAppLogs, environmentFacts, finish, info, joinAndPlay, killUnder, launchBrowser, listening, must, onCleanup, ps, pushStream,
+  quitAndVerify, record, repoRoot, section, serverExe, socketsOf, startApp, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
-const work = path.resolve(opt('work', path.join(repoRoot, 'release', 'win-e2e')));
-const relDir = path.join(work, 'rel');
 const home = 'C:\\SC direct\\SwarmCast';
+addSweepPath(home);
 
 await section('0. environment', async () => {
   for (const [k, v] of Object.entries(environmentFacts())) info(k, v);
@@ -53,10 +54,8 @@ await section('2. DirectMode + mock UPnP gateway, real 0.0.0.0 bind', async () =
 await section('3. app-level direct mode via the panel (manual port forward) + Windows Firewall', async () => {
   record('app-level test with the mock UPnP gateway', 'skip', 'the app has no way to point discovery at a test gateway: createApp() (apps/server/src/app.ts discoverMapper) always uses discoverUpnp() on 239.255.255.250:1900 and the OS default gateway for NAT-PMP, and lookupPublicIps() always asks 1.1.1.1. An env override (e.g. SWARMCAST_TEST_SSDP=host:port and SWARMCAST_TEST_PUBLIC_IP, test builds only) would allow it. Covered instead by section 2 (same DirectMode code) + this section (real app, manual forward).');
   fs.rmSync(path.dirname(home), { recursive: true, force: true });
-  const srv = await serve(relDir);
-  onCleanup(() => srv.close());
   const browser = await launchBrowser('chrome');
-  const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home, args: ['-Yes', '-SkipSpeedtest', '-NoTunnel'], label: 'direct' });
+  const app = await startApp({ home, args: ['--no-tunnel'], label: 'direct' });
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
   const feed = pushStream(s0.rtmpUrl, s0.streamKey);
@@ -97,7 +96,7 @@ await section('3. app-level direct mode via the panel (manual port forward) + Wi
   // Windows Firewall: what a streamer's PC would do with a new program listening on 0.0.0.0.
   const fw = ps(`(Get-NetFirewallProfile | ForEach-Object { "$($_.Name): enabled=$($_.Enabled) inbound=$($_.DefaultInboundAction) notifyOnListen=$($_.NotifyOnListen) allowLocalRules=$($_.AllowLocalFirewallRules)" }) -join '; '`, { allowFail: true });
   info('Windows Firewall profiles on the runner', fw);
-  const exe = path.join(home, 'app', 'current', 'swarmcast.exe');
+  const exe = serverExe(home);
   const rules = ps(`$p = '${exe}'; @(Get-NetFirewallApplicationFilter -ErrorAction SilentlyContinue | Where-Object { $_.Program -eq $p } | Get-NetFirewallRule | ForEach-Object { "$($_.DisplayName) $($_.Direction) $($_.Action) profile=$($_.Profile)" }) -join '; '`, { allowFail: true });
   info('firewall rules for swarmcast.exe after it listened on 0.0.0.0', rules || 'none (no prompt answered on the runner; on a PC with the firewall on, Windows shows "Windows Defender Firewall has blocked some features of this app" the first time and inbound stays blocked until the user clicks Allow; the listen itself succeeds and the app is not blocked)');
 
@@ -112,17 +111,16 @@ await section('3. app-level direct mode via the panel (manual port forward) + Wi
   copyAppLogs(home, 'direct');
 });
 
-await section('4. uninstall-windows.cmd while direct mode is on', async () => {
-  const srv = await serve(relDir);
-  onCleanup(() => srv.close());
-  const app = await startApp({ entry: 'ps', dir: relDir, releaseUrl: srv.url, home, args: ['-Yes', '-SkipSpeedtest', '-NoTunnel'], label: 'direct-uninstall' });
+await section('4. Quit while direct mode is on closes its port', async () => {
+  const app = await startApp({ home, args: ['--no-tunnel'], label: 'direct-quit' });
   onCleanup(() => killUnder(home));
   await waitLiveLink(app);
   const en = await app.api('/api/direct/enable', { acknowledgeRisks: true, manualPortForward: true });
   must('direct mode on', typeof en.liveLink === 'string', JSON.stringify(en).slice(0, 200));
   const port = Number(new URL(en.liveLink).port);
   must('direct port listening', await listening(port));
-  await uninstallAndVerify({ dir: relDir, home, label: 'uninstall with direct mode on', alsoPorts: [port] });
+  await quitAndVerify(app, home, 'quit with direct mode on');
+  check('quit with direct mode on: the direct port is closed', !(await listening(port)), String(port));
 });
 
 finish();

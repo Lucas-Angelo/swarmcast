@@ -1,5 +1,4 @@
 import { desktopUpdateSchema, type DesktopUpdate, type LivePhase, type UpdateChannel } from '@swarmcast/shared';
-import { trayStateFor, type TrayStateMessage } from '../tray/tray.js';
 
 /**
  * Protocol between the desktop shell (apps/desktop, Tauri) and the server started with
@@ -41,10 +40,44 @@ export interface DesktopReadyMessage {
   version: string;
 }
 
-/** Same fields as the Go tray helper's state, plus the exact phase and the viewer count. */
+/** What the shell's tray / menu bar icon shows: off (gray), waiting (yellow) or live (green). */
+export type TrayIconState = 'off' | 'waiting' | 'live';
+
+/** The icon, its tooltip and which menu items are enabled. */
+export interface TrayStateMessage {
+  type: 'state';
+  state: TrayIconState;
+  tooltip: string;
+  canStart: boolean;
+  canStop: boolean;
+}
+
+/** The tray state, plus the exact phase and the viewer count. */
 export interface DesktopStateMessage extends TrayStateMessage {
   phase: LivePhase;
   viewers: number;
+}
+
+/**
+ * What the icon shows for a live phase. Starting and waiting for OBS share the yellow "waiting"
+ * icon; stopping is yellow too, with Stop still enabled.
+ */
+export function trayStateFor(phase: LivePhase, viewersConnected: number): TrayStateMessage {
+  const controls = { canStart: phase === 'off', canStop: phase !== 'off' };
+  switch (phase) {
+    case 'off':
+      return { type: 'state', state: 'off', tooltip: 'SwarmCast: off', ...controls };
+    case 'live': {
+      const n = Math.max(0, Math.floor(viewersConnected));
+      return { type: 'state', state: 'live', tooltip: `SwarmCast: live · ${n} ${n === 1 ? 'viewer' : 'viewers'}`, ...controls };
+    }
+    case 'stopping':
+      return { type: 'state', state: 'waiting', tooltip: 'SwarmCast: stopping…', ...controls };
+    case 'starting':
+    case 'waiting-obs':
+    default:
+      return { type: 'state', state: 'waiting', tooltip: 'SwarmCast: waiting for OBS', ...controls };
+  }
 }
 
 export interface DesktopFatalMessage {

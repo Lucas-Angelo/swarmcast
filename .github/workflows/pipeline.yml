@@ -2,16 +2,16 @@ name: Pipeline
 
 # The one CI entry point for pull requests and main (.github/workflows/README.md):
 #
-#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×5 ──────────┐
-#            ├─ build (web + windows pkgs) ─┤                                         ├─ ci-ok
+#   changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×4 ──────────┐
+#            ├─ build (web + windows pkg) ──┤                                         ├─ ci-ok
 #            │                              └─ desktop <target> ×5: build ─ clean-machine┤
 #            ├─ site (when the site changed) ──────────────────────────────────────────┤
 #            └─ docker (when the Docker suites or what they run changed) ──────────────┘
 #
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
-# - docker: the Linux Docker suites (_docker.yml: package, start script, AppImage, OBS and the
-#   Playwright suite in containers, x64 and arm64), on their own builds. Also weekly through
+# - docker: the Linux Docker suites (_docker.yml: AppImage on minimal hosts, OBS streaming to the
+#   staged server and the Playwright suite in containers, x64 and arm64), on their own builds. Also weekly through
 #   linux-docker.yml.
 # - build runs in parallel with quick; the test jobs download its artifacts (build once, test
 #   the same bytes everywhere).
@@ -38,7 +38,7 @@ on:
         default: '["windows-latest"]'
       windows-suites:
         description: 'Windows suites: JSON list of suites'
-        default: '["installer","app","quality","direct","obs"]'
+        default: '["app","quality","direct","obs"]'
       screenshots:
         description: Also capture the Windows installer pages and app window for the website guide (artifact only).
         type: boolean
@@ -72,7 +72,6 @@ jobs:
     outputs:
       app: ${{ steps.changes.outputs.app }}
       site: ${{ steps.changes.outputs.site }}
-      scripts: ${{ steps.changes.outputs.scripts }}
       docker: ${{ steps.changes.outputs.docker }}
     steps:
       # A pull request's merge commit and its two parents.
@@ -169,10 +168,8 @@ jobs:
   # ---------------------------------------------------------------- test stage
   node:
     name: node
-    needs: [changes, quick, build]
+    needs: [quick, build]
     uses: ./.github/workflows/_node.yml
-    with:
-      scripts: ${{ needs.changes.outputs.scripts == 'true' }}
 
   e2e:
     name: e2e
@@ -185,7 +182,7 @@ jobs:
     uses: ./.github/workflows/_windows.yml
     with:
       runners: ${{ inputs.windows-runners || '["windows-latest"]' }}
-      suites: ${{ inputs.windows-suites || '["installer","app","quality","direct","obs"]' }}
+      suites: ${{ inputs.windows-suites || '["app","quality","direct","obs"]' }}
 
   site:
     name: site

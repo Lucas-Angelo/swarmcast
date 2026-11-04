@@ -134,10 +134,10 @@ describe('panel pages: brand styling and caching', () => {
     expect(res.body).toContain('<link rel="icon" href="/assets/favicon-Q1.svg" type="image/svg+xml">');
     expect(res.body).not.toContain('evil.example');
     expect(res.body).toContain('class="sc-symbol"');
-    expect(res.body).toContain('only opens from the SwarmCast app or window on this computer');
+    expect(res.body).toContain('only opens from the SwarmCast app on this computer');
     expect(res.body).toContain('How to open it again');
     expect(res.body).toMatch(/Open SwarmCast/);
-    expect(res.body).toMatch(/run the start script again/);
+    expect(res.body).not.toMatch(/start script/);
     expect(res.body).not.toMatch(/<script|<style|style=/i);
   });
 
