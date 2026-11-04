@@ -121,6 +121,9 @@ function outside(r: Ranges, start: number, end: number): Array<[number, number]>
  * eight with no clock: the buffer ran through in a fraction of a second and every new segment
  * vanished as it came, so the sound stopped (main run 41828698597; logged probe 18 in 120,
  * against none in 120 with the flush after `seeked`, soak runs 41838099514, 41841700897).
+ * A second append of the segment hls.js seeks into does the same, which is why the player
+ * turns off hls.js's interstitials (player-config.ts hlsConfigFor), and why `play()` is sent
+ * after the reload only to a paused element (player-config.ts playOnLoad).
  * Diagnosis: docs/QUALITY.md "Audio only".
  *
  * Returns false and does nothing unless the player has the audio-only playlist loaded, `url` is

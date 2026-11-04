@@ -8,7 +8,10 @@
 // - reading the audio-only playlist again because a media playlist it listed went away keeps the
 //   element's MediaSource (a new one for sound alone can crash Linux WebKit), plays on what it
 //   holds until the first segment of the new read is buffered, then moves into it and flushes the
-//   rest (the old buffer and playhead sit on the timeline of the window the viewer joined);
+//   rest (the old buffer and playhead sit on the timeline of the window the viewer joined); the
+//   playlist read again never makes an element that plays on start over from 0 (play() on one
+//   that played out its old buffer), and hls.js's interstitials controller, which loaded and
+//   appended the first new segment twice while hls.js seeked into it, is off;
 // - the quality menu offers "Audio only" only when the stream has separate audio, keeps the video
 //   qualities on offer while audio only plays (hls.levels is then one level without a height), and
 //   picking one of them goes back to video at that height;
@@ -19,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIO_ONLY_PLAYLIST, variantStreamSwarmId } from '@swarmcast/shared';
 import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
 import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
-import { createManifestReloader, loadAudioOnly, loadPreferredHeight, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
+import { createManifestReloader, hlsConfigFor, loadAudioOnly, loadPreferredHeight, playOnLoad, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
 const EVENTS = { MANIFEST_PARSED: 'hlsManifestParsed', LEVEL_SWITCHED: 'hlsLevelSwitched' } as const;
@@ -410,6 +413,44 @@ describe('reading the audio-only playlist again (a media playlist it listed went
       { startOffset: 46, endOffset: 64.1, type: null },
       { startOffset: 68.13, endOffset: 70, type: null },
     ]);
+  });
+
+  it('the playlist read again does not start an element over that still plays: play() on one that played out its old buffer seeks to 0', () => {
+    // Arrange: the old buffer ran out while the reload ran (the playhead at the end of the media,
+    // which the browser counts as ended), and a page whose first load is still paused
+    const played: string[] = [];
+    const element = (paused: boolean, name: string) => ({
+      paused,
+      play: () => {
+        played.push(name);
+        return Promise.resolve();
+      },
+    });
+    const blocked = vi.fn();
+    // Act
+    playOnLoad(element(false, 'kept, playing'), blocked);
+    playOnLoad(element(true, 'new MediaSource, paused'), blocked);
+    // Assert
+    expect(played).toEqual(['new MediaSource, paused']);
+  });
+
+  it('a start blocked by the browser (autoplay) is reported', async () => {
+    // Arrange
+    const blocked = vi.fn();
+    const media = { paused: true, play: () => Promise.reject(new DOMException('not allowed', 'NotAllowedError')) };
+    // Act
+    playOnLoad(media, blocked);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Assert
+    expect(blocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('hls.js plays no interstitials: its controller loaded and appended the first segment of the read again twice, during the seek into it', () => {
+    // Act
+    const configs = (['stable', 'low-delay'] as const).map((id) => hlsConfigFor(id, { isMobile: false }));
+    // Assert
+    expect(configs.map((c) => c.enableInterstitialPlayback)).toEqual([false, false]);
   });
 
   it('does nothing for video, for a switch between video and audio only, or when hls.js cannot hand the media over', () => {
