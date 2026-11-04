@@ -16,7 +16,7 @@ import type net from 'node:net';
 import { solveChallenge, type Challenge } from 'altcha-lib';
 import { deriveKey } from 'altcha-lib/algorithms/web/sha';
 import WebSocket from 'ws';
-import { CHAT_MAX_FRAMES_PER_10S, type ServerMessage } from '@swarmcast/shared';
+import { CHAT_MAX_FRAMES_PER_10S, CHAT_REACT_FRAME_MS, CHAT_REACT_FRAMES_MAX_PER_10S, CHAT_REACT_FRAMES_PER_10S, CHAT_REACT_PER_FRAME_MAX, CHAT_REACTIONS, type ServerMessage } from '@swarmcast/shared';
 import { CookieJar } from '../lib/cookie-jar.mjs';
 import { CORPUS } from '../../../packages/shared/test/chat/corpus.js';
 import { until } from '../lib/wait.mjs';
@@ -50,6 +50,12 @@ export interface BotStats {
   votesSent: number;
   voted: number;
   maxTalliesPerObserver: number;
+  /** React storm: reaction frames sent, `rx` items at observers (the most one got), the highest count in one, and the most in one batch. */
+  reactFrames: number;
+  rxDelivered: number;
+  maxRxPerObserver: number;
+  maxRxCount: number;
+  maxRxPerBatch: number;
 }
 
 /**
@@ -76,6 +82,8 @@ class Bot {
   lastSeq = 0;
   /** Send times of the last CHAT_MAX_FRAMES_PER_10S frames (FRAME_WINDOW_MS). */
   readonly sentAt: number[] = [];
+  /** Send times of its last reaction frames (they have a budget of their own on /control). */
+  readonly reactAt: number[] = [];
   constructor(
     readonly i: number,
     base: string,
@@ -103,7 +111,14 @@ const stats: BotStats = {
   votesSent: 0,
   voted: 0,
   maxTalliesPerObserver: 0,
+  reactFrames: 0,
+  rxDelivered: 0,
+  maxRxPerObserver: 0,
+  maxRxCount: 0,
+  maxRxPerBatch: 0,
 };
+/** Reaction items (`rx`) each observer got, by bot index. */
+const rxSeen = new Map<number, number>();
 /** Vote counts (`pt` items) each observer got, by bot index. */
 const tallies = new Map<number, number>();
 const bots: Bot[] = [];
@@ -170,13 +185,21 @@ async function connect(bot: Bot): Promise<void> {
       } else if (m.t === 'chat.reject') rejects.set(String(m.code), (rejects.get(String(m.code)) ?? 0) + 1);
       else if (m.t === 'chat.batch' && isObserver(bot)) {
         const now = Date.now();
+        let rxHere = 0;
         for (const it of m.items) {
+          if (it.k === 'rx') {
+            rxHere++;
+            stats.rxDelivered++;
+            rxSeen.set(bot.i, (rxSeen.get(bot.i) ?? 0) + 1);
+            stats.maxRxCount = Math.max(stats.maxRxCount, ...it.c);
+          }
           if (it.k === 'm') {
             stats.delivered++;
             stats.latencies.push(now - it.at);
           } else if (it.k === 'skip') stats.skipped += it.n;
           else if (it.k === 'pt') tallies.set(bot.i, (tallies.get(bot.i) ?? 0) + 1);
         }
+        stats.maxRxPerBatch = Math.max(stats.maxRxPerBatch, rxHere);
       }
     });
   });
@@ -313,12 +336,49 @@ function voteAll(id: string, options: number, withinMs: number): Promise<void> {
   ).then(() => {});
 }
 
+/**
+ * Reactions (docs/CHAT.md "Reactions"): every bot sends a reaction frame every CHAT_REACT_FRAME_MS
+ * with `taps` taps of random kinds, as the page does at its fastest (never more than
+ * CHAT_REACT_FRAMES_PER_10S in any FRAME_WINDOW_MS, so every frame is handed on); the first
+ * `scripts` bots send frames of CHAT_REACT_PER_FRAME_MAX taps five times as often, kept just under
+ * the ceiling that ends a socket (CHAT_REACT_FRAMES_MAX_PER_10S): the frames past the first limit
+ * are ignored, and the socket must stay.
+ */
+function reactAll(react: NonNullable<Scenario['react']>, end: number): Promise<void> {
+  return Promise.all(
+    bots.map(async (bot) => {
+      const script = bot.i < react.scripts + (scenario.slowReaders ?? 0) && bot.i >= (scenario.slowReaders ?? 0);
+      if (bot.i < (scenario.slowReaders ?? 0)) return;
+      const every = script ? CHAT_REACT_FRAME_MS / 5 : CHAT_REACT_FRAME_MS;
+      const limit = script ? CHAT_REACT_FRAMES_MAX_PER_10S : CHAT_REACT_FRAMES_PER_10S;
+      const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, Math.max(0, Math.min(ms, end - Date.now()))));
+      await sleep(Math.random() * every);
+      while (Date.now() < end) {
+        const n = bot.reactAt.length;
+        await sleep(n < limit ? 0 : Math.max(0, bot.reactAt[n - limit]! + FRAME_WINDOW_MS + 1 - Date.now()));
+        const ws = bot.ws;
+        if (Date.now() < end && ws?.readyState === WebSocket.OPEN) {
+          const c = CHAT_REACTIONS.map(() => 0);
+          const taps = script ? CHAT_REACT_PER_FRAME_MAX : react.taps;
+          for (let k = 0; k < taps; k++) c[Math.floor(Math.random() * c.length)]!++;
+          ws.send(JSON.stringify({ t: 'chat.react', c }));
+          bot.reactAt.push(Date.now());
+          if (bot.reactAt.length > limit) bot.reactAt.shift();
+          stats.reactFrames++;
+        }
+        await sleep(every);
+      }
+    }),
+  ).then(() => {});
+}
+
 async function run(pollId?: string): Promise<void> {
   const b = scenario.behaviour;
   const perS = b.kind === 'idle' ? 0 : b.perBotPerS;
   const end = Date.now() + scenario.seconds * 1000;
   const jobs: Array<Promise<void>> = [drive([...bots], perS, end)];
   if (scenario.poll && pollId) jobs.push(voteAll(pollId, scenario.poll.options, scenario.poll.voteWithinMs));
+  if (scenario.react) jobs.push(reactAll(scenario.react, end));
   if (scenario.raid) {
     const r = scenario.raid;
     jobs.push(
@@ -357,6 +417,7 @@ async function run(pollId?: string): Promise<void> {
   stats.markerMissed = await observersReach(await endMarkerSeq);
   for (const bot of bots) stats.maxGifAcksPerBot = Math.max(stats.maxGifAcksPerBot, bot.acks);
   stats.maxTalliesPerObserver = Math.max(0, ...tallies.values());
+  stats.maxRxPerObserver = Math.max(0, ...rxSeen.values());
   if (scenario.behaviour.kind !== 'gif') stats.maxGifAcksPerBot = 0;
   for (const bot of bots) {
     bot.closing = true;

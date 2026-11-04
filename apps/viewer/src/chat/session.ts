@@ -17,7 +17,10 @@
 // (`poll`, and `poll` in snapshots, with this device's vote as `mine`); vote counts are ephemeral
 // `pt` items for that poll's id; `chat.voted` is the answer to this device's vote (also from another
 // tab). None of them takes a seq or causes a resume.
-import { CHAT_MENTIONS_MAX, CHAT_POLL_OPTIONS_MAX, CHAT_POLL_OPTIONS_MIN, CHAT_PROTOCOL_VERSION, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPollPublic, type ChatPublicSettings, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+//
+// Reactions over the video (docs/CHAT.md, "Reactions"): ephemeral `rx` items with everyone's taps
+// of one window per kind, handed to the view as they come (never stored, never a resume).
+import { CHAT_MENTIONS_MAX, CHAT_POLL_OPTIONS_MAX, CHAT_POLL_OPTIONS_MIN, CHAT_PROTOCOL_VERSION, CHAT_REACT_BROADCAST_MAX_PER_KIND, CHAT_REACTIONS, isChatSeqItem, type ChatAuthor, type ChatClientMessage, type ChatItem, type ChatPin, type ChatPollPublic, type ChatPublicSettings, type ChatReplyRef, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { MessageKey, MessageParams } from '@swarmcast/shared/i18n';
 
 /** A chat frame this page sends on /control (the shared protocol type). */
@@ -82,6 +85,8 @@ export interface ChatView {
   tally?(id: string, c: number[]): void;
   /** The server counted this device's vote (`n`: its nonce, when this page sent it). */
   voted?(n: number | undefined, id: string, o: number): void;
+  /** Everyone's reaction taps of one window, per kind (CHAT_REACTIONS order; docs/CHAT.md "Reactions"). */
+  reactions?(c: number[]): void;
   /** An author's nickname or colour changed. */
   author(a: ChatAuthor): void;
   settings(s: ChatPublicSettings | null): void;
@@ -392,6 +397,14 @@ export class ChatSession {
         if (!p || item.id !== p.id || !isCounts(item.c, p.o.length)) return;
         this.poll = { ...p, c: item.c };
         this.view.tally?.(p.id, item.c);
+        return;
+      }
+      case 'rx': {
+        // Ephemeral and seq-less: drawn over the video, never in the list. Counts of an unknown
+        // kind (a newer server's longer list) are left out; anything malformed drops the item.
+        if (!Array.isArray(item.c) || !item.c.every((x) => Number.isSafeInteger(x) && x >= 0)) return;
+        const c = CHAT_REACTIONS.map((_, i) => Math.min(CHAT_REACT_BROADCAST_MAX_PER_KIND, (item.c[i] as number | undefined) ?? 0));
+        if (c.some((x) => x > 0)) this.view.reactions?.(c);
         return;
       }
       case 'd': {

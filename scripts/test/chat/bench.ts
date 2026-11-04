@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { monitorEventLoopDelay, performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import type { MessageKey } from '@swarmcast/shared';
+import { CHAT_REACT_BROADCAST_MAX_PER_KIND, CHAT_REACT_BURST, CHAT_REACT_REFILL_PER_S, CHAT_REACT_WINDOW_MS_LARGE, type MessageKey } from '@swarmcast/shared';
 import { defaultConfig } from '../../../apps/server/src/core/config.js';
 import { TunnelProvider } from '../../../apps/server/src/tunnel/provider.js';
 import { inactiveDirect, makeController } from '../../../apps/server/test/unit/live-helpers.js';
@@ -297,6 +297,25 @@ async function runScenario(sc: Scenario): Promise<Result> {
         check(lat95 <= 1000, `delivery p95 ${lat95} ms (limit 1000)`);
         break;
       }
+      case 'react-storm': {
+        // Reactions are added up on the server: one rx per window (CHAT_REACT_WINDOW_MS_LARGE, 2 s,
+        // above 40 viewers) whatever the taps, never two in one batch, each count capped; the taps
+        // taken stay within the device buckets; the storm is not a flood (no protection), and the
+        // chat beside it is delivered as in lively.
+        const runS = (Date.now() - runStart) / 1000;
+        const taken = (live.chat.counters().reactions ?? []).reduce((a, b) => a + b, 0);
+        const perDevice = CHAT_REACT_BURST + CHAT_REACT_REFILL_PER_S * Math.ceil(runS);
+        check(bots.reactFrames > 0, 'no reaction frame was sent');
+        check(bots.rxDelivered > 0, 'no observer got the reactions');
+        check(bots.maxRxPerObserver <= Math.ceil(runS / (CHAT_REACT_WINDOW_MS_LARGE / 1000)) + 2, `an observer got ${bots.maxRxPerObserver} reaction items in ${round(runS)} s (at most one per ${CHAT_REACT_WINDOW_MS_LARGE} ms)`);
+        check(bots.maxRxPerBatch <= 1, `${bots.maxRxPerBatch} reaction items in one batch`);
+        check(bots.maxRxCount <= CHAT_REACT_BROADCAST_MAX_PER_KIND, `a count of ${bots.maxRxCount} in one reaction item (cap ${CHAT_REACT_BROADCAST_MAX_PER_KIND})`);
+        check(taken <= joined.bots * perDevice, `${taken} taps taken from ${joined.bots} devices (at most ${perDevice} each)`);
+        check(!protects.has('slow') && !protects.has('lockdown'), `reactions switched protection on (${[...protectStates].join(' ')})`);
+        check(lat95 <= 1000, `delivery p95 ${lat95} ms (limit 1000)`);
+        check(bots.skipped <= Math.ceil(bots.delivered * 0.01), `observers missed ${bots.skipped} messages (got ${bots.delivered}) with chat upload at ${egressP95} of ${budget} kbps`);
+        break;
+      }
       case 'reconnect-storm':
         check(bots.reconnected === joined.bots, `${bots.reconnected} of ${joined.bots} bots got their hello back`);
         check(bots.reconnectMaxMs <= 10_000, `slowest reconnect ${bots.reconnectMaxMs} ms (limit 10 s)`);
@@ -323,6 +342,7 @@ async function runScenario(sc: Scenario): Promise<Result> {
       'skipped (observers)': bots.skipped,
       'votes answered/sent': sc.poll ? `${bots.voted}/${bots.votesSent}` : '-',
       'vote counts per observer': sc.poll ? bots.maxTalliesPerObserver : '-',
+      'reaction frames / items per observer': sc.react ? `${bots.reactFrames}/${bots.maxRxPerObserver}` : '-',
       rejects: bots.rejects
         .map(([k, v]) => `${k.replace(/^(chat\.err|text)\./, '')} ${v}`)
         .join(', '),
