@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useLayoutEffect, useState } from 'preact/hooks';
 import type { AdminState, SecuritySettings } from '@swarmcast/shared';
 import { getLang, t, type MessageKey } from '@swarmcast/shared/i18n';
 import { api, post } from './api.js';
@@ -32,7 +32,10 @@ export function SecurityCard({ s, busy, act }: { s: AdminState; busy: boolean; a
   const sec = s.security;
   const [v, setV] = useState<SecuritySettings>(sec.settings);
   const saved = JSON.stringify(sec.settings);
-  useEffect(() => setV(sec.settings), [saved]);
+  // The saved switches replace the unsaved ones when they change (a save, the other window). In
+  // the commit, not in a useEffect: Preact runs those after the next frame (or a 35 ms timer), and
+  // on the first render that one put the saved switches back over one clicked in the meantime.
+  useLayoutEffect(() => setV(sec.settings), [saved]);
   const pill = sec.threat === 'normal' ? 'pill-ok' : sec.threat === 'suspicious' ? 'pill-wait' : 'pill-bad';
   const configured = s.settings;
   return (
