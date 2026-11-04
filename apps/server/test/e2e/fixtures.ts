@@ -383,11 +383,12 @@ export interface JoinPageOptions extends BrowserOptions {
  * can no longer overtake it.
  *
  * Measured on Linux with Playwright 1.64.1 (WPE), no SwarmCast: a new page's first goto to a
- * local page with COOP never committed in 32 of about 18,500 tries on a busy machine (a new page
- * in a long-lived context too), 0 of 10,000 without COOP, 0 of 28,000 with this route. The e2e
- * soaks hit it about once in 1000 to 3000 WebKit tests, as a test's first goto (e.g.
- * loginPanel). Not media: closing the watch page's player before its context changed nothing.
- * WebKitGTK 2.52 (GNOME Web's engine) loses such loads too. Other engines are left alone.
+ * local page with COOP never committed in 34 of about 23,000 tries on a busy machine (a new page
+ * in a long-lived context too), 0 of 10,000 without COOP, 0 of 40,000 with this route;
+ * first-goto.spec.ts failed 4 runs in 30 without it, 0 in 30 with it. The e2e soaks hit it about
+ * once in 1000 to 3000 WebKit tests, as a test's first goto (e.g. loginPanel). Not media: closing
+ * the watch page's player before its context changed nothing. WebKitGTK 2.52 (GNOME Web's
+ * engine) loses such loads too. Other engines are left alone.
  */
 async function routeWebKitRequests(context: BrowserContext): Promise<void> {
   if (context.browser()?.browserType().name() !== 'webkit') return;
