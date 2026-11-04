@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **The poll form keeps the kind you pick.** Clicking **Prediction** right after opening the form with **Poll** could switch it back to a poll on its own a moment later, so a prediction could start as a plain poll. It now stays on what you clicked.
+- **The poll form keeps what you do right after opening it.** Clicking **Prediction** at once could switch the form back to a poll a moment later, so a prediction could start as a plain poll; and on a Mac or on Linux, a click on an answer box right away could send what you typed into the question instead. Both now stay where you clicked.
 
 ## [0.5.0] - 2026-11-05
 
