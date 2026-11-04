@@ -10,6 +10,7 @@ changes the build output.
 | `obs.sh` | Section 1: real OBS Studio (Ubuntu 24.04 package, obs-websocket) headless under Xvfb + Mesa llvmpipe, streaming to the staged server in the same container |
 | `e2e.sh` | Section 2: the Playwright suite (Firefox, Chromium) in `mcr.microsoft.com/playwright:v<version>-noble` (version read from `package-lock.json`) |
 | `appimage.sh` | Section 3: the desktop AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 that has only the host packages the website's Linux page lists |
+| `webkit.sh` | Section 4: the desktop window's WebKitGTK (Ubuntu 24.04's): how often it loses the panel's first navigation (`race`), and the shell's panel load watchdog against a mock server that never answers the first load (`watchdog`). By hand only, not in CI |
 
 ## In CI
 
@@ -114,6 +115,39 @@ no process. Every other wait in these scripts is for its condition with a deadli
 When a base fails with a missing library, the list (here and on the website, both languages) is
 what needs fixing. `libharfbuzz0b` and `libfribidi0` were found that way: AppImages leave them to
 the host (the AppImage exclude list), and the v0.2.1 AppImage does not start without them.
+
+## Section 4: `webkit.sh`
+
+```sh
+scripts/test/docker/webkit.sh race --loads 3000                          # 12 loops of the app's navigations
+scripts/test/docker/webkit.sh race --pattern blank --pattern app-fresh --copies 8 --loads 1500
+scripts/test/docker/webkit.sh watchdog                                   # this checkout's shell
+scripts/test/docker/webkit.sh watchdog --src /path/to/an/older/checkout  # fails without the watchdog
+```
+
+Why and what was measured: [docs/DESKTOP.md](../../../docs/DESKTOP.md#panel-load-watchdog).
+`Dockerfile.webkit` is Ubuntu 24.04 with its WebKitGTK 4.1 (the library the app's window uses on
+Linux), Python's GObject bindings, Xvfb, and the desktop shell's build dependencies, Node and rustup.
+
+- `race` runs `webkit_coop.py` 12 times at once (`--copies`), each under its own Xvfb, with no
+  network (`--network none`): one webview repeats the window's navigations, the splash on a custom
+  `tauri://` scheme registered like wry does, then `/auth/<token>` and `/` from a server on 127.0.0.1
+  with the panel's headers (COOP same-origin, CSP...). A load that has not committed in 5 s is
+  watched for 20 s more; one that still has not committed is a stall (printed with the webview's
+  load events), and the harness opens it again, as the watchdog does, to check that this recovers
+  it. `--pattern app-fresh` makes a new webview per load (an app start), `--pattern blank` sends a
+  new webview's first navigation straight to the server (the case #115 measured, which loses loads
+  much more often), `--no-coop` drops the header, `--mode watchdog` uses the app's own schedule.
+  Each harness prints a JSON line, then the totals per pattern; exit 1 when a load never committed
+  in the end.
+- `watchdog` builds the shell (`cargo build`, debug) from `--src` (default: this checkout; the mock
+  server always comes from this checkout) and runs it under Xvfb and a D-Bus session with
+  `SWARMCAST_SIDECAR` set to `apps/desktop/test/mock-server.mjs` and `MOCK_LOSE_PANEL_LOADS=1`
+  (`--lose N`): the mock never answers the first N panel loads, so the window's navigation neither
+  commits nor fails, as WebKit's lost one. It passes when the panel page loads (the mock's page
+  reports its language) after exactly N new navigations of the watchdog, within the watchdog's
+  schedule plus 15 s. The update check goes to an address that refuses, never to the real feed.
+  Against a shell without the watchdog it fails: the window stays on the splash.
 
 ## Cleanup
 

@@ -138,6 +138,9 @@ Notes:
   (`<meta http-equiv="refresh" content="0;url=/">` plus a link, no script, `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer`, the token not repeated). That navigation starts on 127.0.0.1, so the
   cookie is sent. A browser (a run without `--desktop`) gets the same page.
+- **Panel load watchdog**: see the section of that name below. Every navigation the shell starts
+  (the splash, the panel) is opened again when it has not committed in 5 s, then 10 s, 20 s and every
+  30 s, until it commits.
 - **`--background`** (used by autostart): start with the window hidden, tray only (macOS: no Dock icon
   while the window is hidden), and pass `--no-autostart` to the server so the live does not turn on at
   every login.
@@ -171,6 +174,62 @@ Notes:
   console window, so killing the shell kills the server and everything it started. macOS / Linux: the
   server's parent watch and stdin EOF; after the 35 s grace the shell SIGKILLs the server only, and the
   server's reaper kills its children.
+
+## Panel load watchdog
+
+The shell watches every navigation it starts in the window (`src/page.rs`, `COMMIT_TIMEOUTS`;
+`src/shell.rs`, `navigate` and `on_watch`): the splash it is built with, the panel's
+`/auth/<token>` after `ready`, and the splash again (a crash, an update). When the page has not
+committed 5 s later, the shell opens it again, then waits 10 s, 20 s and then 30 s each time, until it
+commits; a newer navigation of the shell replaces the one watched. Only a commit counts (wry's
+"started" page-load event, sent on commit on every OS): a lost navigation does report "finished",
+with the panel's URL, without ever committing (measured below). The log says `the panel did not open
+within 5 s, opening it again (attempt 2)`, never the URL (it carries the login token). It runs on
+every OS; WebView2 (Windows) is Chromium, which does not have this WebKit code, so there it should
+never fire.
+
+**Why.** WebKit has a message race in its process swap for `Cross-Origin-Opener-Policy`: a
+navigation whose answer has `Cross-Origin-Opener-Policy: same-origin` moves the page to a new web
+process, and if the old web process's `DidStartProvisionalLoadForFrame` reaches the UI process after
+the swap was requested, `WebPageProxy::didStartProvisionalLoadForFrameShared` cancels the provisional
+page: the navigation then neither commits nor fails, for good (the analysis, with WebKit's own logs,
+is in the pull request that fixed it for the e2e suites, #115). Both SwarmCast servers send that
+header on every answer, the panel's `/auth/<token>` included, and a new window goes from the splash
+(`tauri://localhost`, no COOP) to it. It needs a very fast answer, which a server on 127.0.0.1
+gives. Nothing waited for that navigation, so a lost one left the window on "Starting SwarmCast…"
+until the streamer quit. Opening the page again is a new navigation, which commits.
+
+**Measured** (`scripts/test/docker/webkit.sh race`: Ubuntu 24.04's WebKitGTK 2.52.6 under Xvfb,
+8 to 12 loops at once on a 12-core arm64 Docker host; macOS: the same loop written in Swift around
+WKWebView, 3 at once, a one-off not kept in the repository). A load counts as lost when it has not
+committed 25 s after it started (5 s in the watchdog row); the harness then opens it again.
+
+| Navigation | Loads | Lost | Opened again: committed |
+|---|---:|---:|---:|
+| Linux: an app start (a new webview, the splash on `tauri://`, then `/auth/<token>` with COOP) | 12,000 | 18 | 18 of 18, within 0.5 s |
+| Linux: a new webview's first page straight to `/auth/<token>` (the case of #115) | 12,000 | 44 | 44 of 44 |
+| Linux: one webview going splash → panel → splash again and again | 36,000 | 0 | |
+| macOS 27 (WKWebView): an app start; a new webview's first page | 8,000; 12,000 | 0; 0 | |
+| Linux: an app start, opened again on the watchdog's schedule (`--mode watchdog`) | 12,000 | 7 | 7 of 7: the panel 5.1 s after the first try |
+
+Every lost load had the same page-load events: "finished" with the panel's URL, then "started"
+(WebKitGTK's provisional start, which wry does not pass on), and never "committed": the swap's
+cancel simulates a failed provisional load, and the old process's late start comes after it. The
+`/` that `/auth/<token>` opens by itself (same origin, COOP on both, no swap) and the way back to
+the splash never stalled. macOS did not reproduce it in these runs; it shares the `WebPageProxy`
+code, so the watchdog covers it too. The slowest load that did commit took 1.8 s in Docker and 5.4 s
+on the Mac (a harness copy was killed by the OS for memory then): a slow load that the watchdog
+opens again after 5 s gets 10 s for the next try. The real shell is checked with
+`webkit.sh watchdog` (the mock server never answers the first panel load): the panel opens 5 s later
+through the watchdog, and without it the window stays on the splash.
+
+**Not chosen.** Dropping COOP from `/auth/<token>`: the panel's first page would then be a page
+without COOP that opens `/` (COOP) by itself, so the same swap would move to that navigation, which
+the shell does not start and cannot watch; and the panel's pages keep their browser hardening
+(COOP/CORP, [THREAT_MODEL.md](THREAT_MODEL.md)). Answering `/auth/<token>` a little later: a timing that only makes the race rarer. Viewer pages are
+not changed: over the tunnel (the default) the answer takes tens of milliseconds, far too slow for the
+race, and a viewer's browser can reload a tab that stays blank, which is all the lost navigation does
+there.
 
 ## Autostart ("Start with the computer", default off)
 
@@ -324,6 +383,7 @@ scripts, which ran them before installing:
 | macOS (local + CI arm64/x64) | build `.app`/`.dmg`, install, launch, panel, tray, close dialog, autostart on/off, update vA→vB from a local endpoint with config kept, uninstall |
 | Linux (CI runners) | Ubuntu 22.04/24.04 x64 and 24.04 arm64 (`_desktop.yml`, clean-machine job): install `.deb` and AppImage under Xvfb, panel through the admin API, autostart file, AppImage update, uninstall |
 | Linux (Docker, CI x64 + arm64, weekly) | the AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 with only the host packages the website lists (`scripts/test/docker/appimage.sh`, `linux-docker.yml`): starts, panel login, `/api/desktop`, webview up, Quit leaves nothing running |
+| Linux (Docker, by hand) | `scripts/test/docker/webkit.sh`: how often WebKitGTK loses the panel's first navigation, and the debug shell with a mock server that never answers the first panel load (the panel load watchdog opens it) |
 | Windows (CI) | NSIS silent install, launch, panel through the admin API, Job object (killing the app ends the server), autostart key, update vA→vB with config kept, uninstall, nothing left running |
 
 CI ([.github/workflows/README.md](../.github/workflows/README.md)): `cargo fmt --check` runs in `quick`,
