@@ -9,7 +9,8 @@
 //   OBS reconnect (the stream's next run) keeps it playing on audio only;
 // - with the quality ladder on, when the streamer's PC drops its last converted quality, the
 //   ladder's audio playlist (audio.m3u8) goes away with it and the stream goes on with the
-//   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze;
+//   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze,
+//   on the MediaSource it had (a new one for sound alone can crash Linux WebKit's page);
 // - with the sound on: where the device has a sound output, audio only plays on; where it has none
 //   (Firefox on the Linux runners fails a sound-only element with "OnMediaSinkAudioError" once it
 //   is unmuted, and hls.js used to reset and reload the whole audio playlist every 2 s, forever:
@@ -123,6 +124,9 @@ async function followRuns(page: Page): Promise<void> {
 
 /** The newest run of the stream the player buffered audio from (followRuns). */
 const lastRunBuffered = (page: Page): Promise<number> => page.evaluate(() => (window as unknown as { __lastRun: number }).__lastRun);
+
+/** The blob: URL of the MediaSource the video element plays (a new one after every hls.js MediaSource reset). */
+const mediaSourceUrl = (page: Page): Promise<string> => page.evaluate(() => document.querySelector('video')!.src);
 
 /** The viewer's remembered choice. */
 const savedChoice = (page: Page): Promise<string | null> => page.evaluate(() => localStorage.getItem('sc.audio-only'));
@@ -266,6 +270,7 @@ test('with the quality ladder on, audio only keeps playing when the PC drops its
   await playingAudioOnly(page);
   await waitPlaying(page);
   expect((await player(page)).media).toBe('/hls/audio.m3u8');
+  const mediaSource = await mediaSourceUrl(page);
   await startStallMonitor(page);
 
   // Act
@@ -276,6 +281,8 @@ test('with the quality ladder on, audio only keeps playing when the PC drops its
   await expect.poll(async () => (await player(page)).media, { timeout: STARTING_DELAY_MS, intervals: [500] }).not.toBe('/hls/audio.m3u8');
   await playingAudioOnly(page);
   await playsOn(page, 2);
+  // The same MediaSource plays on: a new one for sound alone can crash Linux WebKit (audio-only.ts reloadAudioOnlyInPlace).
+  expect(await mediaSourceUrl(page), 'the element kept its MediaSource').toBe(mediaSource);
   const after = await stallReport(page);
   const s = await stats(page);
   console.log(`audio only, rendition dropped: longest stall ${Math.round(after.maxStallMs)} ms, ${s.reloads} source reloads (last: ${s.lastReload ?? 'none'})`);

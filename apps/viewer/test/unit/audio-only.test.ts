@@ -5,6 +5,8 @@
 //   the choice is remembered per browser;
 // - a 404 on the audio-only playlist (the stream has no separate audio) goes back to video for the
 //   page and keeps the saved choice;
+// - reading the audio-only playlist again because a media playlist it listed went away keeps the
+//   element's MediaSource (a new one for sound alone can crash Linux WebKit);
 // - the quality menu offers "Audio only" only when the stream has separate audio, keeps the video
 //   qualities on offer while audio only plays (hls.levels is then one level without a height), and
 //   picking one of them goes back to video at that height;
@@ -14,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIO_ONLY_PLAYLIST, variantStreamSwarmId } from '@swarmcast/shared';
 import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
-import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
+import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
 import { createManifestReloader, loadAudioOnly, loadPreferredHeight, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
@@ -212,6 +214,72 @@ describe('a vanished media playlist while audio only plays', () => {
     reloader.onError('levelLoadError', 503);
     // Assert
     expect(reload).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The parts of hls.js a reload uses, recording the calls. `loadSource` with the media attached
+ * detaches it and gives the element a new MediaSource (hls.js loadSource), which Linux WebKit
+ * can crash on for sound alone; `transferMedia` hands the MediaSource over instead.
+ */
+class ReloadHls {
+  calls: string[] = [];
+  mediaSources = 1;
+  attached: unknown = 'media';
+  constructor(public url: string | null, private readonly canTransfer = true) {}
+  loadSource(url: string): void {
+    if (this.attached) {
+      // hls.js: remove and re-create the MediaSource.
+      this.mediaSources += 1;
+    }
+    this.url = new URL(url, BASE).href;
+    this.calls.push(`loadSource ${new URL(url, BASE).pathname}`);
+  }
+  transferMedia(): unknown {
+    this.calls.push('transferMedia');
+    if (!this.canTransfer) return null;
+    const kept = { media: this.attached, mediaSource: 'kept' };
+    this.attached = null;
+    return kept;
+  }
+  attachMedia(m: never): void {
+    this.calls.push('attachMedia');
+    this.attached = m;
+  }
+}
+
+const BASE = 'https://viewer.test/watch';
+
+describe('reading the audio-only playlist again (a media playlist it listed went away)', () => {
+  it('keeps the MediaSource: hands it over, reads the playlist, takes it back', () => {
+    // Arrange
+    const hls = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href);
+    // Act
+    const done = reloadAudioOnlyInPlace(hls, AUDIO_ONLY_URL, BASE);
+    // Assert
+    expect(done).toBe(true);
+    expect(hls.calls).toEqual(['transferMedia', `loadSource ${AUDIO_ONLY_URL}`, 'attachMedia']);
+    expect(hls.mediaSources).toBe(1);
+    expect(hls.attached).toEqual({ media: 'media', mediaSource: 'kept' });
+  });
+
+  it('does nothing for video, for a switch between video and audio only, or when hls.js cannot hand the media over', () => {
+    // Arrange
+    const video = new ReloadHls(new URL('/hls/index.m3u8', BASE).href);
+    const toAudio = new ReloadHls(new URL('/hls/index.m3u8', BASE).href);
+    const toVideo = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href);
+    const noTransfer = new ReloadHls(new URL(AUDIO_ONLY_URL, BASE).href, false);
+    // Act
+    const done = [
+      reloadAudioOnlyInPlace(video, '/hls/index.m3u8', BASE),
+      reloadAudioOnlyInPlace(toAudio, AUDIO_ONLY_URL, BASE),
+      reloadAudioOnlyInPlace(toVideo, '/hls/index.m3u8', BASE),
+      reloadAudioOnlyInPlace(noTransfer, AUDIO_ONLY_URL, BASE),
+    ];
+    // Assert: the caller loads those as usual.
+    expect(done).toEqual([false, false, false, false]);
+    expect([video.calls, toAudio.calls, toVideo.calls]).toEqual([[], [], []]);
+    expect(noTransfer.calls).toEqual(['transferMedia']);
   });
 });
 
