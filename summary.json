@@ -1,23 +1,23 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-04T22:53:06.142Z",
+  "generatedAt": "2026-11-04T23:45:46.430Z",
   "repo": "Lucas-Angelo/swarmcast",
   "downloads": {
-    "total": 371,
+    "total": 378,
     "byKind": {
-      "installer": 261,
+      "installer": 268,
       "package": 110
     },
     "byOs": {
-      "windows": 72,
-      "macos": 126,
-      "linux": 173
+      "windows": 73,
+      "macos": 128,
+      "linux": 177
     },
     "about": 370
   },
   "apps": {
     "week": 120,
-    "checks": 373,
+    "checks": 375,
     "days": 7.5,
     "partial": false,
     "checksPerApp": 3
