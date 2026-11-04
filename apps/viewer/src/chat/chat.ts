@@ -3,7 +3,7 @@
 // and wires the session (protocol state), the list, the input, the picker and the settings.
 import './chat.css';
 import { t } from '@swarmcast/shared/i18n';
-import { CHAT_REACTIONS, cutQuote, GIF_KEY_RE, mentionKeys, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+import { CHAT_BG_DARK, CHAT_BG_LIGHT, CHAT_REACTIONS, cutQuote, GIF_KEY_RE, mixHex, mentionKeys, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { GifConfig } from './gif-api.js';
 import { createGifPicker } from './gif-picker.js';
 import { backgroundOf, onThemeChange, NameColors, tokenColorAt } from './color-ui.js';
@@ -13,6 +13,8 @@ import { ChatInput } from './input.js';
 import { createPicker, type EmojiData } from './picker.js';
 import { PollCard, pollBadge } from './poll.js';
 import { createReactPicker, ReactionLayer, ReactionSender } from './reactions.js';
+import { ChatOverlay, OVERLAY_SCRIM } from './overlay.js';
+import type { OverlayHost } from '../overlay-mode.js';
 import { animateGifs, loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
 import { ChatList, GIF_PROVIDER_NAMES, mentionCandidates, type MessageEntry } from './render.js';
 import { ChatSession, type ChatEntry, type ClientFrame, type ReplyEntry } from './session.js';
@@ -24,6 +26,8 @@ export interface MountOptions {
   showButton: HTMLButtonElement;
   /** The player container: reactions float over the video inside it (absent: they are not drawn). */
   player?: HTMLElement;
+  /** The chat over the video in full screen (overlay-mode.ts; absent: never drawn). */
+  overlay?: OverlayHost;
   /** The viewer's nickname (for their own messages before the roster has them). */
   nickname: string;
   sendFrame(msg: ClientFrame): boolean;
@@ -272,6 +276,32 @@ export function mountChat(opts: MountOptions): ChatController {
   // poll card under it.
   root.append(head, list.pinned, pollCard.root, body, input.form, picker.panel, gifPicker.panel, reactPicker.panel, settingsPop.popover.panel);
 
+  // The chat over the video in full screen (docs/CHAT.md, "Chat over the video"): the latest lines
+  // over the picture, and the chat's own message box moved there while the viewer writes. Names
+  // are made readable against the lightest the lines' scrim gets (over a white picture).
+  const overlayColors = new NameColors(
+    () => opts.player ?? null,
+    (el) => mixHex(tokenColorAt(el, '--video-bg') ?? CHAT_BG_DARK, tokenColorAt(el, '--on-video') ?? CHAT_BG_LIGHT, OVERLAY_SCRIM),
+  );
+  const overlay: ChatOverlay | null =
+    opts.player && opts.overlay
+      ? new ChatOverlay({
+          player: opts.player,
+          line: (e) => list.overlayLine(e, (c) => overlayColors.paint(c)),
+          moveInput: (host) => {
+            reactPicker.popover.close();
+            if (host) host.append(input.form, reactPicker.panel);
+            else {
+              root.insertBefore(input.form, picker.panel);
+              root.insertBefore(reactPicker.panel, settingsPop.popover.panel);
+            }
+          },
+          focusInput: () => input.textarea.focus(),
+        })
+      : null;
+  opts.overlay?.setInputOpener(() => overlay?.openInput() ?? false);
+  opts.overlay?.subscribe(() => overlay?.setActive(opts.overlay?.active === true));
+
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
     list.setMentionHighlight(prefs.mentions);
@@ -283,6 +313,10 @@ export function mountChat(opts: MountOptions): ChatController {
     showButton.hidden = !hidden || !active;
     if (!hidden) list.resume();
     applyReactions();
+    overlay?.root.classList.toggle('mention-highlight', prefs.mentions);
+    // Over the video only while there is a chat to show ("hide chat" means no chat there either).
+    opts.overlay?.setAvailable(active && !hidden && session?.settings?.enabled === true);
+    overlay?.setActive(opts.overlay?.active === true);
   };
 
   const applySettings = (s: ChatPublicSettings | null): void => {
@@ -317,18 +351,22 @@ export function mountChat(opts: MountOptions): ChatController {
         writers.clear();
         noteWriters(entries);
         list.reset(entries);
+        overlay?.reset(entries);
       },
       append: (entries) => {
         noteWriters(entries);
         list.append(entries);
+        overlay?.add(entries);
       },
       remove: (seqs) => {
         input.dropReply((s) => seqs.includes(s));
         list.remove(seqs);
+        overlay?.remove(seqs);
       },
       clearUpTo: (s) => {
         input.dropReply((r) => r <= s);
         list.clearUpTo(s);
+        overlay?.clearUpTo(s);
       },
       highlight: (s, on) => list.highlight(s, on),
       pin: (p) => list.setPin(p),
@@ -356,6 +394,8 @@ export function mountChat(opts: MountOptions): ChatController {
       },
       unsupported: () => {
         chatSession.settings = null;
+        opts.overlay?.setAvailable(false);
+        overlay?.setActive(false);
         pollCard.setAllowed(false);
         root.hidden = false;
         input.form.hidden = true;
@@ -442,12 +482,13 @@ export function mountChat(opts: MountOptions): ChatController {
   onThemeChange(() => {
     colors.invalidate();
     highlightColors.invalidate();
+    overlayColors.invalidate();
     list.recolor();
   });
 
   (window as unknown as { __swarmcastChat: unknown }).__swarmcastChat = {
     get stats() {
-      return { ...list.stats, lastSeq: chatSession.lastSeq, reactions: { alive: layer?.alive ?? 0, spawned: layer?.spawned ?? 0, peak: layer?.peak ?? 0 } };
+      return { ...list.stats, lastSeq: chatSession.lastSeq, reactions: { alive: layer?.alive ?? 0, spawned: layer?.spawned ?? 0, peak: layer?.peak ?? 0 }, overlay: { active: overlay?.active ?? false, lines: overlay?.count ?? 0, writing: overlay?.writing ?? false } };
     },
   };
 

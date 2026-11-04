@@ -96,7 +96,8 @@
   outline-offset: -3px;
 }
 .pc-bar button#theater[aria-pressed='true'],
-.pc button.pc-pip.active {
+.pc button.pc-pip.active,
+.pc button.pc-ico-chat[aria-pressed='true'] {
   background: color-mix(in srgb, var(--on-video) 22%, transparent);
 }
 
@@ -142,6 +143,10 @@
 .pc-ico-theater::before {
   -webkit-mask-image: url('./icons/theater.svg');
   mask-image: url('./icons/theater.svg');
+}
+.pc-ico-chat::before {
+  -webkit-mask-image: url('./icons/chat.svg');
+  mask-image: url('./icons/chat.svg');
 }
 .quality-btn::before {
   content: '';
@@ -237,6 +242,19 @@
 }
 .player.is-fullscreen .pc-bar {
   padding: var(--sp-2) var(--sp-4) max(var(--sp-2), env(safe-area-inset-bottom));
+}
+/* The page-filling stand-in on iPhones without element full screen (player-controls.ts): the
+ * player fixed over the whole window, the page under it still. Safari's own bars may stay. */
+.player.pc-fill {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+}
+body.player-filled {
+  overflow: hidden;
 }
 
 /* ---- Quality menu (quality-menu.ts): a button and a menu over the video ----------------- */

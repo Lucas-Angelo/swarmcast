@@ -1,0 +1,155 @@
+/*
+ * The chat over the video (overlay.ts, docs/CHAT.md "Chat over the video"). Bottom left of the
+ * player, above its control bar (52 px and its padding), under the bar in the stacking order, never
+ * taking a click except on its own button and message box. Each line sits on a strong scrim made
+ * from the video token, so light text stays readable over any picture (overlay.ts OVERLAY_SCRIM
+ * matches the 72 % here). Lines fade with a transition, which brand.css turns off under
+ * prefers-reduced-motion: they then just go.
+ */
+.chat-overlay {
+  position: absolute;
+  left: max(var(--sp-3), env(safe-area-inset-left));
+  /* overlay.ts measures the bar (--ov-bottom); the estimate is for a browser without ResizeObserver. */
+  bottom: var(--ov-bottom, calc(72px + env(safe-area-inset-bottom)));
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-1);
+  width: min(38%, 420px);
+  max-height: calc(100% - var(--ov-bottom, 72px) - var(--sp-8));
+  pointer-events: none;
+  font-family: var(--sc-font-text);
+}
+.chat-overlay[hidden] {
+  display: none;
+}
+.ov-lines {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-height: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+.ov-line {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+  contain: content;
+  overflow: hidden;
+  overflow: clip;
+  max-width: 100%;
+  padding: 2px var(--sp-2);
+  border-radius: var(--sc-radius-md);
+  background: color-mix(in srgb, var(--video-bg) 72%, transparent);
+  color: var(--on-video);
+  font-size: var(--fs-md);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  transition: opacity 1.2s ease;
+}
+.ov-line.ov-old {
+  opacity: 0;
+}
+.ov-line .nick {
+  unicode-bidi: isolate;
+  font-weight: var(--sc-weight-semibold);
+  color: var(--nick, var(--on-video));
+}
+.ov-line .text {
+  unicode-bidi: isolate;
+}
+.ov-line .badge {
+  display: inline-block;
+  margin-right: var(--sp-1);
+  padding: 0 6px;
+  border-radius: var(--sc-radius-pill);
+  background: var(--sc-accent);
+  color: var(--sc-on-accent);
+  font-size: var(--fs-xs);
+  font-weight: var(--sc-weight-semibold);
+}
+.ov-line img.emote {
+  display: inline-block;
+  width: 1.5em;
+  height: 1.5em;
+  margin: -0.2em 0;
+  vertical-align: middle;
+}
+.ov-line .mention {
+  font-weight: var(--sc-weight-semibold);
+}
+.ov-line.highlighted,
+.mention-highlight .ov-line.mentions-me {
+  box-shadow: inset 3px 0 0 var(--sc-secondary);
+  padding-left: calc(var(--sp-2) + 3px);
+}
+.ov-line.sys .text,
+.ov-line.hidden-msg .text {
+  font-style: italic;
+}
+.ov-line .mention-note,
+.ov-line .hl-note {
+  display: none;
+}
+
+/* The button that opens the message box over the video, and the box itself (the chat's own form). */
+button.ov-write {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--sc-radius-pill);
+  background: var(--scrim);
+  color: var(--on-video);
+}
+button.ov-write:hover,
+button.ov-write[aria-expanded='true'] {
+  background: color-mix(in srgb, var(--on-video) 22%, var(--scrim));
+}
+button.ov-write:focus-visible {
+  outline: 2px solid var(--on-video);
+  outline-offset: 2px;
+}
+.ov-write-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.ov-input {
+  pointer-events: auto;
+  width: 100%;
+  min-width: min(280px, 100%);
+  max-height: none;
+}
+.ov-input[hidden] {
+  display: none;
+}
+/* Over the video, the message box keeps Send and React; the emoji and GIF pickers stay in the chat column. */
+.ov-input .picker-btn,
+.ov-input .gif-btn {
+  display: none;
+}
+.ov-input .chat-react {
+  bottom: calc(100% + var(--sp-1));
+}
+
+@media (max-width: 720px) {
+  .chat-overlay {
+    width: min(72%, 420px);
+  }
+  .ov-line {
+    font-size: var(--fs-sm);
+  }
+}

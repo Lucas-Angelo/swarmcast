@@ -164,6 +164,7 @@ To turn the chat off for everyone, use the switch at the top of the Chat card (1
 - **Reply** on each message (pointing at it, tapping it on a phone, or with the arrow keys from the chat) and **@** in the message box to mention someone who wrote.
 - **Polls and predictions** above the messages, with the live results and their own vote. On a phone the poll starts folded to one line, so the chat keeps its room: a tap opens it. While the chat is hidden, **Show chat** says **Poll**.
 - **Reactions**: the bee next to the message box sends one, and everyone's float over the video.
+- **Chat on the video** in full screen, if they turn it on: the latest messages over the bottom left of the video, with a small button to write from there.
 - **Hide chat** hides it on that device (remembered); **Show chat** brings it back.
 - **Chat settings** for their own name colour, times, **Highlight messages that mention me**, **Show reactions on the video** and text size. SwarmCast keeps every colour readable on light and dark screens.
 
