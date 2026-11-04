@@ -318,3 +318,4 @@ describe.skipIf(!POSIX)('desktop mode: update channel ("Get beta versions")', ()
     expect(secondCode).toBe(0);
   });
 });
+

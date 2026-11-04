@@ -3,7 +3,7 @@
 ## Supported versions
 
 Only the latest stable release of SwarmCast receives security fixes. Please update to the
-newest version (the desktop app and the start scripts can do it for you) before reporting an
+newest version (the desktop app does it for you) before reporting an
 issue.
 
 | Version                      | Supported                       |
@@ -44,7 +44,7 @@ In scope, for example:
   website (CSRF, DNS rebinding, missing authentication) or taking over the host.
 - Leaks of secrets such as the stream key, admin token or signing keys, or of viewers'
   information beyond what the feature requires.
-- The release and update pipeline: tampering with downloads, checksums or the start scripts.
+- The release and update pipeline: tampering with downloads, checksums or update feeds.
 
 Out of scope:
 

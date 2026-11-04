@@ -1,14 +1,15 @@
 #!/usr/bin/env node
-// Pre-release "clean machine" check. Run it on a fresh OS (CI runner or VM) with a real,
-// locally built release directory:
+// Pre-release "clean machine" check. Run it on a fresh OS (CI runner or VM) with the staged
+// server package of this OS (scripts/build/package.mjs: the executable the desktop installers
+// carry as their sidecar, with MediaMTX, cloudflared and the web apps):
 //
-//   node scripts/test/preflight/verify.mjs --release-dir release [--tunnel] [--chrome] [--junit FILE]
+//   node scripts/test/preflight/verify.mjs --staging release/staging/<target> [--tunnel] [--chrome] [--junit FILE]
 //
-// It serves the release over HTTP, installs SwarmCast with the real start script into a
-// temp data folder, starts it, streams a synthetic OBS-like feed with ffmpeg, watches with
-// real browsers (Playwright), checks P2P, kick, link rotation, "Stop everything", quitting,
-// and that no process or port is left behind. With --tunnel it repeats playback through a
-// real Cloudflare quick tunnel.
+// It copies the package into a temp folder, starts it outside the desktop app (browser panel)
+// on an empty data folder with a bare-OS PATH, streams a synthetic OBS-like feed with ffmpeg,
+// watches with real browsers (Playwright), checks P2P, kick, link rotation, "Stop everything",
+// quitting, and that no process or port is left behind. With --tunnel it repeats playback
+// through a real Cloudflare quick tunnel.
 //
 // Every step runs once and stops the check at its first failure (no retry): waits are for their
 // condition, with a deadline. The one infra recovery is the brand-new quick-tunnel name that the
@@ -24,7 +25,6 @@ import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
-import { serveDir } from '../lib/release-server.mjs';
 import { joinIn, pageState, playerStats, probeHealth, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 import { orTimeout, poll } from '../lib/wait.mjs';
 
@@ -33,13 +33,16 @@ const opt = (n) => {
   const i = args.indexOf(`--${n}`);
   return i >= 0 ? args[i + 1] : undefined;
 };
-const releaseDir = path.resolve(opt('release-dir') ?? 'release');
+const staging = path.resolve(opt('staging') ?? path.join('release', 'staging', `${{ win32: 'windows', darwin: 'macos' }[process.platform] ?? 'linux'}-${process.arch}`));
 const useTunnel = args.includes('--tunnel');
 const channel = args.includes('--chrome') ? 'chrome' : undefined;
 const isWin = process.platform === 'win32';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-preflight-'));
 const results = [];
 const logFile = path.join(home, 'preflight-app.log');
+/** The server's copy (inside `home`, so processesUnder(home) sees everything it runs) and its data folder. */
+const serverDir = path.join(home, 'server');
+const dataDir = path.join(home, 'data');
 /** Pages still open, for the page states printed when a step fails. */
 const pages = new Set();
 
@@ -63,19 +66,12 @@ function processesUnder(dir) {
   }
 }
 
-// ---- installer ----
-// Simulate a bare OS: the installer and the app only get the PATH a fresh install has
-// (no Git, Node, Homebrew, Chocolatey or other CI tooling).
-function startInstaller(releaseUrl, extra) {
-  const env = bareEnv({ home, releaseUrl });
-  let child;
-  if (isWin) {
-    const ps = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
-    child = spawn(ps, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', path.join(releaseDir, 'start-windows.ps1'), '-Yes', '-SkipSpeedtest', ...extra.map((a) => (a === '--no-tunnel' ? '-NoTunnel' : a))], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  } else {
-    const script = process.platform === 'darwin' ? 'start-macos.sh' : 'start-linux.sh';
-    child = spawn('/bin/bash', [path.join(releaseDir, script), '--yes', '--skip-speedtest', ...extra], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  }
+// ---- the server ----
+// Simulate a bare OS: the server only gets the PATH a fresh install has (no Git, Node,
+// Homebrew, Chocolatey or other CI tooling).
+function startServer(extra) {
+  const exe = path.join(serverDir, isWin ? 'swarmcast.exe' : 'swarmcast');
+  const child = spawn(exe, ['--data-dir', dataDir, ...extra], { env: bareEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   const onData = (d) => {
     out += d;
@@ -83,7 +79,7 @@ function startInstaller(releaseUrl, extra) {
   };
   child.stdout.on('data', onData);
   child.stderr.on('data', onData);
-  return { child, output: () => out, owner: ownerOf(child, 'start script', () => out) };
+  return { child, output: () => out, owner: ownerOf(child, 'server', () => out) };
 }
 
 /**
@@ -110,22 +106,15 @@ async function joinAndPlay(browser, link, nickname) {
   return { context, page };
 }
 
-async function runSession({ releaseUrl, tunnel, browser }) {
+async function runSession({ tunnel, browser }) {
   const label = tunnel ? 'tunnel' : 'local';
   const t0 = Date.now();
-  const inst = startInstaller(releaseUrl, tunnel ? [] : ['--no-tunnel']);
+  const inst = startServer(tunnel ? [] : ['--no-tunnel']);
   const exited = new Promise((r) => inst.child.on('exit', (c) => r(c)));
   let ffmpeg;
   try {
     const app = await loginFromOutput(inst.output, { abortOn: [inst.owner] });
-    step(`[${label}] installer installed and started the app`, true, `${Math.round((Date.now() - t0) / 1000)} s`);
-    // The release publishes binaries.json (ffmpeg pins): the installer must have fetched ffmpeg
-    // from its publisher into <data>/tools/ffmpeg, and the app must use it.
-    if (fs.existsSync(path.join(releaseDir, 'binaries.json'))) {
-      const q = await app.api('/api/quality');
-      const want = path.join(home, 'tools', 'ffmpeg', isWin ? 'ffmpeg.exe' : 'ffmpeg');
-      step(`[${label}] installer installed ffmpeg and the app uses it`, q.ffmpeg?.available === true && q.ffmpeg.path === want, q.ffmpeg?.path ?? 'not available');
-    }
+    step(`[${label}] the server started and the panel signs in`, true, `${Math.round((Date.now() - t0) / 1000)} s`);
     // As long as the app's own tunnel step may take (LIVE_LINK_WAIT_MS), and it fails at once
     // with the app's error when the start fails.
     const s0 = await waitLiveLink(app, undefined, [inst.owner]);
@@ -192,24 +181,27 @@ async function runSession({ releaseUrl, tunnel, browser }) {
 }
 
 let failed = false;
-const server = await serveDir(releaseDir);
+if (!fs.existsSync(path.join(staging, isWin ? 'swarmcast.exe' : 'swarmcast'))) {
+  console.error(`No staged server in ${staging} (node scripts/build/package.mjs --target <target>). Use --staging DIR.`);
+  process.exit(2);
+}
+fs.cpSync(staging, serverDir, { recursive: true });
 const browser = await chromium.launch({ channel, args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'] });
 try {
-  await runSession({ releaseUrl: server.url, tunnel: false, browser });
-  if (useTunnel) await runSession({ releaseUrl: server.url, tunnel: true, browser });
+  await runSession({ tunnel: false, browser });
+  if (useTunnel) await runSession({ tunnel: true, browser });
 } catch (e) {
   failed = true;
-  console.error(`\nPREFLIGHT FAILED: ${e.message}\n--- app/installer output (tail) ---\n${fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').slice(-6000) : ''}`);
+  console.error(`\nPREFLIGHT FAILED: ${e.message}\n--- server output (tail) ---\n${fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8').slice(-6000) : ''}`);
   for (const { page, label } of pages) if (!page.isClosed()) console.error(`--- page ${label}\n${await pageState(page)}`);
 } finally {
   await browser.close();
-  await server.close();
 }
 if (opt('junit')) {
   const cases = results.map((r) => ({ group: 'preflight', name: r.name, status: r.ok ? 'pass' : 'fail', detail: r.detail }));
   if (failed && results.every((r) => r.ok)) cases.push({ group: 'preflight', name: 'preflight (before a check)', status: 'fail', detail: 'failed before or between checks: see the output' });
   writeJunit(path.resolve(opt('junit')), `preflight ${os.platform()}-${os.arch()}`, cases);
 }
-console.log(`\nInstaller/app ran with a bare-OS PATH: ${barePath()}`);
+console.log(`\nThe server ran with a bare-OS PATH: ${barePath()}`);
 console.log(`\nPreflight ${os.platform()}-${os.arch()}: ${results.filter((r) => r.ok).length} checks passed${failed ? ', FAILED' : ''}`);
 process.exit(failed ? 1 : 0);

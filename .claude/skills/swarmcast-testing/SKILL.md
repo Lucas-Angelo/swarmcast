@@ -46,7 +46,7 @@ passes sometimes is a failing test. Main is protected: nothing lands unless ever
 | Viewer chat UI + corpus rendering | Playwright, mock hub | `apps/viewer/test/chat` | `npx playwright test -c apps/viewer/test/chat/playwright.config.ts` |
 | Website | Vitest + Playwright | `site/test` | see `site/package.json` |
 | Desktop shell | `cargo test` | `apps/desktop/src-tauri/src` `#[cfg(test)]` | `cd apps/desktop/src-tauri && cargo test` |
-| System (Windows installer/app/Direct/quality/OBS, Docker x64/arm64, clean machine, apt, DMG) | harnesses | `scripts/test/**` | CI only (`pipeline.yml`), see docs/TESTING.md |
+| System (Windows app/Direct/quality/OBS, Docker x64/arm64, clean machine, apt, DMG) | harnesses | `scripts/test/**` | CI only (`pipeline.yml`), see docs/TESTING.md |
 | Chat load | bench | `scripts/test/chat` | `node --import tsx scripts/test/chat/bench.ts --scenario all` |
 | Coverage | Vitest v8 + c8 + cargo-llvm-cov | floors in `scripts/coverage/floors.json` | `npm run coverage` (`coverage:unit`, `:integration`, `:e2e`, `:desktop`) |
 | Real phones (Safari iOS Simulator, Chrome Android Emulator) | WebDriver / Playwright android | `apps/server/test/devices`, `.github/workflows/devices.yml` | see docs/TESTING.md |

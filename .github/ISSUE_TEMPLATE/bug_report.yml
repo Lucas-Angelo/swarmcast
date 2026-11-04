@@ -62,7 +62,6 @@ body:
       label: How do you run SwarmCast?
       options:
         - Desktop app (installed from the download page)
-        - Start script (script mode)
         - Built from the source code
         - Not sure
     validations:

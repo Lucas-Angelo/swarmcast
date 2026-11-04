@@ -25,7 +25,7 @@ Sem telemetria, não dá para saber exatamente quantas pessoas usam o SwarmCast.
 
 ### Downloads
 
-A soma dos contadores de download dos instaladores (Windows, macOS e Linux) e dos pacotes da instalação por script, em todas as versões. Ela também conta:
+A soma dos contadores de download dos instaladores (Windows, macOS e Linux) de todas as versões, mais os pacotes da instalação por script que as versões anteriores à 0.5.1 também tinham. Ela também conta:
 
 - a mesma pessoa baixando duas vezes;
 - as atualizações que o app baixa sozinho no Windows e no Linux (AppImage).

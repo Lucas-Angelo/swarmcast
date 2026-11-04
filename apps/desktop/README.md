@@ -1,6 +1,6 @@
 # @swarmcast/desktop
 
-The SwarmCast desktop app ([Tauri 2](https://v2.tauri.app/)): installer, app window, tray / menu bar icon and one-click updates around the same server the start scripts run. Design and the shell ↔ server contract: [docs/DESKTOP.md](../../docs/DESKTOP.md).
+The SwarmCast desktop app ([Tauri 2](https://v2.tauri.app/)): installer, app window, tray / menu bar icon and one-click updates around the SwarmCast server (`apps/server`), which it runs as a sidecar. Design and the shell ↔ server contract: [docs/DESKTOP.md](../../docs/DESKTOP.md).
 
 ```mermaid
 flowchart TB
@@ -31,8 +31,8 @@ Needs Node 24, Rust (the toolchain pinned in `src-tauri/rust-toolchain.toml`, wh
 
 ```sh
 npm ci && npm run build
-node scripts/build/package.mjs --target <target> --version <v> --no-archive   # release/staging/<target>
-node scripts/build/desktop.mjs --target <target> --version <v>                # release/desktop/<target>
+node scripts/build/package.mjs --target <target> --version <v>   # release/staging/<target>
+node scripts/build/desktop.mjs --target <target> --version <v>   # release/desktop/<target>
 ```
 
 | Target | Build on | Result |
@@ -51,7 +51,7 @@ Toolchain per CI runner (everything is non-interactive; `tauri build` runs with 
 - **Windows installer from Linux** (optional, unsigned exe): `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`, `rustup target add x86_64-pc-windows-msvc`, `cargo install --locked cargo-xwin`, `XWIN_ACCEPT_LICENSE=1`, then `desktop.mjs --target windows-x64 --runner cargo-xwin`.
 - All: the signing secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the environment (otherwise the build has no `.sig` files and prints a warning).
 
-`desktop.mjs` copies the staged server as the sidecar (`swarmcast-server-<rust triple>`) and MediaMTX, cloudflared, `web/`, `LICENSE` as resources (not the Go tray helper), writes `THIRD_PARTY_LICENSES.txt` (the package's list plus the Rust crates compiled into the app for that target, see below), then runs `tauri build` with a config overlay (version, sidecar, resources), so `cargo build` / `cargo test` work without a staged package. Options: `--package` (run `package.mjs` first), `--sidecar mock` (bundle the mock server), `--insecure-updates` (accept `http://` update URLs: local tests only, never publish such a build).
+`desktop.mjs` copies the staged server as the sidecar (`swarmcast-server-<rust triple>`) and MediaMTX, cloudflared, `web/`, `LICENSE` as resources, writes `THIRD_PARTY_LICENSES.txt` (the package's list plus the Rust crates compiled into the app for that target, see below), then runs `tauri build` with a config overlay (version, sidecar, resources), so `cargo build` / `cargo test` work without a staged package. Options: `--package` (run `package.mjs` first), `--sidecar mock` (bundle the mock server), `--insecure-updates` (accept `http://` update URLs: local tests only, never publish such a build).
 
 **Rust crate licences.** `scripts/build/crate-licenses.mjs` lists the crates compiled into the app for the target (normal dependencies in `Cargo.lock`, from `cargo metadata --locked --filter-platform <triple>`; build-only and dev-only crates are not shipped) with their licence texts from the cargo registry. A crate whose package has no licence file gets the file of a crate from the same repository, or the standard text in `scripts/build/licenses/`. The build fails if a crate declares no SPDX licence or one outside the allowlist (MIT, MIT-0, Apache-2.0 (also WITH LLVM-exception), BSD-2/3-Clause, ISC, Zlib, Unicode-3.0, Unicode-DFS-2016, MPL-2.0, CC0-1.0, 0BSD, BSL-1.0; an `OR` needs one allowed choice). Check without building: `node scripts/build/crate-licenses.mjs --target <triple> --check`.
 
@@ -73,7 +73,7 @@ node apps/desktop/icons.mjs            # or: npm run desktop:icons
 ```
 
 - App icon source: `assets/brand/icon/app-icon-1024.png` (the full-bleed square app icon of the brand, [assets/brand/README.md](../../assets/brand/README.md)). Under the hood: `npx tauri icon <source> -o apps/desktop/src-tauri/icons`, minus the mobile / Store sizes. The small sizes of the Windows `.ico` (16–48 px) and `32x32.png` come from the hand-tuned `assets/brand/icon/sizes/`, since a plain downscale blurs. Without the brand files (a fork), `src-tauri/icons/gen.mjs` draws a placeholder.
-- Tray icons: `assets/brand/tray/tray-{off,waiting,live}-32.png` (shown at 16 pt in the macOS menu bar), else `apps/tray/icons/*.png`, copied to `src-tauri/icons/tray/`.
+- Tray icons: `assets/brand/tray/tray-{off,waiting,live}-32.png` (shown at 16 pt in the macOS menu bar), copied to `src-tauri/icons/tray/`.
 - The installers have no other images: NSIS uses `icon.ico`, the DMG the app icon.
 
 Commit the generated files.

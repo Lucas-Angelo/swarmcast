@@ -13,8 +13,8 @@ releasing and the updater key: [RELEASING.md](RELEASING.md).
 - "Start with the computer" option, **off by default**.
 - OBS-style updates: the app finds the latest **stable** release, and after one click on "Update" it
   downloads, verifies, installs and reopens by itself. Settings are never lost.
-- The script mode (`scripts/start-*.{sh,command,ps1}`) keeps working unchanged for advanced users and
-  servers. Both modes run the same server binary and share the same data folder.
+- The only way streamers install SwarmCast (a script mode, with start scripts, installer zips and a Go
+  tray helper, existed until 0.5.0 and was removed in 0.5.1: [DECISIONS.md](DECISIONS.md)).
 - Viewers are not affected: they keep watching in their browser.
 
 ## Why Tauri (and not Electron)
@@ -45,14 +45,14 @@ scripts/build/desktop.mjs (stage sidecar + resources from release/staging/<targe
 | Product name | `SwarmCast` |
 | Identifier | `io.github.lucas-angelo.swarmcast` |
 | App executable | Windows `SwarmCast.exe`, macOS `SwarmCast.app/Contents/MacOS/SwarmCast`, Linux `swarmcast-desktop` |
-| Server sidecar | `swarmcast-server[.exe]` = the same pkg binary the scripts install as `swarmcast` |
-| Resources | `bin/` (mediamtx, cloudflared; no Go tray helper), `web/viewer`, `web/admin`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` (npm packages, binaries, fonts and the Rust crates of the app for that platform) |
+| Server sidecar | `swarmcast-server[.exe]` = the pkg binary `scripts/build/package.mjs` stages as `swarmcast` |
+| Resources | `bin/` (mediamtx, cloudflared), `web/viewer`, `web/admin`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` (npm packages, binaries, fonts and the Rust crates of the app for that platform) |
 | Windows install dir | `%LOCALAPPDATA%\Programs\SwarmCast` (per user, no admin prompt) |
 | Data dir (unchanged) | `%LOCALAPPDATA%\SwarmCast`, `~/Library/Application Support/SwarmCast`, `~/.local/share/swarmcast` |
 
 The data dir holds config, secrets, logs, ffmpeg (`tools/`) and `system-check.json`. Installing,
 updating and uninstalling the app never touches it, except the uninstaller's optional "delete app data"
-checkbox. Script mode and desktop mode share it.
+checkbox.
 
 ## Shell ↔ server protocol
 
@@ -75,12 +75,12 @@ with environment:
 | `SWARMCAST_TEST_LOGIN_FILE` | Tests/CI only: the server also writes the panel login URL (`ready.adminUrl`) to this file, owner-only, so `scripts/test/desktop/verify.mjs` can call the admin API of an app it did not start itself. |
 | `SWARMCAST_SPEEDTEST_URL` | Speed test server instead of Cloudflare's (`<url>/__down?bytes=n`, `POST <url>/__up`; tests only). |
 
-`--desktop` implies `--no-open` and `--no-tray`, keeps the parent watch, and also exits cleanly when
-stdin closes. Messages are JSON, one per line. As in script mode, the server turns the live on at
+`--desktop` implies `--no-open`, keeps the parent watch, and also exits cleanly when
+stdin closes. Messages are JSON, one per line. As in a run from a terminal, the server turns the live on at
 start (waiting for OBS, off again by itself after the auto-stop time) unless the shell also passes
 `--no-autostart` (a good fit for `--background`).
 
-Desktop mode refuses to run next to another SwarmCast (the start scripts do not): if a SwarmCast panel
+Desktop mode refuses to run next to another SwarmCast (a run without `--desktop` does not): if a SwarmCast panel
 answers on the configured panel port, or the RTMP port is busy, it sends `fatal` and exits 1 before
 `ready`.
 
@@ -90,7 +90,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 | Message | When |
 |---|---|
 | `{"type":"ready","adminUrl":"http://127.0.0.1:8081/auth/…","version":"0.2.0"}` | Admin panel is up. Sent once. |
-| `{"type":"state","state":"off\|waiting\|live","tooltip":"…","canStart":b,"canStop":b,"phase":"off\|starting\|waiting-obs\|live\|stopping","viewers":n}` | On every change (same fields as the Go tray helper + `phase`, `viewers`). |
+| `{"type":"state","state":"off\|waiting\|live","tooltip":"…","canStart":b,"canStop":b,"phase":"off\|starting\|waiting-obs\|live\|stopping","viewers":n}` | On every change. |
 | `{"type":"fatal","code":"…","message":"…"}` | Startup failed, then exits 1. `code`: `already-running` (another SwarmCast answers on the panel port, e.g. started from a terminal), `ports-busy` (the RTMP port, or all 20 panel ports, used by another program), `startup-failed` (anything else, e.g. a broken `config.json`). `message` is English. |
 | `{"type":"update-check"}` | Panel button "Check for updates". |
 | `{"type":"update-install"}` | Panel button "Update now". |
@@ -101,7 +101,7 @@ an ordinary log line the shell copies to `logs/desktop.log`):
 
 | Message | Effect |
 |---|---|
-| `{"type":"click","id":"start\|stop\|quit"}` | Same as the tray helper clicks. `quit` = stop everything and exit 0. |
+| `{"type":"click","id":"start\|stop\|quit"}` | The tray menu's Start live / Stop live. `quit` = stop everything and exit 0. |
 | `{"type":"quit"}` | Stop everything and exit 0. |
 | `{"type":"update","status":"none\|available\|downloading\|installing\|error","current":"…","version":"…","notes":"…","progress":0..1,"error":"…"}` | Update status, shown in the panel (banner, progress, errors). |
 | `{"type":"export-logs"}` | Tray "Export logs…": write the anonymised log export (the same ZIP as the panel's "Export logs" button, without full IP addresses) to the Downloads folder (fallback `<data>/exports`) and answer with `export-logs`. Extra fields are ignored. |
@@ -137,7 +137,7 @@ Notes:
   is not a redirect: it answers 200 with a tiny page that sets the cookie and opens `/` itself
   (`<meta http-equiv="refresh" content="0;url=/">` plus a link, no script, `Cache-Control: no-store`,
   `Referrer-Policy: no-referrer`, the token not repeated). That navigation starts on 127.0.0.1, so the
-  cookie is sent. Browsers in script mode get the same page.
+  cookie is sent. A browser (a run without `--desktop`) gets the same page.
 - **`--background`** (used by autostart): start with the window hidden, tray only (macOS: no Dock icon
   while the window is hidden), and pass `--no-autostart` to the server so the live does not turn on at
   every login.
@@ -147,7 +147,7 @@ Notes:
   SIGHUP (logout, `kill`) quit without asking. Quitting shows "Closing SwarmCast…" while the server stops.
   Without a tray icon (Linux desktop without an AppIndicator host) "keep running" minimizes instead.
 - **Tray / menu bar**: icons off / waiting / live (`assets/brand/tray/tray-<state>-32.png`, copied into
-  `src-tauri/icons/tray/` by `apps/desktop/icons.mjs`; the same files as `apps/tray/icons`), localized tooltip from
+  `src-tauri/icons/tray/` by `apps/desktop/icons.mjs`), localized tooltip from
   `phase` + `viewers`; menu: Open SwarmCast, Start live, Stop live (enabled from `canStart` /
   `canStop`), Check for updates, Export logs…, Quit. Windows / Linux: left click opens the window; macOS:
   the menu. Tray clicks are sent as `click` start / stop; Quit is handled by the shell (it sends `quit`).
@@ -193,7 +193,7 @@ what it read (the panel shows it in the error).
 Panel API (admin auth like the other routes):
 
 - `GET /api/desktop` → `{ desktop: true, version, serverVersion, autostart: { supported, enabled, stale?, error? },
-  update, updateChecking, updateChannel: { choice, effective }, systemCheck }`, or `{ desktop: false }` in script mode (the panel then hides
+  update, updateChecking, updateChannel: { choice, effective }, systemCheck }`, or `{ desktop: false }` outside the desktop app (a run from the source checkout, the tests; the panel then hides
   everything desktop-related). `version` is `SWARMCAST_DESKTOP_VERSION` (else the server's), `update` the
   last `update` message from the shell (or null), `updateChecking` is true from "Check for updates" until
   the shell answers (at most 60 s), `systemCheck` is `idle | running | done | failed` (first start).
@@ -270,12 +270,13 @@ when the app was started by that agent, bootout would kill it).
 
 ## First run in desktop mode
 
-The installers of script mode run a system check and install ffmpeg before starting the app. In desktop
-mode the server does it on first start (no `system-check.json`, or a different app version):
+In desktop mode the server runs a system check and installs ffmpeg on first start (no
+`system-check.json`, or a different app version). The check and the file's schema come from the old start
+scripts, which ran them before installing:
 
 - **System check** in TypeScript (`apps/server/src/desktop/system-check.ts`), same ids, thresholds and
   `system-check.json` schema as the scripts, so the onboarding tutorial shows it unchanged. The file gets
-  two optional fields the scripts do not write: `appVersion` (decides "another version") and
+  two optional fields the scripts did not write: `appVersion` (decides "another version") and
   `source: "desktop"`. The ports SwarmCast itself is using count as free; `github` is checked once
   (`unreachable (not needed)` is a warning, as with a local bundle); `release` is
   `v<version> (desktop app)`. The speed test reuses the server's startup speed test (skipped when speed
@@ -332,7 +333,7 @@ linux-arm64 on Ubuntu 22.04 for an older glibc; the Intel Mac image tests the ma
 `--fast --insecure-updates --updater-pubkey`) and the real installers, signed with a key pair generated in
 the job. Its clean-machine job then runs `scripts/test/desktop/verify.mjs` on each OS: install (NSIS `/S`,
 `.dmg` → `~/Applications`, `.deb` and the AppImage), launch, panel login (admin API), autostart on/off,
-kill (the server and tools go too), quit, the NSIS uninstaller / `apt remove` and `scripts/uninstall-*`,
+kill (the server and tools go too), quit, the NSIS uninstaller / `apt remove`,
 and an update from A to the real installers, served on 127.0.0.1 with a `latest.json` made in the job,
 with config and secrets kept. Pull requests build the release profile without LTO (16 codegen units);
 only `release.yml` builds with fat LTO, signs with the real `TAURI_SIGNING_PRIVATE_KEY` (A then trusts

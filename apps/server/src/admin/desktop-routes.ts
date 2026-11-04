@@ -6,7 +6,7 @@ import type { DesktopBridge } from '../desktop/bridge.js';
 type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
 
 /**
- * Desktop app (admin panel only; docs/DESKTOP.md). In script mode GET answers `{ desktop: false }`
+ * Desktop app (admin panel only; docs/DESKTOP.md). Outside it (development, tests) GET answers `{ desktop: false }`
  * and the others fail, so the panel hides its "Desktop app" section.
  *   GET  /api/desktop                  DesktopInfo (autostart read back from the OS)
  *   PUT  /api/desktop/autostart        { enabled } → DesktopInfo

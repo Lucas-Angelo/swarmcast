@@ -10,7 +10,7 @@ export function isDesktopInfo(v: unknown): v is DesktopInfo {
   return !!d && typeof d === 'object' && d.desktop === true && typeof d.version === 'string' && !!d.autostart && typeof d.autostart === 'object';
 }
 
-/** The desktop state, or null in script mode (`{ desktop: false }`), on older servers and on errors. */
+/** The desktop state, or null outside the desktop app (`{ desktop: false }`), on older servers and on errors. */
 export async function loadDesktop(get: (path: string, method: string) => Promise<unknown>): Promise<DesktopInfo | null> {
   try {
     const r = await get(DESKTOP_API, 'GET');
@@ -81,7 +81,7 @@ export function getDesktop(): DesktopInfo | null {
   return current;
 }
 
-/** Current desktop state (null in script mode); re-renders on every change. */
+/** Current desktop state (null outside the desktop app); re-renders on every change. */
 export function useDesktop(): DesktopInfo | null {
   const [d, setD] = useState<DesktopInfo | null>(current);
   useEffect(() => {

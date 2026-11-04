@@ -52,7 +52,6 @@ jobs:
       rust: ${{ steps.plan.outputs.rust }}
       windows: ${{ steps.plan.outputs.windows }}
       preflight: ${{ steps.plan.outputs.preflight }}
-      scripts: ${{ steps.plan.outputs.scripts }}
       desktop_test: ${{ steps.plan.outputs.desktop_test }}
       desktop_dmg: ${{ steps.plan.outputs.desktop_dmg }}
       apt: ${{ steps.plan.outputs.apt }}
@@ -303,24 +302,13 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
-          go: 'true'
           ffmpeg: 'true'
       - name: Playwright Firefox (app)
         if: matrix.suite == 'windows-app'
         run: npx playwright install firefox
       - run: npm run build
-      - name: Build tray helper
-        run: node apps/tray/build.mjs --target windows-x64 --vendor
-      - name: Build a newer package (installer)
-        if: matrix.suite == 'windows-installer'
-        run: |
-          newer="$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")"
-          node scripts/build/package.mjs --target windows-x64 --version "$newer"
-          echo "SC_NEWER=$newer" >> "$GITHUB_ENV"
-      - name: Build the real package
+      - name: Build the package
         run: node scripts/build/package.mjs --target windows-x64
-      - name: Assemble release folders and the installer zip
-        run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
       - name: Wait for Media Foundation (app)
         if: matrix.suite == 'windows-app'
         timeout-minutes: 4
@@ -368,66 +356,14 @@ jobs:
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
-          go: 'true'
           ffmpeg: 'true'
       # What _desktop.yml's clean-machine preflight step does (with the package built here), without the Playwright browser download: verify.mjs --chrome
       # drives the Google Chrome of the runner image. No --tunnel by default: Cloudflare
       # rate-limits quick tunnels, so the soak would measure Cloudflare. To soak the tunnel
       # too, put "--tunnel" in the plan entry's args.
       - run: npm run build
-      - name: Build tray helper
-        run: node apps/tray/build.mjs --target "${{ matrix.target }}" --vendor
-      - name: Build the real package
+      - name: Build the package
         run: node scripts/build/package.mjs --target "${{ matrix.target }}"
-      - name: Assemble a local release folder
-        run: |
-          cp scripts/start-linux.sh scripts/start-macos.command scripts/start-windows.ps1 scripts/start-windows.cmd release/
-          cp scripts/start-macos.command release/start-macos.sh
-          node scripts/build/checksums.mjs release
-      - *soak-run
-      - *soak-upload
-
-  # ---------------------------------------------------------------- install and uninstall scripts
-  scripts:
-    name: ${{ matrix.name }}
-    needs: plan
-    if: needs.plan.outputs.scripts != '[]'
-    strategy:
-      fail-fast: false
-      max-parallel: 10
-      matrix:
-        include: ${{ fromJSON(needs.plan.outputs.scripts) }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: ${{ matrix.timeout }}
-    defaults:
-      run:
-        shell: bash
-    steps:
-      # A macOS VM can lose DNS for its first minute: in a 10x stability run actions/checkout's three
-      # tries all failed with "Could not resolve host: github.com" (run 41283766285). Wait up to
-      # 3 minutes for github.com before checking out (an infrastructure wait: workflows/README.md).
-      - name: Wait for github.com (macOS)
-        if: runner.os == 'macOS'
-        timeout-minutes: 4
-        shell: bash
-        run: |
-          start=$SECONDS
-          for i in $(seq 1 36); do
-            if curl -sS -o /dev/null --connect-timeout 5 --max-time 10 https://github.com; then
-              [ "$i" = 1 ] || echo "::warning::github.com answered only after $((SECONDS - start)) s ($i tries)"
-              exit 0
-            fi
-            sleep 5
-          done
-          echo "::warning::github.com still unreachable after $((SECONDS - start)) s; continuing"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      # The scripts and their tests need only Node.js (like _node.yml).
-      - uses: ./.github/actions/setup
-        timeout-minutes: 8
-        with:
-          npm-ci: 'false'
       - *soak-run
       - *soak-upload
 
@@ -561,7 +497,7 @@ jobs:
       # build (over 10 minutes on macos-15-intel) is setup, not the bundling the runs measure.
       - run: npm run build
       - name: Assemble release/staging/${{ matrix.target }}
-        run: node scripts/build/package.mjs --target "${{ matrix.target }}" --no-archive
+        run: node scripts/build/package.mjs --target "${{ matrix.target }}"
       - name: Build the app once (the soaked runs then only bundle)
         run: node scripts/build/desktop.mjs --target "${{ matrix.target }}" --bundles app
       - *soak-run
@@ -614,7 +550,7 @@ jobs:
   # ---------------------------------------------------------------- the report
   report:
     name: Soak report
-    needs: [plan, node, rust, windows, preflight, scripts, desktop_test, desktop_dmg, apt]
+    needs: [plan, node, rust, windows, preflight, desktop_test, desktop_dmg, apt]
     if: always() && needs.plan.result == 'success'
     runs-on: ubuntu-24.04
     timeout-minutes: 20

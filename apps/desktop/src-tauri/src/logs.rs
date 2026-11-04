@@ -1,7 +1,7 @@
 //! Data folder and `logs/desktop.log`.
 //!
 //! The data folder is the same one the server uses (`defaultDataDir()` in
-//! apps/server/src/core/paths.ts), so script mode and desktop mode share it. The shell only
+//! apps/server/src/core/paths.ts), so the shell and the server share it. The shell only
 //! writes `logs/desktop.log` (server output + its own lines), rotated by size.
 
 use std::fs::{self, File, OpenOptions};
