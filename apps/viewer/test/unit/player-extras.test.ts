@@ -41,7 +41,7 @@ const statsSource = (video: HTMLVideoElement): StatsSource => ({
   connection: () => undefined,
 });
 
-function setup(storage = new MemoryStorage()) {
+function setup(storage = new MemoryStorage(), over: Partial<Parameters<typeof installPlayerExtras>[0]> = {}) {
   document.body.className = 'watch';
   document.body.innerHTML = MARKUP;
   const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -59,7 +59,7 @@ function setup(storage = new MemoryStorage()) {
   video.pause = pause;
   video.muted = true;
   const onAction = vi.fn();
-  const extras = installPlayerExtras({ doc: document, video, player: document.querySelector<HTMLElement>('.player')!, goLive: $('golive'), unmute: $('unmute'), chatRoot: $('chat'), storage, stats: statsSource(video), onAction });
+  const extras = installPlayerExtras({ doc: document, video, player: document.querySelector<HTMLElement>('.player')!, goLive: $('golive'), unmute: $('unmute'), chatRoot: $('chat'), storage, stats: statsSource(video), onAction, ...over });
   const press = (key: string, target: Element = document.body): KeyboardEvent => {
     const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true });
     target.dispatchEvent(e);
@@ -174,6 +174,28 @@ describe('what the shortcuts do', () => {
     press('m', $('box'));
     // Assert
     expect(video.muted).toBe(true);
+  });
+
+  it("F goes through the player's own toggle when there is one (its page-filling mode on iPhones); C opens the chat over the video first when it shows", () => {
+    // Arrange
+    const toggleFullscreen = vi.fn(() => true);
+    let overVideo = true;
+    const chatOverVideo = vi.fn(() => overVideo);
+    const { $, press } = setup(new MemoryStorage(), { toggleFullscreen, chatOverVideo });
+    Object.defineProperty($('box'), 'offsetParent', { configurable: true, get: () => document.body });
+    // Act
+    const f = press('f');
+    const c = press('c');
+    const focusAfterOverlay = document.activeElement;
+    overVideo = false;
+    press('c');
+    // Assert
+    expect(f.defaultPrevented).toBe(true);
+    expect(toggleFullscreen).toHaveBeenCalledTimes(1);
+    expect(c.defaultPrevented).toBe(true);
+    expect(focusAfterOverlay).not.toBe($('box'));
+    expect(chatOverVideo).toHaveBeenCalledTimes(2);
+    expect(document.activeElement).toBe($('box'));
   });
 
   it('C does nothing while the chat is hidden', () => {

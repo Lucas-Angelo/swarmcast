@@ -101,6 +101,9 @@ interface Pending {
 
 export type MessageEntry = Extract<ChatEntry, { kind: 'msg' }>;
 
+/** A name colour made readable on the background it is drawn on (highlighted rows have their own). */
+export type NamePaint = (color: string, highlighted?: boolean) => string;
+
 const el = <K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string): HTMLElementTagNameMap[K] => {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -283,7 +286,7 @@ export class ChatList {
   }
 
   /** The highlight class, its spoken label (first in the row) and the name colour for its background. */
-  private markHighlighted(row: HTMLElement, on: boolean): void {
+  private markHighlighted(row: HTMLElement, on: boolean, paint: NamePaint = (c, h) => this.opts.nickColor(c, h)): void {
     row.classList.toggle('highlighted', on);
     const note = row.querySelector<HTMLElement>('.hl-note');
     if (on && !note) {
@@ -293,7 +296,32 @@ export class ChatList {
       row.insertBefore(n, time ? time.nextSibling : row.firstChild);
     } else if (!on) note?.remove();
     const nick = row.querySelector<HTMLElement>('.nick[data-c]');
-    if (nick) nick.style.setProperty('--nick', this.opts.nickColor(nick.dataset.c ?? '', on));
+    if (nick) nick.style.setProperty('--nick', paint(nick.dataset.c ?? '', on));
+  }
+
+  /**
+   * One line of the chat over the video (overlay.ts): the badge, the name and the text of a message,
+   * built by the same code as a row (text nodes, `<bdi>` boxes, the shared invariants, emotes,
+   * mentions), without its Reply button or quote; or a system line. Null for a GIF or a skip (the
+   * overlay shows recent text only). `paint` makes names readable on the overlay's own background.
+   */
+  overlayLine(e: ChatEntry, paint: NamePaint): HTMLElement | null {
+    if (e.kind === 'skip' || (e.kind === 'msg' && e.gif)) return null;
+    const line = el('div', e.kind === 'sys' ? 'ov-line sys' : 'ov-line');
+    line.dataset.seq = String(e.s);
+    try {
+      if (e.kind === 'sys') {
+        const text = el('bdi', 'text');
+        text.textContent = translateWire(e.code, e.params, 'chat.sys.unknown');
+        line.append(text);
+      } else {
+        const { reply: _reply, ...rest } = e;
+        this.fillMessage(line, rest, paint);
+      }
+    } catch {
+      line.replaceChildren(this.hiddenText());
+    }
+    return line;
   }
 
   /** Forget everything and show `entries` (snapshot). */
@@ -657,7 +685,7 @@ export class ChatList {
    * Badge, name and text (or GIF) of a message into `box` (a list row or the pinned bar); false
    * when the message fails the shared invariants and "Message hidden" was put there instead.
    */
-  private fillMessage(box: HTMLElement, e: MessageEntry): boolean {
+  private fillMessage(box: HTMLElement, e: MessageEntry, paint: NamePaint = (c, h) => this.opts.nickColor(c, h)): boolean {
     // The streamer's name may be "" (the translated default is shown instead).
     const nickOk = (e.author.r === 'streamer' && e.author.n === '') || checkChatInvariants(e.author.n, { maxGraphemes: CHAT_NICKNAME_MAX, maxEmoji: CHAT_NICKNAME_MAX });
     const textOk = e.text === undefined || checkChatInvariants(e.text);
@@ -688,7 +716,7 @@ export class ChatList {
       const c = isHexColor(e.author.c) ? e.author.c.toLowerCase() : defaultNameColor(e.author.a);
       nick.dataset.c = c;
       nick.dataset.a = e.author.a;
-      nick.style.setProperty('--nick', this.opts.nickColor(c));
+      nick.style.setProperty('--nick', paint(c, false));
     }
     if (e.author.tag) nick.title = `${e.author.n} #${e.author.tag}`;
     const sep = el('span', 'sep');
@@ -702,7 +730,7 @@ export class ChatList {
       this.fillText(text, e.text ?? '', e.mentions);
     }
     box.append(nick, sep, text);
-    if (e.highlighted) this.markHighlighted(box, true);
+    if (e.highlighted) this.markHighlighted(box, true, paint);
     if (e.s > 0 && this.opts.onReply && box.tagName === 'LI') box.classList.add('can-reply');
     return true;
   }
