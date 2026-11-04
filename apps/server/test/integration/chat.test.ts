@@ -166,6 +166,33 @@ describe('chat over /control', () => {
     );
   });
 
+  it("the streamer takes a name a viewer has: that viewer keeps it until the session ends, and nobody can join with it again", async () => {
+    // Arrange
+    const { live, base, link } = await startViewerLive({ chat: { slowModeS: 0 } });
+    const jar = new Jar(base);
+    const lucas = await viewer(base, link, 'lucas', jar);
+    // Act
+    live.updateChatSettings({ ...live.chatSettings(), streamerName: 'Lucas' });
+    lucas.send(say(1, 'still me'));
+    const ack = await lucas.next('chat.ack', (m) => m.n === 1);
+    const streamer = live.chat.sendAsStreamer({ text: 'hi, I am the streamer' });
+    await lucas.until(() => lucas.items().some((i) => i.k === 'm' && i.s === (streamer.ok ? streamer.s : -1)), "the streamer's message");
+    const rejoins = [];
+    for (const [who, j] of [['the same device', jar], ['another device', new Jar(base)]] as const) {
+      await j.fetch(link);
+      const res = await j.fetch('/api/join', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ nickname: 'LUCAS' }) });
+      rejoins.push({ who, status: res.status, code: ((await res.json()) as { code?: string }).code });
+    }
+    // Assert
+    expect(ack).toMatchObject({ n: 1 });
+    const authors = lucas.items().flatMap((i) => (i.k === 'u' ? [{ n: i.au.n, r: i.au.r }] : []));
+    expect(authors).toEqual(expect.arrayContaining([{ n: 'lucas', r: 'viewer' }, { n: 'Lucas', r: 'streamer' }]));
+    expect(rejoins).toEqual([
+      { who: 'the same device', status: 400, code: 'nickname.reserved' },
+      { who: 'another device', status: 400, code: 'nickname.reserved' },
+    ]);
+  });
+
   it('two settings changes in a row reach every socket once, with the last values (coalesced)', async () => {
     // Arrange
     const { live, base, link } = await startViewerLive();

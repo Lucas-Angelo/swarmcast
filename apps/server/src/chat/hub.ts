@@ -34,10 +34,9 @@ import {
   chatVoteSchema,
   containsLink,
   contentOf,
-  countGraphemes,
   cutQuote,
   findMentionSpans,
-  validateNickname,
+  validateStreamerName,
   type AdminChatMessage,
   type AdminChatState,
   type ChatAuthor,
@@ -996,9 +995,8 @@ export class ChatHub {
 
   /** The streamer's name when set and valid; "" = viewers show the translated "Streamer". */
   static validStreamerName(name: string): string | null {
-    if (name.trim() === '') return '';
-    const r = validateNickname(name);
-    return r.ok && countGraphemes(r.value) <= 24 ? r.value : null;
+    const r = validateStreamerName(name);
+    return r.ok ? r.value : null;
   }
 
   /** A message from the panel: role streamer, the same pipeline, only an anti-mistake limit. */

@@ -13,41 +13,49 @@ A janela mostra **Abrindo o SwarmCast…** por alguns segundos, e depois o tutor
 
 ## 2. O tutorial de configuração
 
-![Tutorial de configuração, passo 1 de 9: Boas-vindas ao SwarmCast, com 1 Próximo.](../../../../assets/guides/start/pt-br/welcome.webp)
+![Tutorial de configuração, passo 1 de 10: Boas-vindas ao SwarmCast, com 1 Próximo.](../../../../assets/guides/start/pt-br/welcome.webp)
 
 Leva uns 5 minutos. Clique em **Próximo** para seguir e em **Voltar** para voltar. **Pular tutorial** fecha (dá para abrir de novo depois).
 
-## 3. Conferindo o seu PC
+## 3. Seu nome no chat
 
-![Passo 2, Conferindo o seu PC, enquanto roda: 1 Verificando o seu computador… (memória, processador, velocidade da internet, OBS). Leva mais ou menos um minuto.](../../../../assets/guides/start/pt-br/checking.webp)
+![Passo 2, Seu nome no chat: 1 o nome que aparece nas suas mensagens (aqui, Lucas) e 2 a conferência logo abaixo, Suas mensagens vão mostrar "Lucas".](../../../../assets/guides/start/pt-br/chat-name.webp)
+
+Digite o nome que aparece nas suas mensagens do chat, ao lado do selo **Transmissão** (1). Se você já preencheu a **Sua página**, o nome dela já vem escrito. A linha logo abaixo (2) avisa na hora se o nome não pode ser usado: de 2 a 24 letras ou números, sem emoji, e não uma palavra como "Transmissão" ou "Admin".
+
+Os espectadores não podem usar este nome nem nada parecido com ele, então ninguém se passa por você. É opcional: deixe vazio e as suas mensagens mostram "Transmissão". **Próximo** salva. Para mudar depois: cartão **Chat**, **Configurações do chat** → **Aparência** → **Seu nome no chat**.
+
+## 4. Conferindo o seu PC
+
+![Passo 3, Conferindo o seu PC, enquanto roda: 1 Verificando o seu computador… (memória, processador, velocidade da internet, OBS). Leva mais ou menos um minuto.](../../../../assets/guides/start/pt-br/checking.webp)
 
 Na primeira vez, o SwarmCast confere o seu computador. Ele mostra **Verificando o seu computador…** por mais ou menos um minuto.
 
-![Passo 2 com o resultado: 1 um sinal verde ao lado do sistema, memória, processador, upload e download, disco, portas, OBS Studio, servidor de atualizações e versão, e 2 Próximo.](../../../../assets/guides/start/pt-br/pc-check.webp)
+![Passo 3 com o resultado: 1 um sinal verde ao lado do sistema, memória, processador, upload e download, disco, portas, OBS Studio, servidor de atualizações e versão, e 2 Próximo.](../../../../assets/guides/start/pt-br/pc-check.webp)
 
 Verde quer dizer tudo certo; amarelo, funciona mas não é o ideal. Nada disso impede você de continuar. Ao mesmo tempo, o SwarmCast baixa o conversor de vídeo gratuito (ffmpeg) para as qualidades menores.
 
-## 4. O OBS, uma vez só
+## 5. O OBS, uma vez só
 
-![Passo 4, Para onde você vai transmitir?: 1 Outra plataforma + SwarmCast ao mesmo tempo (recomendado), ou 2 Só o SwarmCast.](../../../../assets/guides/start/pt-br/where.webp)
+![Passo 5, Para onde você vai transmitir?: 1 Outra plataforma + SwarmCast ao mesmo tempo (recomendado), ou 2 Só o SwarmCast.](../../../../assets/guides/start/pt-br/where.webp)
 
 Escolha se você também transmite na Twitch, no YouTube ou na Kick, ou só no SwarmCast. Os próximos passos mostram as configurações do OBS para essa escolha.
 
-![Passo 5: instale o plugin Multiple output no OBS e preencha um destino novo com Nome, URL (servidor) e Chave de transmissão: 1, 2 e 3 são os botões Copiar de cada um.](../../../../assets/guides/start/pt-br/obs-step.webp)
+![Passo 6: instale o plugin Multiple output no OBS e preencha um destino novo com Nome, URL (servidor) e Chave de transmissão: 1, 2 e 3 são os botões Copiar de cada um.](../../../../assets/guides/start/pt-br/obs-step.webp)
 
 Use os botões **Copiar** e cole no OBS. O passo a passo completo, com imagens do OBS: [Configurar o OBS](/swarmcast/pt-br/start/obs/).
 
-## 5. Teste e mande o link
+## 6. Teste e mande o link
 
-![Passo 6, Teste: 1 O SwarmCast está ligado, depois Iniciar transmissão no OBS.](../../../../assets/guides/start/pt-br/test-it.webp)
+![Passo 7, Teste: 1 O SwarmCast está ligado, depois Iniciar transmissão no OBS.](../../../../assets/guides/start/pt-br/test-it.webp)
 
 Comece a transmitir no OBS. O tutorial mostra quando o vídeo chega.
 
-![Passo 7, Compartilhe o link: o link da live (escondido aqui) e 1 Copiar link.](../../../../assets/guides/start/pt-br/share-link.webp)
+![Passo 8, Compartilhe o link: o link da live (escondido aqui) e 1 Copiar link.](../../../../assets/guides/start/pt-br/share-link.webp)
 
 Cada live ganha um link secreto novo. Mande só para os seus membros.
 
-![Passo 9, Tudo pronto!: o que fazer no fim da live, e 1 Concluir.](../../../../assets/guides/start/pt-br/finish.webp)
+![Passo 10, Tudo pronto!: o que fazer no fim da live, e 1 Concluir.](../../../../assets/guides/start/pt-br/finish.webp)
 
 Clique em **Concluir**. Para ver o tutorial de novo, clique em **Refazer o tutorial de configuração**, no fim do painel.
 

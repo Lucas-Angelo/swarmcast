@@ -19,7 +19,7 @@ Todo mundo que está assistindo vê os apelidos no chat. A página de entrada av
 - **Emojis e emotes:** os emojis de sempre, do celular ou do seletor, mais os emotes de abelha que vêm com o SwarmCast (`:gg:`, `:love:`, `:wow:`…).
 - **GIFs:** só se você ligar, com a sua própria chave grátis. Veja [Como conseguir uma chave de GIFs](/swarmcast/pt-br/live/gif-key/).
 
-As suas mensagens, enviadas pela caixa **Enviar como …** no fim do Chat ao vivo, levam o selo **Transmissão**. Ninguém mais consegue esse selo, seja qual for o apelido, e ninguém entra com um nome como "Transmissão", "Admin" ou "Moderador", nem com um nome parecido com o de alguém que já está assistindo.
+As suas mensagens, enviadas pela caixa **Enviar como …** no fim do Chat ao vivo, levam o selo **Transmissão**. Ninguém mais consegue esse selo, seja qual for o apelido, e ninguém entra com um nome como "Transmissão", "Admin" ou "Moderador", com o seu nome no chat, nem com um nome parecido com algum desses ou com o de alguém que já está assistindo. Escolha o seu nome no chat no tutorial de configuração ou em **Configurações do chat** → **Aparência**. Se alguém que já está assistindo tiver um nome parecido com o que você escolher, a pessoa continua com ele até entrar de novo.
 
 ## Mantenha o chat tranquilo
 
