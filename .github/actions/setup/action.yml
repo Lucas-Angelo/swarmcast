@@ -112,6 +112,13 @@ runs:
     # a failed download (run 41283774499: the download stalled at 0 of 79.7 MB, then setup-node
     # took 109 s more to exit). Saved from main only (pull requests that changed a lockfile each
     # saved ~380 MB, five OSes x 76 MB, toward the 10 GB limit: README.md, "Caches").
+    # prebuild-install keeps the native binaries it downloads in `$npm_config_cache/_prebuilds`,
+    # and npm sets npm_config_cache to this path for install scripts, so they are in this cache,
+    # per OS and per CPU (macos-15-intel is x64, macos-latest arm64). That does not help a cold
+    # key: main restores only its exact key, so the first run after a change to one of the three
+    # files downloads them all again (run 41664754395). So no install script in our lockfiles
+    # downloads anything (scripts/ci/test/install-scripts.test.ts; node-datachannel's did and is
+    # replaced by a stand-in, apps/server/shims/node-datachannel).
     - uses: ./.git/remote-actions/actions/setup-node
       with:
         node-version: 24.x
@@ -260,8 +267,12 @@ runs:
         npm config set fetch-retries 4 --location=user
     # --prefer-offline: packages in the restored cache are not re-checked with the registry.
     # The audit runs in its own CI job. A network error that npm's own retries did not get past
-    # (a download that broke off mid-transfer is not retried by npm) runs `npm ci` once more: an
-    # infrastructure retry, like apt-retry.sh; any other failure fails the step.
+    # (a download that broke off mid-transfer is not retried by npm), or one of prebuild-install's
+    # in an install script (it downloads a native binary from GitHub, outside npm's retries),
+    # runs `npm ci` once more: an infrastructure retry, like apt-retry.sh; any other failure fails
+    # the step. .github/scripts/npm-network-error.mjs tells them apart (tested in scripts/ci/test).
+    # No install script in our lockfiles downloads anything today: node-datachannel, the one that
+    # did, is replaced by a stand-in (apps/server/shims/node-datachannel; run 41664754395).
     - name: npm ci
       if: inputs.npm-ci == 'true'
       shell: bash
@@ -269,8 +280,8 @@ runs:
         log="$RUNNER_TEMP/npm-ci.log"
         for try in 1 2; do
           if npm ci --prefer-offline --no-audit --no-fund 2>&1 | tee "$log"; then exit 0; fi
-          if [ "$try" = 1 ] && grep -qE '^npm error (code (ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ERR_SOCKET_TIMEOUT|ENETUNREACH|EPIPE)$|network )' "$log"; then
-            echo "::warning::npm ci: network error after npm's own retries, running it once more"
+          if [ "$try" = 1 ] && line="$(node "$GITHUB_WORKSPACE/.github/scripts/npm-network-error.mjs" "$log")"; then
+            echo "::warning::npm ci: network error after npm's own retries, running it once more ($line)"
             continue
           fi
           exit 1

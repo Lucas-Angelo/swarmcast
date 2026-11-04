@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.
+
+## [0.5.0] - 2026-11-05
+
 ### Added
 
 - **A Share button for viewers.** On the watch page, **Share** sends the link of your live to a friend: on a phone it opens the share menu (WhatsApp, Messages…), on a computer it copies the link and says **Link copied**. It is on by default; turn off **Viewers can share the link** in the **Your internet** card if only you should hand out the link. After **Generate new link**, people who came in with the old link keep watching but lose the button, so whoever got a leaked link cannot pass the new one on.
@@ -27,7 +33,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **A bigger video and the chat locked on the right for viewers.** The watch page now looks like the big streaming sites: the video starts at the top edge and fills the whole width next to the chat, which runs down the full height of the window on the right (on a laptop the video is much bigger than before, without the empty space around it). Your name, picture, **Live**, the delay and how many are watching sit in one row under the video, with **Share**, your support button and a new **Settings** button; your banner and **About** come below that, like a channel's About section. **Playback** (Stable or Lower delay), **Help the stream (P2P)**, **Keyboard shortcuts** and **Stats for nerds** moved from the big box under the video into **Settings**, so they no longer take room all the time. Viewers can still hide the chat (the video then takes the whole width). On a phone the video is at the top, the info row under it and the chat fills the rest of the screen.
-- **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.
 - **Turning an Android phone sideways no longer opens full screen by itself.** Chrome did that only for its own video controls. Now the page lays the video across the sideways screen, with SwarmCast's controls on it, and the full-screen button fills the whole screen when the viewer wants it.
 - **Updated the bundled Cloudflare tunnel program (cloudflared) from 2026.10.4 to 2026.10.7.** Going live works as before: same link, same steps. It fixes a mistake of 2026.10.4 on networks that block UDP, where SwarmCast opens the tunnel over a regular TCP connection: that connection took at most 250 requests at a time instead of having no limit of its own (Cloudflare's own limit for a free quick tunnel, 200 requests at a time, stays the same). Its start-up connection checks now test the connection exactly the way the tunnel then connects, so what they report matches what happens.
 
@@ -36,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Audio only no longer closes the page on Linux browsers built on WebKit (such as GNOME Web).** When your PC turned off its last converted quality, a viewer listening to **Audio only** in such a browser could lose the whole page now and then and had to open the link again. The sound now carries on, with a pause of a fraction of a second, in every browser.
 - **On a Mac, SwarmCast could close by itself when a connection dropped at the wrong moment.** If a program SwarmCast talks to (its own video server while you press **Stop**, your router, an internet check) cut a connection just as SwarmCast opened it, the whole app could quit without a word. Now only that one request fails and SwarmCast carries on.
 - **On an iPhone, a tap on the join page right as it opened could do nothing.** "Checking your browser…" used to appear a moment after the page, and a tap that landed just then (on the nickname box, say) was ignored by Safari, so the viewer had to tap again. The line is now there from the start whenever the check will run.
 - **Viewers who join right after OBS connects start smoothly.** When OBS sent its first seconds all at once (as it can when it connects or catches up after a hiccup), people who opened the live in the next half minute or so could wait a few seconds for the sound to line up with the picture, and on Linux browsers built on WebKit (such as GNOME Web) the video could freeze for good. Sound and picture now start together.
@@ -264,7 +270,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0
