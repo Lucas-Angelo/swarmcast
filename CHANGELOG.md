@@ -15,6 +15,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.
 
+### Fixed
+
+- **Your page keeps what you type while it opens.** The **Your page** card showed empty fields for a moment while it loaded your saved page, and whatever you typed or picked in that moment was replaced by the saved page once it arrived. The card now says "Loading…" until your page is there, and if it cannot be loaded it says so instead of offering a form whose **Save** would put the empty fields over your page.
+
 ## [0.5.0] - 2026-11-05
 
 ### Added
