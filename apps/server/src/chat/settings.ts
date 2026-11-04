@@ -14,6 +14,12 @@ export interface EffectiveChat {
   newViewerWaitS: number;
   historyOnJoin: number;
   gifs: boolean;
+  /**
+   * Viewers may send reactions now (docs/CHAT.md, "Reactions"): the streamer has them on and the
+   * chat is on, not in lockdown and not slowed by the event-loop guard (like GIFs, they are the
+   * first extra to pause).
+   */
+  reactions: boolean;
   /** Lockdown: only sessions present before the alert began, for at least 2 minutes, may write. */
   lockdown: boolean;
   lockdownPresentMs: number;
@@ -46,6 +52,7 @@ export function effectiveChat(i: EffectiveInputs): EffectiveChat {
     gifs = false;
   }
   if (i.guard !== 'ok') gifs = false;
+  const reactions = enabled && s.reactions && i.protect !== 'lockdown' && i.guard === 'ok';
   const content: ChatContentKind[] = [];
   if (s.content.text) content.push('text');
   if (s.content.emotes) content.push('emotes');
@@ -65,8 +72,9 @@ export function effectiveChat(i: EffectiveInputs): EffectiveChat {
     builtinEmotes: s.emotes.builtin,
     protect: i.protect,
     streamerName: s.streamerName,
+    ...(reactions ? { reactions: true as const } : {}),
   };
-  return { public: pub, enabled, slowS, newViewerWaitS, historyOnJoin, gifs, lockdown: i.protect === 'lockdown', lockdownPresentMs: LOCKDOWN.presentMs };
+  return { public: pub, enabled, slowS, newViewerWaitS, historyOnJoin, gifs, reactions, lockdown: i.protect === 'lockdown', lockdownPresentMs: LOCKDOWN.presentMs };
 }
 
 /** Coalesces settings pushes to at most one per `intervalMs` (the last state wins). */

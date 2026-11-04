@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: 'Converse com quem assiste embaixo do vídeo: enquetes, palpites, respostas, @menções, fixar e atalhos, com apagar, silenciar, modo lento e proteção contra flood.'
+description: 'Converse com quem assiste embaixo do vídeo: reações, enquetes, palpites, respostas, @menções e fixar, com apagar, silenciar, modo lento e proteção contra flood.'
 ---
 
 A sua live tem chat. Quem assiste escreve embaixo do vídeo, você lê e responde no **Chat ao vivo** do painel, e todo mundo vê as mensagens em menos de um segundo. Ele vem **ligado por padrão**: não precisa configurar nada.
@@ -86,6 +86,17 @@ Não tem pontos nem prêmios: a enquete é só um jeito divertido de perguntar a
 
 ![A enquete na página de quem assiste, acima das mensagens: 1 o tempo que falta, 2 cada resposta com o resultado ao vivo (o voto da pessoa marcado), 3 quantos votaram.](../../../../assets/guides/live/pt-br/chat-poll-viewer.webp)
 
+## Reações sobre o vídeo
+
+Quem assiste toca na abelhinha ao lado da caixa de mensagem e escolhe uma de oito reações (Amei, Hype, Engraçado, Uau, GG, Fogo, Triste, Oi). Ela sobe flutuando sobre o vídeo por um instante, para todo mundo que está assistindo, também em tela cheia. Elas vêm **ligadas**.
+
+- São só figurinhas dos emotes de abelha: ninguém consegue escrever nada com elas.
+- Quase não usam a sua internet: o SwarmCast soma os toques de todo mundo e manda uma vez por segundo, e um momento agitado nunca põe mais do que algumas na tela.
+- Pessoas **silenciadas** não reagem. As reações pausam sozinhas enquanto o chat está **travado para quem já está aqui** e quando o seu computador está ocupado, e param junto com o chat.
+- O **Chat ao vivo** mostra uma contagem pequena embaixo dos números: "Reações no último minuto: Fogo 12 · Amei 3".
+- Para desligar para todo mundo, desmarque **Reações no vídeo** nas configurações do chat e clique em **Salvar configurações do chat**.
+- Cada espectador pode escondê-las na própria tela (**Mostrar reações no vídeo** nas configurações do chat). Quem pediu ao aparelho para reduzir o movimento vê um contador pequeno no canto do vídeo em vez das abelhinhas flutuando.
+
 ## Atalhos: digite / na caixa
 
 A caixa do Chat ao vivo também aceita comandos curtos. Digite **/** e aparece uma lista dos que combinam, com o jeito de escrever cada um; o **?** ao lado de **Enviar** mostra todos. Os nomes em português e em inglês funcionam, com ou sem acento. Os botões continuam: o comando é só um jeito mais rápido.
@@ -135,7 +146,7 @@ Clique em **Configurações** no Chat ao vivo, ou desça até o cartão **Chat**
 - **Links:** **Mostrar como texto** (o padrão) ou **Bloquear** mensagens que tenham um.
 - **Palavras bloqueadas:** uma por linha. Mensagens com uma delas são recusadas, mesmo escritas com letras parecidas, acentos ou espaços.
 - **Alfabetos permitidos:** **Qualquer**, ou **Só latino** para um público local.
-- **Espectadores escolhem a cor do nome**, **Seu nome no chat** e **Avisar no chat quando alguém for silenciado**.
+- **Espectadores escolhem a cor do nome**, **Seu nome no chat**, **Avisar no chat quando alguém for silenciado** e **Reações no vídeo**.
 - **Emotes do SwarmCast:** liga ou desliga os emotes de abelha.
 
 ![O cartão Chat com as configurações do chat: 1 a chave para ligar e desligar o chat; o que dá para mandar, ritmo (modo lento, tamanho, emojis, novos espectadores, repetidas, histórico), segurança (proteção automática contra flood, palavras bloqueadas, links, alfabetos), aparência, GIFs, emotes e 2 Salvar configurações do chat.](../../../../assets/guides/live/pt-br/chat-settings.webp)
@@ -152,8 +163,9 @@ Para desligar o chat para todo mundo, use a chave no topo do cartão Chat (1). A
 - **Respostas** com um trecho curto da mensagem respondida; um clique no trecho leva até ela enquanto ainda está no chat. Uma mensagem que **menciona a pessoa** tem uma barra cor de mel e o nome dela marcado (7); com o chat oculto, **Mostrar chat** conta essas menções.
 - **Responder** em cada mensagem (apontando para ela, tocando nela no celular ou com as setas a partir do chat) e **@** na caixa de mensagem para mencionar alguém que escreveu.
 - **Enquetes e palpites** acima das mensagens, com o resultado ao vivo e o próprio voto. No celular a enquete começa recolhida numa linha, para o chat não perder espaço: um toque abre. Com o chat oculto, **Mostrar chat** diz **Enquete**.
+- **Reações**: a abelhinha ao lado da caixa de mensagem manda uma, e as de todo mundo flutuam sobre o vídeo.
 - **Ocultar chat** esconde o chat naquele aparelho (fica lembrado); **Mostrar chat** traz de volta.
-- **Configurações do chat** para a cor do próprio nome, horários, **Destacar mensagens que me mencionam** e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
+- **Configurações do chat** para a cor do próprio nome, horários, **Destacar mensagens que me mencionam**, **Mostrar reações no vídeo** e tamanho do texto. O SwarmCast deixa toda cor legível em tela clara e escura.
 
   ![As configurações do chat de quem assiste: Cor do seu nome com doze cores e Outra cor…, uma prévia do nome no tema claro e no escuro, Mostrar horários, Destacar mensagens que me mencionam e Tamanho do texto.](../../../../assets/guides/live/pt-br/chat-viewer-settings.webp)
 

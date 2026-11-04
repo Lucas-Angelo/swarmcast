@@ -23,6 +23,9 @@
 // Replies and mentions from the panel: Reply in the ⋯ menu puts "Replying to …" over the box, "@"
 // lists the people who wrote (with their tag), the reply reaches viewers with the server's quote and
 // the mention by author key, and a viewer's message that mentions the streamer is marked.
+//
+// Reactions over the video: the live chat's tally of the last minute, and the Chat card's switch,
+// which takes them away from every viewer.
 import fs from 'node:fs';
 import path from 'node:path';
 import type { Locator, Page } from '@playwright/test';
@@ -512,6 +515,30 @@ test("GIFs need the streamer's own key, show the privacy text, and the card is t
   await expect.poll(chatSettings).toMatchObject({ content: { gifs: true }, gif: { provider: 'klipy', key: 'test_key_0123456789' } });
   await expect(card.getByTestId('chat-gif-consent')).toHaveText(translate('pt-BR', 'admin.chat.gif.consent.tip'));
   await expect(card.locator('input[data-testid="chat-gif-consent"]')).toHaveCount(0);
+});
+
+test('reactions: the live chat shows a small tally of the last minute; the switch in the Chat card turns them off for everyone', { tag: '@ui' }, async ({ page, bots }) => {
+  // Arrange
+  const { live, card } = await openChat(page);
+  const fan = await bots.join(uid('fan'));
+  await panelShows(page, fan.nickname);
+  await expect(card.getByTestId('chat-reactions')).toBeChecked();
+
+  // Act
+  fan.react([0, 0, 0, 0, 0, 3]);
+
+  // Assert
+  const fire = translate('en', 'chat.react.fire');
+  await expect(live.getByTestId('chat-reactions-tally')).toContainText(new RegExp(`^Reactions in the last minute: .*${fire} \\d+`));
+
+  // Act
+  await card.getByTestId('chat-reactions').uncheck();
+  await card.getByTestId('chat-save').click();
+
+  // Assert
+  await expect.poll(async () => (await chatSettings()).reactions).toBe(false);
+  await expect(live.getByTestId('chat-reactions-tally')).toHaveCount(0);
+  await expect.poll(() => fan.messages.some((m) => m.t === 'chat.settings' && m.settings.reactions === undefined)).toBe(true);
 });
 
 const SHOTS = process.env.SWARMCAST_SHOTS_DIR;

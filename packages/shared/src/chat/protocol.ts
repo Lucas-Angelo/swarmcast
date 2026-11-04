@@ -184,7 +184,18 @@ export interface ChatPollTallyItem {
   rn?: number;
 }
 
-export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem | ChatHighlightItem | ChatPinItem | ChatPollItem | ChatPollTallyItem;
+/**
+ * Reactions over the video (docs/CHAT.md, "Reactions"): everyone's taps of one window, per kind
+ * (`c[i]` of CHAT_REACTIONS[i], each at most CHAT_REACT_BROADCAST_MAX_PER_KIND). An ephemeral item
+ * (never in the ring, a snapshot or a resume answer; a slow socket that misses one gets the next).
+ * The panel's copy has the counts before the cap.
+ */
+export interface ChatReactionsItem {
+  k: 'rx';
+  c: number[];
+}
+
+export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem | ChatHighlightItem | ChatPinItem | ChatPollItem | ChatPollTallyItem | ChatReactionsItem;
 
 /** Ring items (they carry a `seq`). */
 export type ChatRingItem = ChatMessageItem | ChatSystemItem;
@@ -223,6 +234,12 @@ export interface ChatPublicSettings {
   protect: ChatProtect;
   /** Display name of the streamer ("" = the translated default). */
   streamerName: string;
+  /**
+   * Present while viewers may send reactions (the streamer has them on, the chat is not in
+   * lockdown and the server is not busy). A page sends `chat.react` only while it is here, so a
+   * server older than 0.5.1 never gets one.
+   */
+  reactions?: true;
 }
 
 /** What this viewer may do right now. `mutedUntil`: Unix ms, 'live' (until the stream ends) or null. */
@@ -302,7 +319,8 @@ export type ChatClientMessage =
   | { t: 'chat.send'; n: number; gif: GifRef; re?: number }
   | { t: 'chat.color'; color: string }
   | { t: 'chat.resume'; after: number }
-  | { t: 'chat.vote'; n: number; id: string; o: number };
+  | { t: 'chat.vote'; n: number; id: string; o: number }
+  | { t: 'chat.react'; c: number[] };
 
 /** Compile-time check: every ChatClientMessage is an input chatClientSchemas accepts by shape. */
 type _ConformsToSchemas<T extends z.input<(typeof chatClientSchemas)[number]>> = T;
@@ -325,6 +343,8 @@ export interface ChatCounters {
   protectReason?: MessageKey;
   /** The chat stopped itself after repeated internal errors (the stream is not affected). */
   broken: boolean;
+  /** Reaction taps taken in the last minute, per kind (CHAT_REACTIONS order). */
+  reactions?: number[];
 }
 
 /** Per-session moderation state the panel shows (mutes, colours). */

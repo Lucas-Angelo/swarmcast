@@ -18,6 +18,7 @@ import {
   PIN_CHOICES,
   pollPercents,
   pollRequest,
+  reactionsLine,
   resolvePerson,
   runCommand,
   type CommandApi,
@@ -457,5 +458,34 @@ describe('slash commands in the panel (docs/CHAT.md, "Slash commands")', () => {
     expect(noQuestion).toEqual({ ok: false, key: 'admin.chat.err.pollQuestion', params: { max: 80 } });
     expect(emptyOption).toEqual({ ok: false, key: 'admin.chat.err.pollOption', params: { n: 2, max: 30 } });
     expect(pollPercents([1, 1, 2])).toEqual([25, 25, 50]);
+  });
+});
+
+describe('reactionsLine', () => {
+  const eff = (reactions: boolean): ChatPublicSettings => ({ enabled: true, content: ['text'], slowS: 0, autoSlow: false, maxGraphemes: 200, maxEmoji: 30, newViewerWaitS: 0, colors: 'choose', linksBlocked: false, emotes: [], builtinEmotes: true, protect: 'off', streamerName: '', ...(reactions ? { reactions: true as const } : {}) });
+
+  it('the last minute per kind, most first, translated; none yet; paused; nothing while off', () => {
+    // Arrange
+    setLang('en');
+    // Act
+    const tally = reactionsLine(true, eff(true), [3, 0, 0, 0, 0, 12, 0, 1]);
+    const none = reactionsLine(true, eff(true), [0, 0, 0, 0, 0, 0, 0, 0]);
+    const paused = reactionsLine(true, eff(false), [5]);
+    const off = reactionsLine(false, eff(false), [5]);
+    // Assert
+    expect(tally && t(tally.key, tally.params)).toBe('Reactions in the last minute: Fire 12 · Love 3 · Hi 1');
+    expect(none?.key).toBe('admin.chat.reactions.none');
+    expect(paused?.key).toBe('admin.chat.reactions.paused');
+    expect(off).toBeNull();
+  });
+
+  it('in Portuguese, and garbage counts count as none', () => {
+    // Arrange
+    setLang('pt-BR');
+    // Act
+    const line = reactionsLine(true, eff(true), [2, Number.NaN, -4, 0, 0, 0, 0, 0]);
+    // Assert
+    expect(line && t(line.key, line.params)).toBe('Reações no último minuto: Amei 2');
+    setLang('en');
   });
 });

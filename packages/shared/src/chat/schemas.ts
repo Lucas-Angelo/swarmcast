@@ -26,6 +26,8 @@ import {
   CHAT_POLL_QUESTION_MAX_UNITS,
   CHAT_POLL_SECONDS_MAX,
   CHAT_POLL_SECONDS_MIN,
+  CHAT_REACT_PER_FRAME_MAX,
+  CHAT_REACTIONS,
   CHAT_SLOW_MODE_DEFAULT_S,
   CHAT_SLOW_MODE_MAX_S,
   CHAT_TEXT_MAX_UNITS,
@@ -121,14 +123,29 @@ export const chatVoteSchema = z.strictObject({
     .max(CHAT_POLL_OPTIONS_MAX - 1),
 });
 
+/**
+ * viewer → server: reaction taps since the page's last reaction frame, per kind (`c[i]` taps of
+ * CHAT_REACTIONS[i]; a shorter array leaves the rest at 0), at least one and at most
+ * CHAT_REACT_PER_FRAME_MAX in all. Fire-and-forget: never answered (docs/CHAT.md, "Reactions").
+ */
+export const chatReactSchema = z
+  .strictObject({
+    t: z.literal('chat.react'),
+    c: z.array(z.number().int().min(0).max(CHAT_REACT_PER_FRAME_MAX)).min(1).max(CHAT_REACTIONS.length),
+  })
+  .refine((m) => {
+    const sum = m.c.reduce((a, b) => a + b, 0);
+    return sum >= 1 && sum <= CHAT_REACT_PER_FRAME_MAX;
+  }, 'between 1 and CHAT_REACT_PER_FRAME_MAX taps');
+
 /** Every viewer → server chat message (added to clientMessageSchema). */
-export const chatClientSchemas = [chatSendSchema, chatColorSchema, chatResumeSchema, chatVoteSchema] as const;
+export const chatClientSchemas = [chatSendSchema, chatColorSchema, chatResumeSchema, chatVoteSchema, chatReactSchema] as const;
 
 /** Raw-frame prefix of a chat message: the viewer always serialises `t` first (plan §4.1). */
 export const CHAT_FRAME_PREFIX = '{"t":"chat.';
 
 /**
- * Raw-frame prefix of a reaction frame (`chat.react`, reserved for 0.5.0), closing quote included so
+ * Raw-frame prefix of a reaction frame (`chat.react`), closing quote included so
  * `chat.reactX` does not match. These frames have their own budget (CHAT_REACT_FRAMES_PER_10S).
  */
 export const CHAT_REACT_FRAME_PREFIX = '{"t":"chat.react"';
@@ -191,6 +208,8 @@ export const chatSettingsSchema = z.object({
   budgetShare: z.number().min(CHAT_BUDGET_SHARE_MIN).max(CHAT_BUDGET_SHARE_MAX).default(CHAT_BUDGET_SHARE_DEFAULT),
   gif: chatGifSettingsSchema.prefault({}),
   emotes: z.object({ builtin: z.boolean().default(true) }).prefault({}),
+  /** Viewers may send reactions that float over the video for everyone (docs/CHAT.md, "Reactions"; config version 6). */
+  reactions: z.boolean().default(true),
 });
 export type ChatSettings = z.infer<typeof chatSettingsSchema>;
 

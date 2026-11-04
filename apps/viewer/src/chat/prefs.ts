@@ -18,6 +18,8 @@ export interface ChatPrefs {
   animate: boolean | null;
   /** Mark the messages that mention this viewer (on by default; turning it off is the target's own way out of mention spam). */
   mentions: boolean;
+  /** Show the reactions that float over the video (on by default; off hides them for this viewer only, sending still works). */
+  reactions: boolean;
 }
 
 const KEY = 'swarmcast.chat';
@@ -56,6 +58,7 @@ export function createPrefsStore(storage: () => PrefsStorage | null = () => loca
       gifs: stored.gifs === true,
       animate: typeof stored.animate === 'boolean' ? stored.animate : null,
       mentions: stored.mentions !== false,
+      reactions: stored.reactions !== false,
     };
     return memory;
   };

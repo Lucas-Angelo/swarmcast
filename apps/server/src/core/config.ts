@@ -17,8 +17,9 @@ export type TunnelProviderName = z.infer<typeof tunnelProviderSchema>;
  *    old default and becomes 120 once; other values are the streamer's choice and stay.
  * 4: `chat` (v0.4.0): only adds the defaults (chat on, GIFs off, slow mode 2 s).
  * 5: `allowViewerShare` (v0.5.0): only adds the default (the watch page's Share button is on).
+ * 6: `chat.reactions` (v0.5.1): only adds the default (reactions over the video are on).
  */
-export const CONFIG_VERSION = 5;
+export const CONFIG_VERSION = 6;
 
 /** `maxViewers` default before config version 3. */
 const OLD_DEFAULT_MAX_VIEWERS = 500;
