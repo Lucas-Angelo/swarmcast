@@ -5,7 +5,7 @@ import { parseSystemCheck, readSystemCheck } from '../../src/admin/system-check-
 import { tempDir } from './helpers.js';
 import { makeController, panelServer } from './live-helpers.js';
 
-// <data>/system-check.json, written by the start scripts (and the desktop app's first run), as
+// <data>/system-check.json, written by the desktop app's first run (and by the old start scripts), as
 // the panel reads it: unknown result ids are kept, unknown fields dropped, broken, foreign or
 // oversized files ignored. GET /api/system-check serves it with the same login as the rest of the
 // admin API, through Fastify's inject() (the network is not the subject here).
@@ -28,14 +28,14 @@ const SAMPLE = {
   extra: 'ignored',
 };
 
-/** Where the start scripts write the file, in a temp data folder of this test (not written yet). */
+/** Where the first run writes the file, in a temp data folder of this test (not written yet). */
 const systemCheckFile = (): string => path.join(tempDir('sc-syscheck-'), 'system-check.json');
 
 /** The admin panel server reading `file` (inject() only), closed when the test finishes. */
 const panel = (file: string) => panelServer({ live: makeController().live, systemCheckFile: file });
 
 describe('system-check.json parsing', () => {
-  it('accepts the start scripts\' format and drops unknown fields', () => {
+  it('accepts the format (also the old start scripts\' files) and drops unknown fields', () => {
     // Act
     const c = parseSystemCheck(JSON.stringify(SAMPLE));
     // Assert
@@ -93,7 +93,7 @@ describe('system-check.json parsing', () => {
 });
 
 describe('GET /api/system-check', () => {
-  it('is 404 when the start script wrote none', async () => {
+  it('is 404 when none was written', async () => {
     // Arrange
     const { app, headers } = await panel(systemCheckFile());
     // Act

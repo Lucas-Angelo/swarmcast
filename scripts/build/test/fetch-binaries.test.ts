@@ -14,7 +14,6 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, onTestFinished, vi } from 'vitest';
 import { assetUrls, download, downloadFirst } from '../fetch-binaries.mjs';
-import { renderBinariesJson } from '../binaries-json.mjs';
 import versions from '../versions.json' with { type: 'json' };
 import { it } from './fixtures.js';
 
@@ -501,14 +500,5 @@ describe('versions.json mirrors', () => {
     const pins = new Map<string, Set<string>>();
     for (const { m, sha256 } of mirrors) pins.set(m, (pins.get(m) ?? new Set()).add(sha256));
     for (const [m, set] of pins) expect(set.size, m).toBe(1);
-  });
-
-  it('never reach users: binaries.json carries the publisher URLs only', () => {
-    // Act
-    const out = renderBinariesJson(versions);
-
-    // Assert
-    expect(out).not.toContain('ci-deps');
-    expect(out).not.toContain('mirrors');
   });
 });

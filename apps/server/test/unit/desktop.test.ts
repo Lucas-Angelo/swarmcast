@@ -20,6 +20,7 @@ import {
   PROTOCOL_PREFIX,
   sameDesktopState,
   StartupError,
+  trayStateFor,
   type DesktopOutMessage,
 } from '../../src/desktop/protocol.js';
 import { HlsOrigin } from '../../src/hls/origin.js';
@@ -42,11 +43,45 @@ function bridge(o: { version?: string; serverVersion?: string; exe?: string } = 
   return { bridge: b, sent, home };
 }
 
-/** The panel with `desktop` (none: script mode), for app.inject(). */
+/** The panel with `desktop` (none: a run outside the desktop app), for app.inject(). */
 async function desktopPanel(desktop?: DesktopBridge) {
   const { live } = makeController();
   return panelServer({ live, desktop });
 }
+
+describe('trayStateFor (the shell\'s tray / menu bar icon)', () => {
+  it('off: gray, can start, cannot stop', () => {
+    // Act
+    const state = trayStateFor('off', 0);
+    // Assert
+    expect(state).toEqual({ type: 'state', state: 'off', tooltip: 'SwarmCast: off', canStart: true, canStop: false });
+  });
+
+  it.each(['starting', 'waiting-obs'] as const)('%s: yellow, waiting for OBS', (phase) => {
+    // Act
+    const state = trayStateFor(phase, 0);
+    // Assert
+    expect(state).toEqual({ type: 'state', state: 'waiting', tooltip: 'SwarmCast: waiting for OBS', canStart: false, canStop: true });
+  });
+
+  it.each([
+    [3, 'SwarmCast: live · 3 viewers'],
+    [1, 'SwarmCast: live · 1 viewer'],
+    [0, 'SwarmCast: live · 0 viewers'],
+  ])('live with %i viewer(s): green, "%s"', (viewers, tooltip) => {
+    // Act
+    const state = trayStateFor('live', viewers);
+    // Assert
+    expect(state).toEqual({ type: 'state', state: 'live', tooltip, canStart: false, canStop: true });
+  });
+
+  it('stopping: yellow, start disabled, stop still enabled', () => {
+    // Act
+    const state = trayStateFor('stopping', 5);
+    // Assert
+    expect(state).toEqual({ type: 'state', state: 'waiting', tooltip: 'SwarmCast: stopping…', canStart: false, canStop: true });
+  });
+});
 
 describe('desktop protocol: server → shell', () => {
   it('state messages extend the tray state with phase and viewers', () => {
@@ -229,7 +264,7 @@ describe('DesktopBridge', () => {
 });
 
 describe('desktop admin API', () => {
-  it('script mode: { desktop: false } and the actions fail', async () => {
+  it('outside the desktop app (development, tests): { desktop: false } and the actions fail', async () => {
     // Arrange
     const { app, headers } = await desktopPanel();
     // Act

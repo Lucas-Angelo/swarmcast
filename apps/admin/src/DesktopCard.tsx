@@ -81,7 +81,7 @@ export function UpdateBanner({ phase }: { phase: LivePhase }) {
   );
 }
 
-/** "Desktop app" card: start with the computer, version, check for updates. Hidden in script mode. */
+/** "Desktop app" card: start with the computer, version, check for updates. Hidden outside the desktop app. */
 export function DesktopCard() {
   const d = useDesktop();
   const [err, setErr] = useState<unknown>(null);

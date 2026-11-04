@@ -46,10 +46,6 @@ The version you have keeps working. SwarmCast retries the download a few times b
 - **AppImage:** updates itself like on Windows and macOS.
 - **.deb:** if the app cannot install the update by itself, it opens the download page. Download the new `.deb` and install it the same way as the first time ([Install on Linux](/swarmcast/install/linux/)). Your settings are kept.
 
-## Script install
-
-If you installed with a script, run the same script (or the one from a new installer zip) again. It updates SwarmCast and keeps your settings. See [Advanced: install with a script](/swarmcast/advanced/script-install/).
-
 ## How SwarmCast checks (privacy)
 
 To check, the app downloads a small public file (`latest.json`) from the SwarmCast releases on GitHub; with beta versions on, also `updates/beta.json` from this website. It sends nothing about you or your live. GitHub counts how many times that file was downloaded, which is how this site can estimate how many apps are in use. More in [Privacy and usage numbers](/swarmcast/about/privacy/).

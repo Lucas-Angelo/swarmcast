@@ -2,7 +2,8 @@
 // GitHub's public release download counters (REST API `download_count`).
 //
 // 1. Downloads: the sum of `download_count` of the installer assets of every release
-//    (desktop installers, the script-mode installer zips and packages). It includes the
+//    (desktop installers, and the script-mode installer zips and packages of the releases before
+//    0.5.1). It includes the
 //    updates the desktop app downloads by itself on Windows (setup .exe) and Linux (AppImage).
 // 2. Apps opened this week (approximate): the desktop app downloads `latest.json` from the
 //    latest release when it starts and every 6 hours while it stays open (docs/DESKTOP.md),

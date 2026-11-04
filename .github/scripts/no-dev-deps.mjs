@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 // Release hygiene: fails when a development dependency, or test code, would ship.
 //
-//   node .github/scripts/no-dev-deps.mjs [--server] [--web] [--staging <dir>]... [--archive <file>]...
-//                                        [--installers <dir>]...
+//   node .github/scripts/no-dev-deps.mjs [--server] [--web] [--staging <dir>]... [--installers <dir>]...
 //
 //   --server      apps/server/dist/meta.json, esbuild's record of the server bundle: every input
 //                 file, and every require() the bundle leaves to Node at run time (pkg copies
@@ -10,10 +9,9 @@
 //   --web         apps/viewer and apps/admin: the modules and source assets of their Vite builds
 //                 (built again in memory with each app's own config), and apps/<app>/dist must be
 //                 byte for byte that build
-//   --staging     a script-mode package (release/staging/<target>): no node_modules folder, the
+//   --staging     a staged server package (release/staging/<target>): no node_modules folder, the
 //                 files in the server executable's pkg snapshot, and web/ the same as
 //                 apps/*/dist when that is here (a job that only downloaded the package has none)
-//   --archive     a release archive (.zip or .tar.gz of a staging folder): unpacked, then as --staging
 //   --installers  the desktop installers in a folder (release/desktop/<target>): each one unpacked
 //                 (.app, .app.tar.gz, .deb, .AppImage, NSIS -setup.exe), no node_modules folder,
 //                 the server sidecar's snapshot as in --staging and the same file list as the
@@ -28,7 +26,7 @@
 //   *.test.* / *.spec.* file.
 // Exit 1 when something would ship that must not, 2 when a check could not run. The findings also
 // go to the job summary ($GITHUB_STEP_SUMMARY). pipeline.yml's build jobs (_build.yml,
-// _desktop.yml) and release.yml's signing jobs run it; it needs the checkout (package.json files,
+// _desktop.yml) run it; it needs the checkout (package.json files,
 // package-lock.json) and, for --web, `npm ci`.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -356,7 +354,7 @@ function checkExecutable(model, check, exe, label) {
   return snap;
 }
 
-// ------------------------------------------------------------------ packages, archives, installers
+// ------------------------------------------------------------------ packages, installers
 
 /** Every file and folder under `dir`, as posix paths relative to it. */
 function listTree(dir) {
@@ -427,16 +425,6 @@ const tmp = (prefix) => {
 // the OS's bsdtar (which also reads .zip) is in System32.
 const tarBin = () => (process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar');
 const run = (cmd, args, opts = {}) => execFileSync(cmd, args, { stdio: ['ignore', 'ignore', 'pipe'], ...opts });
-
-function checkArchive(model, file) {
-  const dir = tmp('archive');
-  if (/\.zip$/i.test(file)) {
-    if (process.platform !== 'win32' && process.platform !== 'darwin') run('unzip', ['-q', file, '-d', dir]);
-    else run(tarBin(), ['-xf', file, '-C', dir]);
-  } else if (/\.tar\.gz$|\.tgz$/i.test(file)) run(tarBin(), ['-xzf', file, '-C', dir]);
-  else throw new CheckError(`${file}: not a .zip or .tar.gz`);
-  return checkStaging(model, dir, `archive: ${path.basename(file)}`).check;
-}
 
 /** The unpacked installer (a folder), or null when this check does not open that kind of file. */
 function unpack(file) {
@@ -533,15 +521,15 @@ function report(checks) {
 }
 
 async function main(argv) {
-  const want = { server: false, web: false, staging: [], archive: [], installers: [] };
+  const want = { server: false, web: false, staging: [], installers: [] };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--server') want.server = true;
     else if (a === '--web') want.web = true;
-    else if (['--staging', '--archive', '--installers'].includes(a) && argv[i + 1]) want[a.slice(2)].push(path.resolve(argv[++i]));
+    else if (['--staging', '--installers'].includes(a) && argv[i + 1]) want[a.slice(2)].push(path.resolve(argv[++i]));
     else throw new CheckError(`unknown argument ${a} (see the top of .github/scripts/no-dev-deps.mjs)`);
   }
-  if (!want.server && !want.web && !want.staging.length && !want.archive.length && !want.installers.length) throw new CheckError('nothing to check: pass --server, --web, --staging, --archive or --installers');
+  if (!want.server && !want.web && !want.staging.length && !want.installers.length) throw new CheckError('nothing to check: pass --server, --web, --staging or --installers');
   const model = devModel();
   const checks = [];
   if (want.server) checks.push(checkServer(model));
@@ -552,7 +540,6 @@ async function main(argv) {
     checks.push(s.check);
     staged.push(s);
   }
-  for (const file of want.archive) checks.push(checkArchive(model, file));
   for (const dir of want.installers) checks.push(...checkInstallers(model, dir, staged.length === 1 ? staged[0] : null));
   const text = report(checks);
   console.log(text);

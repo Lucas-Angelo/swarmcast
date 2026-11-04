@@ -38,7 +38,7 @@ async function speedForCheck(app: App, signal?: AbortSignal): Promise<SpeedTestR
 
 /**
  * First start of the desktop app (no system-check.json, or one from another version): the
- * system check the start scripts do before installing, then the video converter (ffmpeg),
+ * system check (system-check.ts), then the video converter (ffmpeg),
  * with retries. Runs in the background; nothing here is fatal.
  */
 export async function runDesktopFirstRun(

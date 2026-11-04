@@ -61,10 +61,10 @@ const isReady = (m: DesktopOutMessage): m is Extract<DesktopOutMessage, { type: 
 const isExport = (m: DesktopOutMessage): m is Extract<DesktopOutMessage, { type: 'export-logs' }> => m.type === 'export-logs';
 
 describe('log export (real server)', () => {
-  it('script mode: the panel API writes an anonymised ZIP to the Downloads folder', async () => {
+  it('browser panel (no desktop app): the panel API writes an anonymised ZIP to the Downloads folder', async () => {
     // Arrange
     const ports = await allocAppPorts();
-    const server = start(ports, ['--no-tray', '--no-open']);
+    const server = start(ports, ['--no-open']);
     const [, base, token] = await server.logLine(/(http:\/\/127\.0\.0\.1:\d+)\/auth\/(\S+)/, 'the panel login URL');
     const jar = new Jar(base!);
     const signedIn = await jar.fetch(`/auth/${token}`);

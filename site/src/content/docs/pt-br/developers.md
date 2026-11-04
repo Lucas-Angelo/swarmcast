@@ -24,6 +24,6 @@ Este site é para quem faz live e para quem assiste. A documentação técnica f
 
 ## Este site
 
-O site é feito com o [Astro Starlight](https://starlight.astro.build/), na [pasta `site/`](https://github.com/Lucas-Angelo/swarmcast/tree/main/site). Cada página existe em inglês (`site/src/content/docs/`) e em português do Brasil (`site/src/content/docs/pt-br/`). O guia offline que vai dentro dos zips de instalação é gerado a partir dessas mesmas páginas por `scripts/build/guide-html.mjs`, então só existe um lugar para editar.
+O site é feito com o [Astro Starlight](https://starlight.astro.build/), na [pasta `site/`](https://github.com/Lucas-Angelo/swarmcast/tree/main/site). Cada página existe em inglês (`site/src/content/docs/`) e em português do Brasil (`site/src/content/docs/pt-br/`).
 
 Achou um erro numa página? Use o link **Editar página** no fim dela.

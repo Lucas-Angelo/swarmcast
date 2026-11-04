@@ -3,7 +3,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { isListening } from '../../src/core/ports.js';
-import { allocAppPorts, SCRIPT_MODE, ServerProcess, signIn, stopTracked, tmpDir, writeConfig } from './helpers.js';
+import { allocAppPorts, BROWSER_MODE, ServerProcess, signIn, stopTracked, tmpDir, writeConfig } from './helpers.js';
 
 // The built server, with every new connection its fetch() opens answering "EINVAL" to the type
 // of service, as macOS does on a connection the other side has just reset (what stopped the
@@ -34,7 +34,7 @@ describe('a connection reset under fetch() (type of service refused)', () => {
     const preload = path.join(tmpDir('sc-preload-'), 'refuse-type-of-service.mjs');
     fs.writeFileSync(preload, REFUSE_TYPE_OF_SERVICE);
     const nodeOptions = [process.env.NODE_OPTIONS, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(' ');
-    const server = new ServerProcess({ args: SCRIPT_MODE, dataDir, env: { NODE_OPTIONS: nodeOptions } });
+    const server = new ServerProcess({ args: BROWSER_MODE, dataDir, env: { NODE_OPTIONS: nodeOptions } });
     const [, loginUrl] = await server.logLine(/^Panel: (http:\/\/\S+\/auth\/\S+)/, 'the panel address');
     const panel = await signIn(loginUrl!);
     // Act

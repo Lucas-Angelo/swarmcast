@@ -147,21 +147,21 @@ everywhere, and what each change runs are in [.github/workflows/README.md](../.g
 
 | Stage | What | Runs on |
 |-------|------|---------|
-| `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, tray helper, `cargo fmt` | Ubuntu |
-| `build`, `desktop` | the web build, the script-mode packages, the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
-| `node` | unit and integration tests, `cargo clippy`/`test`, the start and uninstall scripts (when they changed) | Windows, macOS, Ubuntu |
+| `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, `cargo fmt` | Ubuntu |
+| `build`, `desktop` | the web build, the staged server per target (the desktop sidecar), the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
+| `node` | unit and integration tests, `cargo clippy`/`test` | Windows, macOS, Ubuntu |
 | `e2e` | Playwright (Chrome, Firefox, WebKit), split into the `ui` and `media` tests | macOS, Ubuntu |
-| `windows` | exhaustive Windows suites (installer, app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
-| `clean-machine` | per runner image: the pre-release check of the real package (install, live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
+| `windows` | exhaustive Windows suites on the staged server (app in Chrome/Edge/Firefox, quality, direct mode, OBS) | Windows Server |
+| `clean-machine` | per runner image: the pre-release check of the staged server (live, watch, P2P, tunnel), the desktop installers (install, launch, autostart, update, uninstall), the AppImage on a minimal host | Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04 and 24.04 arm64 |
 | `site` | the website's tests, when it changed | Ubuntu |
-| `docker` | the Linux Docker suites (package and start script on Ubuntu 22.04/24.04 and Debian 12, AppImage on a minimal host, OBS Studio, Playwright in the Playwright image), when they or what they run changed | Ubuntu x64 + arm64 |
+| `docker` | the Linux Docker suites (AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12, OBS Studio streaming to the staged server, Playwright in the Playwright image), when they or what they run changed | Ubuntu x64 + arm64 |
 | `ci-ok` | the one required check: green only when every stage the change needs passed | Ubuntu |
 
-Other workflows: `codeql.yml` (code scanning of TypeScript, Go, Rust and the workflows), `site.yml` and
+Other workflows: `codeql.yml` (code scanning of TypeScript, Rust and the workflows), `site.yml` and
 `stats.yml` (the website and the usage numbers, section 6), `soak.yml` (stability measurements),
 `linux-docker.yml` (the Docker suites weekly; pull requests that touch them run the same suites as the
 pipeline's `docker` stage, inside `ci-ok`), and `release.yml` (on a `v*` tag: the whole pipeline as a gate, then
-sign and publish, section 4).
+publish, section 4).
 
 Changes that only touch `docs/`, `site/` or `.md` files skip the app stages: `ci-ok` is green within a
 minute (and the `site` stage runs for the pages they use). The usage-stats job writes only to its own
@@ -228,7 +228,7 @@ for a final frozen build. Always put a dot before the number (`beta.2`, not `bet
 after `beta.2`. No alpha: the release workflow refuses any other pre-release identifier. A beta is tagged
 on the head of its minor's release pull request branch (`release/X.Y.Z`, merged into `main` only with the
 stable version; see "Steps"), not on `main`, and is published as a **GitHub pre-release** that is never **Latest**, so
-`/releases/latest` and its `latest.json` (stable apps, the start scripts and the site's download button)
+`/releases/latest` and its `latest.json` (stable apps and the site's download button)
 never return them. Desktop apps with **Get beta versions** on read the beta feed
 `https://lucas-angelo.github.io/swarmcast/updates/beta.json`, which the website build copies from the
 `latest.json` of the highest release, beta or stable (docs/DESKTOP.md, "Updates").
@@ -243,7 +243,7 @@ pipeline runs with no failure at all.
 
 **A published release is never changed.** Release immutability is on (section 1): once published, its
 assets and its tag cannot be edited, replaced or deleted, and GitHub adds a release attestation.
-Installed apps and the scripts may already have it. A mistake is fixed by shipping the next version.
+Installed apps may already have it. A mistake is fixed by shipping the next version.
 
 ### Steps
 
@@ -282,9 +282,7 @@ Then do **Verify a beta** below before the stable version.
    2. runs the whole pipeline, every stage, the same as for pull requests, with the desktop installers
       built with full optimisation and their update packages signed with the updater key (from the
       `release` environment, section 3). If anything fails, nothing is published;
-   3. signs the server packages the pipeline built and tested when the code-signing secrets exist, and
-      smoke-tests them on each platform;
-   4. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
+   3. publishes the GitHub release, titled **SwarmCast vX.Y.Z**, with the release notes taken from the
       `CHANGELOG.md` section: it uploads every asset to a draft first, checks them, attests them (build
       provenance, `gh attestation verify <file> -R Lucas-Angelo/swarmcast`) and only then publishes the
       draft, so nothing edits a published release. A pre-release is published with
@@ -303,8 +301,9 @@ Then do **Verify a beta** below before the stable version.
 
 **Verify a beta** (before tagging the stable `vX.Y.Z`):
 
-- the release is a **Pre-release**, not Latest, with every asset of section 5 (the same list as a stable
-  release, `latest.json` included) and a `.sig` next to every updatable file;
+- the release is a **Pre-release**, not Latest, with every asset of section 5 and nothing else (the same
+  list as a stable release, `latest.json` included: no start or uninstall scripts, packages, installer
+  zips or `binaries.json`) and a `.sig` next to every updatable file;
   `gh attestation verify <asset> -R Lucas-Angelo/swarmcast` passes for a few of them;
 - `https://github.com/Lucas-Angelo/swarmcast/releases/latest/download/latest.json` still shows the
   previous **stable** version;
@@ -358,18 +357,12 @@ the categories in `.github/release.yml`; pull requests labelled `skip-changelog`
 | `SwarmCast_<v>_amd64.deb`, `SwarmCast_<v>_arm64.deb`, `SwarmCast_<v>_*.AppImage` | Linux desktop app |
 | `SwarmCast_<v>_<arch>.app.tar.gz` and a `.sig` next to every updatable file | Update packages and their signatures, used only by the app's updater |
 | `latest.json` | The updater manifest: version, notes, one URL + signature per platform. The app reads it from `/releases/latest/download/latest.json` |
-| `SwarmCast-v<v>-<target>.zip` / `.tar.gz` (`windows-x64`, `macos-arm64`, `macos-x64`, `linux-x64`, `linux-arm64`) | Script-mode packages, installed by the start scripts |
-| `SwarmCast-v<v>-<target>-installer.zip` | Offline script install: start script + package + checksums + the HTML guide (EN and pt-BR) + uninstaller |
-| `start-*` and `uninstall-*` scripts, `binaries.json` | One-line installs, uninstallers, and the ffmpeg pins the scripts download from its publisher |
 | `SHA256SUMS.txt` | SHA-256 of every asset |
 
-The desktop app is the main download for streamers (site → **Download**). The script mode stays for
-advanced users and servers: [the script install page](https://lucas-angelo.github.io/swarmcast/advanced/script-install/)
-has the one-line commands. Desktop details: [DESKTOP.md](DESKTOP.md).
-
-The offline guide inside the installer zips is generated from the website's pages
-(`site/src/content/docs/`, list and order in `site/offline-guide.json`, by
-`scripts/build/guide-html.mjs`). To change it, edit the site: both always say the same thing.
+Nothing else: the desktop app is the only way streamers install SwarmCast (site → **Download**), and the
+website is the only guide. Until 0.5.0, releases also carried the script mode (start and uninstall
+scripts, per-platform packages, installer zips with an offline HTML guide, `binaries.json`); it was
+removed in 0.5.1 ([DECISIONS.md](DECISIONS.md)). Desktop details: [DESKTOP.md](DESKTOP.md).
 
 ## 6. GitHub Pages and usage numbers
 
@@ -395,17 +388,17 @@ account; a Windows code-signing certificate), so they are optional.
 What users see without signing (the site's install pages explain each step with pictures):
 
 - **Windows:** SmartScreen shows "Windows protected your PC" the first time: **More info → Run anyway**.
-- **macOS:** the app and the scripts are not notarized, so Gatekeeper blocks the first open:
+- **macOS:** the app is not notarized, so Gatekeeper blocks the first open:
   **System Settings → Privacy & Security → Open Anyway** (older macOS: right-click → **Open**). The
-  desktop app is ad-hoc signed; the start script removes the quarantine flag only from the files it
-  verified by SHA-256.
+  desktop app is ad-hoc signed.
 - **Linux:** no warning.
 
 The updater signature (section 3) is separate from code signing and is always on: it proves an update
 came from this project, whether or not the installer is code-signed.
 
-When the following secrets exist, the release signs the script-mode binaries (and notarizes the macOS
-ones) by itself:
+Code-signing the desktop installers needs the Tauri bundler's signing settings (see
+[DESKTOP.md](DESKTOP.md), "Installers") and is future work. It would use secrets like these (until 0.5.0
+the release used them to sign the script-mode binaries; nothing reads them now):
 
 | Secret | Use |
 |--------|-----|
@@ -418,8 +411,6 @@ ones) by itself:
 | `WINDOWS_CERTIFICATE_PFX_BASE64` | Code-signing certificate (.pfx), base64 |
 | `WINDOWS_CERTIFICATE_PASSWORD` | Password of the .pfx |
 
-The desktop installers are not code-signed yet even with these secrets: that needs the Tauri bundler's
-signing settings (see [DESKTOP.md](DESKTOP.md), "Installers") and is future work.
 
 ## 8. Mirrored CI dependencies (`ci-deps`)
 
@@ -433,10 +424,9 @@ repository, which GitHub serves fast to its own runners.
   `url`. `fetch-binaries.mjs` tries the mirrors first and the publisher last, each with its own resume,
   retries and time cap. A missing or unreachable mirror falls back to the publisher; a file whose
   SHA-256 differs from the pin stops the download (the pin is the only thing trusted, whatever the source).
-- Only CI and packagers use the mirrors. `binaries.json`, the start scripts and the app always download
-  from the publisher's `url` (a test checks that `binaries.json` never contains `ci-deps`).
-- `ci-deps` is a **pre-release, never "latest"**, so `/releases/latest` (the app's updater, the start
-  scripts, the site) never sees it, and its asset names do not count as downloads in the usage numbers.
+- Only CI and packagers use the mirrors. The app always downloads from the publisher's `url`.
+- `ci-deps` is a **pre-release, never "latest"**, so `/releases/latest` (the app's updater, the site) never
+  sees it, and its asset names do not count as downloads in the usage numbers.
   It was created before immutable releases were turned on, so it stays editable: new files can be added.
   Do not delete it or its tag: with immutable releases on, a deleted release's tag name cannot be reused.
   If a new mirror release is ever needed, create a new pre-release (for example `ci-deps-2`) and point the

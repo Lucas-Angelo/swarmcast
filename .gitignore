@@ -12,7 +12,6 @@ test-results/
 .env.*
 /vendor/
 *.blob
-apps/tray/bin/
 .claude/*
 !.claude/skills/
 !.claude/agents/

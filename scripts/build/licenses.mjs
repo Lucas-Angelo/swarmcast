@@ -1,7 +1,7 @@
 // Collect license texts of everything shipped in a package: npm production dependencies
-// of the server, viewer and admin bundles, plus MediaMTX, cloudflared and the tray helper, and
-// the Fredoka font. For the desktop app (desktop.mjs) also the Rust crates compiled into it
-// (crate-licenses.mjs) and what its installers carry, instead of the Go tray helper.
+// of the server, viewer and admin bundles, plus MediaMTX, cloudflared and the Fredoka font. For
+// the desktop app (desktop.mjs) also the Rust crates compiled into it (crate-licenses.mjs) and
+// what its installers carry.
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,7 +69,7 @@ function desktopInstallerNotes(target) {
  * The THIRD_PARTY_LICENSES.txt text.
  * @param {{ desktop?: { target: string, triple: string, manifestPath?: string } }} [options]
  *   desktop: for the desktop app of that release target / Rust triple (adds the Rust crates and
- *   throws when one has no allowed licence; no Go tray helper).
+ *   throws when one has no allowed licence).
  */
 export function thirdPartyLicenses({ desktop } = {}) {
   const sections = [
@@ -79,12 +79,12 @@ export function thirdPartyLicenses({ desktop } = {}) {
     '== cloudflared (https://github.com/cloudflare/cloudflared) — Apache License 2.0 ==',
     ...(desktop
       ? ['== Tauri (https://tauri.app) and the other Rust crates of the app window — see "Rust crates" at the end ==', ...desktopInstallerNotes(desktop.target)]
-      : ['== fyne.io/systray (https://github.com/fyne-io/systray) — Apache License 2.0 (tray helper) ==']),
+      : []),
     '== Node.js runtime (https://nodejs.org) — MIT License and bundled third-party licenses: https://github.com/nodejs/node/blob/main/LICENSE ==',
     '',
-    'NOT bundled: FFmpeg (https://ffmpeg.org), used for the optional extra viewer qualities. The start scripts',
-    '(or the panel button "Install the video converter") download the build pinned in binaries.json straight',
-    'from its publisher on the user\'s own computer and verify its SHA-256: BtbN FFmpeg-Builds (LGPL-3.0-or-later)',
+    'NOT bundled: FFmpeg (https://ffmpeg.org), used for the optional extra viewer qualities. The app (on its',
+    'first start, or the panel button "Install the video converter") downloads the build pinned in SwarmCast',
+    'straight from its publisher on the user\'s own computer and verifies its SHA-256: BtbN FFmpeg-Builds (LGPL-3.0-or-later)',
     'on Windows and Linux, Martin Riedl builds (GPL-3.0-or-later) on macOS. SwarmCast does not redistribute',
     'FFmpeg; it runs it as a separate program. <data>/tools/ffmpeg/SOURCE.txt records where it came from.',
     '',
