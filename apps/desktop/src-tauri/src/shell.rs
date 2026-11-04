@@ -16,7 +16,7 @@ use url::Url;
 
 use crate::i18n::{self, t, tr};
 use crate::logs;
-use crate::page::{Page, PageTracker, SplashRoute};
+use crate::page::{Page, PageTracker, SplashRoute, Watch};
 use crate::protocol::{ClickId, LiveState, Phase, ServerMessage, ShellMessage, UpdateInfo, UpdateStatus};
 use crate::sidecar::{Layout, Process, SpawnEnv};
 use crate::tray::{self, TrayView};
@@ -147,7 +147,14 @@ impl Shell {
             // Where Tauri really serves the splash (window::splash_url is the default).
             *self.splash_url.write().unwrap() = url.clone();
         }
-        let shown = self.page.lock().unwrap().loaded(page);
+        let shown = {
+            let mut tracker = self.page.lock().unwrap();
+            if finished {
+                tracker.finished(page)
+            } else {
+                tracker.committed(page)
+            }
+        };
         if shown && finished && page == Page::Splash {
             // A status set while the splash was loading may have missed its first request.
             if let Some(window) = self.window() {
@@ -269,12 +276,9 @@ impl Shell {
         }
         // `/auth/<token>` answers with a page that sets the panel cookie and then opens `/`
         // from the panel's own origin, so the SameSite=Strict cookie is sent although this
-        // navigation starts on the splash.
+        // navigation starts on the splash. The watchdog opens it again if WebKit loses it (page.rs).
         if let Some(window) = self.window() {
-            self.page.lock().unwrap().navigating(Page::Panel, Instant::now());
-            if let Err(err) = window.navigate(url) {
-                logs::shell(format!("could not open the panel: {err}"));
-            }
+            self.navigate(&window, Page::Panel, url);
         }
         self.refresh_tray();
     }
@@ -526,12 +530,58 @@ impl Shell {
             SplashRoute::Wait => {}
             SplashRoute::Navigate => {
                 let url = self.splash_url.read().unwrap().clone();
-                self.page.lock().unwrap().navigating(Page::Splash, Instant::now());
-                if let Err(err) = window.navigate(url) {
-                    logs::shell(format!("could not open the splash: {err}"));
-                }
+                self.navigate(&window, Page::Splash, url);
             }
         }
+    }
+
+    /// Opens `page` (at `url`) in the main window and watches the navigation until it commits.
+    fn navigate(&self, window: &WebviewWindow, page: Page, url: Url) {
+        let watch = self.page.lock().unwrap().navigating(page, Instant::now());
+        if let Err(err) = window.navigate(url) {
+            logs::shell(format!("could not open the {}: {err}", page_name(page)));
+        }
+        self.watch(watch);
+    }
+
+    /// Watches the page the window is built with (the splash), once the window exists.
+    pub fn watch_first_page(&self) {
+        let watch = self.page.lock().unwrap().first_watch();
+        self.watch(watch);
+    }
+
+    /// The navigation watchdog (page.rs, `COMMIT_TIMEOUTS`): `watch.after` from now, opens the
+    /// page again if that navigation still has not committed.
+    fn watch(&self, watch: Watch) {
+        let app = self.app.clone();
+        thread::spawn(move || {
+            thread::sleep(watch.after);
+            if let Some(shell) = app.try_state::<Arc<Shell>>() {
+                shell.on_watch(watch.id);
+            }
+        });
+    }
+
+    fn on_watch(&self, id: u64) {
+        let Some(again) = self.page.lock().unwrap().overdue(id, Instant::now()) else { return };
+        let url = match again.page {
+            Page::Splash => Some(self.splash_url.read().unwrap().clone()),
+            // None: the server exited meanwhile, and the splash replaces this navigation.
+            Page::Panel => self.inner.lock().unwrap().admin_url.clone(),
+            Page::Other => None,
+        };
+        let (Some(url), Some(window)) = (url, self.window()) else { return };
+        // Never the URL: the panel's carries the login token.
+        logs::shell(format!(
+            "the {} did not open within {} s, opening it again (attempt {})",
+            page_name(again.page),
+            again.waited.as_secs(),
+            again.attempt + 1
+        ));
+        if let Err(err) = window.navigate(url) {
+            logs::shell(format!("could not open the {}: {err}", page_name(again.page)));
+        }
+        self.watch(again.watch);
     }
 
     /// Updates only the progress bar (download progress).
@@ -592,6 +642,15 @@ impl Shell {
             }
         };
         tray::update(&self.app, &view);
+    }
+}
+
+/// The page's name in log lines.
+fn page_name(page: Page) -> &'static str {
+    match page {
+        Page::Splash => "splash",
+        Page::Panel => "panel",
+        Page::Other => "page",
     }
 }
 

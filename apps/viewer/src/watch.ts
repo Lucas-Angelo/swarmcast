@@ -17,6 +17,7 @@ import {
   loadAudioOnly,
   mismatchWindow,
   playlistsKnown,
+  playOnLoad,
   type applyProfile,
   loadProfile,
   p2pCoreConfigFor,
@@ -728,7 +729,7 @@ async function main(): Promise<void> {
   });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     networkErrors = 0;
-    void video.play().catch(() => {
+    playOnLoad(video, () => {
       unmute.hidden = false;
     });
   });

@@ -22,6 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The app window no longer stays on the splash screen.** On Linux, the app window could, rarely, stay on "Starting SwarmCast…" for good, although SwarmCast had started, until you closed the app. If the panel has not opened 5 seconds after SwarmCast is ready, the app now opens it again by itself (on every system).
+- **Audio only no longer goes quiet when SwarmCast drops a lower quality.** A viewer listening with **Audio only** could lose the sound for several seconds, or for up to 20 seconds, when your computer stopped making the lower qualities (for example when it got busy). The sound now carries on.
 - **The poll form keeps what you do right after opening it.** Clicking **Prediction** at once could switch the form back to a poll a moment later, so a prediction could start as a plain poll; and on a Mac or on Linux, a click on an answer box right away could send what you typed into the question instead. Both now stay where you clicked.
 - **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
 - **Your page keeps what you type while it opens.** The **Your page** card showed empty fields for a moment while it loaded your saved page, and whatever you typed or picked in that moment was replaced by the saved page once it arrived. The card now says "Loading…" until your page is there, and if it cannot be loaded it says so instead of offering a form whose **Save** would put the empty fields over your page.
