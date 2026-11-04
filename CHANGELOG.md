@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-05
+
 ### Added
 
 - **A Share button for viewers.** On the watch page, **Share** sends the link of your live to a friend: on a phone it opens the share menu (WhatsApp, Messages…), on a computer it copies the link and says **Link copied**. It is on by default; turn off **Viewers can share the link** in the **Your internet** card if only you should hand out the link. After **Generate new link**, people who came in with the old link keep watching but lose the button, so whoever got a leaked link cannot pass the new one on.
@@ -264,7 +266,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0
