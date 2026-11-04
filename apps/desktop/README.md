@@ -18,12 +18,12 @@ flowchart TB
   - `main.rs`: plugins (single instance first), setup, macOS app menu, signals, run loop.
   - `shell.rs`: the state machine: server start / bounded restarts / fatal, splash, close dialog, quit.
   - `sidecar.rs`: spawns the server (env of the contract, Windows Job object + no console), reads stdout/stderr, quit with 35 s grace then kill.
-  - `protocol.rs`: `@@swarmcast` messages (unit-tested); `window.rs`: window, navigation policy (only the admin origin stays inside), WebView2 `--lang`; `page.rs`: which page the window shows, tracked by the shell because `WebviewWindow::url()` panics on macOS before the first page commits (`clippy.toml` forbids calling it).
+  - `protocol.rs`: `@@swarmcast` messages (unit-tested); `window.rs`: window, navigation policy (only the admin origin stays inside), WebView2 `--lang`; `page.rs`: which page the window shows, tracked by the shell because `WebviewWindow::url()` panics on macOS before the first page commits (`clippy.toml` forbids calling it), and the panel load watchdog, which opens a page again when its navigation has not committed in time (WebKit can lose one: [docs/DESKTOP.md](../../docs/DESKTOP.md#panel-load-watchdog)).
   - `tray.rs`, `updater.rs` (endpoint `UPDATE_ENDPOINT`, checks, dialog, download with retries, relaunch), `i18n.rs` (EN / pt-BR, test: same keys), `logs.rs` (data dir like the server, `desktop.log` rotation).
 - `splash/`: local page shown while the server starts, on errors and during updates (the only page with IPC). Colors, radius and font come only from the brand tokens: `src-tauri/build.rs` copies `assets/brand/tokens.css` to `splash/tokens.css` (not committed) at every build. `splash/tokens.stub.css` (same names, Forest & Cream values) is only a fallback for a checkout without `assets/brand/`.
 - `src-tauri/windows/hooks.nsh`: NSIS hooks (install folder, stop processes, `--cleanup`, autostart entry, "delete app data"). `Info.plist`: macOS localizations (en, pt-BR) so `navigator.language` follows the system.
 - `src-tauri/icons/`: app icons and tray icons, all made by `icons.mjs` (see "Icons").
-- `test/mock-server.mjs`: a fake `swarmcast-server --desktop` (modes: ok, crash, fatal, no-ready, ignore quit, self-test of links / language / IPC). `test/dev.mjs`: debug run with the mock.
+- `test/mock-server.mjs`: a fake `swarmcast-server --desktop` (modes: ok, crash, fatal, no-ready, ignore quit, a panel load that never gets an answer, self-test of links / language / IPC). `test/dev.mjs`: debug run with the mock.
 
 ## Build
 
@@ -80,6 +80,7 @@ Commit the generated files.
 
 ## Develop and test
 
-- `npm run desktop:test`: unit tests (protocol, i18n completeness, navigation policy, data dir, log rotation, tooltips).
+- `npm run desktop:test`: unit tests (protocol, i18n completeness, navigation policy, page tracking and the panel load watchdog, data dir, log rotation, tooltips).
+- `scripts/test/docker/webkit.sh watchdog`: the debug shell in Docker (Linux WebKitGTK, Xvfb) with the mock server losing the first panel load: the panel must still open ([scripts/test/docker/README.md](../../scripts/test/docker/README.md#section-4-webkitsh)).
 - `npm run desktop:dev`: debug build with the mock server and a throwaway data folder (`.cache/desktop-dev`). `MOCK_*` variables pick the mock's behaviour (see `test/mock-server.mjs`); `SWARMCAST_LOCALE=pt-BR` forces the language; `SWARMCAST_NO_OPEN=1` logs external links instead of opening them; `SWARMCAST_UPDATE_URL` points the updater elsewhere. Debug builds also accept `SWARMCAST_SIDECAR=<path>` (any executable speaking the protocol).
 - Local update test: build two versions with `--insecure-updates`, serve the newer `.app.tar.gz` / `.exe` / `.AppImage`, its `.sig` and a `latest.json` (from `updater-manifest.mjs`) over http, start the older one with `SWARMCAST_UPDATE_URL=http://127.0.0.1:<port>/latest.json` and a temporary `SWARMCAST_DATA_DIR`.
