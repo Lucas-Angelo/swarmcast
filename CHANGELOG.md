@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.
 
+### Fixed
+
+- **The poll form keeps the kind you pick.** Clicking **Prediction** right after opening the form with **Poll** could switch it back to a poll on its own a moment later, so a prediction could start as a plain poll. It now stays on what you clicked.
+- **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
+
 ## [0.5.0] - 2026-11-05
 
 ### Added
