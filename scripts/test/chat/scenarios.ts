@@ -36,6 +36,13 @@ export interface Scenario {
    * within `voteWithinMs` of it, on top of its chat.
    */
   poll?: { options: number; voteWithinMs: number };
+  /**
+   * Reactions over the video (docs/CHAT.md "Reactions") on top of the chat: every bot taps at the
+   * highest rate the page sends (one frame per CHAT_REACT_FRAME_MS, `taps` each), and `scripts` of
+   * them send reaction frames far above it (CHAT_REACT_PER_FRAME_MAX taps, up to the ceiling that
+   * ends a socket, never past it).
+   */
+  react?: { taps: number; scripts: number };
 }
 
 /** The highest rate a bot may send without being terminated (20 chat frames per 10 s). */
@@ -82,6 +89,17 @@ export const SCENARIOS: Scenario[] = [
     seconds: 20,
     uploadMbps: 20,
     poll: { options: 5, voteWithinMs: 1000 },
+  },
+  // react-storm is lively chat plus everyone tapping reactions, so it gets lively's budget too:
+  // the reactions themselves are one small item per window, the first thing dropped in debt.
+  {
+    name: 'react-storm',
+    description: '120 viewers chatting and all of them tapping reactions as fast as the page sends, 10 scripts far above it',
+    bots: 120,
+    behaviour: { kind: 'chat', perBotPerS: 3 / 120 },
+    seconds: 30,
+    uploadMbps: 20,
+    react: { taps: 4, scripts: 10 },
   },
   { name: 'reconnect-storm', description: '120 viewers drop and reconnect at the same moment', bots: 120, behaviour: { kind: 'chat', perBotPerS: 3 / 120 }, seconds: 30, uploadMbps: 10, reconnectAtS: 15 },
 ];

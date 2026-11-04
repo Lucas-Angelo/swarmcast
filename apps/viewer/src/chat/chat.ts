@@ -3,7 +3,7 @@
 // and wires the session (protocol state), the list, the input, the picker and the settings.
 import './chat.css';
 import { t } from '@swarmcast/shared/i18n';
-import { cutQuote, GIF_KEY_RE, mentionKeys, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
+import { CHAT_REACTIONS, cutQuote, GIF_KEY_RE, mentionKeys, type ChatAuthor, type ChatPublicSettings, type ChatServerMessage, type ChatSnapshot, type ChatYou, type GifRef } from './core/index.js';
 import type { GifConfig } from './gif-api.js';
 import { createGifPicker } from './gif-picker.js';
 import { backgroundOf, onThemeChange, NameColors, tokenColorAt } from './color-ui.js';
@@ -12,6 +12,7 @@ import { loadEmojiData } from './emoji-load.js';
 import { ChatInput } from './input.js';
 import { createPicker, type EmojiData } from './picker.js';
 import { PollCard, pollBadge } from './poll.js';
+import { createReactPicker, ReactionLayer, ReactionSender } from './reactions.js';
 import { animateGifs, loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
 import { ChatList, GIF_PROVIDER_NAMES, mentionCandidates, type MessageEntry } from './render.js';
 import { ChatSession, type ChatEntry, type ClientFrame, type ReplyEntry } from './session.js';
@@ -21,6 +22,8 @@ export interface MountOptions {
   root: HTMLElement;
   /** "Show chat" button outside the column (in the info row under the player). */
   showButton: HTMLButtonElement;
+  /** The player container: reactions float over the video inside it (absent: they are not drawn). */
+  player?: HTMLElement;
   /** The viewer's nickname (for their own messages before the roster has them). */
   nickname: string;
   sendFrame(msg: ClientFrame): boolean;
@@ -196,6 +199,48 @@ export function mountChat(opts: MountOptions): ChatController {
     settingsPop.setGifs(cfg ? { provider: GIF_PROVIDER_NAMES[cfg.provider], consented: prefs.gifs, animate: animateGifs(prefs) } : null);
   };
 
+  // Reactions over the video (docs/CHAT.md, "Reactions"): the React button in the tools, the sender
+  // of this page's taps, and the layer inside the player that draws everyone's reactions.
+  const reduceMotion = typeof matchMedia === 'function' ? matchMedia('(prefers-reduced-motion: reduce)') : null;
+  const layer = opts.player ? new ReactionLayer(opts.player, { reduced: () => reduceMotion?.matches === true, pageVisible: () => document.visibilityState !== 'hidden' }) : null;
+  const sender = new ReactionSender({ send: (c) => session?.send({ t: 'chat.react', c }) ?? false });
+  const reactButton = document.createElement('button');
+  const reactPicker = createReactPicker(reactButton, {
+    onTap: (i) => {
+      if (!reactAllowed() || !sender.tap(i)) return;
+      // The page's own tap floats at once; the server's counts for this window leave it out.
+      layer?.show(CHAT_REACTIONS.map((_, k) => (k === i ? 1 : 0)));
+    },
+  });
+  input.tools.append(reactButton);
+  /** This viewer may react now: the streamer has reactions on (and the chat on), and they are not muted or still waiting. */
+  const reactAllowed = (): boolean => {
+    const s = session?.settings;
+    const you = session?.you;
+    if (!layer || !s?.enabled || s.reactions !== true || !you || !connected) return false;
+    if (you.mutedUntil === 'live' || (typeof you.mutedUntil === 'number' && you.mutedUntil > Date.now())) return false;
+    return !(typeof you.waitUntil === 'number' && you.waitUntil > Date.now());
+  };
+  /** A timed mute or the new-viewer wait ends by itself: the React button comes back then. */
+  let reactWait: ReturnType<typeof setTimeout> | null = null;
+  const applyReactions = (): void => {
+    const s = session?.settings;
+    const allowed = reactAllowed();
+    if (reactWait) clearTimeout(reactWait);
+    reactWait = null;
+    const you = session?.you;
+    const until = Math.max(typeof you?.mutedUntil === 'number' ? you.mutedUntil : 0, you?.waitUntil ?? 0);
+    if (!allowed && until > Date.now()) reactWait = setTimeout(applyReactions, Math.min(until - Date.now() + 50, 2 ** 31 - 1));
+    reactButton.hidden = !allowed;
+    if (!allowed) {
+      reactPicker.popover.close();
+      sender.reset();
+    }
+    settingsPop.setReactions(!!layer && s?.enabled === true && s.reactions === true);
+    // Drawn while the viewer wants them and the chat is on and shown ("hide chat" means no chat).
+    layer?.setEnabled(prefs.reactions && !prefs.hidden && s?.enabled === true && s.reactions === true);
+  };
+
   const settingsPop = createSettingsPopover(gear, {
     onColor: (color) => {
       session?.send({ t: 'chat.color', color });
@@ -225,7 +270,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   // The pinned bar sits between the header and the list, never over the list or the input; the
   // poll card under it.
-  root.append(head, list.pinned, pollCard.root, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
+  root.append(head, list.pinned, pollCard.root, body, input.form, picker.panel, gifPicker.panel, reactPicker.panel, settingsPop.popover.panel);
 
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
@@ -237,6 +282,7 @@ export function mountChat(opts: MountOptions): ChatController {
     root.hidden = hidden || !active;
     showButton.hidden = !hidden || !active;
     if (!hidden) list.resume();
+    applyReactions();
   };
 
   const applySettings = (s: ChatPublicSettings | null): void => {
@@ -262,6 +308,7 @@ export function mountChat(opts: MountOptions): ChatController {
     else settingsPop.setColor({ color: you.color, nick: session?.roster.get(you.a)?.n ?? opts.nickname, locked: you.colorLocked });
     input.update();
     pollCard.update();
+    applyReactions();
   };
 
   const chatSession: ChatSession = new ChatSession(
@@ -288,6 +335,7 @@ export function mountChat(opts: MountOptions): ChatController {
       poll: (p) => pollCard.set(p),
       tally: (id, c) => pollCard.tally(id, c),
       voted: (n, id, o) => pollCard.voted(n, id, o),
+      reactions: (c) => layer?.show(sender.others(c)),
       author: (a) => {
         list.recolor(a);
         if (a.a === chatSession.you?.a) applyYou(chatSession.you);
@@ -320,6 +368,7 @@ export function mountChat(opts: MountOptions): ChatController {
       connection: (open) => {
         connected = open;
         input.update();
+        applyReactions();
       },
     },
     opts.sendFrame,
@@ -398,7 +447,7 @@ export function mountChat(opts: MountOptions): ChatController {
 
   (window as unknown as { __swarmcastChat: unknown }).__swarmcastChat = {
     get stats() {
-      return { ...list.stats, lastSeq: chatSession.lastSeq };
+      return { ...list.stats, lastSeq: chatSession.lastSeq, reactions: { alive: layer?.alive ?? 0, spawned: layer?.spawned ?? 0, peak: layer?.peak ?? 0 } };
     },
   };
 

@@ -6,7 +6,7 @@ import { Info } from '../Info.js';
 import { ChatFeed } from './ChatFeed.js';
 import { ChatSettingsForm } from './ChatSettings.js';
 import { useDark } from './hooks.js';
-import { chatStatus } from './logic.js';
+import { chatStatus, reactionsLine } from './logic.js';
 import type { ChatPanel } from './panel.js';
 import './chat.css';
 
@@ -41,6 +41,17 @@ function ChatError({ err }: { err: unknown }) {
   return (
     <div class="err small" data-testid="chat-error">
       {errorText(err)}
+    </div>
+  );
+}
+
+/** Reactions over the video: a small live tally of the last minute (docs/CHAT.md, "Reactions"). */
+function ReactionsTally({ chat, reactions }: { chat: AdminChatState; reactions: number[] | undefined }) {
+  const line = reactionsLine(chat.settings.reactions, chat.effective, reactions);
+  if (!line) return null;
+  return (
+    <div class="muted small chat-reactions" data-testid="chat-reactions-tally">
+      {t(line.key, line.params)}
     </div>
   );
 }
@@ -95,6 +106,7 @@ export function ChatLive({ panel }: { panel: ChatPanel }) {
           {t('admin.chat.counters', { accepted: counters.acceptedPerMin, rejected: counters.rejectedPerMin })} <Info text={t('admin.chat.counters.tip')} />
         </span>
       </div>
+      <ReactionsTally chat={chat} reactions={counters.reactions} />
       {counters.guard !== 'ok' && <div class="warn small">{t('admin.chat.guard.busy')}</div>}
       <ChatError err={err} />
 

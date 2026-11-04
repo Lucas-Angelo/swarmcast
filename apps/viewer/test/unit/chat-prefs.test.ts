@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { createPrefsStore, RECENT_MAX } from '../../src/chat/prefs.js';
 
 const KEY = 'swarmcast.chat';
-const DEFAULTS = { hidden: false, times: false, large: false, tone: 0, recent: [], gifs: false, animate: null, mentions: true };
+const DEFAULTS = { hidden: false, times: false, large: false, tone: 0, recent: [], gifs: false, animate: null, mentions: true, reactions: true };
 
 /** An in-memory stand-in for localStorage. */
 function memoryStorage(initial: Record<string, string> = {}) {
@@ -68,6 +68,22 @@ describe('chat prefs store', () => {
 
     // Assert
     expect(prefs.map((p) => p.mentions)).toEqual([true, false, true]);
+  });
+
+  it('"Show reactions on the video" is on unless the viewer turned it off (also for prefs saved before it existed), and is remembered', () => {
+    // Arrange
+    const storage = memoryStorage({ [KEY]: JSON.stringify({ times: true }) });
+    const older = createPrefsStore(() => storage);
+    const odd = createPrefsStore(() => memoryStorage({ [KEY]: JSON.stringify({ reactions: 'no' }) }));
+
+    // Act
+    const before = [older.load().reactions, odd.load().reactions];
+    older.save({ reactions: false });
+    const next = createPrefsStore(() => storage).load();
+
+    // Assert
+    expect(before).toEqual([true, true]);
+    expect(next).toMatchObject({ times: true, reactions: false });
   });
 
   it('bad JSON in storage gives the defaults', () => {
