@@ -663,7 +663,7 @@ async function main(): Promise<void> {
     stats.lastReload = why;
     debugLog(`reloading the source (${why})`);
     const url = source.url();
-    if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, location.href)) return;
+    if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, { base: location.href, events: Hls.Events })) return;
     hls.loadSource(url);
   };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
