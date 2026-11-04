@@ -409,12 +409,12 @@ export interface JoinPageOptions extends BrowserOptions {
  * before the request even reaches the network process, so the swap can no longer overtake it.
  *
  * Measured on Linux with Playwright 1.64.1 (WPE), no SwarmCast: a new page's first goto to a
- * local page with COOP never committed in 34 of about 23,000 tries on a busy machine (a new page
- * in a long-lived context too), 0 of 10,000 without COOP, 0 of 40,000 with the route;
- * first-goto.spec.ts failed 4 runs in 30 without it. The e2e soaks hit it about once in 1000 to
- * 3000 WebKit tests, as a test's first goto (e.g. loginPanel). Not media: closing the watch page's
- * player before its context changed nothing. WebKitGTK 2.52 (GNOME Web's engine) loses such loads
- * too.
+ * local page with COOP never committed in 12 of 30,000 tries on a busy machine, and in 0 of 30,000
+ * with this route, run side by side (0 of 10,000 without COOP; a new page in a long-lived context
+ * stalls too); CI runners 5 of 24,000. first-goto.spec.ts failed 4 runs in 30 without the route.
+ * The e2e soaks hit it about once in 1000 to 3000 WebKit tests, as a test's first goto (e.g.
+ * loginPanel). Not media: closing the watch page's player before its context changed nothing.
+ * WebKitGTK 2.52 (GNOME Web's engine) loses such loads too.
  *
  * Only that first request, so the rest of the page loads as it would without the fixtures: a
  * route sends every request through this process and turns the HTTP cache off, and once a
