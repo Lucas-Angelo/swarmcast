@@ -37,10 +37,13 @@ function ErrorText({ e, testid }: { e?: FieldError; testid?: string }) {
 /**
  * The panel's "Your page" card (plan branding-0.4.0 §2.7): five sections, a live preview, one
  * explicit Save. Pictures are stored as soon as they are cropped (each is its own upload);
- * texts, links, colours and switches wait for Save.
+ * texts, links, colours and switches wait for Save. Nothing is editable before the saved page
+ * has loaded: a form shown with the defaults would have its edits replaced by the late answer,
+ * and a Save after a failed load would put the defaults over the saved page.
  */
 export function BrandingCard() {
   const [available, setAvailable] = useState(true);
+  const [loaded, setLoaded] = useState(false);
   const [saved, setSaved] = useState<Draft>(defaultDraft);
   const [draft, setDraft] = useState<Draft>(defaultDraft);
   const [images, setImages] = useState<AdminBrandingState['images']>({});
@@ -69,15 +72,44 @@ export function BrandingCard() {
 
   useEffect(() => {
     brandingApi.load().then(
-      (r) => apply(r),
+      (r) => {
+        apply(r);
+        setLoaded(true);
+      },
       (e: unknown) => {
-        if (e instanceof NotAvailableError) setAvailable(false);
-        else setErr(e);
+        if (e instanceof NotAvailableError) {
+          // An older server: the card works on the defaults and saves nothing.
+          setAvailable(false);
+          setLoaded(true);
+        } else setErr(e);
       },
     );
   }, []);
   // Object URLs made for the preview are released when the card goes away.
   useEffect(() => () => Object.values(localRef.current).forEach((u) => u && URL.revokeObjectURL(u)), []);
+
+  const title = (
+    <h2 class="row-title">
+      {t('admin.brand.title')} <Info text={t('admin.brand.tip')} />
+    </h2>
+  );
+
+  if (!loaded) {
+    return (
+      <section class="card mt brand-card" data-testid="brand-card">
+        <div class="brand-head">{title}</div>
+        {err !== null ? (
+          <div class="err small" data-testid="brand-error">
+            {errorText(err)}
+          </div>
+        ) : (
+          <p class="muted" data-testid="brand-loading">
+            {t('admin.loading')}
+          </p>
+        )}
+      </section>
+    );
+  }
 
   const errors = validateDraft(draft, { pixConfirmed });
   const hasErrors = Object.keys(errors).length > 0;
@@ -333,9 +365,7 @@ export function BrandingCard() {
   return (
     <section class="card mt brand-card" data-testid="brand-card">
       <div class="brand-head">
-        <h2 class="row-title">
-          {t('admin.brand.title')} <Info text={t('admin.brand.tip')} />
-        </h2>
+        {title}
         <label class="bf-switch" title={t('admin.brand.switch.tip')}>
           <input type="checkbox" role="switch" data-testid="brand-enabled" checked={draft.enabled} onChange={(e) => patch({ enabled: (e.target as HTMLInputElement).checked })} />
           <span>{draft.enabled ? t('admin.brand.switch.on') : t('admin.brand.switch.off')}</span>
