@@ -30,6 +30,10 @@ export interface PlayerExtrasDeps {
   debug?: (msg: string) => void;
   /** A shortcut ran (player-controls.ts shows its bar for a moment, so the viewer sees what changed). */
   onAction?: (action: ShortcutAction) => void;
+  /** F: the player's own full-screen toggle (player-controls.ts, with its page-filling mode); absent: the container's. */
+  toggleFullscreen?: () => boolean;
+  /** C while the chat shows over the video: opens its message box there (overlay-mode.ts); false when it does not show. */
+  chatOverVideo?: () => boolean;
 }
 
 export interface PlayerExtras {
@@ -92,7 +96,7 @@ export function installPlayerExtras(d: PlayerExtrasDeps): PlayerExtras {
         d.unmute.hidden = !video.muted;
         return true;
       case 'fullscreen':
-        return toggleFullscreen(d.player, video, doc);
+        return d.toggleFullscreen ? d.toggleFullscreen() : toggleFullscreen(d.player, video, doc);
       case 'theater':
         theater.toggle();
         return true;
@@ -103,6 +107,7 @@ export function installPlayerExtras(d: PlayerExtrasDeps): PlayerExtras {
       case 'pip':
         return canPip && togglePip(video, doc);
       case 'chat': {
+        if (d.chatOverVideo?.()) return true;
         const box = d.chatRoot.hidden ? null : d.chatRoot.querySelector<HTMLTextAreaElement>('textarea:not([disabled])');
         if (!box || box.offsetParent === null) return false;
         box.focus();
