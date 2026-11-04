@@ -17,6 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The poll form keeps the kind you pick.** Clicking **Prediction** right after opening the form with **Poll** could switch it back to a poll on its own a moment later, so a prediction could start as a plain poll. It now stays on what you clicked.
+- **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
 - **Your page keeps what you type while it opens.** The **Your page** card showed empty fields for a moment while it loaded your saved page, and whatever you typed or picked in that moment was replaced by the saved page once it arrived. The card now says "Loading…" until your page is there, and if it cannot be loaded it says so instead of offering a form whose **Save** would put the empty fields over your page.
 
 ## [0.5.0] - 2026-11-05

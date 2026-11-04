@@ -112,6 +112,34 @@ test('chat poll from the panel form: viewer pages vote with live results, a late
   expect(await pollState()).toBeUndefined();
 });
 
+test('chat poll form: a choice made the moment the form appears stays chosen', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  const live = await openChat(page);
+  const form = live.getByTestId('chat-poll-form');
+
+  // Act: open the form and pick "Prediction" in the same task as the form's first render, before
+  // Preact runs its effects (after the next frame or a 35 ms timer), as a fast click on a busy page
+  // can. Then wait for those effects: they were scheduled first, so they run before this frame's
+  // own callback and the task it queues.
+  const picked = await live.evaluate(async (root) => {
+    root.querySelector<HTMLButtonElement>('[data-testid="chat-poll-new"]')!.click();
+    let radio: HTMLInputElement | null = null;
+    for (let i = 0; i < 50 && radio === null; i++) {
+      await Promise.resolve(); // Preact renders in a microtask
+      radio = root.querySelector<HTMLInputElement>('[data-testid="chat-poll-kind-prediction"]');
+    }
+    if (radio === null) throw new Error('the poll form did not render');
+    radio.click();
+    await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve)));
+    return radio.checked;
+  });
+
+  // Assert
+  expect(picked).toBe(true);
+  await expect(form.getByTestId('chat-poll-kind-prediction')).toBeChecked();
+  await expect(form.getByTestId('chat-poll-newonly')).toBeChecked();
+});
+
 test('chat prediction: guesses from people already watching, the right answer picked in the panel, who got it right', { tag: '@ui' }, async ({ page, viewers, bots }) => {
   // Arrange
   const live = await openChat(page);
