@@ -132,11 +132,11 @@ export async function bootApp(o: AppOptions & { start?: boolean } = {}): Promise
   }
 }
 
-/** The command-line flags of a SwarmCast in script mode that opens nothing and draws no tray icon. */
-export const SCRIPT_MODE = ['--no-tunnel', '--no-open', '--no-tray'];
+/** The command-line flags of a SwarmCast outside the desktop app (browser panel) that opens nothing. */
+export const BROWSER_MODE = ['--no-tunnel', '--no-open'];
 
 export interface ServerOptions {
-  /** Command-line flags (the data folder is added): SCRIPT_MODE, ['--desktop', ...]. */
+  /** Command-line flags (the data folder is added): BROWSER_MODE, ['--desktop', ...]. */
   args: string[];
   /** Its data folder (default: a new one; write its config.json first, see writeConfig). */
   dataDir?: string;

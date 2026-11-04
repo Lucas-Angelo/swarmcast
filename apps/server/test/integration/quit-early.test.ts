@@ -3,23 +3,23 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
 import { isListening } from '../../src/core/ports.js';
 import { SelfSignedIssuer } from '../../src/direct/certs.js';
-import { allocAppPorts, hangingServer, SCRIPT_MODE, ServerProcess, signIn, stopTracked, tmpDir, until, writeConfig, type HangingServer, type Panel, type Ports } from './helpers.js';
+import { allocAppPorts, hangingServer, BROWSER_MODE, ServerProcess, signIn, stopTracked, tmpDir, until, writeConfig, type HangingServer, type Panel, type Ports } from './helpers.js';
 
-// Quitting early: the start scripts restart SwarmCast when it exits with a non-zero code within
-// 10 s (start-windows.ps1). A user who quits right after the panel opened (the panel's Quit,
-// while the live and the blocklists are still starting) must get a clean exit 0, or the script
-// would start SwarmCast again. Each test quits at one moment of the start-up, reached for sure:
+// Quitting early: the desktop app restarts the server when it exits with a non-zero code
+// (apps/desktop/src-tauri/src/shell.rs: only exit 0 after `ready` means "the panel's Quit"). A
+// user who quits right after the panel opened (the panel's Quit, while the live and the
+// blocklists are still starting) must get a clean exit 0, or the app would start it again. Each test quits at one moment of the start-up, reached for sure:
 // the slow steps (the tunnel's reachability check, a blocklist download) wait on a local server
 // that never answers, and the test quits once that server has the request.
 
 afterEach(stopTracked);
 
-/** SwarmCast in script mode with `config` over testConfig(), signed in like the browser. */
+/** SwarmCast (browser panel, no desktop app) with `config` over testConfig(), signed in like the browser. */
 async function startSignedIn(o: { args?: string[]; config?: Record<string, unknown>; env?: Record<string, string> } = {}): Promise<{ server: ServerProcess; panel: Panel; ports: Ports }> {
   const ports = await allocAppPorts();
   const dataDir = tmpDir();
   writeConfig(dataDir, ports, o.config);
-  const server = new ServerProcess({ args: o.args ?? SCRIPT_MODE, dataDir, env: o.env });
+  const server = new ServerProcess({ args: o.args ?? BROWSER_MODE, dataDir, env: o.env });
   const [, loginUrl] = await server.logLine(/^Panel: (http:\/\/\S+\/auth\/\S+)/, 'the panel address');
   return { server, panel: await signIn(loginUrl!), ports };
 }
@@ -63,7 +63,7 @@ describe('quitting right after start-up', () => {
   it('Quit while the live waits for the tunnel to answer exits with code 0 and leaves nothing behind', async () => {
     // Arrange
     const hang = await hangingFor();
-    const { server, panel, ports } = await startSignedIn({ args: ['--no-open', '--no-tray'], config: { tunnel: { provider: 'external', externalUrl: hang.url } } });
+    const { server, panel, ports } = await startSignedIn({ args: ['--no-open'], config: { tunnel: { provider: 'external', externalUrl: hang.url } } });
     await requested(hang, '/healthz', server);
     // Act
     const result = await quit(server, panel);

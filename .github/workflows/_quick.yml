@@ -1,8 +1,7 @@
 name: quick
 
 # The fast checks of the pipeline (pipeline.yml), on one Ubuntu runner: lint, typecheck, unit tests
-# (macOS and Windows run them in _node.yml), npm audit, the upstream-binaries check, the streamer
-# guides, the tray helper (Linux and Windows cross-builds, go vet, go test, gofmt) and cargo fmt.
+# (macOS and Windows run them in _node.yml), npm audit, the upstream-binaries check and cargo fmt.
 on:
   workflow_call:
 
@@ -14,7 +13,7 @@ env:
 
 jobs:
   quick:
-    name: lint, typecheck, unit, audit, tray, fmt
+    name: lint, typecheck, unit, audit, fmt
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
@@ -40,8 +39,6 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         timeout-minutes: 8
-        with:
-          go: 'true'
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
       - name: Install the website's dependencies
         run: npm ci --prefix site --no-audit --no-fund
@@ -102,34 +99,6 @@ jobs:
             if [ "$GITHUB_EVENT_NAME" = schedule ]; then exit "$status"; fi
             echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins."
           fi
-
-      # The installer zips carry these guides as HTML, generated from the website's pages
-      # (release.yml, site/offline-guide.json). Screenshots are embedded as data: URIs; anything
-      # else with src= would load from outside. _site.yml runs the same check for site changes.
-      - name: Render the streamer guides
-        if: ${{ !cancelled() }}
-        run: |
-          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-en.html" --lang en
-          node scripts/build/guide-html.mjs "$RUNNER_TEMP/guide-pt-BR.html" --lang pt-BR
-          if grep -qiP '<script|src=(?!"data:)' "$RUNNER_TEMP"/guide-*.html; then
-            echo "::error::The guides must stay self-contained (no scripts, no external resources)."
-            exit 1
-          fi
-
-      # Windows and Linux are pure Go and cross-compile from here; macOS needs cgo and is built
-      # (and vetted) by the macOS desktop builds in _desktop.yml, which package it.
-      - name: Tray helper (Linux x64/arm64, Windows x64), go vet, go test, gofmt
-        if: ${{ !cancelled() }}
-        timeout-minutes: 6
-        run: |
-          for t in linux-x64 linux-arm64 windows-x64; do node apps/tray/build.mjs --target "$t"; done
-          cd apps/tray
-          go vet ./...
-          GOOS=windows go vet ./...
-          # The helper's own tests, including the start without a D-Bus session bus (Linux only).
-          go test ./...
-          unformatted="$(gofmt -l .)"
-          if [ -n "$unformatted" ]; then echo "::error title=gofmt::run gofmt -w on: $unformatted"; exit 1; fi
 
       - name: cargo fmt
         if: ${{ !cancelled() }}

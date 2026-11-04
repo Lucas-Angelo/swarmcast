@@ -8,7 +8,7 @@ test.skip(({ browserName }) => browserName === 'firefox', 'checked on Chromium a
 
 const SPLASH = 'http://splash.test/';
 
-test('script mode: opening the login URL shows the panel, logged in', { tag: '@ui' }, async ({ page }) => {
+test('browser panel (no desktop app): opening the login URL shows the panel, logged in', { tag: '@ui' }, async ({ page }) => {
   // Act
   await loginPanel(page);
 

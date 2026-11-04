@@ -10,8 +10,7 @@
 #   archive is outside our control. Pipeline run 41273197813 (2026-11-01 05:38 UTC) lost
 #   `docker / ubuntu:24.04 x64` that way: apt exited with 100 within seconds, an error apt itself
 #   does not retry (a 404, a hash or size mismatch: its network retries alone take 31 s). A second
-#   failure fails, with both logs. Nothing that runs SwarmCast is retried: the start script's own
-#   `apt-get install curl` (run.sh b) runs live, once, in the test.
+#   failure fails, with both logs. Nothing that runs SwarmCast is retried.
 #
 #   BUILD_RETRY_PAUSE  seconds before the second try (default 60)
 BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

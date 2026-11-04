@@ -22,24 +22,7 @@
 // AppImage and refuse it.
 import fs from 'node:fs';
 import path from 'node:path';
-
-function arg(name, fallback) {
-  const i = process.argv.indexOf(`--${name}`);
-  return i > 0 ? process.argv[i + 1] : fallback;
-}
-const VALUE_FLAGS = new Set(['--version', '--base-url', '--notes-file', '--notes', '--pub-date', '--out']);
-const inputs = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && !VALUE_FLAGS.has(all[i - 1]));
-
-const version = arg('version');
-const baseUrl = arg('base-url');
-if (!version || !baseUrl || inputs.length === 0) {
-  console.error('usage: updater-manifest.mjs --version <v> --base-url <url> [--notes-file f | --notes text] [--out file] <dir|file>...');
-  process.exit(2);
-}
-const notesFile = arg('notes-file');
-const notes = notesFile ? fs.readFileSync(notesFile, 'utf8').trim() : (arg('notes', '') ?? '');
-const pubDate = arg('pub-date', new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'));
-const out = arg('out', 'release/desktop/latest.json');
+import { fileURLToPath } from 'node:url';
 
 /** [file name pattern, platform keys] — the first key is the generic `{os}-{arch}` one. */
 const RULES = [
@@ -51,8 +34,10 @@ const RULES = [
   [/_amd64\.deb$/, ['linux-x86_64-deb']],
   [/_arm64\.deb$/, ['linux-aarch64-deb']],
 ];
-const REQUIRED = ['windows-x86_64', 'darwin-aarch64', 'darwin-x86_64', 'linux-x86_64', 'linux-aarch64'];
+/** The platforms a release must cover (--require-all). */
+export const REQUIRED = ['windows-x86_64', 'darwin-aarch64', 'darwin-x86_64', 'linux-x86_64', 'linux-aarch64'];
 
+/** The .sig files of `p` (a file, or a folder searched without entering .app bundles). */
 function sigFiles(p) {
   const st = fs.statSync(p);
   if (st.isFile()) return p.endsWith('.sig') ? [p] : [];
@@ -63,36 +48,61 @@ function sigFiles(p) {
   });
 }
 
-const platforms = {};
-for (const sig of inputs.flatMap(sigFiles)) {
-  const artifact = sig.slice(0, -'.sig'.length);
-  const name = path.basename(artifact);
-  if (!name.includes(`_${version}_`)) {
-    console.warn(`⚠ skipping ${name}: not version ${version}`);
-    continue;
+/**
+ * The manifest for `version` from the signed artifacts in `inputs` (files or folders).
+ * `warn` gets what is skipped (another version, an unknown artifact) and, without
+ * `requireAll`, the missing platforms; with it, a missing platform throws.
+ */
+export function buildManifest({ version, baseUrl, notes = '', pubDate, inputs, requireAll = false, warn = (m) => console.warn(`⚠ ${m}`) }) {
+  const platforms = {};
+  for (const sig of inputs.flatMap(sigFiles)) {
+    const artifact = sig.slice(0, -'.sig'.length);
+    const name = path.basename(artifact);
+    if (!name.includes(`_${version}_`)) {
+      warn(`skipping ${name}: not version ${version}`);
+      continue;
+    }
+    if (!fs.existsSync(artifact)) throw new Error(`${name}.sig has no ${name} next to it`);
+    const rule = RULES.find(([re]) => re.test(name));
+    if (!rule) {
+      warn(`skipping ${name}: unknown artifact type`);
+      continue;
+    }
+    const entry = { signature: fs.readFileSync(sig, 'utf8').trim(), url: `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(name)}` };
+    for (const key of rule[1]) {
+      if (platforms[key]) throw new Error(`two artifacts for ${key}: ${platforms[key].url} and ${entry.url}`);
+      platforms[key] = entry;
+    }
   }
-  if (!fs.existsSync(artifact)) throw new Error(`${name}.sig has no ${name} next to it`);
-  const rule = RULES.find(([re]) => re.test(name));
-  if (!rule) {
-    console.warn(`⚠ skipping ${name}: unknown artifact type`);
-    continue;
+  const missing = REQUIRED.filter((k) => !platforms[k]);
+  if (missing.length) {
+    const msg = `missing platforms: ${missing.join(', ')}`;
+    if (requireAll) throw new Error(msg);
+    warn(msg);
   }
-  const entry = { signature: fs.readFileSync(sig, 'utf8').trim(), url: `${baseUrl.replace(/\/+$/, '')}/${encodeURIComponent(name)}` };
-  for (const key of rule[1]) {
-    if (platforms[key]) throw new Error(`two artifacts for ${key}: ${platforms[key].url} and ${entry.url}`);
-    platforms[key] = entry;
-  }
+  if (Object.keys(platforms).length === 0) throw new Error('no signed artifacts found');
+  return { version, notes, pub_date: pubDate, platforms: Object.fromEntries(Object.entries(platforms).sort(([a], [b]) => a.localeCompare(b))) };
 }
 
-const missing = REQUIRED.filter((k) => !platforms[k]);
-if (missing.length) {
-  const msg = `missing platforms: ${missing.join(', ')}`;
-  if (process.argv.includes('--require-all')) throw new Error(msg);
-  console.warn(`⚠ ${msg}`);
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const arg = (name, fallback) => {
+    const i = process.argv.indexOf(`--${name}`);
+    return i > 0 ? process.argv[i + 1] : fallback;
+  };
+  const VALUE_FLAGS = new Set(['--version', '--base-url', '--notes-file', '--notes', '--pub-date', '--out']);
+  const inputs = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && !VALUE_FLAGS.has(all[i - 1]));
+  const version = arg('version');
+  const baseUrl = arg('base-url');
+  if (!version || !baseUrl || inputs.length === 0) {
+    console.error('usage: updater-manifest.mjs --version <v> --base-url <url> [--notes-file f | --notes text] [--out file] <dir|file>...');
+    process.exit(2);
+  }
+  const notesFile = arg('notes-file');
+  const notes = notesFile ? fs.readFileSync(notesFile, 'utf8').trim() : (arg('notes', '') ?? '');
+  const pubDate = arg('pub-date', new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'));
+  const out = arg('out', 'release/desktop/latest.json');
+  const manifest = buildManifest({ version, baseUrl, notes, pubDate, inputs, requireAll: process.argv.includes('--require-all') });
+  fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
+  fs.writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
+  console.log(`✓ ${out} (${Object.keys(manifest.platforms).join(', ')})`);
 }
-if (Object.keys(platforms).length === 0) throw new Error('no signed artifacts found');
-
-const manifest = { version, notes, pub_date: pubDate, platforms: Object.fromEntries(Object.entries(platforms).sort(([a], [b]) => a.localeCompare(b))) };
-fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
-fs.writeFileSync(out, `${JSON.stringify(manifest, null, 2)}\n`);
-console.log(`✓ ${out} (${Object.keys(platforms).join(', ')})`);

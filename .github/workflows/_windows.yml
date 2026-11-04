@@ -1,9 +1,8 @@
 name: windows
 
 # The Windows end-to-end suites (pipeline.yml test stage) on fresh GitHub-hosted VMs: each takes
-# the real windows-x64 package (pkg-windows-x64 from _build.yml, plus the "newer" one for the
-# update tests), assembles the release folders and installer zip like release.yml, serves them
-# locally and drives the real start script with a bare-OS PATH, then the app with Google Chrome,
+# the staged windows-x64 server (pkg-windows-x64 from _build.yml: the desktop app's sidecar),
+# runs it outside the desktop app with a bare-OS PATH, and drives it with Google Chrome,
 # Microsoft Edge and Firefox (Playwright), the real Cloudflare quick tunnel, direct mode, the
 # quality ladder and real OBS Studio (scripts/test/windows). Each job writes its suite's results
 # to its summary (.github/scripts/test-summary.mjs); `node scripts/test/windows/summarize.mjs` makes
@@ -18,7 +17,7 @@ on:
       suites:
         description: JSON list of suites.
         type: string
-        default: '["installer","app","quality","direct","obs"]'
+        default: '["app","quality","direct","obs"]'
 
 permissions:
   contents: read
@@ -61,8 +60,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # ffmpeg is only for the test harness (OBS-like feed, FFMPEG_BIN); the installer and the
-      # app run with a bare-OS PATH and never see it.
+      # ffmpeg is only for the test harness (OBS-like feed, FFMPEG_BIN); the app runs with a
+      # bare-OS PATH and never sees it.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
@@ -80,16 +79,10 @@ jobs:
           echo "SC_ARTIFACTS=$RUNNER_TEMP/sc-artifacts" >> "$GITHUB_ENV"
           echo "SC_RUNNER_LABEL=$OS" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/sc-artifacts"
-          # The installer suite also updates to the "newer" package _build.yml made.
-          if [ "$SUITE" = installer ]; then
-            echo "SC_NEWER=$(node -p "const v=require('./package.json').version.split('-')[0].split('.');v[2]=+v[2]+1;v.join('.')")" >> "$GITHUB_ENV"
-          fi
       - name: Playwright Firefox
         timeout-minutes: 8
         if: matrix.suite == 'app'
         run: npx playwright install firefox
-      - name: Assemble release folders and the installer zip
-        run: node scripts/test/windows/make-release.mjs --out release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"}
 
       # By now the install has had the setup's 3-4 minutes; the wait gives it 2 more (the slowest
       # seen took 18 s in all), then prints the install log and the servicing diagnostics and
@@ -100,14 +93,14 @@ jobs:
         shell: pwsh
         run: .github/scripts/media-foundation.ps1 wait -Seconds 120
 
-      # 11 minutes: the slowest suite took 7.4 (installer). A step that runs out fails, so the
-      # results and logs below are still uploaded (a job that runs out is cancelled).
+      # 11 minutes: the slowest suite took about 7. A step that runs out fails, so the results and
+      # logs below are still uploaded (a job that runs out is cancelled).
       - name: Run the ${{ matrix.suite }} suite
         timeout-minutes: 11
         env:
           SUITE: ${{ matrix.suite }}
           OS: ${{ matrix.os }}
-        run: node "scripts/test/windows/$SUITE.mjs" --work release/win-e2e ${SC_NEWER:+--newer "$SC_NEWER"} --out "$SC_ARTIFACTS/results-$SUITE-$OS.json"
+        run: node "scripts/test/windows/$SUITE.mjs" --staging release/staging/windows-x64 --out "$SC_ARTIFACTS/results-$SUITE-$OS.json"
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true

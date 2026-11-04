@@ -143,7 +143,7 @@ export default defineConfig({
         },
         {
           ...t('More', 'Mais'),
-          items: [{ slug: 'advanced/script-install' }, { slug: 'about/privacy' }, { slug: 'developers' }],
+          items: [{ slug: 'about/privacy' }, { slug: 'developers' }],
         },
       ],
     }),

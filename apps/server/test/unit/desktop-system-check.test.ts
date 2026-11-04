@@ -23,7 +23,7 @@ import {
 import { tempDir } from './helpers.js';
 
 // The desktop app's first-run system check: the same checks, values, thresholds and file
-// (system-check.json) as the start scripts, from facts gathered with injected probes.
+// (system-check.json) the old start scripts used, from facts gathered with injected probes.
 
 const facts = (over: Partial<SystemFacts> = {}): SystemFacts => ({
   platform: 'darwin',
@@ -48,7 +48,7 @@ async function listening(): Promise<number> {
   return (srv.address() as net.AddressInfo).port;
 }
 
-describe('operating system (same rules as the start scripts)', () => {
+describe('operating system (same rules as the old start scripts)', () => {
   const UBUNTU = parseOsRelease('NAME="Ubuntu"\nID=ubuntu\nID_LIKE=debian\nVERSION_ID="24.04"\nPRETTY_NAME="Ubuntu 24.04.1 LTS"\n');
 
   it('reads /etc/os-release', () => {
@@ -257,7 +257,7 @@ describe('when the desktop app runs the check', () => {
     expect(needs).toEqual([true, true]);
   });
 
-  it('runs when the file comes from a start script (no appVersion/source)', () => {
+  it('runs when the file comes from an old start script (no appVersion/source)', () => {
     // Arrange
     const f = file();
     const { appVersion: _v, source: _s, ...script } = buildSystemCheck(facts());

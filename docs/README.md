@@ -1,6 +1,6 @@
 # Documentation
 
-**Streamers and viewers:** everything is on the website, <https://lucas-angelo.github.io/swarmcast/> (English) and <https://lucas-angelo.github.io/swarmcast/pt-br/> (Português). Its pages live in [`site/src/content/docs/`](../site/src/content/docs/), and the offline guide inside the installer zips is generated from them.
+**Streamers and viewers:** everything is on the website, <https://lucas-angelo.github.io/swarmcast/> (English) and <https://lucas-angelo.github.io/swarmcast/pt-br/> (Português). Its pages live in [`site/src/content/docs/`](../site/src/content/docs/).
 
 Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING.md); coding agents, and the people who work with them, start with [AGENTS.md](../AGENTS.md)):
 
@@ -20,4 +20,4 @@ Developer and maintainer documents (start with [CONTRIBUTING.md](../CONTRIBUTING
 | [assets/brand/README.md](../assets/brand/README.md) | Brand: Forest & Cream palette, tokens, symbol, icons, mascot, fonts | English |
 | [site/DESIGN.md](../site/DESIGN.md) | Website design spec: principles, tokens, components | English |
 
-Component READMEs: [apps](../apps/README.md) · [server](../apps/server/README.md) · [viewer](../apps/viewer/README.md) · [admin](../apps/admin/README.md) · [desktop](../apps/desktop/README.md) · [tray](../apps/tray/README.md) · [packages](../packages/README.md) · [shared](../packages/shared/README.md) · [scripts](../scripts/README.md) · [site](../site/README.md) · [brand](../assets/brand/README.md).
+Component READMEs: [apps](../apps/README.md) · [server](../apps/server/README.md) · [viewer](../apps/viewer/README.md) · [admin](../apps/admin/README.md) · [desktop](../apps/desktop/README.md) · [packages](../packages/README.md) · [shared](../packages/shared/README.md) · [scripts](../scripts/README.md) · [site](../site/README.md) · [brand](../assets/brand/README.md).

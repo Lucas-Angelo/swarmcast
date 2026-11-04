@@ -4,7 +4,7 @@ import { z } from 'zod';
 const value = z.union([z.string().max(200), z.number(), z.boolean(), z.null()]).optional();
 
 /**
- * Result of the start script's system check, written to `<data>/system-check.json` (English values).
+ * Result of the first-start system check, written to `<data>/system-check.json` (English values).
  * The desktop app writes the same file on its first start (apps/server/src/desktop/system-check.ts),
  * plus `appVersion` and `source` so it can run again after an update. The server serves it to the
  * panel's setup tutorial (GET /api/system-check). Unknown result ids are kept (the panel shows them
@@ -31,9 +31,9 @@ export const systemCheckSchema = z.object({
   downloadMbps: z.number().nullable().optional(),
   viewerEstimate: z.number().nullable().optional(),
   belowMinimum: z.array(z.string().max(40)).max(50).default([]),
-  /** Version of SwarmCast that ran the check (desktop app only; the start scripts do not write it). */
+  /** Version of SwarmCast that ran the check (the old start scripts did not write it). */
   appVersion: z.string().max(64).optional(),
-  /** Who ran the check; missing means a start script. */
+  /** Who ran the check; missing means one of the old start scripts (before 0.5.1). */
   source: z.enum(['script', 'desktop']).optional(),
 });
 
