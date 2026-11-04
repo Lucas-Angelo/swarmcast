@@ -242,6 +242,8 @@ describe('chat admin API', () => {
 
   it.each<[string, (cur: ChatSettings) => ChatSettings, string]>([
     ['a streamer name with a bidi override', (cur) => ({ ...cur, streamerName: 'Lu\u{202E}cas' }), 'admin.chat.err.streamerName'],
+    ['"Streamer" as the streamer name (a built-in label)', (cur) => ({ ...cur, streamerName: 'STREAMER' }), 'admin.chat.err.streamerName'],
+    ['a one-letter streamer name', (cur) => ({ ...cur, streamerName: 'L' }), 'admin.chat.err.streamerName'],
     ['a blocked word over 40 characters', (cur) => ({ ...cur, blockedWords: ['x'.repeat(41)] }), 'admin.chat.err.blockedWord'],
     ['GIFs without the streamer key', (cur) => ({ ...cur, content: { text: true, emotes: true, gifs: true }, gif: { ...cur.gif, key: '' } }), 'admin.chat.err.gifKey'],
   ])('settings: %s is refused with its code', async (_what, edit, code) => {

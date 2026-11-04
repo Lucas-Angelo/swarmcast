@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalizeChatText, checkChatInvariants, joinRequestSchema, nicknameError, validateNickname } from '@swarmcast/shared';
+import { canonicalizeChatText, checkChatInvariants, joinRequestSchema, nicknameError, validateNickname, validateStreamerName } from '@swarmcast/shared';
 import { UCD_SHA256, UCD_VERSION } from '@swarmcast/shared/chat/ucd';
 import { CONFUSABLES_SHA256 } from '../../src/chat/confusables.generated.js';
 import pins from '../../../../scripts/build/unicode-data.json' with { type: 'json' };
@@ -142,5 +142,29 @@ describe('nicknames v2', () => {
     const r = validateNickname('Lucas Live', { reserved: ['lucas-live'] });
     // Assert
     expect(r).toMatchObject({ ok: false, code: 'nickname.reserved' });
+  });
+
+  it("the streamer's chat name follows the same rules, and may be empty (viewers show \"Streamer\")", () => {
+    // Act
+    const results = ['', '  \t ', ' Lucas   Live ', 'Streamer', 'L', 'Lu\u{202E}cas', '\u{85}', 'x'.repeat(25), 'x'.repeat(201)].map(validateStreamerName);
+    // Assert
+    expect(results).toEqual([
+      { ok: true, value: '' },
+      { ok: true, value: '' },
+      { ok: true, value: 'Lucas Live' },
+      { ok: false, code: 'nickname.reserved' },
+      { ok: false, code: 'nickname.tooShort', params: { min: 2 } },
+      { ok: false, code: 'nickname.chars' },
+      { ok: false, code: 'nickname.chars' },
+      { ok: false, code: 'nickname.tooLong', params: { max: 24 } },
+      { ok: false, code: 'nickname.tooLong', params: { max: 24 } },
+    ]);
+  });
+
+  it.each(accepting.map((n) => [caseName(n), n] as const))("a name every viewer may use is a valid streamer name too: %s", (_name, n) => {
+    // Act
+    const r = validateStreamerName(n.input);
+    // Assert
+    expect(r).toEqual({ ok: true, value: n.ok });
   });
 });

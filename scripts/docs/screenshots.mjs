@@ -708,11 +708,21 @@ async function captureAppWindow(browser, lang) {
   await panel.getByTestId('redo-tutorial').click();
   await step('welcome', 'welcome', [panel.getByTestId('onb-next')]);
   await next();
-  // Step 2 while the app's first-run check runs, then with its result.
+  // Step 2 with a name typed in (1 the field, 2 its check), cleared again before Next, so
+  // nothing is saved and the chat pictures keep "Streamer".
+  const nameInput = panel.getByTestId('onb-name-input');
+  await nameInput.waitFor();
+  await nameInput.fill('Lucas');
+  await panel.locator('[data-testid="onb-name-feedback"][data-kind="ok"]').waitFor();
+  await step('name', 'chat-name', [nameInput, panel.getByTestId('onb-name-feedback')]);
+  await nameInput.fill('');
+  await next();
+  // Step 3 while the app's first-run check runs, then with its result.
   await step('pc', 'checking', [panel.getByTestId('onb-sys-checking')]);
   await asDesktopApp(ctx, s.version, { check: firstRunCheck(s.version) });
   await panel.reload();
   await panel.getByTestId('redo-tutorial').click();
+  await next();
   await next();
   await panel.getByTestId('onb-syscheck').waitFor();
   await step('pc', 'pc-check', [panel.locator('.onb-sys-list'), panel.getByTestId('onb-next')]);
