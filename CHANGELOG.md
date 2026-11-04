@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-05
+
 ### Added
 
 - **Reactions over the video.** Viewers tap the bee next to the chat box and pick one of eight reactions (Love, Hype, Funny, Wow, GG, Fire, Sad, Hi): it floats up over the video for a moment for everyone, also in full screen. SwarmCast adds up everyone's taps and sends them once a second, so even a big moment uses almost none of your internet and never fills the screen. Muted people cannot react, and reactions pause by themselves while the chat is locked to current viewers or your computer is busy. The **Live chat** shows a small count of the last minute ("Fire 12 · Love 3"); untick **Reactions on the video** in the chat settings to turn them off. Each viewer can hide them on their own screen, and people who asked their device for less motion see a small counter instead of floating bees. Pages left open from an older version simply do not show them.
@@ -287,7 +289,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
