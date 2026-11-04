@@ -40,6 +40,7 @@ export interface KeptElement {
   readonly buffered: Ranges;
   readonly seeking: boolean;
   currentTime: number;
+  addEventListener(type: 'seeked', fn: () => void, o: { once: true }): void;
 }
 
 /** What hls.js `transferMedia()` hands over: the element with its MediaSource and SourceBuffers. */
@@ -69,11 +70,26 @@ export interface ReloadInPlaceOptions {
   audioUrl?: string;
 }
 
-/** `r` holds media between `from` and `to` (a few ms at either edge do not count). */
+/** A few ms at either edge of a range do not count. */
+const EDGE_S = 0.01;
+
+/** `r` holds media between `from` and `to`. */
 const holds = (r: Ranges, from: number, to: number): boolean => {
-  for (let i = 0; i < r.length; i++) if (r.start(i) < to - 0.01 && r.end(i) > from + 0.01) return true;
+  for (let i = 0; i < r.length; i++) if (r.start(i) < to - EDGE_S && r.end(i) > from + EDGE_S) return true;
   return false;
 };
+
+/** What `r` holds outside [start, end]. */
+function outside(r: Ranges, start: number, end: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < r.length; i++) {
+    const a = r.start(i);
+    const z = r.end(i);
+    if (a < start - EDGE_S) out.push([a, Math.min(z, start)]);
+    if (z > end + EDGE_S) out.push([Math.max(a, end), z]);
+  }
+  return out;
+}
 
 /**
  * Reads the audio-only playlist again while audio only plays (a media playlist it listed went
@@ -96,10 +112,15 @@ const holds = (r: Ranges, from: number, to: number): boolean => {
  * reload probe of soak run 41757062883 took that jump back, after 26 reloads in a row, for a
  * stop). So once the first segment of the new read is buffered, the playhead moves into it, to
  * where hls.js starts (hls.js itself only moves a playhead that is before its start position),
- * and everything else the buffer holds, all from the read before, goes through hls.js's own
- * flush. Until then the old buffer plays on: emptied any earlier, the element waits with nothing
- * buffered, which the adaptive delay takes for a network stall and holds playback for, and
- * Linux WebKit then stayed paused for good about one time in two (soak run 41766158247).
+ * and, once that seek is over, what the buffer held besides that segment, all from the read
+ * before, goes through hls.js's own flush (leaving out the segments of the new read buffered
+ * meanwhile). Until then the old buffer plays on: emptied any earlier, the element waits with
+ * nothing buffered, which the adaptive delay takes for a network stall and holds playback for,
+ * and Linux WebKit then stayed paused for good about one time in two (soak run 41766158247).
+ * Flushed while the seek still runs, Linux WebKit (GStreamer) then played about one time in
+ * eight with no clock: the buffer ran through in a fraction of a second and every new segment
+ * vanished as it came, so the sound stopped (main run 41828698597; logged probe 18 in 120,
+ * against none in 120 with the flush after `seeked`, soak runs 41838099514, 41841700897).
  * Diagnosis: docs/QUALITY.md "Audio only".
  *
  * Returns false and does nothing unless the player has the audio-only playlist loaded, `url` is
@@ -120,11 +141,25 @@ export function reloadAudioOnlyInPlace(hls: ReloadablePlayer, url: string, o: Re
       const at = hls.startPosition;
       media.currentTime = at >= start && at < end ? at : start;
     }
-    const flush = (from: number, to: number): void => {
-      if (holds(media.buffered, from, to)) hls.trigger(o.events.BUFFER_FLUSHING as never, { startOffset: from, endOffset: to, type: null } as never);
+    const old = outside(media.buffered, start, end);
+    // The new read grows on from `end` while the seek runs; none of that is old.
+    let newEnd = end;
+    const grow = ((_e: unknown, d: { frag: { type: string; start: number; end: number } }) => {
+      if (d.frag.type === 'main' && d.frag.start <= newEnd + EDGE_S) newEnd = Math.max(newEnd, d.frag.end);
+    }) as never;
+    const flushOld = (): void => {
+      hls.off(o.events.FRAG_BUFFERED as never, grow);
+      for (const [a, z] of old) {
+        const from = a >= end - EDGE_S ? Math.max(a, newEnd) : a;
+        if (z > from + EDGE_S && holds(media.buffered, from, z)) hls.trigger(o.events.BUFFER_FLUSHING as never, { startOffset: from, endOffset: z, type: null } as never);
+      }
     };
-    flush(0, start);
-    flush(end, Number.POSITIVE_INFINITY);
+    if (!media.seeking) {
+      flushOld();
+      return;
+    }
+    hls.on(o.events.FRAG_BUFFERED as never, grow);
+    media.addEventListener('seeked', flushOld, { once: true });
   }) as never;
   hls.on(o.events.FRAG_BUFFERED as never, onBuffered);
   hls.loadSource(url);

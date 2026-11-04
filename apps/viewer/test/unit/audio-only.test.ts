@@ -239,9 +239,21 @@ class KeptElement {
   get currentTime(): number {
     return this.t;
   }
+  /** Like an element: setting the time starts a seek, which `seeked()` ends. */
   set currentTime(t: number) {
     this.seeks.push(t);
     this.t = t;
+    this.seeking = true;
+  }
+  private onSeeked: Array<() => void> = [];
+  addEventListener(type: 'seeked', fn: () => void): void {
+    if (type === 'seeked') this.onSeeked.push(fn);
+  }
+  seeked(): void {
+    this.seeking = false;
+    const fns = this.onSeeked;
+    this.onSeeked = [];
+    for (const fn of fns) fn();
   }
 }
 
@@ -315,7 +327,7 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     expect([hls.element.seeks, hls.flushes]).toEqual([[], []]);
   });
 
-  it('once the first segment of the playlist read again is buffered, moves the playhead into it, where hls.js starts, and flushes what the read before left', () => {
+  it('once the first segment of the playlist read again is buffered, moves the playhead into it, where hls.js starts, and flushes what the read before left once that seek is over', () => {
     // Arrange: the playhead at 66 s on the timeline of the window the viewer joined; the window
     // read again starts at 0, hls.js at its live sync position 21.7 s
     const hls = audioOnly();
@@ -325,25 +337,43 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     hls.buffered(20.05, 22.04, 'audio');
     hls.buffered(20.05, 22.04);
     hls.buffered(22.04, 24.06);
+    hls.element.seeked();
+    hls.buffered(24.06, 26.07);
     // Assert: once, for the first segment of the main playlist
     expect(hls.element.seeks).toEqual([21.7]);
-    expect(hls.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(hls.flushes).toEqual([{ startOffset: 46, endOffset: 70, type: null }]);
     expect(hls.listeners()).toBe(0);
   });
 
-  it('flushes what the read before left on both sides of the new segment', () => {
-    // Arrange: the window had moved on a little, so the old media spans the new segment
+  it('flushes nothing while the seek into the new segment runs (Linux WebKit then plays with no clock)', () => {
+    // Arrange
     const hls = audioOnly();
-    hls.element.held = [[10, 30]];
+    reload(hls, AUDIO_ONLY_URL);
+    hls.startPosition = 21.7;
+    // Act
+    hls.buffered(20.05, 22.04);
+    hls.buffered(22.04, 24.06);
+    // Assert
+    expect(hls.element.seeking).toBe(true);
+    expect(hls.flushes).toEqual([]);
+  });
+
+  it('flushes what the read before left on both sides of the new segment, but not the segments of the new read buffered during the seek', () => {
+    // Arrange: the window had moved on a little, so the old media spans the new segment and the next ones
+    const hls = audioOnly();
+    hls.element.held = [[10, 34]];
     reload(hls, AUDIO_ONLY_URL);
     hls.startPosition = 26.2;
     // Act
     hls.buffered(26, 28);
+    hls.buffered(28, 30);
+    hls.buffered(30, 32);
+    hls.element.seeked();
     // Assert
     expect(hls.element.seeks).toEqual([26.2]);
     expect(hls.flushes).toEqual([
-      { startOffset: 0, endOffset: 26, type: null },
-      { startOffset: 28, endOffset: Number.POSITIVE_INFINITY, type: null },
+      { startOffset: 10, endOffset: 26, type: null },
+      { startOffset: 32, endOffset: 34, type: null },
     ]);
   });
 
@@ -358,7 +388,7 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     expect(hls.element.seeks).toEqual([20.05]);
   });
 
-  it('leaves the playhead alone when hls.js moved it itself or it is in the new segment, and still flushes the rest', () => {
+  it('leaves the playhead alone when hls.js moved it itself or it is in the new segment, and still flushes the rest, after the seek', () => {
     // Arrange: hls.js seeks a playhead that is before its start position (stream-controller seekToStartPos)
     const seeking = audioOnly();
     const inside = audioOnly();
@@ -370,12 +400,15 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     // Act
     seeking.buffered(20.05, 22.04);
     inside.buffered(64.1, 68.13);
+    const whileSeeking = [...seeking.flushes];
+    seeking.element.seeked();
     // Assert
     expect([seeking.element.seeks, inside.element.seeks]).toEqual([[], []]);
-    expect(seeking.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(whileSeeking).toEqual([]);
+    expect(seeking.flushes).toEqual([{ startOffset: 46, endOffset: 70, type: null }]);
     expect(inside.flushes).toEqual([
-      { startOffset: 0, endOffset: 64.1, type: null },
-      { startOffset: 68.13, endOffset: Number.POSITIVE_INFINITY, type: null },
+      { startOffset: 46, endOffset: 64.1, type: null },
+      { startOffset: 68.13, endOffset: 70, type: null },
     ]);
   });
 
