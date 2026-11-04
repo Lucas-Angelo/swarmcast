@@ -30,6 +30,41 @@ export const AUDIO_ONLY_URL = `/hls/${AUDIO_ONLY_PLAYLIST}`;
  */
 export const AUDIO_ONLY_GONE_AFTER = 1;
 
+/** The part of hls.js a reload of the audio-only playlist uses. */
+export interface ReloadablePlayer {
+  /** The source loaded last (absolute). */
+  readonly url: string | null;
+  loadSource(url: string): void;
+  /** Detaches the media but keeps its MediaSource and SourceBuffers (hls.js ≥ 1.6), or null. */
+  transferMedia(): unknown;
+  attachMedia(media: never): void;
+}
+
+/**
+ * Reads the audio-only playlist again while audio only plays (a media playlist it listed went
+ * away: the quality ladder's audio, once the ladder fell back to the original quality) and keeps
+ * the element's MediaSource and its audio SourceBuffer: hls.js `transferMedia()` hands them over,
+ * `loadSource()` reads the playlist again, `attachMedia()` takes them back. A plain
+ * `hls.loadSource()` detaches the media and gives the element a new MediaSource, and Linux WebKit
+ * (GStreamer) kills the page's process doing that for sound alone (SIGSEGV on the web process's
+ * main thread, always at the same address in WebKit; about 1 audio-only reload in 300-900 on the
+ * Linux CI runners, with or without a sound server, a bare hls.js page too; never for video):
+ * the viewer's tab is gone. Diagnosis: docs/QUALITY.md "Audio only".
+ *
+ * Returns false and does nothing unless the player has the audio-only playlist loaded, `url` is
+ * that playlist and hls.js can hand the media over; the caller then loads the source as usual.
+ */
+export function reloadAudioOnlyInPlace(hls: ReloadablePlayer, url: string, base: string, audioUrl: string = AUDIO_ONLY_URL): boolean {
+  const path = (u: string | null): string => (u ? new URL(u, base).pathname : '');
+  const target = path(audioUrl);
+  if (path(hls.url) !== target || path(url) !== target) return false;
+  const kept = hls.transferMedia();
+  if (!kept) return false;
+  hls.loadSource(url);
+  hls.attachMedia(kept as never);
+  return true;
+}
+
 /**
  * hls.js resets of the MediaSource (`mediaSourceRequiresReset`) within AUDIO_ONLY_BROKEN_WINDOW_MS
  * after which audio-only playback gives up for this page and the video comes back. A browser that
