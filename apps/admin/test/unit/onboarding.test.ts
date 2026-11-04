@@ -3,9 +3,11 @@ import type { AdminState, QualityState } from '@swarmcast/shared';
 import { isMessageKey, translate } from '@swarmcast/shared/i18n';
 import {
   clampStep,
+  initialChatName,
   isLastStep,
   keyframeProblem,
   loadDone,
+  nameOnLeave,
   nextStep,
   ONBOARDING_API,
   prevStep,
@@ -73,7 +75,14 @@ describe('onboarding: completion persistence', () => {
 describe('onboarding: steps', () => {
   it('has the planned order, one idea per step', () => {
     // Assert
-    expect(STEPS).toEqual(['welcome', 'pc', 'output', 'choose', 'connect', 'test', 'share', 'tour', 'finish']);
+    expect(STEPS).toEqual(['welcome', 'name', 'pc', 'output', 'choose', 'connect', 'test', 'share', 'tour', 'finish']);
+  });
+
+  it('asks for the chat name right after the welcome, before anything that can take a while', () => {
+    // Act
+    const at = STEPS.indexOf('name');
+    // Assert
+    expect(at).toBe(1);
   });
 
   it('Back/Next stay inside the step range', () => {
@@ -87,11 +96,53 @@ describe('onboarding: steps', () => {
 
   it('has its texts in English and Brazilian Portuguese', () => {
     // Act
-    const missing = ['onb.redo', 'onb.welcome.title', 'onb.test.ok', 'onb.finish.title'].filter((k) => !isMessageKey(k));
+    const missing = ['onb.redo', 'onb.welcome.title', 'onb.name.title', 'onb.name.reserved', 'onb.test.ok', 'onb.finish.title'].filter((k) => !isMessageKey(k));
     const redo = { pt: translate('pt-BR', 'onb.redo'), en: translate('en', 'onb.redo') };
     // Assert
     expect(missing).toEqual([]);
     expect(redo).toEqual({ pt: 'Refazer o tutorial de configuração', en: 'Redo setup tutorial' });
+  });
+});
+
+describe('onboarding: step 2, your name in the chat', () => {
+  it('starts from the saved chat name, else from a "Your page" name that fits the nickname rules, else empty', () => {
+    // Act
+    const names = [
+      initialChatName('Lucas', 'Lucas Plays'),
+      initialChatName('', '  Lucas   Plays '),
+      initialChatName('', 'Ana 🎮 Games'),
+      initialChatName('', 'A'.repeat(30)),
+      initialChatName('', 'Streamer'),
+      initialChatName('   ', undefined),
+      initialChatName('', null),
+    ];
+    // Assert
+    expect(names).toEqual(['Lucas', 'Lucas Plays', '', '', '', '', '']);
+  });
+
+  it('leaving saves a valid change (canonical), keeps an unchanged name, and stays on an invalid one', () => {
+    // Act
+    const moves = {
+      unchanged: nameOnLeave('Lucas', 'Lucas'),
+      sameAfterCleanUp: nameOnLeave('  Lucas ', 'Lucas'),
+      changed: nameOnLeave(' Lucas   Live ', 'Lucas'),
+      cleared: nameOnLeave('', 'Lucas'),
+      stillEmpty: nameOnLeave('   ', ''),
+      reserved: nameOnLeave('Admin', ''),
+      emoji: nameOnLeave('Lucas 🎮', ''),
+      tooShort: nameOnLeave('L', ''),
+    };
+    // Assert
+    expect(moves).toEqual({
+      unchanged: { do: 'keep' },
+      sameAfterCleanUp: { do: 'keep' },
+      changed: { do: 'save', value: 'Lucas Live' },
+      cleared: { do: 'save', value: '' },
+      stillEmpty: { do: 'keep' },
+      reserved: { do: 'stay' },
+      emoji: { do: 'stay' },
+      tooShort: { do: 'stay' },
+    });
   });
 });
 

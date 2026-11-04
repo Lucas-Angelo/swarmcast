@@ -13,41 +13,49 @@ The window shows **Starting SwarmCast…** for a few seconds, then the setup tut
 
 ## 2. The setup tutorial
 
-![Setup tutorial, step 1 of 9: Welcome to SwarmCast, with 1 Next.](../../../assets/guides/start/en/welcome.webp)
+![Setup tutorial, step 1 of 10: Welcome to SwarmCast, with 1 Next.](../../../assets/guides/start/en/welcome.webp)
 
 About 5 minutes. Click **Next** to go on, **Back** to go back. **Skip tutorial** closes it (you can open it again later).
 
-## 3. Your PC check
+## 3. Your name in the chat
 
-![Step 2, Your PC check, while it runs: 1 Checking your computer… (memory, processor, internet speed, OBS). This takes about a minute.](../../../assets/guides/start/en/checking.webp)
+![Step 2, Your name in the chat: 1 the name your messages show (Lucas here) and 2 the check under it, Your messages will show "Lucas".](../../../assets/guides/start/en/chat-name.webp)
+
+Type the name your chat messages show next to the **Streamer** badge (1). If you already filled in **Your page**, its name is there to start with. The line under it (2) tells you right away if the name cannot be used: 2 to 24 letters or numbers, no emoji, and not a word like "Streamer" or "Admin".
+
+Viewers cannot use this name or anything that looks like it, so nobody can pass for you. It is optional: leave it empty and your messages show "Streamer". **Next** saves it. To change it later: the **Chat** card, **Chat settings** → **Looks** → **Your name in the chat**.
+
+## 4. Your PC check
+
+![Step 3, Your PC check, while it runs: 1 Checking your computer… (memory, processor, internet speed, OBS). This takes about a minute.](../../../assets/guides/start/en/checking.webp)
 
 The first time, SwarmCast checks your computer. It shows **Checking your computer…** for about a minute.
 
-![Step 2 with the results: 1 a green tick next to the system, memory, processor, upload and download speed, disk, ports, OBS Studio, update server and version, and 2 Next.](../../../assets/guides/start/en/pc-check.webp)
+![Step 3 with the results: 1 a green tick next to the system, memory, processor, upload and download speed, disk, ports, OBS Studio, update server and version, and 2 Next.](../../../assets/guides/start/en/pc-check.webp)
 
 A green tick means fine, a yellow one means it works but is not ideal. Nothing here stops you. At the same time SwarmCast downloads the free video converter (ffmpeg) for the smaller qualities.
 
-## 4. OBS, once
+## 5. OBS, once
 
-![Step 4, Where will you stream?: 1 Another platform + SwarmCast at the same time (recommended), or 2 Only SwarmCast.](../../../assets/guides/start/en/where.webp)
+![Step 5, Where will you stream?: 1 Another platform + SwarmCast at the same time (recommended), or 2 Only SwarmCast.](../../../assets/guides/start/en/where.webp)
 
 Choose whether you also stream to Twitch, YouTube or Kick, or only to SwarmCast. The next steps show the OBS settings for that choice.
 
-![Step 5: install the Multiple output plugin in OBS and fill in a new target with Name, URL (server) and Stream key: 1, 2 and 3 are their Copy buttons.](../../../assets/guides/start/en/obs-step.webp)
+![Step 6: install the Multiple output plugin in OBS and fill in a new target with Name, URL (server) and Stream key: 1, 2 and 3 are their Copy buttons.](../../../assets/guides/start/en/obs-step.webp)
 
 Use the **Copy** buttons and paste into OBS. The full walkthrough with OBS pictures: [Set up OBS](/swarmcast/start/obs/).
 
-## 5. Test it and share the link
+## 6. Test it and share the link
 
-![Step 6, Test it: 1 SwarmCast is on, then Start Streaming in OBS.](../../../assets/guides/start/en/test-it.webp)
+![Step 7, Test it: 1 SwarmCast is on, then Start Streaming in OBS.](../../../assets/guides/start/en/test-it.webp)
 
 Start streaming in OBS. The tutorial shows when the video arrives.
 
-![Step 7, Share the link: the live link (hidden here) and 1 Copy link.](../../../assets/guides/start/en/share-link.webp)
+![Step 8, Share the link: the live link (hidden here) and 1 Copy link.](../../../assets/guides/start/en/share-link.webp)
 
 Every live gets a new secret link. Send it only to your members.
 
-![Step 9, All set!: what to do at the end of a live, and 1 Finish.](../../../assets/guides/start/en/finish.webp)
+![Step 10, All set!: what to do at the end of a live, and 1 Finish.](../../../assets/guides/start/en/finish.webp)
 
 Click **Finish**. To see the tutorial again, click **Redo setup tutorial** at the bottom of the panel.
 

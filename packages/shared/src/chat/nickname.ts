@@ -179,3 +179,20 @@ export function validateNickname(raw: unknown, opts: { reserved?: Iterable<strin
   if (isReservedName(value, opts.reserved)) return { ok: false, code: 'nickname.reserved' };
   return { ok: true, value };
 }
+
+export type StreamerNameResult = { ok: true; value: string } | { ok: false; code: Exclude<NicknameError, 'nickname.empty'>; params?: Record<string, number> };
+
+/**
+ * The streamer's own chat name (`chat.streamerName`, docs/CHAT.md "Nicknames (rules v2)"): the
+ * viewers' nickname rules, so it cannot look like "Streamer", "admin"… either; or empty, and
+ * viewers then show the translated "Streamer". The one rule for the server's save, the setup
+ * tutorial and the chat settings, so the panel's instant feedback and the server never disagree.
+ */
+export function validateStreamerName(raw: string): StreamerNameResult {
+  if (raw.trim() === '') return { ok: true, value: '' };
+  const r = validateNickname(raw);
+  if (r.ok) return r;
+  // White space that trim() keeps (U+0085) folds to nothing: refused, as before.
+  if (r.code === 'nickname.empty') return { ok: false, code: 'nickname.chars' };
+  return r.params ? { ok: false, code: r.code, params: r.params } : { ok: false, code: r.code };
+}

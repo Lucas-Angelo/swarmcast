@@ -28,6 +28,7 @@ import {
   replyPreview,
   sameSettings,
   streamerKey,
+  streamerNameFeedback,
   systemText,
 } from '../../src/chat/logic.js';
 
@@ -208,6 +209,36 @@ describe('draft length and settings equality', () => {
     const same = [sameSettings(a, defaultChatSettings()), sameSettings(a, { ...a, slowModeS: 5 })];
     // Assert
     expect(same).toEqual([true, false]);
+  });
+});
+
+describe("the streamer's chat name (setup tutorial and chat settings)", () => {
+  it("is checked as she types with the viewers' nickname rules; empty is fine and shows \"Streamer\"", () => {
+    // Act
+    const feedback = ['  Lucas   Live ', '', '   ', 'L', 'Lucas 🎮', '\u{405}treamer', 'x'.repeat(25)].map(streamerNameFeedback);
+    // Assert
+    expect(feedback).toEqual([
+      { kind: 'ok', value: 'Lucas Live' },
+      { kind: 'empty' },
+      { kind: 'empty' },
+      { kind: 'error', key: 'nickname.tooShort', params: { min: 2 } },
+      { kind: 'error', key: 'nickname.chars' },
+      { kind: 'error', key: 'nickname.mixed' },
+      { kind: 'error', key: 'nickname.tooLong', params: { max: 24 } },
+    ]);
+  });
+
+  it.each(['Streamer', 'Transmissão', 'ADMIN', 'Mod'])('says SwarmCast keeps %s for its own labels, in both languages', (name) => {
+    // Act
+    const f = streamerNameFeedback(name);
+    setLang('pt-BR');
+    const pt = f.kind === 'error' ? t(f.key) : '';
+    setLang('en');
+    const en = f.kind === 'error' ? t(f.key) : '';
+    // Assert
+    expect(f).toEqual({ kind: 'error', key: 'admin.chat.err.nameReserved' });
+    expect(en).toContain('leave it empty');
+    expect(pt).toContain('deixe vazio');
   });
 });
 

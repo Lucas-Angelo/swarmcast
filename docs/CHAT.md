@@ -70,7 +70,7 @@ The panel changes them with `PUT /api/chat/settings`; viewers get the effective 
 | `links` | `text` | `text`, `block` | Links are never clickable either way; `block` refuses messages that contain one |
 | `blockedWords` | none | ≤ 200 entries, 1–40 graphemes each | Matched on the comparison key, so look-alike letters, accents, case, fullwidth forms and spacing do not get around them. The sender is not told which word |
 | `viewerColors` | on | on/off | Viewers pick their name colour; off = the default colour per author |
-| `streamerName` | "" | nickname rules, ≤ 24 graphemes | Shown next to the "Streamer" badge; "" = the translated "Streamer" |
+| `streamerName` | "" | nickname rules, ≤ 24 graphemes | Shown next to the "Streamer" badge; "" = the translated "Streamer". Reserved for joins; asked in the setup tutorial ("The streamer's chat name") |
 | `announceMutes` | off | on/off | A system line "X was muted" in the chat |
 | `scripts` | `any` | `any`, `latin` | `latin`: every grapheme must be Latin, Common or Inherited, else `text.script` |
 | `autoProtect` | on | on/off | Automatic flood protection (below) |
@@ -361,6 +361,32 @@ live at the same time. The same device may rejoin with its own name.
 
 **The streamer's identity never comes from a name.** Her messages carry `r: streamer`, and the
 viewer draws a translated "Streamer" badge from that role. A viewer can never get the role.
+
+### The streamer's chat name
+
+`chat.streamerName` in `config.json` is the one source of truth: it is the name on her messages
+(`ChatHub.streamerMember`) and the extra reserved name of every join (`reservedNames` in
+`core/live.ts` → `/api/join`). The "Your page" channel name is a different field (it may have emoji
+and 40 graphemes) and reserves nothing.
+
+- **Rules:** `validateStreamerName()` in `nickname.ts`: the viewers' rules above (so not
+  "Streamer", "admin"… either), or empty, which shows the translated "Streamer". The server's save
+  (`PUT /api/chat/settings`, `admin.chat.err.streamerName`), the setup tutorial and the chat
+  settings form use it, so the panel's instant feedback never disagrees with the server.
+- **Asked once:** the setup tutorial's second step, "Your name in the chat", right after the
+  welcome. It starts from the saved name, else from the "Your page" name when that one passes the
+  rules. Next (or Enter) saves a valid change with the chat settings; an invalid name keeps the step
+  open with its reason; closing the tutorial saves a valid change and drops an invalid one. Later
+  it is changed in the Chat card, Chat settings → Looks, with the same instant check.
+- **Changed while viewers watch:** the new name is reserved from the next `/api/join` on. A viewer
+  who already holds a name that now looks like it keeps it for the rest of that session (it ends
+  with Stop, "Disconnect everyone", a kick, or about 10 minutes away from the page, when the
+  session cookie runs out); nobody is renamed or dropped, since a rename the viewer
+  did not ask for would be more confusing than the badge, which still tells the two apart. Any new
+  join with that name, from any device, including the same one, gets `nickname.reserved`. The
+  streamer's name wins over a viewer's only on joins, so a viewer who joined first cannot block the
+  streamer from taking her own name. Integration test: `chat.test.ts`, "the streamer takes a name
+  a viewer has".
 
 ## Rendering rules (viewer and panel)
 

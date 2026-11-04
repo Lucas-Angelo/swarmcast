@@ -15,6 +15,7 @@ import {
   findMentionSpans,
   plainNameKey,
   tokenizeChat,
+  validateStreamerName,
   type ChatAuthor,
   type ChatCommand,
   type ChatCounters,
@@ -376,4 +377,18 @@ export function pollRequest(kind: 'poll' | 'prediction', question: string, optio
   const empty = opts.findIndex((o) => o === '');
   if (empty >= 0) return { ok: false, key: 'admin.chat.err.pollOption', params: { n: empty + 1, max: CHAT_POLL_OPTION_MAX_GRAPHEMES } };
   return { ok: true, body: { kind, question: q, options: opts, seconds, newOnly } };
+}
+
+export type NameFeedback = { kind: 'ok'; value: string } | { kind: 'empty' } | { kind: 'error'; key: MessageKey; params?: Record<string, number> };
+
+/**
+ * Instant feedback on the streamer's chat name while she types (setup tutorial and chat settings):
+ * the rules the server applies on save (validateStreamerName).
+ */
+export function streamerNameFeedback(draft: string): NameFeedback {
+  const r = validateStreamerName(draft);
+  if (r.ok) return r.value ? { kind: 'ok', value: r.value } : { kind: 'empty' };
+  // "Reserved" for the streamer means SwarmCast's own labels, not someone else's name.
+  if (r.code === 'nickname.reserved') return { kind: 'error', key: 'admin.chat.err.nameReserved' };
+  return r.params ? { kind: 'error', key: r.code, params: r.params } : { kind: 'error', key: r.code };
 }
