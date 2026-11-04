@@ -119,6 +119,32 @@ export const CHAT_MENTIONS_TO_TARGET_PER_MIN = 10;
 export const CHAT_MENTION_SUGGESTIONS = 8;
 
 /**
+ * Polls and predictions (docs/CHAT.md, "Polls and predictions"): one at a time, started only from
+ * the panel, 2 to 5 options, open for 15 s to 10 min. Question and options go through the chat's
+ * Unicode pipeline with these grapheme caps; the raw input is bounded in UTF-16 units first.
+ */
+export const CHAT_POLL_OPTIONS_MIN = 2;
+export const CHAT_POLL_OPTIONS_MAX = 5;
+export const CHAT_POLL_QUESTION_MAX_GRAPHEMES = 80;
+export const CHAT_POLL_OPTION_MAX_GRAPHEMES = 30;
+export const CHAT_POLL_QUESTION_MAX_UNITS = 500;
+export const CHAT_POLL_OPTION_MAX_UNITS = 200;
+export const CHAT_POLL_SECONDS_MIN = 15;
+export const CHAT_POLL_SECONDS_MAX = 600;
+export const CHAT_POLL_SECONDS_DEFAULT = 120;
+/** Durations the panel's form offers, in seconds. */
+export const CHAT_POLL_SECONDS_PRESETS = [30, 60, 120, 300, 600] as const;
+/** Seconds a finished poll (or an answered prediction) stays on screen with its results. */
+export const CHAT_POLL_RESULTS_S = 60;
+/** A prediction whose guesses ended waits this long for the right answer, then it is removed. */
+export const CHAT_PREDICTION_LOCK_MAX_MIN = 30;
+/** At most one vote count per this many ms (the larger value above CHAT_BATCH_LARGE_AUDIENCE viewers or under pressure). */
+export const CHAT_POLL_TALLY_MS = 1000;
+export const CHAT_POLL_TALLY_MS_LARGE = 2000;
+/** Votes counted from one network (an IPv4 address, or an IPv6 /64) in one poll; the rest are refused and counted for the streamer. */
+export const CHAT_POLL_VOTES_PER_NET = 10;
+
+/**
  * State items (a pin, a highlight) a socket too slow to receive them may owe before it gets a fresh
  * snapshot instead of their current state when it catches up (batcher.ts).
  */

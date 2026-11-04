@@ -71,6 +71,8 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
 | A registry hiccup on `docker pull` | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test |
 | A slow apt mirror, an artifact service hiccup | `.github/scripts/apt-retry.sh`, `.github/actions/fetch-artifact` | CI infrastructure |
+| A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
+| A 404 from codeload for an action at a commit that exists | `.github/actions/fetch-remote` (our actions run their remote actions from a git fetch) | the runner's own download does not try again after a 404 (run 41636784175); CI infrastructure |
 | A port taken by another process between the probe and MediaMTX's bind | `bootApp` in apps/server/test/integration/helpers.ts | a race between concurrent runs, not SwarmCast behaviour: one logged retry on new ports |
 
 ### Measured windows
@@ -175,6 +177,20 @@ sideways layout; iOS: the sideways layout).
   pins version 37.2.12 (a known build, not whatever is newest). CI boots it the suite's
   way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
   leaves a core and its backtrace with the job's artifacts.
+- **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
+  saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
+  in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the
+  Mac's, and Health, Fitness, Siri and the widgets added theirs. A tap then reached the element and
+  no click followed. `setup.sh` and the suite turn those daemons off (`launchctl disable` in the
+  simulator; `ios.ts` `UNUSED_JOBS`), and the harness's touch listeners are passive, so WebKit does
+  not hold a tap for the page. Every tap's timing goes to `taps.log`, the Mac's load to
+  `host-load.log`.
+- **iOS taps and content that appears:** WebKit on iOS watches the page from touchstart to the
+  synthetic mouse move and takes a tap for a hover, with no click, when clickable content appears
+  meanwhile (its content-change observer). The join page's "Checking your browser…" line (with its
+  "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
+  41566408164); the server now sends the page with the line already shown to a browser it will check
+  (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a

@@ -25,7 +25,7 @@ import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
-import { joinIn, pageState, playerStats, probeHealth, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
+import { joinIn, pageState, playerStats, probeHealth, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 import { orTimeout, poll } from '../lib/wait.mjs';
 
 const args = process.argv.slice(2);
@@ -136,8 +136,8 @@ async function runSession({ tunnel, browser }) {
       // Bob must start on segments Alice already played, so peers can share them.
       await waitPlaylistForLateJoiners(a.page);
       const b = await joinAndPlay(browser, s0.liveLink, 'bob');
-      await a.page.check('#p2p');
-      await b.page.check('#p2p');
+      await setP2P(a.page, true);
+      await setP2P(b.page, true);
       await poll(async () => (await playerStats(a.page)).p2pDownBytes + (await playerStats(b.page)).p2pDownBytes > 0, { timeoutMs: 120_000, what: 'P2P bytes' });
       const sa = await playerStats(a.page);
       const sb = await playerStats(b.page);

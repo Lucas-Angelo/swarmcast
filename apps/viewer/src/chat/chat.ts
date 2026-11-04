@@ -11,6 +11,7 @@ import { emoteTable, type Emote } from './emotes.js';
 import { loadEmojiData } from './emoji-load.js';
 import { ChatInput } from './input.js';
 import { createPicker, type EmojiData } from './picker.js';
+import { PollCard, pollBadge } from './poll.js';
 import { animateGifs, loadPrefs, savePrefs, type ChatPrefs } from './prefs.js';
 import { ChatList, GIF_PROVIDER_NAMES, mentionCandidates, type MessageEntry } from './render.js';
 import { ChatSession, type ChatEntry, type ClientFrame, type ReplyEntry } from './session.js';
@@ -18,7 +19,7 @@ import { createSettingsPopover } from './settings-popover.js';
 
 export interface MountOptions {
   root: HTMLElement;
-  /** "Show chat" button outside the column (in the bar under the player). */
+  /** "Show chat" button outside the column (in the info row under the player). */
   showButton: HTMLButtonElement;
   /** The viewer's nickname (for their own messages before the roster has them). */
   nickname: string;
@@ -210,8 +211,21 @@ export function mountChat(opts: MountOptions): ChatController {
     },
   });
 
-  // The pinned bar sits between the header and the list, never over the list or the input.
-  root.append(head, list.pinned, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
+  // The poll card (docs/CHAT.md, "Polls and predictions"): under the pinned bar, above the list.
+  const pollCard = new PollCard({
+    vote: (id, o) => {
+      if (!session) return null;
+      const n = nonce();
+      return session.send({ t: 'chat.vote', n, id, o }) ? n : null;
+    },
+    you: () => session?.you ?? null,
+    // The same width as chat.css's phone rules: the chat under the player has room for a few lines.
+    compact: () => typeof matchMedia === 'function' && matchMedia('(max-width: 720px)').matches,
+  });
+
+  // The pinned bar sits between the header and the list, never over the list or the input; the
+  // poll card under it.
+  root.append(head, list.pinned, pollCard.root, body, input.form, picker.panel, gifPicker.panel, settingsPop.popover.panel);
 
   const applyPrefs = (): void => {
     root.classList.toggle('large', prefs.large);
@@ -228,6 +242,7 @@ export function mountChat(opts: MountOptions): ChatController {
   const applySettings = (s: ChatPublicSettings | null): void => {
     emotes = emoteTable(s?.builtinEmotes !== false);
     list.setPinAllowed(s?.enabled === true);
+    pollCard.setAllowed(s?.enabled === true);
     pickerButton.hidden = !s?.content.includes('emotes');
     if (pickerButton.hidden) picker.popover.close();
     applyGifs();
@@ -246,6 +261,7 @@ export function mountChat(opts: MountOptions): ChatController {
     if (!you || !s || s.colors !== 'choose') settingsPop.setColor(null);
     else settingsPop.setColor({ color: you.color, nick: session?.roster.get(you.a)?.n ?? opts.nickname, locked: you.colorLocked });
     input.update();
+    pollCard.update();
   };
 
   const chatSession: ChatSession = new ChatSession(
@@ -269,6 +285,9 @@ export function mountChat(opts: MountOptions): ChatController {
       },
       highlight: (s, on) => list.highlight(s, on),
       pin: (p) => list.setPin(p),
+      poll: (p) => pollCard.set(p),
+      tally: (id, c) => pollCard.tally(id, c),
+      voted: (n, id, o) => pollCard.voted(n, id, o),
       author: (a) => {
         list.recolor(a);
         if (a.a === chatSession.you?.a) applyYou(chatSession.you);
@@ -280,6 +299,8 @@ export function mountChat(opts: MountOptions): ChatController {
         input.acked(n);
       },
       reject: (n, code, params, retryMs) => {
+        // A refused vote is the poll card's (its own nonces); everything else is a message's.
+        if (pollCard.rejected(n, code, params)) return;
         // Without `n` the server refused the frame before reading it: it is the oldest send.
         const nonce = n ?? input.oldestPending();
         list.reject(nonce);
@@ -287,6 +308,7 @@ export function mountChat(opts: MountOptions): ChatController {
       },
       unsupported: () => {
         chatSession.settings = null;
+        pollCard.setAllowed(false);
         root.hidden = false;
         input.form.hidden = true;
         list.reset([]);
@@ -309,6 +331,7 @@ export function mountChat(opts: MountOptions): ChatController {
     settingsPop.popover.close();
     picker.popover.close();
     applyPrefs();
+    updateShowLabel();
     showButton.focus();
   });
   showButton.addEventListener('click', () => {
@@ -327,6 +350,7 @@ export function mountChat(opts: MountOptions): ChatController {
   let mentionsUnseen = 0;
   /** A new pin came while the chat was hidden: "Show chat" says so until the chat is shown. */
   let pinUnseen = false;
+  pollCard.onChange = () => updateShowLabel();
   list.onPin = (p, fresh) => {
     if (fresh && prefs.hidden) pinUnseen = true;
     if (!p) pinUnseen = false;
@@ -334,6 +358,15 @@ export function mountChat(opts: MountOptions): ChatController {
   };
   const updateShowLabel = (): void => {
     showButton.textContent = t('chat.viewer.show');
+    // A poll or prediction is open: "Show chat" says so while the chat is hidden.
+    const poll = prefs.hidden ? pollBadge(pollCard.current) : null;
+    if (poll) {
+      const badge = document.createElement('span');
+      badge.className = 'chat-unread';
+      badge.dataset.testid = 'chat-show-poll';
+      badge.textContent = poll;
+      showButton.append(' ', badge);
+    }
     if (prefs.hidden && pinUnseen) {
       const badge = document.createElement('span');
       badge.className = 'chat-unread';

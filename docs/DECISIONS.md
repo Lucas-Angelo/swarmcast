@@ -16,6 +16,7 @@ its area and add a row here in the same pull request.
 | The website is the only guide for streamers and viewers | one place to edit, nothing to keep in sync | [site/README.md](../site/README.md) |
 | Script mode removed in 0.5.1 (start and uninstall scripts, installer zips, per-platform packages, the Go tray helper): the desktop app is the only install | one install path to support, test and explain; the app updates itself (signed) and has its own tray and autostart; script mode doubled the release assets, the CI suites and the guide, and nobody used it | [DESKTOP.md](DESKTOP.md), [RELEASING.md §5](RELEASING.md#5-what-a-release-publishes) |
 | Forest & Cream palette, colours only through the brand tokens, no purple | calm and trustworthy, kept apart from other brands | [assets/brand/README.md](../assets/brand/README.md#palette-forest--cream-chosen), [site/DESIGN.md](../site/DESIGN.md) |
+| Watch page laid out like the big streaming sites: the video edge to edge and as tall as leaves the info row in view, the chat a column fixed on the right (`position: fixed`, not a grid row: a spanning grid item made the rows grow), playback and P2P in a Settings menu, the banner under the video | the video was small with empty margins and the settings always took room; the patterns viewers know, without any follow / subscribe | [apps/viewer/README.md](../apps/viewer/README.md), `apps/viewer/src/style.css` "Watch page" |
 
 ## Runtime and packaging
 
@@ -28,6 +29,7 @@ its area and add a row here in the same pull request.
 | ffmpeg is never shipped: each computer downloads the pinned build from its publisher and checks its SHA-256 | licence obligations of redistribution | [DEVELOPMENT.md](DEVELOPMENT.md#configuration) ("ffmpeg licensing"), [QUALITY.md](QUALITY.md) |
 | Third-party binaries pinned by SHA-256; npm `^` ranges with an exact lockfile; majors upgraded by hand | no surprise major release breaks a build | [DEVELOPMENT.md](DEVELOPMENT.md#version-policy) |
 | A run from the source checkout keeps its data in `<repo>/.cache/dev-data` | development never touches the real SwarmCast data of the computer | `apps/server/src/core/paths.ts`, [apps/server/README.md](../apps/server/README.md) |
+| The server makes `net.Socket#setTypeOfService` best effort at start (only the socket-option error is ignored), until the Node 24 line bundles undici with nodejs/undici#6076 | Node 24's `fetch` sets it on every new connection, and on macOS a connection the other side reset makes it throw outside the request: an uncaught exception that stopped the app; ignoring it makes that request fail on its own, as on Node 26 and on Windows | `apps/server/src/core/type-of-service.ts`, `apps/server/test/unit/type-of-service.test.ts` |
 
 ## Streaming and network
 
@@ -80,3 +82,5 @@ its area and add a row here in the same pull request.
 | Every version ships as at least two betas first; published releases are never changed | installed apps update by themselves | [RELEASING.md §4](RELEASING.md#4-ship-a-release) |
 | CI downloads slow third-party files from byte-identical copies in the `ci-deps` pre-release | some publishers are very slow from GitHub's runners | [RELEASING.md §8](RELEASING.md#8-mirrored-ci-dependencies-ci-deps) |
 | Media Foundation on the Windows Server runners is enabled with DISM, not `Install-WindowsFeature` | Server Manager scans every feature twice (2-3.5 minutes of CPU-bound servicing work, once more than 14); DISM takes 6-18 s | `.github/scripts/media-foundation.ps1` |
+| Our actions run their remote actions from a git fetch (`uses: ./.git/remote-actions/...`), pinned in a composite action that never runs | the runner downloads a remote action from codeload and does not try again after a 404, in "Set up job" and in a composite alike; Dependabot reads the pins | [workflows README](../.github/workflows/README.md#remote-actions) |
+| node-datachannel (a native WebRTC addon pulled in by bittorrent-tracker's client) is replaced by a local stand-in through an npm override | nothing loads it (the server runs `bittorrent-tracker/server`, viewers use the browser's WebRTC), and its install script downloads a binary from GitHub and fails when that times out | [workflows README](../.github/workflows/README.md#stalled-cache-restores), `apps/server/shims/node-datachannel` |

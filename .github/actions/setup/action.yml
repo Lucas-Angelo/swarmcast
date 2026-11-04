@@ -81,6 +81,23 @@ runs:
         echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
         echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
 
+    # The remote actions of this action (setup-node, actions/cache) run from copies
+    # fetched with git at their pins (.github/actions/remote-pins), with tries: the runner's own
+    # download of a remote action is not tried again after a 404 (.github/workflows/README.md,
+    # "Remote actions"). actions/cache here only for the npm cache's save on main; cache-restore
+    # fetches it by itself.
+    - name: Remote actions (git fetch, with tries)
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/setup-node
+    - name: Remote actions for the caches (git fetch, with tries; main)
+      id: cache-action
+      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/cache
+        optional: 'true'
+
     # One npm cache for the root workspace and the website (site/ has its own lockfile), only in
     # jobs that run `npm ci`: a job without it saved an empty ~/.npm first under the same key, so
     # the npm caches on main held 677 B to 75 KB and every `npm ci` went to the registry. This
@@ -92,7 +109,14 @@ runs:
     # a failed download (run 41283774499: the download stalled at 0 of 79.7 MB, then setup-node
     # took 109 s more to exit). Saved from main only (pull requests that changed a lockfile each
     # saved ~380 MB, five OSes x 76 MB, toward the 10 GB limit: README.md, "Caches").
-    - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+    # prebuild-install keeps the native binaries it downloads in `$npm_config_cache/_prebuilds`,
+    # and npm sets npm_config_cache to this path for install scripts, so they are in this cache,
+    # per OS and per CPU (macos-15-intel is x64, macos-latest arm64). That does not help a cold
+    # key: main restores only its exact key, so the first run after a change to one of the three
+    # files downloads them all again (run 41664754395). So no install script in our lockfiles
+    # downloads anything (scripts/ci/test/install-scripts.test.ts; node-datachannel's did and is
+    # replaced by a stand-in, apps/server/shims/node-datachannel).
+    - uses: ./.git/remote-actions/actions/setup-node
       with:
         node-version: 24.x
         package-manager-cache: false
@@ -106,12 +130,11 @@ runs:
         prefix="node-cache-$RUNNER_OS-$(node -p process.arch)-npm-"
         { echo "prefix=$prefix"; echo "key=$prefix$HASH"; echo "path=$(npm config get cache)"; } >> "$GITHUB_OUTPUT"
     # Saved from main only, at the end of the job when main has no entry for the key yet: this
-    # step only looks the key up (lookup-only), its post step saves. It is also the job's
-    # reference to actions/cache, which ./.github/actions/cache-restore needs downloaded.
+    # step only looks the key up (lookup-only), its post step saves.
     - name: Save the npm cache at the end of the job (main)
-      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main'
+      if: inputs.npm-ci == 'true' && github.ref == 'refs/heads/main' && steps.cache-action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: ./.git/remote-actions/actions/cache
       with:
         path: ${{ steps.npm-cache.outputs.path }}
         key: ${{ steps.npm-cache.outputs.key }}
@@ -233,8 +256,12 @@ runs:
         npm config set fetch-retries 4 --location=user
     # --prefer-offline: packages in the restored cache are not re-checked with the registry.
     # The audit runs in its own CI job. A network error that npm's own retries did not get past
-    # (a download that broke off mid-transfer is not retried by npm) runs `npm ci` once more: an
-    # infrastructure retry, like apt-retry.sh; any other failure fails the step.
+    # (a download that broke off mid-transfer is not retried by npm), or one of prebuild-install's
+    # in an install script (it downloads a native binary from GitHub, outside npm's retries),
+    # runs `npm ci` once more: an infrastructure retry, like apt-retry.sh; any other failure fails
+    # the step. .github/scripts/npm-network-error.mjs tells them apart (tested in scripts/ci/test).
+    # No install script in our lockfiles downloads anything today: node-datachannel, the one that
+    # did, is replaced by a stand-in (apps/server/shims/node-datachannel; run 41664754395).
     - name: npm ci
       if: inputs.npm-ci == 'true'
       shell: bash
@@ -242,8 +269,8 @@ runs:
         log="$RUNNER_TEMP/npm-ci.log"
         for try in 1 2; do
           if npm ci --prefer-offline --no-audit --no-fund 2>&1 | tee "$log"; then exit 0; fi
-          if [ "$try" = 1 ] && grep -qE '^npm error (code (ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|ERR_SOCKET_TIMEOUT|ENETUNREACH|EPIPE)$|network )' "$log"; then
-            echo "::warning::npm ci: network error after npm's own retries, running it once more"
+          if [ "$try" = 1 ] && line="$(node "$GITHUB_WORKSPACE/.github/scripts/npm-network-error.mjs" "$log")"; then
+            echo "::warning::npm ci: network error after npm's own retries, running it once more ($line)"
             continue
           fi
           exit 1

@@ -554,8 +554,19 @@ export async function stats(page: Page): Promise<ViewerStats> {
   return page.evaluate(() => (window as unknown as { __swarmcast: { stats: ViewerStats } }).__swarmcast.stats);
 }
 
+/**
+ * Opens the watch page's Settings menu (Playback, Help the stream (P2P), shortcuts, stats) under
+ * the video, unless it is open already.
+ */
+export async function openSettings(page: Page): Promise<void> {
+  const menu = page.getByTestId('settings-menu');
+  if (!(await menu.isVisible())) await page.getByTestId('settings-open').click();
+  await expect(menu).toBeVisible();
+}
+
 /** Turns P2P on (it is off by default, opt-in; `check` is a no-op when already checked). */
 export async function enableP2P(page: Page): Promise<void> {
+  await openSettings(page);
   await page.check('#p2p');
   await expect(page.locator('#p2p')).toBeChecked();
 }
@@ -760,6 +771,31 @@ export class ScriptedViewer {
     // `t` first: the server's cheap pre-parse check expects it.
     this.ws.send(JSON.stringify({ t: 'chat.send', n, text, ...extra }));
     return n;
+  }
+
+  /** Votes for option `o` of poll `id` (docs/CHAT.md, "Polls and predictions"); returns its nonce. */
+  vote(id: string, o: number): number {
+    const n = ++this.nonce;
+    this.ws.send(JSON.stringify({ t: 'chat.vote', n, id, o }));
+    return n;
+  }
+
+  /** The server's answer to a vote: the option it counted, or the reject code. */
+  async voteAnswer(n: number): Promise<{ o?: number; code?: string }> {
+    let found: { o?: number; code?: string } | undefined;
+    await expect
+      .poll(
+        () => {
+          for (const m of this.messages) {
+            if (m.t === 'chat.voted' && m.n === n) found = { o: m.o };
+            if (m.t === 'chat.reject' && m.n === n) found = { code: m.code };
+          }
+          return found !== undefined;
+        },
+        { message: `answer to vote ${n}; last messages: ${JSON.stringify(this.messages.slice(-6))}` },
+      )
+      .toBe(true);
+    return found!;
   }
 
   /** This viewer's author key in the chat (from its hello, or a later `chat.you`). */

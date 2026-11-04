@@ -17,7 +17,7 @@ import {
   addSweepPath, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installServer, isLoopback, join, joinAndPlay,
   killUnder, launchBrowser, listening, must, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, probe, processesUnder,
   pushStream, quitAndVerify, record, renderedTwice, uploadCapCheck, repoRoot, section, serverExe, socketsOf, startApp, stats, ui, until,
-  waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners,
+  waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners, setP2P,
 } from './lib.mjs';
 
 const V = opt('version', pkgVersion());
@@ -110,8 +110,8 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   await waitPlaylistForLateJoiners(early.page);
   const e = await joinAndPlay(edge, s0.liveLink, 'edge');
   check('viewer plays in Microsoft Edge', true, edge.version());
-  await early.page.check('#p2p');
-  await e.page.check('#p2p');
+  await setP2P(early.page, true);
+  await setP2P(e.page, true);
   const p2pEdge = await until(async () => {
     const se = await stats(e.page);
     return se.p2pDownBytes + se.p2pUpBytes > 0 ? se : null;
@@ -132,7 +132,7 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
     record('viewer plays in Firefox', 'fail', f.message);
   } else {
     check('viewer plays in Firefox', true, firefox.version());
-    await f.page.check('#p2p');
+    await setP2P(f.page, true);
     const p2pFf = await until(async () => {
       const sf = await stats(f.page);
       return sf.p2pDownBytes + sf.p2pUpBytes > 0 ? sf : null;

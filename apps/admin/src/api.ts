@@ -6,6 +6,7 @@ import type {
   AdminSocketMessage,
   AdminState,
   ApiErrorBody,
+  ChatPollCreate,
   ChatProtect,
   ChatPublicSettings,
   ChatSettings,
@@ -171,6 +172,22 @@ export const chatApi = {
   },
   unpin(): Promise<unknown> {
     return post('/api/chat/unpin');
+  },
+  /** Start a poll or a prediction (docs/CHAT.md, "Polls and predictions"). */
+  startPoll(body: ChatPollCreate): Promise<{ ok: true; id: string }> {
+    return post('/api/chat/poll', body);
+  },
+  /** End the voting now. */
+  endPoll(): Promise<{ ok: true; id: string }> {
+    return post('/api/chat/poll/end');
+  },
+  /** The right answer of a prediction whose guesses ended (option index, from 0). */
+  resolvePoll(option: number): Promise<{ ok: true; id: string }> {
+    return post('/api/chat/poll/resolve', { option });
+  },
+  /** Remove the poll or prediction (any state). */
+  cancelPoll(): Promise<{ ok: true; id: string }> {
+    return post('/api/chat/poll/cancel');
   },
 };
 // ---- end ----

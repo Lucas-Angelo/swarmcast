@@ -134,7 +134,57 @@ export interface ChatPinItem {
   p: ChatPin | null;
 }
 
-export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem | ChatHighlightItem | ChatPinItem;
+export type ChatPollKind = 'poll' | 'prediction';
+/**
+ * open: voting. closed: a poll's voting ended, its results show. locked: a prediction's guesses
+ * ended, waiting for the streamer's answer. resolved: a prediction with its right answer.
+ * (A canceled or expired poll is no poll: `{k: 'poll', p: null}`.)
+ */
+export type ChatPollState = 'open' | 'closed' | 'locked' | 'resolved';
+
+/** A poll or a prediction as viewers see it (docs/CHAT.md, "Polls and predictions"). */
+export interface ChatPollPublic {
+  /** Per live ("p1", "p2"…): a vote names it, so a vote for a poll that is gone is refused. */
+  id: string;
+  kind: ChatPollKind;
+  /** Question and options, canonical (the chat's Unicode pipeline). */
+  q: string;
+  o: string[];
+  st: ChatPollState;
+  /** Votes per option (shown live while voting). */
+  c: number[];
+  /** While open: milliseconds of voting left when this was sent (relative, so clock skew does not matter). */
+  endsIn?: number;
+  /** A resolved prediction: the right option (index into `o`). */
+  win?: number;
+  /** Only people who were already watching when it opened may vote. */
+  newOnly?: true;
+  /** In a snapshot or a `chat.voted`: the option this device voted for. */
+  mine?: number;
+  /** Panel only: devices whose vote was refused because their network already gave CHAT_POLL_VOTES_PER_NET votes. */
+  rn?: number;
+}
+
+/** The poll changed (opened, ended, answered) or is gone (`null`). A seq-less state item (key `poll`). */
+export interface ChatPollItem {
+  k: 'poll';
+  p: ChatPollPublic | null;
+}
+
+/**
+ * The vote counts of poll `id` now: an ephemeral latest-wins item (at most one per
+ * CHAT_POLL_TALLY_MS, never in the ring, a snapshot or a resume answer; a slow socket that misses
+ * one gets the next). A count for another poll id is ignored.
+ */
+export interface ChatPollTallyItem {
+  k: 'pt';
+  id: string;
+  c: number[];
+  /** Panel only: as ChatPollPublic.rn. */
+  rn?: number;
+}
+
+export type ChatItem = ChatMessageItem | ChatRosterItem | ChatDeleteItem | ChatClearItem | ChatSystemItem | ChatSkipItem | ChatHighlightItem | ChatPinItem | ChatPollItem | ChatPollTallyItem;
 
 /** Ring items (they carry a `seq`). */
 export type ChatRingItem = ChatMessageItem | ChatSystemItem;
@@ -201,6 +251,8 @@ export interface ChatSnapshot {
   delta?: true;
   /** The pinned message, in full snapshots and in deltas alike (absent: nothing is pinned). */
   pin?: ChatPin;
+  /** The poll or prediction on screen, with this device's vote (`mine`), in full snapshots and deltas alike (absent: none). */
+  poll?: ChatPollPublic;
 }
 
 /** Reject codes (each is a message key in en.ts / pt-BR.ts). */
@@ -224,6 +276,10 @@ export const CHAT_REJECT_CODES = [
   'text.combining',
   'text.tooManyEmoji',
   'text.script',
+  'chat.err.pollClosed',
+  'chat.err.voted',
+  'chat.err.pollLate',
+  'chat.err.pollNet',
 ] as const satisfies readonly MessageKey[];
 export type ChatRejectCode = (typeof CHAT_REJECT_CODES)[number];
 
@@ -233,7 +289,9 @@ export type ChatServerMessage =
   | { t: 'chat.reject'; n?: number; code: ChatRejectCode; params?: MessageParams; retryMs?: number }
   | { t: 'chat.settings'; settings: ChatPublicSettings }
   | { t: 'chat.you'; you: ChatYou }
-  | ({ t: 'chat.reset' } & ChatSnapshot);
+  | ({ t: 'chat.reset' } & ChatSnapshot)
+  /** A vote was counted: to every socket of every session of the voting device (other tabs show it at once), with the counts now. */
+  | { t: 'chat.voted'; n?: number; id: string; o: number; c: number[] };
 
 /**
  * Viewer → server chat messages as the viewer builds them: `chat.send` carries `text` or `gif`,
@@ -243,7 +301,8 @@ export type ChatClientMessage =
   | { t: 'chat.send'; n: number; text: string; re?: number; mn?: string[] }
   | { t: 'chat.send'; n: number; gif: GifRef; re?: number }
   | { t: 'chat.color'; color: string }
-  | { t: 'chat.resume'; after: number };
+  | { t: 'chat.resume'; after: number }
+  | { t: 'chat.vote'; n: number; id: string; o: number };
 
 /** Compile-time check: every ChatClientMessage is an input chatClientSchemas accepts by shape. */
 type _ConformsToSchemas<T extends z.input<(typeof chatClientSchemas)[number]>> = T;
@@ -303,4 +362,6 @@ export interface AdminChatState {
   counters: ChatCounters;
   /** The pinned message (absent: nothing is pinned). */
   pin?: ChatPin;
+  /** The poll or prediction on screen, with `rn` (absent: none). */
+  poll?: ChatPollPublic;
 }

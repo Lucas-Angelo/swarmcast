@@ -21,29 +21,40 @@ runs:
         has() { [ -d "$1" ] && [ -n "$(find "$1" -type f -print -quit)" ] && echo true || echo false; }
         echo "downloads=$(has "$RUNNER_TEMP/sc-cache/downloads")" >> "$GITHUB_OUTPUT"
         echo "pkg=$(has "$RUNNER_TEMP/sc-cache/pkg")" >> "$GITHUB_OUTPUT"
+    # actions/cache/save runs from a copy fetched with git at its pin (.github/actions/remote-pins;
+    # the job's setup or a cache restore fetched it already, as a rule): the runner's own download
+    # of a remote action is not tried again after a 404 (.github/workflows/README.md, "Remote
+    # actions"). One that cannot be fetched skips the saves, with a warning.
+    - name: actions/cache (git fetch, with tries)
+      id: cache-action
+      if: github.ref == 'refs/heads/main' || github.event_name == 'pull_request'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/cache
+        optional: 'true'
     # Also from pull requests: some publishers are very slow from GitHub's runners (the macOS
     # ffmpeg at 10-30 kB/s), so a pull request pays one slow download and its later runs restore
     # it. Safe to take from a pull request: the entries are the pinned files themselves, and
     # fetch-binaries.mjs checks sha256(cached file) against scripts/build/versions.json before it
     # uses one (a wrong file is ignored, downloaded again and replaced). Small: tens of MB per runner OS.
     - name: Save the download cache
-      if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && env.SC_DL_CACHE_KEY != '' && env.SC_DL_CACHE_HIT != 'true' && steps.filled.outputs.downloads == 'true'
+      if: (github.ref == 'refs/heads/main' || github.event_name == 'pull_request') && env.SC_DL_CACHE_KEY != '' && env.SC_DL_CACHE_HIT != 'true' && steps.filled.outputs.downloads == 'true' && steps.cache-action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: ./.git/remote-actions/actions/cache/save
       with:
         path: ${{ runner.temp }}/sc-cache/downloads
         key: ${{ env.SC_DL_CACHE_KEY }}
     - name: Save the pkg cache
-      if: github.ref == 'refs/heads/main' && env.SC_PKG_CACHE_KEY != '' && env.SC_PKG_CACHE_HIT != 'true' && steps.filled.outputs.pkg == 'true'
+      if: github.ref == 'refs/heads/main' && env.SC_PKG_CACHE_KEY != '' && env.SC_PKG_CACHE_HIT != 'true' && steps.filled.outputs.pkg == 'true' && steps.cache-action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: ./.git/remote-actions/actions/cache/save
       with:
         path: ${{ runner.temp }}/sc-cache/pkg
         key: ${{ env.SC_PKG_CACHE_KEY }}
     - name: Save the .deb cache
-      if: github.ref == 'refs/heads/main' && env.SC_APT_DEBS_KEY != '' && env.SC_APT_DEBS_HIT != 'true'
+      if: github.ref == 'refs/heads/main' && env.SC_APT_DEBS_KEY != '' && env.SC_APT_DEBS_HIT != 'true' && steps.cache-action.outputs.fetched == 'true'
       continue-on-error: true
-      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      uses: ./.git/remote-actions/actions/cache/save
       with:
         path: ${{ runner.temp }}/apt-debs/*.deb
         key: ${{ env.SC_APT_DEBS_KEY }}

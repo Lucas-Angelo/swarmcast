@@ -274,6 +274,10 @@ button.tip-btn:hover {
   -webkit-mask-image: url('./icons/share.svg');
   mask-image: url('./icons/share.svg');
 }
+.sc-ico-settings::before {
+  -webkit-mask-image: url('./icons/settings.svg');
+  mask-image: url('./icons/settings.svg');
+}
 
 @media (prefers-reduced-motion: reduce) {
   *,

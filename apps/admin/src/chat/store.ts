@@ -1,4 +1,4 @@
-import type { AdminChatMessage, AdminChatState, ChatAuthor, ChatCounters, ChatItem, ChatPin, ChatRingItem, ChatSessionInfo } from '@swarmcast/shared';
+import { CHAT_POLL_OPTIONS_MAX, CHAT_POLL_OPTIONS_MIN, type AdminChatMessage, type AdminChatState, type ChatAuthor, type ChatCounters, type ChatItem, type ChatPin, type ChatPollPublic, type ChatRingItem, type ChatSessionInfo } from '@swarmcast/shared';
 
 /** Messages the panel keeps (the server's ring holds 200; the panel also keeps lines skipped for slow viewers). */
 export const PANEL_CHAT_KEEP = 500;
@@ -17,6 +17,9 @@ export interface ChatView {
   /** The pinned message (null: none) and, for a timed pin, when it comes down (this computer's clock, ms). */
   pin: ChatPin | null;
   pinUntil: number | null;
+  /** The poll or prediction (null: none), with `rn`, and while open when voting ends (this computer's clock, ms). */
+  poll: ChatPollPublic | null;
+  pollUntil: number | null;
   /** Highest seq seen. */
   lastSeq: number;
   /** Bumped on every change (cheap equality for UI hooks). */
@@ -38,6 +41,8 @@ export class ChatStore {
   private counters: ChatCounters | null = null;
   private pin: ChatPin | null = null;
   private pinUntil: number | null = null;
+  private poll: ChatPollPublic | null = null;
+  private pollUntil: number | null = null;
   private lastSeq = 0;
   private rev = 0;
   private listeners = new Set<Listener>();
@@ -63,6 +68,7 @@ export class ChatStore {
       this.unknown.clear();
       this.lastSeq = 0;
       this.setPin(null);
+      this.setPoll(null);
     }
     for (const [a, sid] of Object.entries(msg.sessions ?? {})) {
       if (typeof sid === 'string') this.sessions.set(a, sid);
@@ -82,6 +88,7 @@ export class ChatStore {
     this.applyItems(s.items);
     this.lastSeq = Math.max(this.lastSeq, s.lastSeq);
     this.setPin(s.pin ?? null);
+    this.setPoll(s.poll ?? null);
     this.fillSessions(s.sessions);
     this.counters = s.counters;
     this.changed();
@@ -154,6 +161,15 @@ export class ChatStore {
         case 'pin':
           this.setPin(isPin(it.p) ? it.p : null);
           break;
+        case 'poll':
+          this.setPoll(it.p);
+          break;
+        case 'pt': {
+          const p = this.poll;
+          if (!p || it.id !== p.id || !isCounts(it.c, p.o.length)) break;
+          this.poll = { ...p, c: it.c, ...(typeof it.rn === 'number' && it.rn >= 0 ? { rn: it.rn } : {}) };
+          break;
+        }
         case 'skip':
           // Viewers' gaps only: the panel gets every message.
           break;
@@ -163,6 +179,12 @@ export class ChatStore {
       }
     }
     if (this.items.length > this.keep) this.items = this.items.slice(-this.keep);
+  }
+
+  /** A poll from the server; anything malformed counts as none. */
+  private setPoll(p: unknown): void {
+    this.poll = isPoll(p) ? p : null;
+    this.pollUntil = this.poll?.st === 'open' && typeof this.poll.endsIn === 'number' ? this.now() + this.poll.endsIn : null;
   }
 
   private setPin(p: ChatPin | null): void {
@@ -186,6 +208,8 @@ export class ChatStore {
       counters: this.counters,
       pin: this.pin,
       pinUntil: this.pinUntil,
+      poll: this.poll,
+      pollUntil: this.pollUntil,
       lastSeq: this.lastSeq,
       rev: this.rev,
     };
@@ -218,6 +242,27 @@ function isPin(p: unknown): p is ChatPin {
   if (p === null || typeof p !== 'object') return false;
   const v = p as Partial<ChatPin>;
   return Number.isSafeInteger(v.s) && typeof v.a === 'string' && typeof v.at === 'number' && (typeof v.x === 'string' || (typeof v.g === 'object' && v.g !== null));
+}
+
+function isCounts(c: unknown, n: number): c is number[] {
+  return Array.isArray(c) && c.length === n && c.every((x) => Number.isSafeInteger(x) && x >= 0);
+}
+
+/** A poll as the server sends it: id, kind, question, 2–5 options, a known state and counts for each option. */
+function isPoll(p: unknown): p is ChatPollPublic {
+  if (p === null || typeof p !== 'object') return false;
+  const v = p as Partial<ChatPollPublic>;
+  return (
+    typeof v.id === 'string' &&
+    (v.kind === 'poll' || v.kind === 'prediction') &&
+    typeof v.q === 'string' &&
+    (v.st === 'open' || v.st === 'closed' || v.st === 'locked' || v.st === 'resolved') &&
+    Array.isArray(v.o) &&
+    v.o.length >= CHAT_POLL_OPTIONS_MIN &&
+    v.o.length <= CHAT_POLL_OPTIONS_MAX &&
+    v.o.every((x) => typeof x === 'string') &&
+    isCounts(v.c, v.o.length)
+  );
 }
 
 /** The panel's one store (the /ws handler in api.ts feeds it from the moment the socket opens). */

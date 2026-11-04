@@ -11,7 +11,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import {
   addSweepPath, appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
-  orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, section, startApp, until, waitLiveLink, waitPhase,
+  orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, section, setP2P, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 
 const home = 'C:\\SC quality\\SwarmCast';
@@ -118,7 +118,7 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
   check('the converter runs from the data folder', ff.length >= 1, describeProcs(ff));
 
   const v = await joinAndPlay(browser, s0.liveLink, 'ladder-viewer');
-  await v.page.uncheck('#p2p').catch(() => {});
+  await setP2P(v.page, false).catch(() => {});
   const master = await v.page.evaluate(async () => (await fetch('/hls/index.m3u8', { credentials: 'same-origin' })).text());
   const infs = master.split('\n').filter((l) => l.startsWith('#EXT-X-STREAM-INF'));
   check('multivariant playlist with >= 2 levels', infs.length >= 2, infs.map((l) => /RESOLUTION=(\S+?),/.exec(l)?.[1]).join(', '));

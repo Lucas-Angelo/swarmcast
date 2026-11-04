@@ -10,6 +10,7 @@ import { startDesktop } from './desktop/desktop.js';
 import { runDesktopFirstRun } from './desktop/first-run.js';
 import { fatalCodeOf } from './desktop/protocol.js';
 import { probeIntl } from './chat/probe.js';
+import { guardTypeOfService } from './core/type-of-service.js';
 
 function flag(name: string): boolean {
   return process.argv.includes(`--${name}`);
@@ -25,6 +26,8 @@ function smokeOrTool(): boolean {
 }
 
 async function main(): Promise<void> {
+  // Before any fetch(): a connection reset must fail one request, not stop the app (macOS, Node 24).
+  guardTypeOfService();
   if (flag('reaper')) {
     runReaper(Number(value('reaper')));
     return;

@@ -128,8 +128,15 @@ async function serveViewer(page: Page, api: ApiRoutes): Promise<void> {
   });
 }
 
-/** Watch page options: the page's language and extra query string (starting with "&"). */
-type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string };
+/**
+ * Watch page options: the page's language, extra query string (starting with "&"), and the
+ * streamer's page (`brand`: the /api/brand answer; the theme is empty and every /brand/<hash>.webp
+ * is a small real WebP). Without `brand`, /api/brand is a 404: the stock SwarmCast page.
+ */
+type WatchOptions = { lang?: 'en' | 'pt-BR'; query?: string; brand?: unknown };
+
+/** A small real WebP for the streamer's pictures. */
+const brandPicture = (): Buffer => fs.readFileSync(path.resolve(DIST, '..', '..', '..', 'assets', 'brand', 'emotes', 'bee@2x.webp'));
 
 /** Opens /watch against `hub`; fails on any page error during load. Returns the page errors seen later. */
 export async function openWatch(page: Page, hub: MockHub, o: WatchOptions = {}): Promise<string[]> {
@@ -153,6 +160,11 @@ export async function loadWatch(page: Page, hub: MockHub, o: WatchOptions = {}):
       });
     }
     if (url.pathname === '/api/session/refresh') return route.fulfill({ status: 204 });
+    if (o.brand !== undefined) {
+      if (url.pathname === '/api/brand') return route.fulfill({ json: o.brand });
+      if (url.pathname === '/brand/theme.css') return route.fulfill({ body: '/* */', contentType: 'text/css' });
+      if (/^\/brand\/[0-9a-f]{64}\.webp$/.test(url.pathname)) return route.fulfill({ body: brandPicture(), contentType: 'image/webp' });
+    }
     return false;
   });
   await page.routeWebSocket(`ws://chat.test/control`, (ws) => {
@@ -182,11 +194,14 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
  * Opens /join (English) with /api/brand answered by `brand` once it settles (a test holds it to
  * see the page before and after its branding), the theme empty, the streamer's pictures 1×1, no
  * browser check and its CSS animations paused (PAUSED_ANIMATIONS). `withoutScripts`: the page's
- * scripts fail to load (and the page reloads itself, its startup guard). Fails on any page error
- * during load. `joins` collects the POST /api/join bodies the page sends; each one is answered
- * with a redirect to /watch. `loads()` counts the join pages the browser has shown (commits).
+ * scripts fail to load (and the page reloads itself, its startup guard). `script`: the page's
+ * script (its one entry, the join form and its branding) arrives once this settles, as on a slow
+ * phone that runs it seconds after the page's styles; the navigation then settles on commit, since
+ * the page cannot finish loading before. Fails on any page error during load. `joins` collects
+ * the POST /api/join bodies the page sends; each one is answered with a redirect to /watch.
+ * `loads()` counts the join pages the browser has shown (commits).
  */
-export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean }): Promise<{ joins: unknown[]; loads: () => number }> {
+export async function openJoin(page: Page, o: { brand: Promise<unknown>; withoutScripts?: boolean; script?: Promise<void> }): Promise<{ joins: unknown[]; loads: () => number }> {
   const joins: unknown[] = [];
   let loads = 0;
   page.on('framenavigated', (frame) => {
@@ -196,6 +211,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
     if (url.pathname === PAUSED_ANIMATIONS) return route.fulfill({ body: '*, *::before, *::after { animation-play-state: paused !important; }', contentType: 'text/css' });
     if (url.pathname === '/join') return route.fulfill({ body: joinHtml().replace('</head>', `<link rel="stylesheet" href="${PAUSED_ANIMATIONS}" /></head>`), contentType: 'text/html', headers: { 'content-security-policy': viewerCsp('chat.test', false) } });
     if (o.withoutScripts && url.pathname.endsWith('.js')) return route.fulfill({ status: 404, body: 'not found' });
+    if (o.script && /^\/assets\/join-[\w-]+\.js$/.test(url.pathname)) return o.script.then(() => route.fulfill({ path: path.join(DIST, url.pathname), contentType: 'text/javascript' }));
     if (url.pathname === '/api/brand') return o.brand.then((json) => route.fulfill({ json }));
     if (url.pathname === '/api/join/challenge') return route.fulfill({ json: { required: false } });
     if (url.pathname === '/api/join') {
@@ -209,7 +225,7 @@ export async function openJoin(page: Page, o: { brand: Promise<unknown>; without
   await firstVisit(page);
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(`${ORIGIN}/join?lang=en`);
+  await page.goto(`${ORIGIN}/join?lang=en`, o.script ? { waitUntil: 'commit' } : {});
   expect(errors).toEqual([]);
   return { joins, loads: () => loads };
 }

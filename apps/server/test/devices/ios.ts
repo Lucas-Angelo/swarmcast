@@ -10,7 +10,7 @@
 // simulator's OS version stays "(unknown)" and no session host matches (log: "Created
 // Simulator target ... productVersion = (unknown)", then "Could not find any session hosts").
 // Classic iOS 17 disk images still work there. docs/TESTING.md "Real devices" has the details.
-import { execFile, spawn } from 'node:child_process';
+import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
@@ -42,6 +42,32 @@ const AUTOMATION_KEYS = [
   ['com.apple.mobilesafari', 'WebKitRemoteAutomationEnabled'],
 ] as const;
 
+/**
+ * Launchd jobs of the simulator a page in Safari never needs, turned off (unusedJobsOff). With them
+ * the 3-core CI Mac stayed saturated through the whole run (load average 300 to 550, 3 % idle,
+ * Devices run 41544831758), where a tap reached the element and no click followed (runs
+ * 41184587941, 41190536745, 41518563555). apsd, the push daemon, retried the development push
+ * server in a loop and logged 1,400 to 2,300 lines a second; each one went through the simulator's
+ * diagnosticd and on to the Mac's (their .sim_diagnosticd_socket relay), and apsd and the two
+ * diagnosticd took 78 % of the Mac's 300 %. identityservicesd and StatusKitAgent are apsd's
+ * clients; the rest are the Health, Fitness, Reminders, Siri and photo-analysis daemons and
+ * chronod, which keeps relaunching the home screen's widget extensions (100 to 360 MB each).
+ * scripts/test/devices/setup.sh turns the same jobs off.
+ */
+const UNUSED_JOBS = [
+  'com.apple.apsd',
+  'com.apple.identityservicesd',
+  'com.apple.StatusKitAgent',
+  'com.apple.remindd',
+  'com.apple.healthd',
+  'com.apple.fitcore',
+  'com.apple.fitnessintelligenced',
+  'com.apple.finhealthd',
+  'com.apple.assistantd',
+  'com.apple.mediaanalysisd',
+  'com.apple.chronod',
+] as const;
+
 async function simctl(args: readonly string[]): Promise<string> {
   return (await run('xcrun', ['simctl', ...args], { maxBuffer: 64 * 1024 * 1024 })).stdout.trim();
 }
@@ -51,6 +77,31 @@ interface SimDevice {
   name: string;
   state: string;
   isAvailable: boolean;
+}
+
+/** Which of UNUSED_JOBS run now (launchctl list: a PID, then the label). */
+async function unusedJobsRunning(udid: string): Promise<string[]> {
+  const list = (await simctl(['spawn', udid, 'launchctl', 'list'])).split('\n');
+  return UNUSED_JOBS.filter((job) => list.some((line) => /^\d+\t/.test(line) && line.endsWith(`\t${job}`)));
+}
+
+/**
+ * Turns UNUSED_JOBS off in the booted simulator: `launchctl disable` (kept in the simulator's
+ * data, so later boots start without them) and `bootout` for those running. They live in the
+ * simulator's user domain, which `simctl boot --disabledJob` does not reach: booted with it, all
+ * of them ran (Devices run 41546937424); disabled, they stayed off after a reboot (run 41550242580).
+ * Returns what was running.
+ */
+async function unusedJobsOff(udid: string): Promise<string[]> {
+  const running = await unusedJobsRunning(udid);
+  for (const job of UNUSED_JOBS) await simctl(['spawn', udid, 'launchctl', 'disable', `user/foreground/${job}`]);
+  for (const job of running) {
+    // Exit status 3 (No such process): the job ended by itself since the list.
+    await simctl(['spawn', udid, 'launchctl', 'bootout', `user/foreground/${job}`]).catch((e: Error & { code?: unknown }) => {
+      if (e.code !== 3) throw e;
+    });
+  }
+  return running;
 }
 
 async function findSimulator(): Promise<SimDevice> {
@@ -142,7 +193,57 @@ async function hideSimulatorApp(): Promise<void> {
   await run('osascript', ['-e', 'tell application "System Events" to set visible of process "Simulator" to false']);
 }
 
-/** How this Xcode turns a simulator: `xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
+/** The events a tap is recorded by (IosPhone.tap). */
+const TAP_TYPES = ['touchstart', 'touchend', 'click'] as const;
+
+/**
+ * One event the tap delivered: its type, the element it reached when that was not the tapped one,
+ * its time stamp and when the page handled it (epoch ms).
+ */
+interface TapEvent {
+  type: (typeof TAP_TYPES)[number] | '?';
+  elsewhere?: string;
+  stamp: number;
+  handled: number;
+}
+
+/**
+ * The page's record (`type[>element]@stamp:handled ...`). It comes from the page, so the type is
+ * taken from TAP_TYPES and the times are numbers; only the name of an element hit elsewhere is the
+ * page's own text, and describeTap leaves it out of what is written to taps.log.
+ */
+function parseTapEvents(record: string): TapEvent[] {
+  return record
+    .split(' ')
+    .filter(Boolean)
+    .map((entry) => {
+      const [what = '', times = ''] = entry.split('@');
+      const [raw = '', elsewhere] = what.split('>');
+      const [stamp = NaN, handled = NaN] = times.split(':').map(Number);
+      return { type: TAP_TYPES.find((t) => t === raw) ?? '?', ...(elsewhere === undefined ? {} : { elsewhere }), stamp, handled };
+    });
+}
+
+/**
+ * What a tap delivered and when, for the log and a failure message: the events in order, the
+ * finger's time down (touchstart to touchend, by the events' time stamps and by when the page
+ * handled them) and the click's delay after touchend. "click" appears only when one arrived on the
+ * element; one elsewhere is "click>element", or "click>elsewhere" without `names` (for the file).
+ */
+export function describeTap(events: readonly TapEvent[], started: number, performed: number, names = true): string {
+  const own = (type: string) => events.find((e) => e.type === type && e.elsewhere === undefined);
+  const down = own('touchstart');
+  const up = own('touchend');
+  const click = own('click');
+  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : 'elsewhere'}`);
+  const parts = [`events: ${events.map(label).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
+  if (down) parts.push(`touchstart ${down.handled - started} ms after the actions began`);
+  if (down && up) parts.push(`finger down ${up.stamp - down.stamp} ms by time stamps, ${up.handled - down.handled} ms as handled`);
+  if (up && click) parts.push(`then the click ${click.handled - up.handled} ms after touchend`);
+  return parts.join('; ');
+}
+
+/** How this Xcode turns a simulator:`xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
 type Rotator = 'devicectl' | 'simulator-app';
 
 export class IosDevice {
@@ -159,11 +260,17 @@ export class IosDevice {
     private readonly logDir: string,
     /** The connection that keeps the simulator's webinspectord running (webInspectorReady). */
     private readonly inspector: net.Socket | null,
+    /** `top` writing the Mac's load (simulator processes included) to host-load.log every 2 s. */
+    private readonly sampler: ChildProcess,
   ) {}
 
   static async attach(o: { logDir: string }): Promise<IosDevice> {
     // Each step with its time, so a slow or failed first session can be laid against them.
     const note = (step: string) => fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${step}\n`);
+    // The Mac's load through the run (CPU, memory, swap, the busiest processes), to lay a slow tap against.
+    const loadLog = fs.openSync(path.join(o.logDir, 'host-load.log'), 'a');
+    const sampler = spawn('top', ['-l', '0', '-s', '2', '-o', 'cpu', '-n', '15', '-stats', 'pid,command,cpu,mem,state,threads'], { stdio: ['ignore', loadLog, loadLog] });
+    fs.closeSync(loadLog);
     const sim = await findSimulator();
     note(`simulator ${sim.udid} (${sim.state})`);
     let booted = false;
@@ -187,6 +294,9 @@ export class IosDevice {
       booted = true;
       note(`automation settings written (${missing.join(', ')}), rebooted`);
     }
+    const stopped = await unusedJobsOff(sim.udid);
+    const left = await unusedJobsRunning(sim.udid);
+    note(`unused jobs off (stopped: ${stopped.join(', ') || 'none'}; running still: ${left.join(', ') || 'none'})`);
     // Safari running before the first session gives the Web Inspector an application to list
     // (without it a new simulator answered safaridriver with a timeout: the same source).
     await simctl(['launch', sim.udid, SAFARI]);
@@ -209,7 +319,7 @@ export class IosDevice {
     const base = new URL(`http://127.0.0.1:${port}`);
     await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
     note('safaridriver ready');
-    return new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector);
+    return new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
   }
 
   /** A WebDriver session (Safari's automation sessions start with no cookies or storage of an earlier one). */
@@ -230,12 +340,22 @@ export class IosDevice {
     return this.logs(from, 'session', 'process CONTAINS[c] "webinspector" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "webdriver" OR subsystem CONTAINS[c] "webinspector" OR subsystem CONTAINS[c] "webkit"');
   }
 
+  /** Appends one tap's timing (IosPhone.tap) to taps.log in the log folder. */
+  noteTap(line: string): void {
+    fs.appendFileSync(path.join(this.logDir, 'taps.log'), `${new Date().toISOString()} ${line}\n`);
+  }
+
+  /** What WebKit and UIKit logged in the simulator about a tap that began at `from`; returns where. */
+  tapLogs(from: Date): Promise<string> {
+    return this.logs(from, 'tap', 'subsystem == "com.apple.WebKit" OR subsystem == "com.apple.UIKit" OR process == "MobileSafari"', 5_000);
+  }
+
   /**
-   * The simulator's and the Mac's unified log since a minute before `from`, filtered by
+   * The simulator's and the Mac's unified log since `leadMs` (a minute) before `from`, filtered by
    * `predicate`, in `<name>-<time>.log` in the log folder; returns where (for a failure message).
    */
-  private async logs(from: Date, name: string, predicate: string): Promise<string> {
-    const start = new Date(from.getTime() - 60_000)
+  private async logs(from: Date, name: string, predicate: string, leadMs = 60_000): Promise<string> {
+    const start = new Date(from.getTime() - leadMs)
       .toISOString()
       .replace('T', ' ')
       .replace(/\.\d+Z$/, '+0000');
@@ -299,6 +419,7 @@ export class IosDevice {
     await this.driver.stop({ graceMs: 5_000 });
     this.inspector?.destroy();
     if (this.booted) await simctl(['shutdown', this.udid]);
+    this.sampler.kill();
   }
 }
 
@@ -351,26 +472,43 @@ export class IosPhone implements Phone {
         message: `${selector} can be touched (enabled, partly in sight, not covered)`,
       })
       .toBe(true);
-    // What the tap delivers to the element, kept in sessionStorage: a tap on Watch may navigate.
+    // What the tap delivers to the element, kept in sessionStorage (a tap on Watch may navigate):
+    // each event's type, its time stamp (the platform event's) and when the page handled it, as
+    // epoch milliseconds, so that a tap that ends in no click says how long the finger was down.
+    // An event on another element is kept as `type>element`, so a tap that missed says what it hit.
+    // Passive listeners: a touchend listener that may call preventDefault makes the browser wait
+    // for the page before it decides the tap (phone.ts recordInput).
     await this.session.execute(
       `const el = arguments[0];
        window.__tapStop?.();
        sessionStorage.setItem('__tap', '');
-       const note = (e) => { if (e.isTrusted && (e.target === el || el.contains(e.target))) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + ' '); };
+       const name = (t) => t instanceof Element ? (t.id || t.getAttribute('data-testid') || t.tagName.toLowerCase()).replace(/[\\s@>:]/g, '_') : '?';
+       const note = (e) => { if (e.isTrusted) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + (e.target === el || el.contains(e.target) ? '' : '>' + name(e.target)) + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + Math.round(performance.timeOrigin + performance.now()) + ' '); };
        const types = ['touchstart', 'touchend', 'click'];
-       for (const type of types) window.addEventListener(type, note, true);
+       for (const type of types) window.addEventListener(type, note, { capture: true, passive: true });
        window.__tapStop = () => { for (const type of types) window.removeEventListener(type, note, true); };`,
       [element],
     );
     const started = Date.now();
     await this.session.perform(tapActions(point!.clientX, point!.clientY));
-    const took = Date.now() - started;
+    const performed = Date.now();
+    let events: TapEvent[] = [];
     // A finger's tap ends in a click. When it does not (the touch reached the element and no click
     // followed: runs 41184587941, 41190536745, the second with a tap that took 9.5 s to perform on
-    // an overloaded simulator), the test fails here, with what arrived.
-    await expect
-      .poll(() => this.evaluate(() => sessionStorage.getItem('__tap') ?? ''), { message: `the tap on ${selector} ended in a click (it took ${took} ms to perform)` })
-      .toContain('click');
+    // an overloaded simulator), the test fails here, with what arrived and its timing.
+    try {
+      await expect
+        .poll(async () => describeTap((events = parseTapEvents((await this.evaluate(() => sessionStorage.getItem('__tap'))) ?? '')), started, performed), {
+          message: `the tap on ${selector} ended in a click`,
+        })
+        // A click on the element itself (one elsewhere is listed as "click>element").
+        .toMatch(/^events: (\S+, )*click[,;]/);
+    } catch (e) {
+      (e as Error).message += `\n(${await this.device.tapLogs(new Date(started))})`;
+      throw e;
+    } finally {
+      this.device.noteTap(`${selector}: ${describeTap(events, started, performed, false)}`);
+    }
   }
 
   /**

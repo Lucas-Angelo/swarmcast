@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { chatAdminSendSchema, chatDeleteSchema, chatHighlightSchema, chatMuteSchema, chatPinSchema, chatProtectRequestSchema, chatSetColorSchema, chatUnmuteSchema, type MessageKey } from '@swarmcast/shared';
-import type { MessageActionResult } from '../chat/hub.js';
+import { chatAdminSendSchema, chatDeleteSchema, chatHighlightSchema, chatMuteSchema, chatPinSchema, chatPollCreateSchema, chatPollResolveSchema, chatProtectRequestSchema, chatSetColorSchema, chatUnmuteSchema, type MessageKey } from '@swarmcast/shared';
+import type { MessageActionResult, PollActionResult } from '../chat/hub.js';
 import type { LiveController } from '../core/live.js';
 import { CodedError } from '../core/messages.js';
 
@@ -21,7 +21,13 @@ type Handler = (req: FastifyRequest, reply: FastifyReply) => Promise<unknown>;
  *   POST /api/chat/highlight {s, on}: highlight a message for everyone, or take it off
  *   POST /api/chat/pin       {s, minutes?: 1…120 | null}: pin a message at the top (replaces any other pin)
  *   POST /api/chat/unpin
- * Only the panel can highlight or pin: no viewer frame can (docs/CHAT.md, "Highlight and pin").
+ *   POST /api/chat/poll         {kind, question, options[2..5], seconds 15…600, newOnly?}: start a poll or a prediction
+ *   POST /api/chat/poll/end     end the voting now
+ *   POST /api/chat/poll/resolve {option}: the right answer of a prediction whose guesses ended
+ *   POST /api/chat/poll/cancel  remove the poll or prediction (any state)
+ * Only the panel can highlight, pin or start a poll: no viewer frame can (docs/CHAT.md, "Highlight
+ * and pin", "Polls and predictions"). The panel's slash commands are parsed in the panel and come
+ * here as these same bodies; the server never reads chat text as a command.
  */
 export function registerChatRoutes(
   app: FastifyInstance,
@@ -36,6 +42,10 @@ export function registerChatRoutes(
   };
   const done = (r: MessageActionResult): { ok: true } => {
     if (!r.ok) throw new CodedError(r.code);
+    return r;
+  };
+  const polled = (r: PollActionResult): { ok: true; id: string } => {
+    if (!r.ok) throw new CodedError(r.code, r.params);
     return r;
   };
   app.get('/api/chat', { preHandler: auth }, async () => chat.adminState());
@@ -78,4 +88,8 @@ export function registerChatRoutes(
     chat.unpin();
     return { ok: true };
   }));
+  app.post('/api/chat/poll', { preHandler: auth }, wrap((req) => polled(chat.startPoll(chatPollCreateSchema.parse(req.body)))));
+  app.post('/api/chat/poll/end', { preHandler: auth }, wrap(() => polled(chat.endPoll())));
+  app.post('/api/chat/poll/resolve', { preHandler: auth }, wrap((req) => polled(chat.resolvePoll(chatPollResolveSchema.parse(req.body).option))));
+  app.post('/api/chat/poll/cancel', { preHandler: auth }, wrap(() => polled(chat.cancelPoll())));
 }

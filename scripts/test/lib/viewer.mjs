@@ -93,6 +93,19 @@ export async function waitPlaying(page, timeoutMs = 90_000, minTime = 1.5) {
   );
 }
 
+/**
+ * Turns the viewer's "Help the stream (P2P)" switch on or off. It is in the watch page's Settings
+ * menu under the video: the menu is opened for it and closed again (Esc).
+ */
+export async function setP2P(page, on) {
+  const menu = page.locator('[data-testid="settings-menu"]');
+  if (!(await menu.isVisible())) await page.click('[data-testid="settings-open"]');
+  await menu.waitFor({ timeout: 10_000 });
+  await (on ? page.check('#p2p') : page.uncheck('#p2p'));
+  await page.keyboard.press('Escape');
+  await menu.waitFor({ state: 'hidden', timeout: 10_000 });
+}
+
 /** The viewer's own counters (window.__swarmcast.stats: P2P bytes, hash failures, stalls). */
 export const playerStats = (page) => page.evaluate(() => window.__swarmcast.stats);
 

@@ -288,6 +288,23 @@ describe('the "Stats for nerds" link', () => {
     expect(document.activeElement).toBe(button);
   });
 
+  it('closed while the link is out of sight (the Settings menu closed): the focus goes to the fallback', async () => {
+    // Arrange
+    const { button, host } = els();
+    const fallback = document.createElement('button');
+    document.body.append(fallback);
+    button.getClientRects = () => [] as unknown as DOMRectList;
+    const mounted: Array<Parameters<MountStatsPanel>[0]> = [];
+    const toggle = createStatsToggle({ button, host, source: source(), fallbackFocus: fallback, load: () => Promise.resolve((d) => (mounted.push(d), { destroy: vi.fn() })) });
+    toggle.toggle();
+    await vi.waitFor(() => expect(mounted).toHaveLength(1));
+    // Act
+    mounted[0]!.onClose();
+    // Assert
+    expect(toggle.open).toBe(false);
+    expect(document.activeElement).toBe(fallback);
+  });
+
   it('closed again while the chunk still loads: it never shows', async () => {
     // Arrange
     let release!: () => void;

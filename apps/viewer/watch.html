@@ -13,55 +13,105 @@
          Vite adds at the end of the head, so the streamer's colours win at equal specificity) -->
     <link rel="stylesheet" href="/brand/theme.css" data-brand-theme />
     <!-- end branding: theme -->
-    <header class="site-head">
-      <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
-      <!-- branding: header -->
-      <div id="brand-head" class="brand-head" hidden></div>
-      <!-- end branding: header -->
-      <!-- branding: support -->
-      <div id="brand-support" class="brand-support" hidden></div>
-      <!-- end branding: support -->
-    </header>
+    <!--
+      The page is one grid (style.css "Watch page"): the player as large as the window allows,
+      the info row under it (the streamer, the status, Share, Settings), the chat as a column
+      locked on the right (under the info row on phones), then the streamer's About and the credit.
+    -->
     <main class="stage">
-      <!-- branding: banner -->
-      <div id="brand-banner" class="brand-banner" hidden></div>
-      <!-- end branding: banner -->
       <div class="player">
         <video id="video" controls playsinline muted autoplay></video>
         <div id="overlay" class="overlay" data-i18n="watch.connecting">Connecting…</div>
         <!-- "Stats for nerds" (stats-toggle.ts): empty until the viewer opens it -->
         <div id="stats" class="stats-overlay" data-testid="stats" hidden></div>
       </div>
-      <section class="bar">
-        <div class="status">
-          <span id="live-dot" class="dot" data-state="wait"></span>
-          <span id="status" data-i18n="watch.connecting">Connecting…</span>
-          <span class="tip"
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-status">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-status" data-i18n="watch.status.tip"
-              >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs 10 to 30 seconds behind the streamer, adjusted to your connection (6 to 10 seconds with "Lower delay").</span
-            ></span
-          >
-          <span class="tip delay" id="delay-wrap" hidden
-            ><span id="delay" class="delay-badge muted" data-testid="delay"></span
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-delay">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-delay" data-i18n="watch.delay.tip"
-              >How far behind the streamer you are watching. It adjusts itself to your connection: it moves closer to live while your internet is steady and further back when it wobbles, so the video does not pause. "LIVE" / "Go live" jumps to the live moment.</span
-            ></span
-          >
-          <span class="tip viewers" id="viewer-count-wrap" hidden
-            ><span id="viewer-count" class="viewers-badge sc-ico-eye" data-testid="viewer-count"></span
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-viewers">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-viewers" data-i18n="watch.viewers.tip">People watching this stream right now.</span></span
-          >
+      <section class="info" data-testid="info">
+        <div class="info-id">
+          <div class="site-head">
+            <span class="sc-brand"><span class="sc-symbol" aria-hidden="true"></span><span class="sc-wordmark">SwarmCast</span></span>
+            <!-- branding: header -->
+            <div id="brand-head" class="brand-head" hidden></div>
+            <!-- end branding: header -->
+          </div>
+          <div class="status">
+            <span id="live-dot" class="dot" data-state="wait"></span>
+            <span id="status" data-i18n="watch.connecting">Connecting…</span>
+            <span class="tip"
+              ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-status">i</button
+              ><span class="tip-bubble" role="tooltip" id="tip-status" data-i18n="watch.status.tip"
+                >Connecting: loading the stream. Live: you are watching. Buffering: waiting for more video (slow internet, yours or the streamer's). The stream runs 10 to 30 seconds behind the streamer, adjusted to your connection (6 to 10 seconds with "Lower delay").</span
+              ></span
+            >
+            <span class="tip delay" id="delay-wrap" hidden
+              ><span id="delay" class="delay-badge muted" data-testid="delay"></span
+              ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-delay">i</button
+              ><span class="tip-bubble" role="tooltip" id="tip-delay" data-i18n="watch.delay.tip"
+                >How far behind the streamer you are watching. It adjusts itself to your connection: it moves closer to live while your internet is steady and further back when it wobbles, so the video does not pause. "LIVE" / "Go live" jumps to the live moment.</span
+              ></span
+            >
+            <span class="tip viewers" id="viewer-count-wrap" hidden
+              ><span id="viewer-count" class="viewers-badge sc-ico-eye" data-testid="viewer-count"></span
+              ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-viewers">i</button
+              ><span class="tip-bubble" role="tooltip" id="tip-viewers" data-i18n="watch.viewers.tip">People watching this stream right now.</span></span
+            >
+          </div>
         </div>
-        <div class="bar-actions">
+        <div class="info-actions">
+          <!-- LIVE / Go live and Theater mode: the player's control bar takes them (player-controls.ts);
+               they stay here only when it could not be built. -->
           <button id="golive" type="button" class="golive at-live" data-testid="go-live" hidden>LIVE</button>
-          <button id="theater" type="button" class="secondary theater-btn" data-testid="theater" hidden aria-pressed="false" title="A bigger video that uses the whole width of the window. Click again (or press T) to go back." data-i18n="watch.theater" data-i18n-title="watch.theater.tip">Theater mode</button>
+          <button id="theater" type="button" class="secondary theater-btn" data-testid="theater" hidden aria-pressed="false" title="The video as big as the window: it takes the whole height of the window. Click again (or press T) to go back." data-i18n="watch.theater" data-i18n-title="watch.theater.tip">Theater mode</button>
+          <!-- branding: support -->
+          <div id="brand-support" class="brand-support" hidden></div>
+          <!-- end branding: support -->
           <button id="chat-show" type="button" class="secondary chat-show" data-testid="chat-show" hidden data-i18n="chat.viewer.show">Show chat</button>
           <button id="unmute" type="button" class="secondary sc-ico-volume" hidden title="The video starts muted because browsers block autoplay with sound. Click to turn the sound on." data-i18n="watch.unmute" data-i18n-title="watch.unmute.tip">Unmute</button>
           <span id="share-status" class="share-status" role="status" data-testid="share-status"></span>
           <button id="share" type="button" class="secondary sc-ico-share" data-testid="share" hidden title="Send the link of this live to a friend. They open it and pick a nickname, like you did." data-i18n="watch.share" data-i18n-title="watch.share.tip">Share</button>
+          <!-- Settings (settings-menu.ts): playback, P2P, the nickname, shortcuts and stats, out of the way
+               until the viewer opens them. The panel comes right after its button, so Tab goes into it. -->
+          <div class="settings">
+            <button id="settings-open" type="button" class="secondary settings-btn sc-ico-settings" data-testid="settings-open" aria-expanded="false" aria-controls="settings-menu" title="Playback, Help the stream (P2P), keyboard shortcuts and stats." data-i18n-title="watch.settings.tip"><span class="btn-label" data-i18n="watch.settings">Settings</span></button>
+            <div id="settings-menu" class="settings-menu" data-testid="settings-menu" role="group" aria-labelledby="settings-title" hidden>
+              <div class="settings-head">
+                <h2 id="settings-title" class="settings-title" data-i18n="watch.settings">Settings</h2>
+                <button id="settings-close" type="button" class="settings-close" data-testid="settings-close" aria-label="Close settings" data-i18n-aria-label="watch.settings.close">×</button>
+              </div>
+              <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
+              <div class="toggle-row">
+                <label class="toggle">
+                  <input id="p2p" type="checkbox" />
+                  <span data-i18n="watch.p2p">Help the stream (P2P)</span>
+                </label>
+                <span class="tip"
+                  ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p">i</button
+                  ><span class="tip-bubble" role="tooltip" id="tip-p2p" data-i18n="watch.p2p.tip"
+                    >Shares video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.</span
+                  ></span
+                >
+              </div>
+              <div class="info-row" id="p2p-stats-row" hidden>
+                <p id="p2p-stats" class="muted small"></p>
+                <span class="tip" id="p2p-stats-tip"
+                  ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p-stats">i</button
+                  ><span class="tip-bubble" role="tooltip" id="tip-p2p-stats" data-i18n="watch.p2pStats.tip"
+                    >Peers: other viewers you are connected to. The percentage is how much of your video came from them instead of the streamer. Shared: megabytes (MB) you sent to others.</span
+                  ></span
+                >
+              </div>
+              <div class="info-row">
+                <p class="muted small"><span data-i18n="watch.watchingAs">Watching as</span> <strong id="nick"></strong>.</p>
+                <span class="tip"
+                  ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
+                  ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Everyone in the live sees it in the chat.</span></span
+                >
+              </div>
+              <div class="extras-row">
+                <button id="keys-open" type="button" class="link-btn" data-testid="keys-open" aria-haspopup="dialog" data-i18n="watch.keys.open">Keyboard shortcuts</button>
+                <button id="stats-open" type="button" class="link-btn" data-testid="stats-open" aria-expanded="false" aria-controls="stats" data-i18n="watch.stats.open">Stats for nerds</button>
+              </div>
+            </div>
+          </div>
         </div>
         <div id="share-fallback" class="share-fallback" hidden>
           <label
@@ -71,50 +121,18 @@
         </div>
       </section>
       <aside id="chat" class="chat" data-testid="chat" hidden></aside>
+      <!-- branding: banner -->
+      <div id="brand-banner" class="brand-banner" hidden></div>
+      <!-- end branding: banner -->
       <!-- branding: about -->
       <div id="brand-about" class="brand-about" data-testid="brand-about" hidden></div>
       <!-- end branding: about -->
-      <section class="panel">
-        <div id="player-controls" class="player-controls" data-testid="player-controls"></div>
-        <div class="toggle-row">
-          <label class="toggle">
-            <input id="p2p" type="checkbox" />
-            <span data-i18n="watch.p2p">Help the stream (P2P)</span>
-          </label>
-          <span class="tip"
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-p2p" data-i18n="watch.p2p.tip"
-              >Shares video with other viewers so it runs smoother for everyone. Viewers who also have this on can see your IP address, which only reveals your approximate location (city) and internet provider — not your name, home address or anything on your device. Same as online games and video calls. You can turn it off any time and keep watching normally over HTTPS. Every piece of video is checked, so nobody can send you altered video.</span
-            ></span
-          >
-        </div>
-        <div class="info-row" id="p2p-stats-row" hidden>
-          <p id="p2p-stats" class="muted small"></p>
-          <span class="tip" id="p2p-stats-tip"
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-p2p-stats">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-p2p-stats" data-i18n="watch.p2pStats.tip"
-              >Peers: other viewers you are connected to. The percentage is how much of your video came from them instead of the streamer. Shared: megabytes (MB) you sent to others.</span
-            ></span
-          >
-        </div>
-        <div class="info-row">
-          <p class="muted small"><span data-i18n="watch.watchingAs">Watching as</span> <strong id="nick"></strong>.</p>
-          <span class="tip"
-            ><button type="button" class="tip-btn" aria-label="More info" data-i18n-aria-label="tip.more" aria-describedby="tip-nick">i</button
-            ><span class="tip-bubble" role="tooltip" id="tip-nick" data-i18n="watch.watchingAs.tip">The nickname you picked. Everyone in the live sees it in the chat.</span></span
-          >
-        </div>
-        <div class="extras-row">
-          <button id="keys-open" type="button" class="link-btn" data-testid="keys-open" aria-haspopup="dialog" data-i18n="watch.keys.open">Keyboard shortcuts</button>
-          <button id="stats-open" type="button" class="link-btn" data-testid="stats-open" aria-expanded="false" aria-controls="stats" data-i18n="watch.stats.open">Stats for nerds</button>
-        </div>
-      </section>
+      <!-- branding: credit -->
+      <footer id="brand-credit" class="brand-credit" hidden>
+        <a href="https://lucas-angelo.github.io/swarmcast/" target="_blank" rel="noopener noreferrer" data-i18n="brand.credit" data-i18n-title="brand.viewer.creditTip">on SwarmCast</a>
+      </footer>
+      <!-- end branding: credit -->
     </main>
-    <!-- branding: credit -->
-    <footer id="brand-credit" class="brand-credit" hidden>
-      <a href="https://lucas-angelo.github.io/swarmcast/" target="_blank" rel="noopener noreferrer" data-i18n="brand.credit" data-i18n-title="brand.viewer.creditTip">on SwarmCast</a>
-    </footer>
-    <!-- end branding: credit -->
     <div id="ended" class="ended" hidden>
       <div class="card">
         <span class="sc-mascot sc-mascot-sleep" aria-hidden="true"></span>
