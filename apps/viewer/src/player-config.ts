@@ -179,6 +179,14 @@ export function hlsConfigFor(id: PlaybackProfileId, o: PlayerConfigOptions): Par
     fragLoadPolicy: { default: RETRY_POLICY },
     playlistLoadPolicy: { default: RETRY_POLICY },
     manifestLoadPolicy: { default: RETRY_POLICY },
+    // No stream of ours has interstitials (EXT-X-DATERANGE ads). Left on, hls.js's interstitials
+    // controller restarted the load of an audio-only playlist read again in place
+    // (audio-only.ts reloadAudioOnlyInPlace) once the kept media attached: the first segment,
+    // already buffered, was loaded and appended a second time while hls.js seeked into it, and
+    // Linux WebKit (GStreamer) then played about one such seek in ten with no clock, racing
+    // through the buffer to the live edge (soak runs 41868878113, 41871643800: 4 of 42 seeks with
+    // that second append, none of 188 without; with and without a sound server).
+    enableInterstitialPlayback: false,
   };
 }
 
@@ -299,6 +307,22 @@ export function createManifestReloader(reload: () => void, threshold: number | (
       misses = 0;
     },
   };
+}
+
+/**
+ * Starts playback once a source is loaded (hls.js MANIFEST_PARSED), unless the element is
+ * playing already: `onBlocked` runs when the browser refuses to start it (autoplay). A new
+ * MediaSource leaves the element paused, so a plain load always starts it; an audio-only
+ * reload in place (audio-only.ts reloadAudioOnlyInPlace) keeps the element as it was. There,
+ * play() on an element that is not paused does nothing, unless the playhead stands at the end
+ * of the media (it played out the old buffer while the reload ran): the browser then counts
+ * playback as ended and play() seeks to the start, to 0, where the new read never puts media.
+ * Linux WebKit then sat "seeking" at 0 until the stall watchdog reloaded the source, 10-20 s of
+ * silence (audio-only.spec, soak runs 41819877519, 41871643800).
+ */
+export function playOnLoad(media: { readonly paused: boolean; play(): Promise<void> }, onBlocked: () => void): void {
+  if (!media.paused) return;
+  void media.play().catch(onBlocked);
 }
 
 interface HlsLike {

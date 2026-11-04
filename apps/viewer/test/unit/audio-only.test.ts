@@ -8,7 +8,10 @@
 // - reading the audio-only playlist again because a media playlist it listed went away keeps the
 //   element's MediaSource (a new one for sound alone can crash Linux WebKit), plays on what it
 //   holds until the first segment of the new read is buffered, then moves into it and flushes the
-//   rest (the old buffer and playhead sit on the timeline of the window the viewer joined);
+//   rest (the old buffer and playhead sit on the timeline of the window the viewer joined); the
+//   playlist read again never makes an element that plays on start over from 0 (play() on one
+//   that played out its old buffer), and hls.js's interstitials controller, which loaded and
+//   appended the first new segment twice while hls.js seeked into it, is off;
 // - the quality menu offers "Audio only" only when the stream has separate audio, keeps the video
 //   qualities on offer while audio only plays (hls.levels is then one level without a height), and
 //   picking one of them goes back to video at that height;
@@ -19,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIO_ONLY_PLAYLIST, variantStreamSwarmId } from '@swarmcast/shared';
 import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
 import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
-import { createManifestReloader, loadAudioOnly, loadPreferredHeight, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
+import { createManifestReloader, hlsConfigFor, loadAudioOnly, loadPreferredHeight, playOnLoad, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
 const EVENTS = { MANIFEST_PARSED: 'hlsManifestParsed', LEVEL_SWITCHED: 'hlsLevelSwitched' } as const;
@@ -239,9 +242,21 @@ class KeptElement {
   get currentTime(): number {
     return this.t;
   }
+  /** Like an element: setting the time starts a seek, which `seeked()` ends. */
   set currentTime(t: number) {
     this.seeks.push(t);
     this.t = t;
+    this.seeking = true;
+  }
+  private onSeeked: Array<() => void> = [];
+  addEventListener(type: 'seeked', fn: () => void): void {
+    if (type === 'seeked') this.onSeeked.push(fn);
+  }
+  seeked(): void {
+    this.seeking = false;
+    const fns = this.onSeeked;
+    this.onSeeked = [];
+    for (const fn of fns) fn();
   }
 }
 
@@ -315,7 +330,7 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     expect([hls.element.seeks, hls.flushes]).toEqual([[], []]);
   });
 
-  it('once the first segment of the playlist read again is buffered, moves the playhead into it, where hls.js starts, and flushes what the read before left', () => {
+  it('once the first segment of the playlist read again is buffered, moves the playhead into it, where hls.js starts, and flushes what the read before left once that seek is over', () => {
     // Arrange: the playhead at 66 s on the timeline of the window the viewer joined; the window
     // read again starts at 0, hls.js at its live sync position 21.7 s
     const hls = audioOnly();
@@ -325,25 +340,43 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     hls.buffered(20.05, 22.04, 'audio');
     hls.buffered(20.05, 22.04);
     hls.buffered(22.04, 24.06);
+    hls.element.seeked();
+    hls.buffered(24.06, 26.07);
     // Assert: once, for the first segment of the main playlist
     expect(hls.element.seeks).toEqual([21.7]);
-    expect(hls.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(hls.flushes).toEqual([{ startOffset: 46, endOffset: 70, type: null }]);
     expect(hls.listeners()).toBe(0);
   });
 
-  it('flushes what the read before left on both sides of the new segment', () => {
-    // Arrange: the window had moved on a little, so the old media spans the new segment
+  it('flushes nothing while the seek into the new segment runs (Linux WebKit then plays with no clock)', () => {
+    // Arrange
     const hls = audioOnly();
-    hls.element.held = [[10, 30]];
+    reload(hls, AUDIO_ONLY_URL);
+    hls.startPosition = 21.7;
+    // Act
+    hls.buffered(20.05, 22.04);
+    hls.buffered(22.04, 24.06);
+    // Assert
+    expect(hls.element.seeking).toBe(true);
+    expect(hls.flushes).toEqual([]);
+  });
+
+  it('flushes what the read before left on both sides of the new segment, but not the segments of the new read buffered during the seek', () => {
+    // Arrange: the window had moved on a little, so the old media spans the new segment and the next ones
+    const hls = audioOnly();
+    hls.element.held = [[10, 34]];
     reload(hls, AUDIO_ONLY_URL);
     hls.startPosition = 26.2;
     // Act
     hls.buffered(26, 28);
+    hls.buffered(28, 30);
+    hls.buffered(30, 32);
+    hls.element.seeked();
     // Assert
     expect(hls.element.seeks).toEqual([26.2]);
     expect(hls.flushes).toEqual([
-      { startOffset: 0, endOffset: 26, type: null },
-      { startOffset: 28, endOffset: Number.POSITIVE_INFINITY, type: null },
+      { startOffset: 10, endOffset: 26, type: null },
+      { startOffset: 32, endOffset: 34, type: null },
     ]);
   });
 
@@ -358,7 +391,7 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     expect(hls.element.seeks).toEqual([20.05]);
   });
 
-  it('leaves the playhead alone when hls.js moved it itself or it is in the new segment, and still flushes the rest', () => {
+  it('leaves the playhead alone when hls.js moved it itself or it is in the new segment, and still flushes the rest, after the seek', () => {
     // Arrange: hls.js seeks a playhead that is before its start position (stream-controller seekToStartPos)
     const seeking = audioOnly();
     const inside = audioOnly();
@@ -370,13 +403,54 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     // Act
     seeking.buffered(20.05, 22.04);
     inside.buffered(64.1, 68.13);
+    const whileSeeking = [...seeking.flushes];
+    seeking.element.seeked();
     // Assert
     expect([seeking.element.seeks, inside.element.seeks]).toEqual([[], []]);
-    expect(seeking.flushes).toEqual([{ startOffset: 22.04, endOffset: Number.POSITIVE_INFINITY, type: null }]);
+    expect(whileSeeking).toEqual([]);
+    expect(seeking.flushes).toEqual([{ startOffset: 46, endOffset: 70, type: null }]);
     expect(inside.flushes).toEqual([
-      { startOffset: 0, endOffset: 64.1, type: null },
-      { startOffset: 68.13, endOffset: Number.POSITIVE_INFINITY, type: null },
+      { startOffset: 46, endOffset: 64.1, type: null },
+      { startOffset: 68.13, endOffset: 70, type: null },
     ]);
+  });
+
+  it('the playlist read again does not start an element over that still plays: play() on one that played out its old buffer seeks to 0', () => {
+    // Arrange: the old buffer ran out while the reload ran (the playhead at the end of the media,
+    // which the browser counts as ended), and a page whose first load is still paused
+    const played: string[] = [];
+    const element = (paused: boolean, name: string) => ({
+      paused,
+      play: () => {
+        played.push(name);
+        return Promise.resolve();
+      },
+    });
+    const blocked = vi.fn();
+    // Act
+    playOnLoad(element(false, 'kept, playing'), blocked);
+    playOnLoad(element(true, 'new MediaSource, paused'), blocked);
+    // Assert
+    expect(played).toEqual(['new MediaSource, paused']);
+  });
+
+  it('a start blocked by the browser (autoplay) is reported', async () => {
+    // Arrange
+    const blocked = vi.fn();
+    const media = { paused: true, play: () => Promise.reject(new DOMException('not allowed', 'NotAllowedError')) };
+    // Act
+    playOnLoad(media, blocked);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Assert
+    expect(blocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('hls.js plays no interstitials: its controller loaded and appended the first segment of the read again twice, during the seek into it', () => {
+    // Act
+    const configs = (['stable', 'low-delay'] as const).map((id) => hlsConfigFor(id, { isMobile: false }));
+    // Assert
+    expect(configs.map((c) => c.enableInterstitialPlayback)).toEqual([false, false]);
   });
 
   it('does nothing for video, for a switch between video and audio only, or when hls.js cannot hand the media over', () => {
