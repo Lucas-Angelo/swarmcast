@@ -242,7 +242,8 @@ export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpd
  * the goto waits only for the answer ("commit"), not for the `load` of a page that is replaced
  * at once: WebKit sometimes never reports that load, and the goto then hung until the test
  * timeout (calibration soak, diagnostics on ubuntu-24.04 WebKit: 150 s, 1.5 s on the retry).
- * Where it lands is what the tests check, web-first.
+ * Where it lands is what the tests check, web-first. (A first goto that never even commits is
+ * another WebKit fault: routeWebKitRequests.)
  */
 export async function loginPanel(page: Page, login = serverEnv().adminLoginUrl): Promise<void> {
   await page.goto(login, { waitUntil: 'commit' });
@@ -364,6 +365,46 @@ export interface JoinPageOptions extends BrowserOptions {
   prepare?: (page: Page) => Promise<void>;
 }
 
+/**
+ * Every WebKit context of the e2e specs routes all its requests and lets each one through
+ * unchanged (route.fallback), so that a page's navigation can never be lost by WebKit.
+ *
+ * Both servers send `Cross-Origin-Opener-Policy: same-origin`, so a page's first navigation to
+ * them (from its initial about:blank, or from a page without COOP) moves to a new web process
+ * once the response arrives: the network process asks the UI process to swap. The old web
+ * process also tells the UI process that the navigation started (DidStartProvisionalLoadForFrame),
+ * over its own connection. When that message comes second, the UI process takes it for a new
+ * navigation and cancels the provisional page of the swap ("cancel any pending one in a
+ * provisional process", WebPageProxy::didStartProvisionalLoadForFrameShared, WebKit main as of
+ * 2026-11): the navigation neither commits nor fails, and `goto` waits until the test times out.
+ * With a route, the request waits in the web process until the route answers, and that question
+ * travels to the UI process on the same connection, after DidStartProvisionalLoadForFrame: the UI
+ * process has handled the start before the request even reaches the network process, so the swap
+ * can no longer overtake it.
+ *
+ * Measured on Linux with Playwright 1.64.1 (WPE), no SwarmCast: a new page's first goto to a
+ * local page with COOP never committed in 32 of about 18,500 tries on a busy machine (a new page
+ * in a long-lived context too), 0 of 10,000 without COOP, 0 of 28,000 with this route. The e2e
+ * soaks hit it about once in 1000 to 3000 WebKit tests, as a test's first goto (e.g.
+ * loginPanel). Not media: closing the watch page's player before its context changed nothing.
+ * WebKitGTK 2.52 (GNOME Web's engine) loses such loads too. Other engines are left alone.
+ */
+async function routeWebKitRequests(context: BrowserContext): Promise<void> {
+  if (context.browser()?.browserType().name() !== 'webkit') return;
+  await context.route('**/*', (route) => route.fallback());
+}
+
+/**
+ * Closes a context the specs opened: its routes go first. Once close() is called Playwright stops
+ * answering routes, so a request still in flight would stay held, and the screenshot Playwright
+ * takes of each page at close then waits 5 s for its fonts (measured: 100 fresh browsers took
+ * 2.5 min instead of 40 s).
+ */
+export async function closeContext(context: BrowserContext): Promise<void> {
+  await context.unrouteAll({ behavior: 'ignoreErrors' });
+  await context.close();
+}
+
 /** The `viewers` fixture: browsers of their own (one context each), all closed after the test. */
 export class Audience {
   private readonly contexts: BrowserContext[] = [];
@@ -374,6 +415,12 @@ export class Audience {
   async browserContext(o: BrowserOptions = {}): Promise<BrowserContext> {
     const context = await this.browser.newContext(o.context);
     this.contexts.push(context);
+    // A spec may close it first (closeContext): close() then leaves it alone.
+    context.once('close', () => {
+      const i = this.contexts.indexOf(context);
+      if (i >= 0) this.contexts.splice(i, 1);
+    });
+    await routeWebKitRequests(context);
     await o.setup?.(context);
     return context;
   }
@@ -396,7 +443,7 @@ export class Audience {
   }
 
   async close(): Promise<void> {
-    for (const c of this.contexts.splice(0)) await c.close();
+    for (const c of this.contexts.splice(0)) await closeContext(c);
   }
 }
 
@@ -977,6 +1024,13 @@ export const test = base.extend<E2EFixtures>({
     },
     { auto: true },
   ],
+  // Playwright's own context (the `page` fixture): routed like the viewers' (routeWebKitRequests),
+  // its routes removed before Playwright closes it (closeContext).
+  context: async ({ context }, use) => {
+    await routeWebKitRequests(context);
+    await use(context);
+    await context.unrouteAll({ behavior: 'ignoreErrors' });
+  },
   viewers: async ({ browser }, use) => {
     const audience = new Audience(browser);
     await use(audience);

@@ -9,7 +9,7 @@
 // withDate). Checked on every engine: the served dates right after a reconnect, and viewers
 // joining one after the other through the run's first 30 s all play.
 import type { Page } from '@playwright/test';
-import { expect, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
+import { closeContext, expect, reconnectObs, test, uid, waitPlaying } from './fixtures.js';
 
 /** The served video and audio playlists, through the viewer's own session. */
 async function playlists(page: Page): Promise<Record<string, string>> {
@@ -71,6 +71,6 @@ test('right after OBS reconnects, the served dates follow the segment durations 
   for (let i = 0; Date.now() - since < 30_000; i++) {
     const { page, context } = await viewers.join(uid(`runjoin${i}`));
     await waitPlaying(page);
-    await context.close();
+    await closeContext(context);
   }
 });
