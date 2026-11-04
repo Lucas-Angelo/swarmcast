@@ -14,7 +14,10 @@ export interface JoinFormElements {
   /** "Watch": disabled in the markup until this form handles it (a click before that would reload the page). */
   button: HTMLButtonElement;
   error: HTMLElement;
-  /** "Checking your browser…": below the button, so showing or hiding it never moves the button. */
+  /**
+   * "Checking your browser…": below the button, so showing or hiding it never moves the button;
+   * shown by the server already for a browser it will check, hidden here when no check runs.
+   */
   check: HTMLElement;
   progress: HTMLProgressElement | null;
 }
@@ -82,7 +85,10 @@ export function startJoinForm(el: JoinFormElements, d: JoinFormDeps): JoinForm {
     return p;
   };
 
-  // Start solving right away, while the viewer types a nickname.
+  // Start solving right away, while the viewer types a nickname. The server shows the line from
+  // the start for a browser it will ask (apps/server/src/public/server.ts Pages.joinChecking: shown
+  // here instead, it appeared under a tap, and Mobile Safari dropped that tap's click), so it goes
+  // away when no check runs after all.
   const ready = (async () => {
     try {
       const res = await d.fetch('/api/join/challenge', { credentials: 'same-origin' });
@@ -91,6 +97,8 @@ export function startJoinForm(el: JoinFormElements, d: JoinFormDeps): JoinForm {
       if (body.required) startCheck(body.challenge as Challenge);
     } catch {
       /* the join request will ask again if needed */
+    } finally {
+      if (!shown) el.check.hidden = true;
     }
   })();
 

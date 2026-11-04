@@ -163,6 +163,40 @@ describe('the browser check', () => {
     expect(check.solve).not.toHaveBeenCalled();
     expect(el.check.hidden).toBe(true);
   });
+
+  it('keeps the line the server showed while the check it expected runs', async () => {
+    // Arrange
+    const el = joinPage();
+    el.check.hidden = false;
+    const check = solver();
+    const { form } = start(el, server({ 'GET /api/join/challenge': [checkWith(challenge('s1'))] }).fetch, check.solve);
+
+    // Act
+    await form.ready;
+
+    // Assert
+    expect(check.solve).toHaveBeenCalledOnce();
+    expect(el.check.hidden).toBe(false);
+  });
+
+  it.each<[string, Answer]>([
+    ['the server needs none', noCheck],
+    ['the question is refused', { status: 403, body: { error: 'x', code: 'viewer.err.linkInvalid' } }],
+    ['the network fails', new Error('offline')],
+  ])('hides the line the server showed when %s', async (_, answer) => {
+    // Arrange
+    const el = joinPage();
+    el.check.hidden = false;
+    const check = solver();
+    const { form } = start(el, server({ 'GET /api/join/challenge': [answer] }).fetch, check.solve);
+
+    // Act
+    await form.ready;
+
+    // Assert
+    expect(check.solve).not.toHaveBeenCalled();
+    expect(el.check.hidden).toBe(true);
+  });
 });
 
 describe('joining', () => {

@@ -27,7 +27,7 @@ import {
   swarmIdBuilderFor,
   urgentSecondsFor,
 } from './player-config.js';
-import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
+import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
 import { p2pConnecting, type P2PConnectState } from './p2p-status.js';
@@ -678,16 +678,21 @@ async function main(): Promise<void> {
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
   // Every load of the source after the first goes through here, so the stats count it.
-  const reloadSource = (why: string): void => {
+  // `keepMedia`: audio only reads its playlist again in place, on the same MediaSource
+  // (audio-only.ts reloadAudioOnlyInPlace: a new one can crash Linux WebKit). Not for the stall
+  // watchdog or the audio-only switch: those need a fresh MediaSource or another playlist.
+  const reloadSource = (why: string, o: { keepMedia?: boolean } = {}): void => {
     stats.reloads += 1;
     stats.lastReload = why;
     debugLog(`reloading the source (${why})`);
-    hls.loadSource(source.url());
+    const url = source.url();
+    if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, { base: location.href, events: Hls.Events })) return;
+    hls.loadSource(url);
   };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
   // or ffmpeg fell back to the original quality): a media playlist the player knows may be
   // gone for good. Repeated 404s on media playlists re-read the multivariant playlist.
-  const reloader = createManifestReloader(() => reloadSource('media playlists gone'), () => (source.active ? AUDIO_ONLY_GONE_AFTER : 3));
+  const reloader = createManifestReloader(() => reloadSource('media playlists gone', { keepMedia: true }), () => (source.active ? AUDIO_ONLY_GONE_AFTER : 3));
   hls.on(Hls.Events.LEVEL_LOADED, () => reloader.reset());
 
   let networkErrors = 0;

@@ -195,6 +195,17 @@ test('a phone: the video, the info row, then the chat down to the bottom of the 
     for (const id of ['unmute', 'share']) document.getElementById(id)!.hidden = false;
   });
   await expect(page.locator('#share')).toBeVisible();
+  // The chat's height follows the info row through a ResizeObserver (watch.ts), which reports the
+  // row's new height after the next layout, not at once: measure once --info-row-h holds it (run
+  // 41602653032 measured in between, the chat one line too tall).
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const row = Math.ceil(document.querySelector<HTMLElement>('.info')!.getBoundingClientRect().height);
+        return document.body.style.getPropertyValue('--info-row-h') === `${row}px`;
+      }),
+    )
+    .toBe(true);
 
   // Assert
   const view = page.viewportSize()!;

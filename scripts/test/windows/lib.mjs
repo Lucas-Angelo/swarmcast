@@ -19,6 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bareEnv, LIVE_LINK_WAIT_MS, loginFromOutput, waitLiveLink as waitLiveLinkOf } from '../lib/app.mjs';
+import { browserTempOnWorkDisk } from '../lib/browser-temp.mjs';
 import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { writeJunit } from '../lib/junit.mjs';
@@ -35,6 +36,11 @@ export { renderedTwice, setP2P, waitPlaylistForLateJoiners } from '../lib/viewer
 export { orTimeout } from '../lib/wait.mjs';
 
 export const isWin = process.platform === 'win32';
+// On a CI runner the harness's own temporary files, and with them the profile of every browser
+// it launches, go on the runner's local disk, not on C:, where Defender's signature update can
+// stall a new Firefox for a minute (lib/browser-temp.mjs). The app under test keeps the
+// machine's own TEMP and TMP (bareEnv).
+browserTempOnWorkDisk();
 export const here = path.dirname(fileURLToPath(import.meta.url));
 export const repoRoot = path.resolve(here, '..', '..', '..');
 

@@ -51,9 +51,17 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # setup-go from a copy fetched with git at its pin, with tries: the runner's own download
+      # of a remote action is not tried again after a 404 (README.md, "Remote actions").
+      - name: setup-go (git fetch, with tries)
+        if: matrix.language == 'go'
+        timeout-minutes: 4
+        uses: ./.github/actions/fetch-remote
+        with:
+          repos: actions/setup-go
       - name: Set up Go
         if: matrix.language == 'go'
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        uses: ./.git/remote-actions/actions/setup-go
         with:
           go-version: 1.27.x
           cache-dependency-path: apps/tray/go.sum

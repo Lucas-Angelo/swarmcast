@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { clearPaths, findRestoreScript, parseOutputs, restore } from '../../../.github/actions/cache-restore/restore.mjs';
+import { clearPaths, parseOutputs, restore, restoreScriptIn } from '../../../.github/actions/cache-restore/restore.mjs';
 
 let dir: string;
 beforeEach(() => {
@@ -205,15 +205,16 @@ describe('helpers', () => {
     expect(fs.existsSync(path.join(dir, 'npm'))).toBe(false);
   });
 
-  it("findRestoreScript finds actions/cache's restore-only entry point among the downloaded actions", () => {
+  it("restoreScriptIn finds actions/cache's restore-only entry point in its fetched copy", () => {
     // Arrange
-    const script = path.join(dir, '_actions', 'actions', 'cache', '55cc8345863c7cc4c66a329aec7e433d2d1c52a9', 'dist', 'restore-only', 'index.js');
+    const copy = path.join(dir, '.git', 'remote-actions', 'actions', 'cache');
+    const script = path.join(copy, 'dist', 'restore-only', 'index.js');
     fs.mkdirSync(path.dirname(script), { recursive: true });
     fs.writeFileSync(script, '');
-    fs.mkdirSync(path.join(dir, '_actions', 'actions', 'cache', 'other-without-dist'), { recursive: true });
+    fs.mkdirSync(path.join(dir, 'without-dist'));
 
     // Act / Assert
-    expect(findRestoreScript(path.join(dir, '_actions'))).toBe(script);
-    expect(findRestoreScript(path.join(dir, 'nothing'))).toBeNull();
+    expect(restoreScriptIn(copy)).toBe(script);
+    expect(restoreScriptIn(path.join(dir, 'without-dist'))).toBeNull();
   });
 });

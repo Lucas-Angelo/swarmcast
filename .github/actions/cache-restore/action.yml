@@ -4,9 +4,10 @@ description: >-
   failed (.github/actions/cache-restore/restore.mjs): a stalled download from the cache's storage hung
   actions/cache/restore for 12 minutes in a simulation, whatever SEGMENT_DOWNLOAD_TIMEOUT_MINS
   says, and steps of a composite action cannot have timeout-minutes. It runs actions/cache's own
-  restore code, so the job must also reference actions/cache (any of its actions, any step, even
-  a skipped one) for the runner to download it. Never fails the step: an outcome is a hit or a
-  miss.
+  restore code, from the copy at its pin that .github/actions/fetch-remote/fetch.mjs fetches with
+  git (once per job; the runner's own download of a remote action is not tried again after a
+  404). Run actions/checkout first. Never fails the step: an outcome is a hit or a miss (also
+  when actions/cache could not be fetched).
 
 inputs:
   path:

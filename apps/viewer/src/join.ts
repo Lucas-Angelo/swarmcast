@@ -10,7 +10,8 @@ const PAGE_SHOW_FALLBACK_MS = 3000;
 
 /**
  * Settles once the join page is visible and takes clicks: when branding/loader.ts marks
- * body.brand-known (at most JOIN_BRAND_WAIT_MS after load), or after style.css's own fallback.
+ * body.brand-known (at most JOIN_BRAND_WAIT_MS after load, or as soon as style.css's fallback
+ * shows the page), or after PAGE_SHOW_FALLBACK_MS should the branding code never run.
  */
 function pageShown(): Promise<void> {
   return new Promise((resolve) => {
