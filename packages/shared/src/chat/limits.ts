@@ -96,6 +96,13 @@ export const CHAT_REACT_BROADCAST_MAX_PER_KIND = 20;
 export const CHAT_FLOATERS_SPAWN_PER_WINDOW = 8;
 export const CHAT_FLOATERS_MAX = 24;
 
+/**
+ * The chat over the video in full screen (docs/CHAT.md, "Chat over the video"): at most this many
+ * recent lines, each gone this many seconds after it came.
+ */
+export const CHAT_OVERLAY_LINES = 6;
+export const CHAT_OVERLAY_FADE_S = 12;
+
 /** Seconds between two GIFs from one viewer. */
 export const CHAT_GIF_INTERVAL_S = 30;
 

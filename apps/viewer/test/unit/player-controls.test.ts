@@ -54,6 +54,8 @@ function fakeWindow(reducedMotion = false) {
 }
 
 interface Setup {
+  /** The chat over the video is on (player-controls.ts `fillScreen`). */
+  fill?: boolean;
   volumeFixed?: boolean;
   reducedMotion?: boolean;
   iphone?: boolean;
@@ -104,6 +106,7 @@ function setup(o: Setup = {}) {
     theater: $('theater'),
     started: () => started,
     onPlayRefused,
+    ...(o.fill !== undefined ? { fillScreen: () => o.fill === true } : {}),
   };
   const controls = mountPlayerControls(deps);
   const byTestId = <T extends HTMLElement>(id: string): T => player.querySelector<T>(`[data-testid="${id}"]`)!;
@@ -326,6 +329,50 @@ describe('full screen and picture-in-picture', () => {
     expect(controls.fullscreenMode).toBe('video-native');
     expect(webkitEnterFullscreen).toHaveBeenCalledTimes(1);
     expect(nameOf(byTestId('play'))).toBe('Pause');
+  });
+
+  it("iPhone with the chat over the video on: the button fills the page instead of opening iOS's player; the button again or Escape leaves; the bar takes another button before full screen", () => {
+    // Arrange
+    const { byTestId, nameOf, player, webkitEnterFullscreen, controls } = setup({ iphone: true, fill: true });
+    const changes: boolean[] = [];
+    player.addEventListener('sc-fillchange', () => changes.push(player.classList.contains('pc-fill')));
+    const extra = document.createElement('button');
+    controls.addButton(extra);
+    // Act
+    byTestId('fullscreen').click();
+    const filled = { pcFill: player.classList.contains('pc-fill'), body: document.body.classList.contains('player-filled'), fs: player.classList.contains('is-fullscreen'), name: nameOf(byTestId('fullscreen')), api: controls.filled };
+    byTestId('fullscreen').click();
+    controls.toggleFullscreen();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    // Assert
+    expect(filled).toEqual({ pcFill: true, body: true, fs: true, name: 'Exit full screen', api: true });
+    expect(changes).toEqual([true, false, true, false]);
+    expect(player.classList.contains('pc-fill')).toBe(false);
+    expect(document.body.classList.contains('player-filled')).toBe(false);
+    expect(webkitEnterFullscreen).not.toHaveBeenCalled();
+    expect(extra.nextElementSibling).toBe(byTestId('fullscreen'));
+    expect(extra.classList.contains('pc-btn')).toBe(true);
+  });
+
+  it('iPhone with the chat over the video off: iOS\'s own player, as before; exitFill does nothing then', () => {
+    // Arrange
+    const { byTestId, player, webkitEnterFullscreen, controls } = setup({ iphone: true, fill: false });
+    // Act
+    byTestId('fullscreen').click();
+    controls.exitFill();
+    // Assert
+    expect(webkitEnterFullscreen).toHaveBeenCalledTimes(1);
+    expect(player.classList.contains('pc-fill')).toBe(false);
+  });
+
+  it('a computer never fills the page: the container goes full screen whatever the chat over the video says', () => {
+    // Arrange
+    const { byTestId, player, requestFullscreen } = setup({ fill: true });
+    // Act
+    byTestId('fullscreen').click();
+    // Assert
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(player.classList.contains('pc-fill')).toBe(false);
   });
 
   it('picture-in-picture: no button where the browser has none', () => {

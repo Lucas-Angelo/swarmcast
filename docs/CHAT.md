@@ -689,6 +689,47 @@ are paused, why.
 button, so it never sends `chat.react` (`chat-compat.test.ts`); a current page sends reactions only to
 a server that announces them.
 
+## Chat over the video
+
+While the player fills the screen, the viewer can show the chat as lines over the picture, like the
+big streaming sites do in full screen. It is the viewer's own choice, **off by default** and
+remembered in that browser (`swarmcast.chatOverlay`): the **Chat on the video** button in the
+player's bar (only while it fills the screen) or **Chat on the video in full screen** in the watch
+page's Settings. Nothing changes on the server or the wire: the page draws what its chat already
+has. The switches and the state are in [`overlay-mode.ts`](../apps/viewer/src/overlay-mode.ts) (the
+main bundle; the player never depends on the chat), the lines in
+[`chat/overlay.ts`](../apps/viewer/src/chat/overlay.ts) (the chat chunk).
+
+- **When it shows.** The viewer turned it on, there is a chat (on, and not hidden by the viewer:
+  "Hide chat" means no chat over the video either), and the player fills the screen: the player
+  container in full screen (computers, Android, iPad, iPhones on iOS 26), or **fill the screen** on an
+  iPhone whose Safari has no element full screen. There, while this is on, the full-screen button
+  fixes the player over the whole page (`pc-fill`; the button again or Escape leaves; Safari's own
+  bars may stay) instead of opening iOS's own player, which shows nothing of the page over the
+  picture. With it off, that button opens iOS's player as before. Picture-in-picture shows the video
+  only.
+- **What shows.** The last `CHAT_OVERLAY_LINES` (6) messages and system lines at the bottom left,
+  each for `CHAT_OVERLAY_FADE_S` (12 s) from when it came (a snapshot's messages only for what is left
+  of that time), fading over its last 1.2 s; two lines at most each; GIFs are left out. Deleting a
+  message, Clear chat and a new snapshot take lines away as in the list. Lines are built by the
+  list's own code (`ChatList.overlayLine`: text nodes, `<bdi>` boxes, the shared invariants, emotes,
+  mentions) without the Reply button or the quote, so there is no second renderer.
+- **Readable on any picture.** Each line sits on a strong scrim, 72 % of `--video-bg`, with
+  `--on-video` text; names are made readable (4.5:1) against the lightest that scrim gets, over a white
+  picture, so they also hold over a dark one. Both themes look the same (the video tokens do not
+  change with the theme).
+- **Never in the way.** The overlay sits under the player's bar in the stacking order and just above
+  it on screen (the bar's height is measured, also with a phone's safe area); the lines take no click
+  (`pointer-events: none`) and are hidden from screen readers (the chat list stays the accessible
+  chat); at most 38 % of the player's width (72 % on a phone). Reactions float on the right, the lines
+  on the left.
+- **Writing.** A small button opens the chat's own message box over the video (the same form, moved
+  into the overlay and back, so slow mode, mutes, replies, mentions and React work there), and **C**
+  does too while the overlay shows. The emoji and GIF pickers stay in the chat column. Closing the box,
+  or leaving full screen, puts it back in the chat. Keys typed there never trigger the page's
+  shortcuts. Escape in full screen is the browser's (it leaves full screen).
+- **Reduce motion**: lines come and go without fading.
+
 ## Slash commands
 
 A shortcut for the streamer in the panel's message box; the buttons stay (a command is never the only
@@ -909,15 +950,16 @@ the chat stopped itself, and the reaction taps of the last minute per kind.
 | Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, state items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
+| The chat over the video: the viewer's choice (default, remembered, blocked storage), when it shows (full screen, the page-filling mode, a chat), the bar button and the Settings switch, C; the lines (at most 6, the fade and the end on a manual clock, a snapshot's, deletes, clears) and the message box moved over the video and back; the page-filling mode on an iPhone (and iOS's own player while it is off); F through the player's toggle | [`apps/viewer/test/unit/chat-overlay.test.ts`](../apps/viewer/test/unit/chat-overlay.test.ts), [`player-controls.test.ts`](../apps/viewer/test/unit/player-controls.test.ts), [`player-extras.test.ts`](../apps/viewer/test/unit/player-extras.test.ts), [`shortcuts.test.ts`](../apps/viewer/test/unit/shortcuts.test.ts) |
 | Reactions: the tally, the merge and the tap allowance; the effective switch (lockdown, guard, chat off); the hub (one `rx` per window for everyone, capped, never a seq, a snapshot or an answer; the device and address buckets, CGNAT; mute, new-viewer wait, lockdown, off; hostile frames; not a flood for the detector; slow sockets, merged windows, budget pressure; the panel's counts; the window's timer; Stop); the frame schema; the page's sender (first tap at once, the rest together, the bucket, its own taps taken off), the floaters (sampled, capped, hidden tab, reduce motion), the picker (names, keys) and the session's `rx` guard; the panel's tally line | [`chat-reactions.test.ts`](../apps/server/test/unit/chat-reactions.test.ts), [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts), [`apps/viewer/test/unit/chat-reactions.test.ts`](../apps/viewer/test/unit/chat-reactions.test.ts), [`chat-logic.test.ts`](../apps/admin/test/unit/chat-logic.test.ts) |
 | Polls: the state machine on a manual clock (lifecycle, timers to the millisecond, one vote per device, per network with IPv4 and IPv6 /64, "only people already watching", kick, counts), the hub (frames, three sessions and tabs of one device, moderation refusals, hostile and replayed frames, counts at most one per window, slow sockets, snapshots and resume, Clear, chat off, Stop, the panel's `rn`, 120 votes at once); slash commands (both languages, accents, every command and error, text stays text, a fuzzed property: total, round trip, linear) | [`chat-polls.test.ts`](../apps/server/test/unit/chat-polls.test.ts), [`commands.test.ts`](../packages/shared/test/chat/commands.test.ts), [`chat-logic.test.ts`](../apps/admin/test/unit/chat-logic.test.ts) |
 | Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop); polls (one vote across tabs and sessions of a browser, a late joiner, a kick, a prediction, Stop; a burst of 120 vote frames from one network); reactions (a burst of frames from one address: sockets kept, a script past the ceiling ended, the taps added up and capped, one `rx` per batch at most; a muted viewer and reactions off reach nobody; Stop) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
-| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages, a reaction from one page floating on the other under the real CSP | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
+| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages, a reaction from one page floating on the other under the real CSP, the chat over the video in full screen (a message from another page over the picture, one written from there) | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
 | Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin); replies and mentions under the content modes, blocked words, mute and clear | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
 | The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (reply, highlight, pin, unpin), the @ list, "Mentions you", settings, protection, the reactions tally and switch | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
-| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones); the poll card (place, mouse and keyboard votes, live percentages, ended / waiting / answered, reload, mute, Portuguese, folded on phones) and `/help`; reactions (the React button and its named reactions by mouse and keyboard, floaters inside the player under its controls and never taking a click, at most 8 per window and 24 at once, no double own tap, reduce motion, "Show reactions" remembered, turned off by the streamer, an older server, mutes, chat off, Portuguese, both themes, a storm, phones) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-poll.spec.ts`, `chat-reactions.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones); the poll card (place, mouse and keyboard votes, live percentages, ended / waiting / answered, reload, mute, Portuguese, folded on phones) and `/help`; reactions (the React button and its named reactions by mouse and keyboard, floaters inside the player under its controls and never taking a click, at most 8 per window and 24 at once, no double own tap, reduce motion, "Show reactions" remembered, turned off by the streamer, an older server, mutes, chat off, Portuguese, both themes, a storm, phones); the chat over the video in full screen (off by default, the bar button only in full screen and the Settings switch, remembered; the lines above the controls taking no click; readable in both themes; the message box over the video with React; C; hide chat and chat off; deletes and Clear; Portuguese; reduce motion; an iPhone without element full screen fills the page; phones) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-poll.spec.ts`, `chat-reactions.spec.ts`, `chat-overlay.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 | Polls and commands end to end: the panel's form and card with real viewer pages (live results, a late viewer, a reload, End now, Remove), a prediction answered from the panel, commands in Portuguese and English (suggestions, the ? list, `/limpar` asks first), moderation (mute, chat off, Clear), a narrow panel | [`apps/server/test/e2e/chat-polls.spec.ts`](../apps/server/test/e2e/chat-polls.spec.ts) |
 
 ## Load and soak
