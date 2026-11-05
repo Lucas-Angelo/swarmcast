@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Viewers on a fast connection get closer to live again.** The player could take a fast connection for a shaky one: when the video took a second or two to start, or now and then while it moved closer to live. It then added a few seconds of delay for about half a minute, or stopped moving closer, instead of getting as close to live as the connection allows. It now judges the connection only by what it has really measured.
 - **The app window no longer stays on the splash screen.** On Linux, the app window could, rarely, stay on "Starting SwarmCast…" for good, although SwarmCast had started, until you closed the app. If the panel has not opened 5 seconds after SwarmCast is ready, the app now opens it again by itself (on every system).
 - **Audio only no longer closes the watch page in Linux WebKit browsers.** A viewer using GNOME Web or another WebKit browser on Linux could see the watch page crash, now and then, right after picking **Audio only** or when the page opened on audio only. Audio only now starts in a way those browsers handle; other browsers are unchanged.
 - **Audio only no longer goes quiet when SwarmCast drops a lower quality.** A viewer listening with **Audio only** could lose the sound for several seconds, or for up to 20 seconds, when your computer stopped making the lower qualities (for example when it got busy). The sound now carries on.
