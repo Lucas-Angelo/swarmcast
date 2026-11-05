@@ -24,8 +24,26 @@ name: e2e
 # No test is retried (retries: 0 in the configs); --fail-on-flaky-tests fails the run anyway if a
 # config ever retries and a test passes only on its retry. Each Playwright run's results go to
 # the job summary (.github/scripts/test-summary.mjs).
+#
+# pipeline.yml calls it three times, so its macOS jobs fit the pipeline's macOS runners
+# (README.md, "macOS concurrency"): Ubuntu with every group plus the Windows chat UI; macOS
+# chat and media; macOS ui, after the macOS node job. Every call names its stage `e2e`, so the
+# checks read `e2e / <group> (<runner>)` as before.
 on:
   workflow_call:
+    inputs:
+      os:
+        description: JSON list of the runners to run the groups on.
+        type: string
+        required: true
+      groups:
+        description: JSON list of the groups (ui, chat, media) to run on each of them.
+        type: string
+        default: '["ui","chat","media"]'
+      chat-windows:
+        description: Also run the viewer chat UI on Windows (the chat-windows job).
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -42,9 +60,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Monthly canary on ubuntu-latest, as for the node tests.
-        os: ${{ fromJSON(github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","macos-latest"]' || '["ubuntu-24.04","macos-latest"]') }}
-        group: [ui, chat, media]
+        # From pipeline.yml, with the monthly canary on ubuntu-latest, as for the node tests.
+        os: ${{ fromJSON(inputs.os) }}
+        group: ${{ fromJSON(inputs.groups) }}
     runs-on: ${{ matrix.os }}
     # Setup about 5 minutes, the group's Playwright step up to 20, the chat group's viewer chat UI
     # step up to 10, then the summary and coverage steps.
@@ -220,6 +238,7 @@ jobs:
   # macOS run it in the chat group above; rendering.yml adds the screenshots and phone emulation.
   chat-windows:
     name: chat UI (windows-latest)
+    if: inputs.chat-windows
     runs-on: windows-latest
     timeout-minutes: 15
     defaults:
