@@ -164,5 +164,77 @@
         "binary": "ffmpeg"
       }
     }
+  },
+  "tauri-apprun": {
+    "version": "apprun-old",
+    "bundle": false,
+    "appimageTool": true,
+    "tauriCli": "2.12.4",
+    "license": "MIT",
+    "notes": "AppImage build tool, never shipped as a file (scripts/build/appimage-tools.mjs puts it where the Tauri bundler of @tauri-apps/cli 2.12.4 looks before it downloads, see apps/desktop/README.md). The AppImage's AppRun (AppImageKit), from the release tauri-bundler 2.10.4 downloads (src/bundle/linux/appimage/linuxdeploy.rs, prepare_tools). Re-read that function when @tauri-apps/cli changes (appimage-tools.test.ts checks the version).",
+    "url": "https://github.com/tauri-apps/binary-releases/releases/download/{version}/{asset}",
+    "assets": {
+      "linux-x64": {
+        "asset": "AppRun-x86_64",
+        "sha256": "f30140a43a0a59e46db21bdefdf749b9e9f2c6946e92afabbacf98b8ae73fb4f",
+        "binary": "AppRun-x86_64"
+      },
+      "linux-arm64": {
+        "asset": "AppRun-aarch64",
+        "sha256": "072f17c0895a85c490282fe5395c5007e5fc75da727e553b3b8fb680feb11578",
+        "binary": "AppRun-aarch64"
+      }
+    }
+  },
+  "linuxdeploy": {
+    "version": "linuxdeploy-07333c6",
+    "bundle": false,
+    "appimageTool": true,
+    "tauriCli": "2.12.4",
+    "license": "MIT",
+    "notes": "AppImage build tool, never shipped as a file (scripts/build/appimage-tools.mjs puts it where the Tauri bundler of @tauri-apps/cli 2.12.4 looks before it downloads, see apps/desktop/README.md). linuxdeploy at commit 07333c6 (LINUXDEPLOY_COMMIT_HASH in tauri-bundler 2.10.4), with its built-in appimage plugin, which the build uses (appimage-tools.mjs). The bundler zeroes bytes 8-10 of its copy (the AppImage magic), so a used copy is checked with them restored.",
+    "url": "https://github.com/tauri-apps/binary-releases/releases/download/{version}/{asset}",
+    "assets": {
+      "linux-x64": {
+        "asset": "linuxdeploy-x86_64.AppImage",
+        "sha256": "36a2d7e274d12e1050d0e9ecfe11d339ed54720b2bec464c286d53f8b07f5c62",
+        "binary": "linuxdeploy-07333c6-x86_64.AppImage"
+      },
+      "linux-arm64": {
+        "asset": "linuxdeploy-aarch64.AppImage",
+        "sha256": "556ab80baa98e600aa80f0dcedfb70bca0e1ce7e9f147fb345be3fcc3e91b2b1",
+        "binary": "linuxdeploy-07333c6-aarch64.AppImage"
+      }
+    }
+  },
+  "appimage-runtime": {
+    "version": "continuous",
+    "build": "fedfad5",
+    "bundle": false,
+    "appimageTool": true,
+    "env": "LDAI_RUNTIME_FILE",
+    "optional": true,
+    "tauriCli": "2.12.4",
+    "license": "MIT",
+    "notes": "The AppImage runtime (AppImage/type2-runtime), the first part of every SwarmCast AppImage. appimagetool (inside linuxdeploy's appimage plugin) downloads it from the `continuous` release at bundle time unless LDAI_RUNTIME_FILE names one, which appimage-tools.mjs does. `continuous` is replaced on every upstream commit, so the build of commit fedfad5 (2026-10-19, the runtime of SwarmCast 0.5.1's AppImages) is pinned, with a ci-deps mirror. `optional`: when no source gives the pinned bytes (all fail, or the publisher has a newer build and the mirror is missing), the build warns and goes on as before the pin (appimagetool downloads the runtime itself, no runtime check). update-binaries.mjs --check reports a newer upstream build. Re-pin: docs/RELEASING.md, section 8.",
+    "url": "https://github.com/AppImage/type2-runtime/releases/download/{version}/{asset}",
+    "assets": {
+      "linux-x64": {
+        "asset": "runtime-x86_64",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/type2-runtime-fedfad5-linux-x64"
+        ],
+        "sha256": "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46",
+        "binary": "runtime-x86_64"
+      },
+      "linux-arm64": {
+        "asset": "runtime-aarch64",
+        "mirrors": [
+          "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/type2-runtime-fedfad5-linux-arm64"
+        ],
+        "sha256": "9a72a744d221576c9347ec074243acc5c3c7568896b12714e0e82e9f0bf47900",
+        "binary": "runtime-aarch64"
+      }
+    }
   }
 }

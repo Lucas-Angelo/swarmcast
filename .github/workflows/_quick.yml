@@ -76,7 +76,8 @@ jobs:
         if: ${{ !cancelled() }}
         run: npm audit --omit=dev --audit-level=high
 
-      # Reports MediaMTX/cloudflared releases newer than the pins in scripts/build/versions.json.
+      # Reports MediaMTX/cloudflared releases newer than the pins in scripts/build/versions.json,
+      # and a new upstream build of the pinned AppImage runtime (a rolling `continuous` release).
       # SwarmCast ships pinned, verified versions on purpose, so a newer release is only a warning
       # on pull requests, main and releases; the monthly scheduled run fails (the rot alarm). It
       # never opens PRs: run `node scripts/build/update-binaries.mjs` locally to apply the update.
@@ -97,7 +98,7 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" -ne 0 ]; then
             if [ "$GITHUB_EVENT_NAME" = schedule ]; then exit "$status"; fi
-            echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins."
+            echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases or a new AppImage runtime build exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins (the runtime by hand, docs/RELEASING.md section 8)."
           fi
 
       - name: cargo fmt
