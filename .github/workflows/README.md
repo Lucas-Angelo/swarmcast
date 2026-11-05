@@ -280,6 +280,37 @@ architecture. Now the bundler's log shows no `Downloading` line, `desktop.mjs` l
 came from, and it checks that each AppImage starts with the pinned runtime (unless the runtime
 fell back, see above).
 
+### Pinned downloads in Docker
+
+The pinned binaries reach a container the way they reach a runner: from the download cache. Of
+the `docker` stage's jobs only `Playwright in Docker` downloads one at run time:
+`e2e-in-container.sh` runs `fetch-binaries.mjs` (MediaMTX and cloudflared for the container's
+architecture). The job runs `./.github/actions/setup` with `downloads: 'true'` and
+`npm-ci: 'false'`, which restores `main`'s `sc-downloads-Linux-<arch>-ffmpeg-false-*` entry (the
+one the `docker` and desktop builds fill) and sets `SC_DOWNLOAD_CACHE`; `e2e.sh` mounts that folder
+into the container as `/dl-cache` and passes `SC_DOWNLOAD_CACHE=/dl-cache`. `fetch-binaries.mjs`
+then takes each archive from the cache after checking its SHA-256 against
+`scripts/build/versions.json` (`✓ mediamtx v1.21.3: mediamtx_v1.21.3_linux_amd64.tar.gz from the
+download cache`), and only on a miss downloads it, from the asset's `mirrors` first when
+`versions.json` lists any (MediaMTX and cloudflared have none today), with its tries and back-off.
+The job never saves the cache: an entry saved by it would hold only these two archives, and the
+builds, which restore the same key, would then miss their AppImage tools. `e2e.sh` prints
+`Download cache:` with the folder and its file count (or `none`) before the container starts.
+
+The other Docker suites download nothing pinned at run time: `obs.sh` runs the staged server
+from the build's artifact (with `--no-tunnel`), `appimage.sh` runs with `--network none`, and their
+images install only distribution packages (`build.sh`, "Test images" in
+[scripts/test/docker/README.md](../../scripts/test/docker/README.md)). Inside the Playwright
+image, the browsers come with the image, and `ffmpeg` (apt, Ubuntu's own retries) and `npm ci`
+(npm's own retries) are not pinned files, so the cache does not cover them.
+
+Why: in 10x stability run 42046773993 (`soak/p10-0.5.2b`), `docker / Playwright in Docker x64`
+failed in `e2e.sh` at `fetch-binaries`: the job had no download cache, so its only source was
+github.com, which answered `HTTP 504` to all six tries in 62 s
+(`https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_linux_amd64.tar.gz`),
+while every job that ran `fetch-binaries.mjs` on the runner restored the same archive from the
+cache.
+
 ## Caches
 
 GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
@@ -290,7 +321,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
@@ -435,7 +466,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
   41636784175), the pinned
   downloads (`fetch-binaries.mjs`; also the AppImage tools, through `appimage-tools.mjs`, so the
-  Tauri bundler downloads nothing without a retry: run 42000871599, "AppImage tools" above), cache restores (`cache-restore`: one more try after a try that
+  Tauri bundler downloads nothing without a retry: run 42000871599, "AppImage tools" above; in the Playwright container from the download cache, "Pinned downloads in Docker" above), cache restores (`cache-restore`: one more try after a try that
   timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error, npm's or a prebuild-install download's (`setup`, `npm-network-error.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after

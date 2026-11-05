@@ -6,6 +6,10 @@
 #
 # Reports, with the e2e server log and the fake OBS log, are copied to
 # ./test-results/docker-e2e/<project>/ in the repo.
+#
+# SC_DOWNLOAD_CACHE=<dir> (fetch-binaries.mjs; CI's setup action restores it): mounted into the
+# container, so the pinned MediaMTX and cloudflared come from it (SHA-256 checked) and only
+# what it lacks is downloaded (and added to it).
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
@@ -31,9 +35,19 @@ rm -rf "$OUT"
 mkdir -p "$OUT"
 echo "Image: $IMAGE ${PLATFORM:+($PLATFORM)}  projects: ${PROJECTS[*]}"
 
+CACHE=()
+if [ -n "${SC_DOWNLOAD_CACHE:-}" ]; then
+  mkdir -p "$SC_DOWNLOAD_CACHE" || exit 2
+  CACHE=(-v "$(cd "$SC_DOWNLOAD_CACHE" && pwd):/dl-cache" -e SC_DOWNLOAD_CACHE=/dl-cache)
+  echo "Download cache: $SC_DOWNLOAD_CACHE ($(find "$SC_DOWNLOAD_CACHE" -type f | wc -l | tr -d ' ') files)"
+else
+  echo "Download cache: none (SC_DOWNLOAD_CACHE unset): fetch-binaries downloads the binaries"
+fi
+
 pull_image "$IMAGE" "$PLATFORM" || exit 2
+# ${CACHE[@]+...}: an empty array under `set -u` is an error in bash before 4.4 (macOS's 3.2).
 docker run --rm --init ${PLATFORM:+--platform "$PLATFORM"} --ipc=host \
-  -v "$ROOT:/src:ro" -v "$OUT:/out" -e "PROJECTS=${PROJECTS[*]}" -e CI= \
+  -v "$ROOT:/src:ro" -v "$OUT:/out" ${CACHE[@]+"${CACHE[@]}"} -e "PROJECTS=${PROJECTS[*]}" -e CI= \
   "$IMAGE" bash /src/scripts/test/docker/e2e-in-container.sh
 rc=$?
 echo "Reports: $OUT"
