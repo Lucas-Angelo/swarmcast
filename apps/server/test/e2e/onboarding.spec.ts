@@ -7,6 +7,9 @@
 // closes it, is translated, and its "Your PC check" step shows the installer's system check
 // (system-check.json in the data folder, read each time the step is shown), else live data.
 //
+// A first GET /api/onboarding the network lost (fetch() rejected, net::ERR_NO_BUFFER_SPACE on a
+// Windows runner) is asked again: the tutorial still opens by itself.
+//
 // After a reload the panel decides from GET /api/onboarding whether to open the tutorial; that
 // decision shows nothing when it stays closed, so the test waits for that answer to be fully
 // received and for the two frames after it, then checks that the tutorial stayed closed.
@@ -14,7 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { Page } from '@playwright/test';
 import type { AdminChatState } from '@swarmcast/shared';
-import { admin, adminApi, expect, liveLink, openPanel, serverEnv, test as base } from './fixtures.js';
+import { admin, adminApi, expect, liveLink, loseFirstGet, openPanel, serverEnv, test as base } from './fixtures.js';
 
 /** The installer's system check the "Your PC check" step reads; removed after the test. */
 const test = base.extend<{ systemCheckFile: string }>({
@@ -224,6 +227,27 @@ test('the first panel open shows the tutorial; finishing it keeps it closed on r
   // Assert
   await expect(dialog).toBeHidden();
   expect(errors.filter((e) => /Content Security Policy|Refused/.test(e))).toEqual([]);
+});
+
+test('a first answer the network lost is asked again: a fresh install still opens the tutorial', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  await admin('/api/onboarding', { done: false });
+  const lost = await loseFirstGet(page, '**/api/onboarding');
+  const dialog = page.getByTestId('onboarding');
+
+  // Act
+  await openPanel(page);
+
+  // Assert
+  await expect(dialog).toBeVisible();
+  expect(lost()).toBe(1);
+
+  // Act
+  page.once('dialog', (d) => void d.accept());
+  await page.getByTestId('onb-skip').click();
+
+  // Assert
+  await expect(dialog).toBeHidden();
 });
 
 test('the name step starts from the "Your page" name; what the streamer types wins over a late answer', { tag: '@ui' }, async ({ page, chat }) => {

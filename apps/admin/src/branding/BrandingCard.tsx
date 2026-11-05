@@ -3,6 +3,7 @@ import { countGraphemes, type MessageKey } from '@swarmcast/shared';
 import { BRAND_MAX_TAGS, BRAND_SUPPORT_LABELS, BRAND_TEXT, defaultBranding, lineCount, type AdminBrandingState, type BrandSlot } from '@swarmcast/shared/branding';
 import { t } from '@swarmcast/shared/i18n';
 import { errorText } from '../api.js';
+import { askUntilAnswered } from '../ask-again.js';
 import { Info } from '../Info.js';
 import { brandingApi, NotAvailableError } from './api.js';
 import type { FieldId } from './image.js';
@@ -71,7 +72,10 @@ export function BrandingCard() {
   };
 
   useEffect(() => {
-    brandingApi.load().then(
+    // Asked again when the network lost the request (ask-again.ts); else the card showed
+    // "Failed to fetch" until the page was reloaded.
+    const stop = new AbortController();
+    askUntilAnswered(() => brandingApi.load(), stop.signal).then(
       (r) => {
         apply(r);
         setLoaded(true);
@@ -81,9 +85,10 @@ export function BrandingCard() {
           // An older server: the card works on the defaults and saves nothing.
           setAvailable(false);
           setLoaded(true);
-        } else setErr(e);
+        } else if (!stop.signal.aborted) setErr(e);
       },
     );
+    return () => stop.abort();
   }, []);
   // Object URLs made for the preview are released when the card goes away.
   useEffect(() => () => Object.values(localRef.current).forEach((u) => u && URL.revokeObjectURL(u)), []);

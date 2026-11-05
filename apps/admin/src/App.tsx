@@ -74,9 +74,11 @@ export function App() {
   );
   // Desktop app only (null outside it, in development and tests: its card and banner stay hidden).
   useEffect(() => {
-    void loadDesktop((p, m) => api(p, m)).then((d) => {
-      if (d) setDesktop(d);
+    const stop = new AbortController();
+    void loadDesktop((p, m) => api(p, m), stop.signal).then((d) => {
+      if (d && !stop.signal.aborted) setDesktop(d);
     });
+    return () => stop.abort();
   }, []);
 
   const changeLang = (l: Lang): void => {

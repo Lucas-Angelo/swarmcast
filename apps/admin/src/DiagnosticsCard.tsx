@@ -2,6 +2,7 @@ import { useEffect, useState } from 'preact/hooks';
 import { LOG_RETENTION_RANGE, type DiagnosticsSettings, type LogExportResult } from '@swarmcast/shared';
 import { t } from '@swarmcast/shared/i18n';
 import { api, errorText, post } from './api.js';
+import { askUntilAnswered } from './ask-again.js';
 import { Info } from './Info.js';
 
 const clampDays = (n: number): number => Math.min(LOG_RETENTION_RANGE.max, Math.max(LOG_RETENTION_RANGE.min, Math.round(n) || LOG_RETENTION_RANGE.default));
@@ -22,13 +23,16 @@ export function DiagnosticsCard() {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
-    api<DiagnosticsSettings>('/api/diagnostics', 'GET').then(
+    // Asked again when the network lost the request (ask-again.ts); else the field never showed.
+    const stop = new AbortController();
+    askUntilAnswered(() => api<DiagnosticsSettings>('/api/diagnostics', 'GET'), stop.signal).then(
       (s) => {
         setDays(s.logRetentionDays);
         setSavedDays(s.logRetentionDays);
       },
       () => {},
     );
+    return () => stop.abort();
   }, []);
 
   const exportLogs = async (): Promise<void> => {

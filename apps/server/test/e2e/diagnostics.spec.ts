@@ -1,10 +1,11 @@
 // The "Problem report" card: Export logs writes the anonymised ZIP on the server side (the e2e
 // server points SWARMCAST_DOWNLOADS_DIR at a temporary folder) and shows where, so it works
 // without browser downloads; the full-IP option is under Advanced and off by default; the log
-// retention is saved (3 to 90 days); the card is translated.
+// retention is saved (3 to 90 days) and still shows when the network lost its first load; the
+// card is translated.
 import fs from 'node:fs';
 import path from 'node:path';
-import { adminApi, expect, openPanel, serverEnv, test } from './fixtures.js';
+import { adminApi, expect, loseFirstGet, openPanel, serverEnv, test } from './fixtures.js';
 
 test('Export logs saves an anonymised ZIP to the Downloads folder and shows where', { tag: '@ui' }, async ({ page }) => {
   // Arrange
@@ -55,6 +56,21 @@ test('the retention setting is saved (3 to 90 days)', { tag: '@ui' }, async ({ p
   // Assert
   await expect(card.getByText('Saved ✓')).toBeVisible();
   expect(await adminApi('GET', '/api/diagnostics')).toEqual({ logRetentionDays: 30 });
+});
+
+test('a first load the network lost is asked again: the retention setting still shows', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  const lost = await loseFirstGet(page, '**/api/diagnostics');
+
+  // Act
+  await openPanel(page);
+  const card = page.getByTestId('diagnostics');
+  await card.scrollIntoViewIfNeeded();
+  await card.getByText('Advanced').click();
+
+  // Assert
+  await expect(card.getByTestId('log-retention')).toHaveValue(String((await adminApi<{ logRetentionDays: number }>('GET', '/api/diagnostics')).logRetentionDays));
+  expect(lost()).toBe(1);
 });
 
 test('the card is translated to pt-BR', { tag: '@ui' }, async ({ page }) => {
