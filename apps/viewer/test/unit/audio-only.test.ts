@@ -17,11 +17,15 @@
 //   picking one of them goes back to video at that height;
 // - audio-only playback joins the video viewers' audio swarm, never a video swarm;
 // - the poster shows the streamer's name and picture as text and a same-origin image;
-// - the state is observable (a screen wake lock subscribes to it).
+// - the state is observable (a screen wake lock subscribes to it);
+// - on Linux WebKit (GStreamer), sound alone on a new MediaSource starts at the first segment of
+//   the live window and moves to live only once it plays: a seek before the new sound-only
+//   pipeline played anything kills the page's process there (hls.js seeks right after its first
+//   append on every live start).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AUDIO_ONLY_PLAYLIST, variantStreamSwarmId } from '@swarmcast/shared';
 import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
-import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type ParsedManifest } from '../../src/audio-only.js';
+import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, createWindowStart, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, usesGStreamer, WINDOW_START_PLAY_S, type ParsedManifest } from '../../src/audio-only.js';
 import { createManifestReloader, hlsConfigFor, loadAudioOnly, loadPreferredHeight, playOnLoad, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
 
@@ -466,6 +470,132 @@ describe('reading the audio-only playlist again (a media playlist it listed went
     expect([video.calls, toAudio.calls, toVideo.calls]).toEqual([[], [], []]);
     expect(noTransfer.calls).toEqual(['transferMedia']);
     expect([video, toAudio, toVideo, noTransfer].map((h) => h.listeners())).toEqual([0, 0, 0, 0]);
+  });
+});
+
+/** The element a sound-only start drives: its playhead, seeks, and the timeupdate it sends. */
+class StartMedia {
+  seeking = false;
+  paused = true;
+  seeks: number[] = [];
+  private t = 0;
+  private listeners: Array<() => void> = [];
+  get currentTime(): number {
+    return this.t;
+  }
+  set currentTime(t: number) {
+    this.seeks.push(t);
+    this.t = t;
+  }
+  addEventListener(_type: 'timeupdate', fn: () => void): void {
+    this.listeners.push(fn);
+  }
+  removeEventListener(_type: 'timeupdate', fn: () => void): void {
+    this.listeners = this.listeners.filter((f) => f !== fn);
+  }
+  get listening(): number {
+    return this.listeners.length;
+  }
+  /** A timeupdate before playback started (the element still paused). */
+  timeupdateWhilePaused(): void {
+    for (const fn of [...this.listeners]) fn();
+  }
+  /** Playback reached `t` on its own (the pipeline's clock), as a timeupdate reports it. */
+  playedTo(t: number): void {
+    this.paused = false;
+    this.t = t;
+    for (const fn of [...this.listeners]) fn();
+  }
+}
+
+const LINUX_WEBKIT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+const startPlayer = () => ({ config: { startPosition: -1 }, liveSyncPosition: 21.7 as number | null });
+
+describe('sound alone on a new MediaSource on Linux WebKit (GStreamer)', () => {
+  it('starts at the first segment of the live window, where its media begins, so hls.js does not seek before the pipeline plays', () => {
+    // Arrange
+    const hls = startPlayer();
+    const media = new StartMedia();
+    const start = createWindowStart(hls, media, { enabled: true, base: BASE });
+    // Act
+    start.beforeLoad(AUDIO_ONLY_URL);
+    // Assert: a live start elsewhere seeks to the live sync position right after the first append
+    expect(hls.config.startPosition).toBe(0);
+    expect(start.active).toBe(true);
+    expect(media.seeks).toEqual([]);
+  });
+
+  it(`moves to live only once playback has run ${WINDOW_START_PLAY_S} s from where it started, and lets hls.js start live again afterwards`, () => {
+    // Arrange
+    const hls = startPlayer();
+    const media = new StartMedia();
+    const start = createWindowStart(hls, media, { enabled: true, base: BASE });
+    start.beforeLoad(AUDIO_ONLY_URL);
+    // Act: the first timeupdates (paused, then at its start) are not playback yet
+    media.timeupdateWhilePaused();
+    media.playedTo(0.04);
+    media.playedTo(0.2);
+    const before = [...media.seeks];
+    media.playedTo(0.3);
+    // Assert
+    expect(before).toEqual([]);
+    expect(media.seeks).toEqual([21.7]);
+    expect([start.active, media.listening, hls.config.startPosition]).toEqual([false, 0, -1]);
+  });
+
+  it('does not move a playhead that is at live already, and does nothing while the element seeks', () => {
+    // Arrange
+    const hls = startPlayer();
+    const media = new StartMedia();
+    const start = createWindowStart(hls, media, { enabled: true, base: BASE });
+    start.beforeLoad(AUDIO_ONLY_URL);
+    hls.liveSyncPosition = 1;
+    // Act
+    media.playedTo(0);
+    media.seeking = true;
+    media.playedTo(0.5);
+    media.seeking = false;
+    media.playedTo(0.6);
+    // Assert: the seek (not ours) was skipped; the playhead is within a second of live
+    expect(media.seeks).toEqual([]);
+    expect(start.active).toBe(false);
+  });
+
+  it('video, and every engine but Linux WebKit, start where hls.js picks (live); a new load drops a start still waiting', () => {
+    // Arrange
+    const hls = startPlayer();
+    const media = new StartMedia();
+    const elsewhere = createWindowStart(hls, media, { enabled: false, base: BASE });
+    const linux = createWindowStart(hls, media, { enabled: true, base: BASE });
+    // Act
+    elsewhere.beforeLoad(AUDIO_ONLY_URL);
+    const elsewhereStart = hls.config.startPosition;
+    linux.beforeLoad(AUDIO_ONLY_URL);
+    linux.beforeLoad('/hls/index.m3u8');
+    media.playedTo(0);
+    media.playedTo(1);
+    // Assert
+    expect([elsewhereStart, elsewhere.active]).toEqual([-1, false]);
+    expect([hls.config.startPosition, linux.active, media.listening, media.seeks]).toEqual([-1, false, 0, []]);
+  });
+
+  it('tells Linux WebKit browsers from the rest by their user agent and platform, also when the user agent says macOS', () => {
+    // Arrange: [user agent, navigator.platform]
+    const safariMac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+    const agents: Record<string, [string, string]> = {
+      'GNOME Web': ['Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Epiphany/605.1.15', 'Linux x86_64'],
+      'WebKit on Linux with a macOS user agent (Playwright Desktop Safari)': [safariMac, 'Linux x86_64'],
+      'WebKit on Linux, no platform': [LINUX_WEBKIT, ''],
+      'Chrome, Linux': ['Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36', 'Linux x86_64'],
+      'Chrome, Android': ['Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36', 'Linux armv81'],
+      'Safari, macOS': [safariMac, 'MacIntel'],
+      'Safari, iPhone': ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', 'iPhone'],
+      'Firefox, Linux': ['Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0', 'Linux x86_64'],
+    };
+    // Act
+    const picked = Object.entries(agents).filter(([, [ua, platform]]) => usesGStreamer(ua, platform)).map(([name]) => name);
+    // Assert
+    expect(picked).toEqual(['GNOME Web', 'WebKit on Linux with a macOS user agent (Playwright Desktop Safari)', 'WebKit on Linux, no platform']);
   });
 });
 

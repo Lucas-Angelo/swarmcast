@@ -68,6 +68,14 @@ export interface LiveStreamScript {
   /** Test-only clock and rate flags (`?delaySpeed=`, `?delayRate=`). */
   speed?: number;
   rateScale?: number;
+  /**
+   * A separate audio playlist (the server's audio rendition, hls.js alternate audio), reloaded on
+   * its own timer every segment duration: with the video one at first; from `videoLeadFromS` on,
+   * the video playlist is reloaded `leadS` earlier (hls.js reloads a playlist it found unchanged
+   * half a target duration later, which moves that playlist's phase for good). The element plays
+   * what both tracks have buffered.
+   */
+  audio?: { videoLeadFromS: number; leadS: number };
 }
 
 /** What the adaptive delay showed at the end of each second (its debug snapshot). */
@@ -87,16 +95,21 @@ export interface DelaySnapshot {
  * restarts at the reload (hls.js base-playlist-controller: advancedDateTime is the load time,
  * not the segment's), so hls.latency = edge + age − currentTime, as in hls.js, is off by the
  * time the newest segment waited for that reload. New segments are buffered at once (10 ms
- * loads: 30 Mbps for a 1.3 Mbps rendition). The video plays at its playbackRate.
+ * loads: 30 Mbps for a 1.3 Mbps rendition; FRAG_LOADED, then FRAG_BUFFERED). The video plays at
+ * its playbackRate.
  */
 export class FakeLiveStream {
   readonly video = new FakeVideo();
   readonly delay: ReturnType<typeof attachAdaptiveDelay>;
   private readonly startedAt = performance.now() / 1000;
-  private readonly fragLoaded: Array<(event: string, data: unknown) => void> = [];
+  private readonly fragEvents: Array<{ event: string; handler: (event: string, data: unknown) => void }> = [];
   private edgeIndex: number;
   private advancedAt = 0;
   private nextReload = LIVE_SEGMENT_S;
+  private audioEdgeIndex: number;
+  private audioAdvancedAt = 0;
+  private nextAudioReload = LIVE_SEGMENT_S;
+  private videoLeading = false;
 
   constructor(private readonly script: LiveStreamScript) {
     const video = this.video;
@@ -111,9 +124,20 @@ export class FakeLiveStream {
         return age();
       },
     };
+    const audioEdge = (): number => (this.audioEdgeIndex + 1) * LIVE_SEGMENT_S;
+    const audioAge = (): number => this.now() - this.audioAdvancedAt;
+    const audioDetails = {
+      live: true,
+      get edge() {
+        return audioEdge();
+      },
+      get age() {
+        return audioAge();
+      },
+    };
     const hls = {
       on: (event: string, handler: (event: string, data: unknown) => void) => {
-        if (event === 'hlsFragLoaded') this.fragLoaded.push(handler);
+        if (event === 'hlsFragLoaded' || event === 'hlsFragBuffered') this.fragEvents.push({ event, handler });
       },
       get latency() {
         return details.edge + details.age - video.currentTime;
@@ -123,21 +147,25 @@ export class FakeLiveStream {
       currentLevel: 0,
       config: { liveSyncDuration: script.startDelayS },
       latestLevelDetails: details,
+      audioTracks: script.audio ? [{ details: audioDetails }] : [],
+      audioTrack: script.audio ? 0 : -1,
       set targetLatency(v: number) {
         hls.config.liveSyncDuration = v;
       },
     };
     this.delay = attachAdaptiveDelay(hls as unknown as Parameters<typeof attachAdaptiveDelay>[0], null, video as unknown as HTMLVideoElement, {
       profile: 'stable',
-      events: { FRAG_LOADED: 'hlsFragLoaded' } as unknown as typeof Hls.Events,
+      events: { FRAG_LOADED: 'hlsFragLoaded', FRAG_BUFFERED: 'hlsFragBuffered' } as unknown as typeof Hls.Events,
       p2pEnabled: () => false,
       speed: script.speed,
       rateScale: script.rateScale,
     });
     this.edgeIndex = this.lastPublished(0) - START_SEGMENTS;
+    this.audioEdgeIndex = this.edgeIndex;
     this.reload();
+    this.reloadAudio();
     video.currentTime = this.edge - script.startDelayS;
-    video.bufferTo(this.edge);
+    video.bufferTo(this.bufferEnd);
     void video.play();
     video.dispatchEvent(new Event('playing'));
   }
@@ -148,21 +176,35 @@ export class FakeLiveStream {
     const steps = (seconds * 1000) / STEP_MS;
     for (let i = 1; i <= steps; i++) {
       const v = this.video;
-      if (!v.paused) v.currentTime = Math.min(this.edge, v.currentTime + (v.playbackRate * STEP_MS) / 1000);
+      if (!v.paused) v.currentTime = Math.min(this.bufferEnd, v.currentTime + (v.playbackRate * STEP_MS) / 1000);
       vi.advanceTimersByTime(STEP_MS);
+      const audio = this.script.audio;
+      if (audio && !this.videoLeading && this.now() >= audio.videoLeadFromS) {
+        this.videoLeading = true;
+        this.nextReload -= audio.leadS;
+      }
       if (this.now() >= this.nextReload - 1e-9) {
         this.reload();
         this.nextReload += LIVE_SEGMENT_S;
       }
-      v.bufferTo(this.edge);
+      if (audio && this.now() >= this.nextAudioReload - 1e-9) {
+        this.reloadAudio();
+        this.nextAudioReload += LIVE_SEGMENT_S;
+      }
+      v.bufferTo(this.bufferEnd);
       if (i % (1000 / STEP_MS) === 0) out.push({ s: Math.round(this.now()), ...(this.delay.snapshot() as unknown as Omit<DelaySnapshot, 's'>) });
     }
     return out;
   }
 
-  /** End of the newest segment in the player's playlist (and buffer), media time. */
+  /** End of the newest segment in the player's (video) playlist, media time. */
   private get edge(): number {
     return (this.edgeIndex + 1) * LIVE_SEGMENT_S;
+  }
+
+  /** End of what the element can play: what the video playlist and, if separate, the audio one list (all of it is buffered at once). */
+  private get bufferEnd(): number {
+    return this.script.audio ? Math.min(this.edge, (this.audioEdgeIndex + 1) * LIVE_SEGMENT_S) : this.edge;
   }
 
   private now(): number {
@@ -183,10 +225,135 @@ export class FakeLiveStream {
     if (last <= this.edgeIndex) return;
     const ms = performance.now();
     for (let k = this.edgeIndex + 1; k <= last; k++) {
-      const frag = { type: 'main', duration: LIVE_SEGMENT_S, url: `seg${k}.mp4`, stats: { loading: { start: ms - 10, end: ms }, loaded: 325_000 } };
-      for (const h of this.fragLoaded) h('hlsFragLoaded', { frag });
+      const stats = { aborted: false, loading: { start: ms - 10, end: ms }, loaded: 325_000 };
+      const frag = { type: 'main', sn: k, duration: LIVE_SEGMENT_S, url: `seg${k}.mp4`, stats };
+      for (const { event, handler } of this.fragEvents) handler(event, event === 'hlsFragLoaded' ? { frag } : { frag, stats, part: null, id: 'main' });
     }
     this.edgeIndex = last;
     this.advancedAt = now;
+  }
+
+  /** The player reloads the audio playlist (alternate audio: not a main fragment, nothing the controller counts). */
+  private reloadAudio(): void {
+    const now = this.now();
+    const last = this.lastPublished(now);
+    if (last <= this.audioEdgeIndex) return;
+    this.audioEdgeIndex = last;
+    this.audioAdvancedAt = now;
+  }
+}
+
+/** How a player starts on a fast link, and what hls.js' bandwidth estimate says meanwhile. */
+export interface PlayerStartScript {
+  /** hls.js' estimate before it has timed a segment (abrEwmaDefaultEstimate: the last visit's estimate or 2 Mbps), bits/s. */
+  guessBps: number;
+  /** What it measures once it has timed one, bits/s. */
+  measuredBps: number;
+  /** Bitrate of the rendition, bits/s (its segments are this big). */
+  renditionBps: number;
+  /** Seconds from the end of the first segment's download to hls.js buffering it (and playback starting). */
+  bufferedAfterS: number;
+  /** Test-only clock and rate flags (`?delaySpeed=`, `?delayRate=`). */
+  speed?: number;
+  rateScale?: number;
+}
+
+/** When the first segment's download ends, s after the player attached. */
+const FIRST_SEGMENT_AT_S = 0.3;
+/** Delay behind live the player starts at, s (adaptive-delay.spec.ts starts ~20 s behind). */
+const START_LATENCY_S = 22;
+
+/**
+ * A player starting a live stream on a fast link, played by attachAdaptiveDelay on Vitest's fake
+ * clock (call vi.useFakeTimers() first). hls.js is modelled where the adaptive delay reads it:
+ * `bandwidthEstimate` is the starting guess until the first segment is buffered (hls.js
+ * abr-controller times a segment on FRAG_BUFFERED, not FRAG_LOADED), `currentLevel` is -1 until
+ * playback starts (the rendition bitrate then comes from segment sizes), and playback starts once
+ * the first segment is buffered. After it, a segment is loaded and buffered every 2 s, 20 s
+ * buffered ahead, the delay steady.
+ */
+export class FakePlayerStart {
+  readonly video = new FakeVideo();
+  readonly delay: ReturnType<typeof attachAdaptiveDelay>;
+  private readonly startedAt = performance.now() / 1000;
+  private readonly handlers = new Map<string, Array<(event: string, data: unknown) => void>>();
+  private buffered = false;
+  private segment = 0;
+  private nextSegmentAt = FIRST_SEGMENT_AT_S;
+  private bufferAt = Infinity;
+
+  constructor(private readonly script: PlayerStartScript) {
+    const buffered = (): boolean => this.buffered;
+    const hls = {
+      on: (event: string, handler: (event: string, data: unknown) => void) => {
+        this.handlers.set(event, [...(this.handlers.get(event) ?? []), handler]);
+      },
+      get latency() {
+        return buffered() ? START_LATENCY_S : 0;
+      },
+      get bandwidthEstimate() {
+        return buffered() ? script.measuredBps : script.guessBps;
+      },
+      levels: [{ bitrate: script.renditionBps }],
+      get currentLevel() {
+        return buffered() ? 0 : -1;
+      },
+      config: { liveSyncDuration: 20 },
+      targetLatency: 20,
+    };
+    this.delay = attachAdaptiveDelay(hls as unknown as Parameters<typeof attachAdaptiveDelay>[0], null, this.video as unknown as HTMLVideoElement, {
+      profile: 'stable',
+      events: { FRAG_LOADED: 'hlsFragLoaded', FRAG_BUFFERED: 'hlsFragBuffered' } as unknown as typeof Hls.Events,
+      p2pEnabled: () => false,
+      speed: script.speed,
+      rateScale: script.rateScale,
+    });
+  }
+
+  /** Plays `seconds` of fake time; returns the adaptive delay's snapshot at the end of each second. */
+  play(seconds: number): DelaySnapshot[] {
+    const out: DelaySnapshot[] = [];
+    const steps = (seconds * 1000) / STEP_MS;
+    for (let i = 1; i <= steps; i++) {
+      vi.advanceTimersByTime(STEP_MS);
+      const now = this.now();
+      if (now >= this.nextSegmentAt - 1e-9) this.loadSegment(now);
+      if (now >= this.bufferAt - 1e-9) this.firstBuffered();
+      if (i % (1000 / STEP_MS) === 0) out.push({ s: Math.round(now), ...(this.delay.snapshot() as unknown as Omit<DelaySnapshot, 's'>) });
+    }
+    return out;
+  }
+
+  private now(): number {
+    return performance.now() / 1000 - this.startedAt;
+  }
+
+  private emit(event: string, data: unknown): void {
+    for (const h of this.handlers.get(event) ?? []) h(event, data);
+  }
+
+  /** One segment downloaded at the measured rate (hls.js FRAG_LOADED); after the first, buffered at once (FRAG_BUFFERED). */
+  private loadSegment(now: number): void {
+    const bytes = Math.round((this.script.renditionBps * LIVE_SEGMENT_S) / 8);
+    const ms = performance.now();
+    const loadMs = ((bytes * 8) / this.script.measuredBps) * 1000;
+    const stats = { aborted: false, loaded: bytes, loading: { start: ms - loadMs, end: ms } };
+    const frag = { type: 'main', sn: this.segment, duration: LIVE_SEGMENT_S, url: `seg${this.segment}.mp4`, stats };
+    this.emit('hlsFragLoaded', { frag });
+    if (this.segment === 0) this.bufferAt = now + this.script.bufferedAfterS;
+    else this.emit('hlsFragBuffered', { frag, stats, part: null, id: 'main' });
+    this.segment += 1;
+    this.nextSegmentAt = now + LIVE_SEGMENT_S;
+  }
+
+  /** hls.js buffers the first segment (and times it: the estimate is measured from now on); playback starts. */
+  private firstBuffered(): void {
+    this.bufferAt = Infinity;
+    this.buffered = true;
+    const stats = { aborted: false, loaded: 1, loading: { start: 0, end: 0 } };
+    this.emit('hlsFragBuffered', { frag: { type: 'main', sn: 0, duration: LIVE_SEGMENT_S, url: 'seg0.mp4', stats }, stats, part: null, id: 'main' });
+    this.video.bufferAhead(20);
+    void this.video.play();
+    this.video.dispatchEvent(new Event('playing'));
   }
 }
