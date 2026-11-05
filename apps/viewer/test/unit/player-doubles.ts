@@ -68,6 +68,14 @@ export interface LiveStreamScript {
   /** Test-only clock and rate flags (`?delaySpeed=`, `?delayRate=`). */
   speed?: number;
   rateScale?: number;
+  /**
+   * A separate audio playlist (the server's audio rendition, hls.js alternate audio), reloaded on
+   * its own timer every segment duration: with the video one at first; from `videoLeadFromS` on,
+   * the video playlist is reloaded `leadS` earlier (hls.js reloads a playlist it found unchanged
+   * half a target duration later, which moves that playlist's phase for good). The element plays
+   * what both tracks have buffered.
+   */
+  audio?: { videoLeadFromS: number; leadS: number };
 }
 
 /** What the adaptive delay showed at the end of each second (its debug snapshot). */
@@ -98,6 +106,10 @@ export class FakeLiveStream {
   private edgeIndex: number;
   private advancedAt = 0;
   private nextReload = LIVE_SEGMENT_S;
+  private audioEdgeIndex: number;
+  private audioAdvancedAt = 0;
+  private nextAudioReload = LIVE_SEGMENT_S;
+  private videoLeading = false;
 
   constructor(private readonly script: LiveStreamScript) {
     const video = this.video;
@@ -112,6 +124,17 @@ export class FakeLiveStream {
         return age();
       },
     };
+    const audioEdge = (): number => (this.audioEdgeIndex + 1) * LIVE_SEGMENT_S;
+    const audioAge = (): number => this.now() - this.audioAdvancedAt;
+    const audioDetails = {
+      live: true,
+      get edge() {
+        return audioEdge();
+      },
+      get age() {
+        return audioAge();
+      },
+    };
     const hls = {
       on: (event: string, handler: (event: string, data: unknown) => void) => {
         if (event === 'hlsFragLoaded' || event === 'hlsFragBuffered') this.fragEvents.push({ event, handler });
@@ -124,6 +147,8 @@ export class FakeLiveStream {
       currentLevel: 0,
       config: { liveSyncDuration: script.startDelayS },
       latestLevelDetails: details,
+      audioTracks: script.audio ? [{ details: audioDetails }] : [],
+      audioTrack: script.audio ? 0 : -1,
       set targetLatency(v: number) {
         hls.config.liveSyncDuration = v;
       },
@@ -136,9 +161,11 @@ export class FakeLiveStream {
       rateScale: script.rateScale,
     });
     this.edgeIndex = this.lastPublished(0) - START_SEGMENTS;
+    this.audioEdgeIndex = this.edgeIndex;
     this.reload();
+    this.reloadAudio();
     video.currentTime = this.edge - script.startDelayS;
-    video.bufferTo(this.edge);
+    video.bufferTo(this.bufferEnd);
     void video.play();
     video.dispatchEvent(new Event('playing'));
   }
@@ -149,21 +176,35 @@ export class FakeLiveStream {
     const steps = (seconds * 1000) / STEP_MS;
     for (let i = 1; i <= steps; i++) {
       const v = this.video;
-      if (!v.paused) v.currentTime = Math.min(this.edge, v.currentTime + (v.playbackRate * STEP_MS) / 1000);
+      if (!v.paused) v.currentTime = Math.min(this.bufferEnd, v.currentTime + (v.playbackRate * STEP_MS) / 1000);
       vi.advanceTimersByTime(STEP_MS);
+      const audio = this.script.audio;
+      if (audio && !this.videoLeading && this.now() >= audio.videoLeadFromS) {
+        this.videoLeading = true;
+        this.nextReload -= audio.leadS;
+      }
       if (this.now() >= this.nextReload - 1e-9) {
         this.reload();
         this.nextReload += LIVE_SEGMENT_S;
       }
-      v.bufferTo(this.edge);
+      if (audio && this.now() >= this.nextAudioReload - 1e-9) {
+        this.reloadAudio();
+        this.nextAudioReload += LIVE_SEGMENT_S;
+      }
+      v.bufferTo(this.bufferEnd);
       if (i % (1000 / STEP_MS) === 0) out.push({ s: Math.round(this.now()), ...(this.delay.snapshot() as unknown as Omit<DelaySnapshot, 's'>) });
     }
     return out;
   }
 
-  /** End of the newest segment in the player's playlist (and buffer), media time. */
+  /** End of the newest segment in the player's (video) playlist, media time. */
   private get edge(): number {
     return (this.edgeIndex + 1) * LIVE_SEGMENT_S;
+  }
+
+  /** End of what the element can play: what the video playlist and, if separate, the audio one list (all of it is buffered at once). */
+  private get bufferEnd(): number {
+    return this.script.audio ? Math.min(this.edge, (this.audioEdgeIndex + 1) * LIVE_SEGMENT_S) : this.edge;
   }
 
   private now(): number {
@@ -190,6 +231,15 @@ export class FakeLiveStream {
     }
     this.edgeIndex = last;
     this.advancedAt = now;
+  }
+
+  /** The player reloads the audio playlist (alternate audio: not a main fragment, nothing the controller counts). */
+  private reloadAudio(): void {
+    const now = this.now();
+    const last = this.lastPublished(now);
+    if (last <= this.audioEdgeIndex) return;
+    this.audioEdgeIndex = last;
+    this.audioAdvancedAt = now;
   }
 }
 

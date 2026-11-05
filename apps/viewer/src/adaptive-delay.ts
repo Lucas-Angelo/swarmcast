@@ -12,7 +12,7 @@ import type Hls from 'hls.js';
 import type { CoreEventMap } from 'p2p-media-loader-core';
 import { DelayController, type DelayProfileId, type FragmentSample } from './latency-controller.js';
 
-type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config' | 'latestLevelDetails'> & { targetLatency: number | null };
+type HlsLike = Pick<Hls, 'on' | 'latency' | 'bandwidthEstimate' | 'levels' | 'currentLevel' | 'config' | 'latestLevelDetails' | 'audioTracks' | 'audioTrack'> & { targetLatency: number | null };
 interface EngineLike {
   addEventListener<K extends keyof CoreEventMap>(eventName: K, listener: CoreEventMap[K]): void;
 }
@@ -119,10 +119,20 @@ export function attachAdaptiveDelay(
   // rate) or two segments arriving in one playlist refresh read as a gap that grows (WebKit,
   // macOS runner: a trend of +0.2 s/s on a 30 Mbps link, called unstable). The controller
   // filters this reading itself.
+  // The live edge is the earliest of the playlists in use: the video one (latestLevelDetails) and
+  // the separate audio one, if any. The buffer the element plays is where both tracks are
+  // buffered, and each playlist is reloaded on its own timer: after a reload that found two
+  // segments at once, hls.js reloads the then unchanged video playlist half a target duration
+  // later, so for a while it is read 1 s before the audio one. Measured from the video edge
+  // alone, the gap then grew by about 1 s for that stretch, a trend of +0.12 to +0.15 s/s in a
+  // young window: "firm" ended (Chromium, macOS, soak run 41940729001) or the network was called
+  // unstable (WebKit, Linux, pipeline run 41689801511) on a 30 Mbps link.
   const liveLag = (): number | null => {
-    const d = hls.latestLevelDetails;
-    if (!d?.live) return null;
-    return d.edge + d.age - (video.currentTime + forwardBuffer(video));
+    const v = hls.latestLevelDetails;
+    if (!v?.live) return null;
+    const a = hls.audioTracks[hls.audioTrack]?.details;
+    const edge = a?.live ? Math.min(v.edge + v.age, a.edge + a.age) : v.edge + v.age;
+    return edge - (video.currentTime + forwardBuffer(video));
   };
 
   // p2p-media-loader knows where each segment came from and how long the real download took
