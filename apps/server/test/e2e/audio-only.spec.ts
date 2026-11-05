@@ -7,6 +7,9 @@
 //   is a third, which a full 20 s buffer refill right after the switch stays under);
 // - the choice is remembered per browser: after a reload the player starts on audio only, and an
 //   OBS reconnect (the stream's next run) keeps it playing on audio only;
+// - on Linux WebKit, the switch and the reload never seek the new sound-only MediaSource before it
+//   plays (a seek there kills the page's process now and then): it starts at the window start and
+//   moves to live once it plays;
 // - with the quality ladder on, when the streamer's PC drops its last converted quality, the
 //   ladder's audio playlist (audio.m3u8) goes away with it and the stream goes on with the
 //   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze,
@@ -141,9 +144,38 @@ async function rememberAudioOnly(context: BrowserContext): Promise<void> {
 
 const MEASURE_MS = 8000;
 
-test('a viewer switches to audio only and back while live: far less data, no picture, the choice survives a reload and an OBS reconnect', { tag: '@media' }, async ({ viewers }) => {
+/**
+ * Counts, in the page, the seeks made while the player loads the audio-only playlist and the
+ * element has not started playing it (readyState below HAVE_FUTURE_DATA). Linux WebKit (GStreamer)
+ * kills the page's process now and then when a new sound-only MediaSource is sought before it
+ * plays, which every live start of hls.js does (it seeks to its live sync position right after
+ * the first append); there the player starts sound alone at the window start instead and seeks
+ * to live once it plays (audio-only.ts createWindowStart).
+ */
+const recordEarlySoundSeeks = (): void => {
+  const w = window as unknown as { __earlySoundSeeks: number; __hls?: { url: string | null } };
+  w.__earlySoundSeeks = 0;
+  const ct = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!;
+  Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+    ...ct,
+    set(this: HTMLMediaElement, t: number) {
+      const url = w.__hls?.url;
+      if (this.readyState < HTMLMediaElement.HAVE_FUTURE_DATA && url && new URL(url, location.href).pathname === '/hls/audio-only.m3u8') w.__earlySoundSeeks += 1;
+      ct.set!.call(this, t);
+    },
+  });
+};
+const earlySoundSeeks = (page: Page): Promise<number> => page.evaluate(() => (window as unknown as { __earlySoundSeeks: number }).__earlySoundSeeks);
+
+/** Linux WebKit: sound alone on a new MediaSource is never sought before it plays (recordEarlySoundSeeks). */
+async function noEarlySoundSeek(page: Page, browserName: string): Promise<void> {
+  if (browserName !== 'webkit' || process.platform !== 'linux') return;
+  expect(await earlySoundSeeks(page), 'seeks of the new sound-only MediaSource before it played').toBe(0);
+}
+
+test('a viewer switches to audio only and back while live: far less data, no picture, the choice survives a reload and an OBS reconnect', { tag: '@media' }, async ({ viewers, browserName }) => {
   // Arrange
-  const { page } = await viewers.join(uid('audio'));
+  const { page } = await viewers.join(uid('audio'), { setup: async (c) => void (await c.addInitScript(recordEarlySoundSeeks)) });
   const received = hlsBytes(page);
   await waitPlaying(page);
   await expect(qualityMenu.entries(page).last()).toHaveText(AUDIO_ONLY);
@@ -156,6 +188,7 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await playingAudioOnly(page);
   await playsOn(page, 3);
   await atLive(page);
+  await noEarlySoundSeek(page, browserName);
   expect(await savedChoice(page)).toBe('on');
   const audioBytes = await bytesDuring(page, received, MEASURE_MS);
   console.log(`bytes in ${MEASURE_MS / 1000} s: video ${videoBytes}, audio only ${audioBytes} (${Math.round((audioBytes / videoBytes) * 100)} %)`);
@@ -169,6 +202,7 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await playingAudioOnly(page);
   await waitPlaying(page);
   await atLive(page);
+  await noEarlySoundSeek(page, browserName);
 
   // Act: OBS drops its connection and publishes again, as its own reconnect does.
   await followRuns(page);

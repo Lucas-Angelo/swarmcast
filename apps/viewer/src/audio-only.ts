@@ -172,11 +172,13 @@ export function reloadAudioOnlyInPlace(hls: ReloadablePlayer, url: string, o: Re
 
 /**
  * Browsers whose media engine is GStreamer: WebKit on Linux (GNOME Web and the other WebKitGTK and
- * WPE browsers; Playwright's WebKit on Linux). Not Chromium-based browsers, which also name
- * AppleWebKit in their user agent, and not Android.
+ * WPE browsers). WebKit by its user agent (AppleWebKit, not Chromium-based: those name AppleWebKit
+ * too), Linux by `navigator.platform` or the user agent: a WebKit browser may send a macOS-like
+ * user agent (Playwright's WebKit on Linux sends Desktop Safari's), never a macOS platform.
  */
-export function usesGStreamer(userAgent: string): boolean {
-  return /\bLinux\b/.test(userAgent) && /AppleWebKit\//.test(userAgent) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|Android/.test(userAgent);
+export function usesGStreamer(userAgent: string, platform = ''): boolean {
+  const webkit = /AppleWebKit\//.test(userAgent) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|Android/.test(userAgent);
+  return webkit && (/^Linux/i.test(platform) || /\bLinux\b/.test(userAgent));
 }
 
 /** Seconds a sound-only start plays from the window start before it moves to live. */

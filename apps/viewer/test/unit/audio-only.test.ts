@@ -579,20 +579,23 @@ describe('sound alone on a new MediaSource on Linux WebKit (GStreamer)', () => {
     expect([hls.config.startPosition, linux.active, media.listening, media.seeks]).toEqual([-1, false, 0, []]);
   });
 
-  it('tells Linux WebKit browsers from the rest by their user agent', () => {
-    // Arrange
-    const agents = {
-      'GNOME Web': 'Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Epiphany/605.1.15',
-      'Playwright WebKit, Linux': LINUX_WEBKIT,
-      'Chrome, Linux': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
-      'Chrome, Android': 'Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36',
-      'Safari, macOS': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
-      'Firefox, Linux': 'Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0',
+  it('tells Linux WebKit browsers from the rest by their user agent and platform, also when the user agent says macOS', () => {
+    // Arrange: [user agent, navigator.platform]
+    const safariMac = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15';
+    const agents: Record<string, [string, string]> = {
+      'GNOME Web': ['Mozilla/5.0 (X11; Ubuntu; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15 Epiphany/605.1.15', 'Linux x86_64'],
+      'WebKit on Linux with a macOS user agent (Playwright Desktop Safari)': [safariMac, 'Linux x86_64'],
+      'WebKit on Linux, no platform': [LINUX_WEBKIT, ''],
+      'Chrome, Linux': ['Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36', 'Linux x86_64'],
+      'Chrome, Android': ['Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Mobile Safari/537.36', 'Linux armv81'],
+      'Safari, macOS': [safariMac, 'MacIntel'],
+      'Safari, iPhone': ['Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', 'iPhone'],
+      'Firefox, Linux': ['Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0', 'Linux x86_64'],
     };
     // Act
-    const picked = Object.entries(agents).filter(([, ua]) => usesGStreamer(ua)).map(([name]) => name);
+    const picked = Object.entries(agents).filter(([, [ua, platform]]) => usesGStreamer(ua, platform)).map(([name]) => name);
     // Assert
-    expect(picked).toEqual(['GNOME Web', 'Playwright WebKit, Linux']);
+    expect(picked).toEqual(['GNOME Web', 'WebKit on Linux with a macOS user agent (Playwright Desktop Safari)', 'WebKit on Linux, no platform']);
   });
 });
 

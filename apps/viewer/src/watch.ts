@@ -580,7 +580,7 @@ async function main(): Promise<void> {
   let lastShortest: PlaylistWindow | null = null;
   // Sound alone on a new MediaSource starts at the window start on Linux WebKit, and moves to live
   // once it plays (audio-only.ts createWindowStart): hls.js's catch-up jump waits for that too.
-  const soundStart = createWindowStart(hls, video, { enabled: usesGStreamer(navigator.userAgent), base: location.href });
+  const soundStart = createWindowStart(hls, video, { enabled: usesGStreamer(navigator.userAgent, navigator.platform), base: location.href });
   const fitLatency = (): void => {
     const known = playlistsKnown(hls.audioTracks.length > 0, liveDetails());
     if (known) {
