@@ -255,6 +255,22 @@ export async function loginPanel(page: Page, login = serverEnv().adminLoginUrl):
  * switch is a second navigation, started only once the login has landed on `/` (a goto during
  * the meta refresh would be interrupted by it).
  */
+/**
+ * Makes the network lose the page's first GET to `url` (a glob): it fails with net::ERR_FAILED,
+ * so fetch() rejects with no answer, as a dropped connection does (net::ERR_NO_BUFFER_SPACE on a
+ * Windows runner, pipeline run 42046773993). Later requests go through. Call it before opening
+ * the page; the returned function tells how many requests were lost.
+ */
+export async function loseFirstGet(page: Page, url: string): Promise<() => number> {
+  let lost = 0;
+  await page.route(url, (route) => {
+    if (route.request().method() !== 'GET' || lost > 0) return route.fallback();
+    lost++;
+    return route.abort('failed');
+  });
+  return () => lost;
+}
+
 export async function openPanel(page: Page, lang?: 'en' | 'pt-BR'): Promise<void> {
   const login = serverEnv().adminLoginUrl;
   await loginPanel(page, login);

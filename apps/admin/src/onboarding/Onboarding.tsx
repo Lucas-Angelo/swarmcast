@@ -54,17 +54,15 @@ export function Onboarding({ state, chat }: { state: AdminState; chat: ChatPanel
 
   // Auto-open on first run.
   useEffect(() => {
-    let stopped = false;
-    void loadDone((p, m) => api(p, m)).then((done) => {
-      if (!stopped && shouldAutoOpen(done)) {
+    const stop = new AbortController();
+    void loadDone((p, m) => api(p, m), stop.signal).then((done) => {
+      if (!stop.signal.aborted && shouldAutoOpen(done)) {
         returnFocus.current = document.activeElement as HTMLElement | null;
         setStep(0);
         setOpen(true);
       }
     });
-    return () => {
-      stopped = true;
-    };
+    return () => stop.abort();
   }, []);
 
   // "Redo setup tutorial".

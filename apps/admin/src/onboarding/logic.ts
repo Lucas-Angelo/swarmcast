@@ -1,6 +1,7 @@
 // Pure logic of the first-run setup tutorial (no DOM): step order, auto-open, OBS detection,
 // persistence calls. Kept separate from the Preact components so it can be unit-tested in Node.
 import { validateStreamerName, type AdminState, type QualityState } from '@swarmcast/shared';
+import { askUntilAnswered } from '../ask-again.js';
 
 // "name" comes right after the welcome, so a streamer who closes the tutorial early has already
 // been asked for her chat name (docs/CHAT.md, "The streamer's chat name").
@@ -101,10 +102,14 @@ export function converterInstall(q: { install?: InstallLike | null } | null | un
 type Get = (path: string, method: string) => Promise<unknown>;
 type Post = (path: string, body: unknown) => Promise<unknown>;
 
-/** Whether the tutorial was finished, or null when the server does not know (older server, error). */
-export async function loadDone(get: Get): Promise<boolean | null> {
+/**
+ * Whether the tutorial was finished, or null when the server does not know (an older server, an
+ * HTTP error) or `signal` aborted. A request the network lost is asked again until the server
+ * answers (ask-again.ts): taking it as "unknown" kept the tutorial closed on a fresh install.
+ */
+export async function loadDone(get: Get, signal?: AbortSignal): Promise<boolean | null> {
   try {
-    const r = (await get(ONBOARDING_API, 'GET')) as { done?: unknown } | null;
+    const r = (await askUntilAnswered(() => get(ONBOARDING_API, 'GET'), signal)) as { done?: unknown } | null;
     return typeof r?.done === 'boolean' ? r.done : null;
   } catch {
     return null;
