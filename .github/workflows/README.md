@@ -39,10 +39,10 @@ changes ─┬─ quick ──────────────────�
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first |
-| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
+| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel, and its call starts after macos-arm64's: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
-| e2e | `_e2e.yml` | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
+| node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
+| e2e | `_e2e.yml`, called three times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos`: macOS `chat`, `media`; `e2e-macos-ui`: macOS `ui`, after `node-macos`) | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
@@ -50,7 +50,9 @@ changes ─┬─ quick ──────────────────�
 
 That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
-5 of them on macOS.
+5 of them on macOS; a pipeline uses at most 4 of those 5 at once (see "macOS concurrency" below).
+Every call of a stage keeps the stage's name, so the checks read `node / ... (macos-latest)` and
+`e2e / <group> (macos-latest)` whichever call ran them.
 
 ### What runs where
 
@@ -112,6 +114,55 @@ ruleset (docs/RELEASING.md, section 2).
 
 **Concurrency.** A newer push to a pull request cancels its running pipeline. Runs on `main`, tags,
 schedules and releases are never cancelled.
+
+### macOS concurrency
+
+A pipeline's eight macOS jobs run in four lanes, so it never has more than four on macOS at once
+(`needs` in `pipeline.yml`; a chained call runs whatever the result of the call before it, not when
+the run is cancelled):
+
+| Lane | Jobs, in order | Minutes (p50, max) |
+|---|---|---|
+| 1 | `e2e / chat` (with the viewer chat UI) | 17.8, 24.4 |
+| 2 | `e2e / media` | 17.0, 19.6 |
+| 3 | `node / unit, integration, rust`, then `e2e / ui` | 4.3 + 12.2 = 16.5; 6.7 + 16.8 |
+| 4 | `desktop macos-arm64` (build, clean-machine), then `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 4.1 + 2.7 + 4.1 + 3.7 = 14.6; 12.1 + 3.8 + 10.7 + 5.8 in a release |
+
+(Job times of the successful Pipeline and Release runs from 2026-11-03 12:00 to 2026-11-05 18:00
+UTC.) Lanes 3 and 4 end before lane 1 on a pull request or `main`, so the wall time is the same
+as with every macOS job at once, when runners come straight away. A release builds with fat LTO
+(macOS builds 5-12.5 minutes), so lane 4 there takes up to about 30 minutes against 22 for
+lane 1. A cold Rust cache (a `Cargo.lock` or toolchain change) doubles the two builds. Each
+chained job waits for its own runner.
+
+**Why.** GitHub Free gives the account 5 macOS jobs at once, Apple silicon and Intel together.
+In the 2,270 macOS jobs of every workflow that uses macOS (422 Pipeline, Soak, Release,
+Rendering, Devices and Chat load runs, 2026-11-01 10:28 to 2026-11-05 17:55 UTC), never more
+than 5 ran at once, Intel included, and 5 did in most hours; a queued Apple silicon job that
+started while 4 of ours ran did so within 15 s of one of ours ending 62-76 % of the time (a
+random moment: 16-26 %). The pipeline used to ask for 7 Apple silicon runners at once (the two
+macOS desktop builds once `build` is done, node and the three e2e groups once `quick` is too),
+then for the two clean-machines 4 minutes later: 8 jobs, so at least 3 always waited for the
+pipeline's own, and longer when a second run (another pull request, a soak batch) was going.
+
+Since 2026-11-02 19:11 UTC, queued Apple silicon jobs carry the notice "Due to capacity
+constraints, jobs targeting macOS arm64 runners may experience longer queue times", and GitHub
+drops a job it cannot place: "The job was not acquired by Runner of type hosted even after
+multiple attempts" (conclusion `cancelled`, no runner, no steps), which leaves `ci-ok` red and
+the run lost. 53 jobs were dropped that way (47 in Pipeline runs, 4 in Release, 2 in Soak; 52
+`macos-latest`, 1 `macos-15-intel`), each after 15 to 101 minutes in the queue; from
+2026-11-04 17:00, 19 of the 72 macOS jobs that waited 15 minutes or more were dropped and none of
+the 396 that waited less. Waiting is the risk, and the pipeline made most of its own waiting.
+In run 42075942536 (the only run of the repository on macOS then), seven Apple silicon jobs were
+queued at 17:36 UTC; three got runners at 17:41, `e2e / media` 3 s after the macos-x64 build
+ended (17:45:11) and `e2e / chat` 3 s after node ended (17:46:23); the macos-arm64 build, queued
+since 17:36:23, was dropped at 17:51:55.
+
+Not fixed here: in capacity mode GitHub also hands out runners slowly below the limit (in about
+half of the minutes in which an Apple silicon job of ours waited over a minute, fewer than 5 of
+ours were running; on 2026-11-05 one waited 18 minutes, 15:27-15:45, with none of ours running).
+Two runs at once (two pull requests, or one with a soak batch) still need up to 8 runners. Four
+lanes leave one runner for another run's job.
 
 ## Shared pieces
 
