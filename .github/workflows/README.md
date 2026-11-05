@@ -286,8 +286,8 @@ The pinned binaries reach a container the way they reach a runner: from the down
 the `docker` stage's jobs only `Playwright in Docker` downloads one at run time:
 `e2e-in-container.sh` runs `fetch-binaries.mjs` (MediaMTX and cloudflared for the container's
 architecture). The job runs `./.github/actions/setup` with `downloads: 'true'` and
-`npm-ci: 'false'`, which restores `main`'s `sc-downloads-Linux-<arch>-ffmpeg-false-*` entry (the
-one the `docker` and desktop builds fill) and sets `SC_DOWNLOAD_CACHE`; `e2e.sh` mounts that folder
+`npm-ci: 'false'`, which restores the `sc-downloads-Linux-<arch>-ffmpeg-false-for-linux-<arch>-*`
+entry (the one the `docker` and desktop builds fill) and sets `SC_DOWNLOAD_CACHE`; `e2e.sh` mounts that folder
 into the container as `/dl-cache` and passes `SC_DOWNLOAD_CACHE=/dl-cache`. `fetch-binaries.mjs`
 then takes each archive from the cache after checking its SHA-256 against
 `scripts/build/versions.json` (`✓ mediamtx v1.21.3: mediamtx_v1.21.3_linux_amd64.tar.gz from the
@@ -307,9 +307,21 @@ image, the browsers come with the image, and `ffmpeg` (apt, Ubuntu's own retries
 Why: in 10x stability run 42046773993 (`soak/p10-0.5.2b`), `docker / Playwright in Docker x64`
 failed in `e2e.sh` at `fetch-binaries`: the job had no download cache, so its only source was
 github.com, which answered `HTTP 504` to all six tries in 62 s
-(`https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_linux_amd64.tar.gz`),
-while every job that ran `fetch-binaries.mjs` on the runner restored the same archive from the
-cache.
+(`https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_linux_amd64.tar.gz`).
+
+**One target per entry.** The first proof run of the mount (`Linux in Docker` 42052312402,
+`soak/docker-dl-cache`) showed a second gap. On arm64 the container took both binaries from the
+cache (5 files). On x64 the restored entry held 2 files and both binaries were downloaded again,
+in the container and in `docker / Build linux-x64` alike. The key was
+`sc-downloads-<OS>-<arch>-ffmpeg-<true|false>-<pins>`, and the first job to save it on `main`
+after #122 was `build / web + windows-x64 package`, which runs `package.mjs --target windows-x64`
+on Linux x64: its entry held the Windows MediaMTX and cloudflared. A key is saved once, and a job
+whose exact key is found never saves it again, so every other Linux x64 job without ffmpeg (the
+`docker` build, the desktop `linux-x64` build, and now `Playwright in Docker`) found that entry
+and downloaded its own binaries from github.com on every run. The key now names the target whose
+binaries the job fetches (`-for-<target>-`: `setup`'s `downloads-for` input, or the runner's own
+OS and architecture), and the Windows package job passes `downloads-for: windows-x64`. The entries
+under the old keys are no longer restored and expire after GitHub's 7 days without use.
 
 ## Caches
 
@@ -321,7 +333,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
