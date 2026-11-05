@@ -22,7 +22,7 @@ Docker workflows, `pipeline.yml`, the e2e specs and server (`apps/server/test/e2
 (`gh workflow run linux-docker.yml --ref <branch>`). A build job stages the server and makes the
 AppImage of the commit for each architecture (on Ubuntu 22.04, like the release); then one job per
 base image and architecture runs `appimage.sh`, one per architecture `obs.sh`, and one per
-architecture `e2e.sh`.
+architecture `e2e.sh`, with the download cache mounted (Section 2).
 
 ### Test images
 
@@ -92,6 +92,13 @@ with that project's `e2e-server.log` and `fake-obs.log` (CI uploads them when a 
 After every Playwright invocation, nothing of the e2e web server (its own process, the MediaMTX
 and cloudflared it started) may still run 10 s after Playwright stopped it: a check that fails the
 run (what is left is then killed, so the next invocation can bind its ports).
+
+With `SC_DOWNLOAD_CACHE` set (as in CI, where the job's setup restores the download cache), `e2e.sh`
+mounts that folder into the container as `/dl-cache`, so `fetch-binaries.mjs` takes MediaMTX and
+cloudflared from it after checking their SHA-256 (`✓ mediamtx ...: ... from the download cache`)
+and downloads only what it lacks, into it. Without it, they are downloaded each run.
+`e2e.sh` prints which (`Download cache:`). How CI restores that cache, and why:
+[.github/workflows/README.md](../../../.github/workflows/README.md#pinned-downloads-in-docker).
 
 ## Section 3: `appimage.sh`
 

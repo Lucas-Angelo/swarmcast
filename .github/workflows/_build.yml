@@ -56,6 +56,7 @@ jobs:
         timeout-minutes: 8
         with:
           downloads: 'true'
+          downloads-for: windows-x64 # package.mjs --target windows-x64 below, on Linux
       - run: npm run build
       # esbuild's meta.json for the server; the viewer's and the panel's module graphs, and that
       # their dist folders are exactly those builds.

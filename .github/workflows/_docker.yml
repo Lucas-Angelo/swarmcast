@@ -169,6 +169,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The download caches, no `npm ci` on the runner: e2e.sh mounts SC_DOWNLOAD_CACHE (the
+      # sc-downloads-Linux-<arch>-ffmpeg-false-for-linux-<arch>-* entry the build jobs fill) into
+      # the container, where fetch-binaries.mjs takes the pinned MediaMTX and cloudflared from it
+      # (SHA-256 checked) instead of from github.com. Restored, never saved here: an entry saved
+      # by this job would lack the build jobs' AppImage tools. Run 42046773993 lost this job to
+      # six HTTP 504s from github.com for MediaMTX (.github/workflows/README.md, "Pinned
+      # downloads in Docker").
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          npm-ci: 'false'
+          downloads: 'true'
       # e2e.sh reads the Playwright version from package-lock.json; the container does the rest
       # (npm ci, binaries, build, firefox + chromium). 45 minutes: about 3 times the slowest run.
       - name: Playwright in the Playwright image (e2e.sh)

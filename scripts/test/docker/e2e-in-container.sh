@@ -2,6 +2,7 @@
 # Runs INSIDE mcr.microsoft.com/playwright:v<version>-noble (as root), started by e2e.sh.
 # /src = the repo (read-only), /out = where reports are copied.
 #   PROJECTS="firefox chromium"   Playwright projects to run
+#   SC_DOWNLOAD_CACHE=/dl-cache   the host's download cache, when e2e.sh mounted one
 set -u
 set -o pipefail
 # shellcheck source-path=SCRIPTDIR source=lib.sh
@@ -22,8 +23,13 @@ echo "node $(node --version), npm $(npm --version), ffmpeg $(ffmpeg -version | h
 echo "== npm ci"
 npm ci --no-audit --no-fund --loglevel=error || exit 2
 echo "Playwright $(npx playwright --version)"
-echo "== fetch-binaries"
+echo "== fetch-binaries${SC_DOWNLOAD_CACHE:+ (download cache: $SC_DOWNLOAD_CACHE)}"
 node scripts/build/fetch-binaries.mjs || exit 2
+# What fetch-binaries added to the host's cache goes to the cache folder's owner, not root (a
+# file the host's user cannot replace later). Not fatal: the binaries are in place either way.
+if [ -n "${SC_DOWNLOAD_CACHE:-}" ]; then
+  chown -R "$(stat -c %u:%g "$SC_DOWNLOAD_CACHE")" "$SC_DOWNLOAD_CACHE" || echo "  could not give $SC_DOWNLOAD_CACHE back to its owner"
+fi
 echo "== build"
 npm run build --silent >/tmp/build.log 2>&1 || { tail -50 /tmp/build.log; exit 2; }
 
