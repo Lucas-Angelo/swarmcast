@@ -2,6 +2,7 @@
 // Pure helpers (no DOM) are unit-tested; the tiny store lets any component follow the state.
 import { useEffect, useState } from 'preact/hooks';
 import type { DesktopInfo, DesktopUpdate, LivePhase } from '@swarmcast/shared';
+import { askUntilAnswered } from './ask-again.js';
 
 export const DESKTOP_API = '/api/desktop';
 
@@ -10,10 +11,13 @@ export function isDesktopInfo(v: unknown): v is DesktopInfo {
   return !!d && typeof d === 'object' && d.desktop === true && typeof d.version === 'string' && !!d.autostart && typeof d.autostart === 'object';
 }
 
-/** The desktop state, or null outside the desktop app (`{ desktop: false }`), on older servers and on errors. */
-export async function loadDesktop(get: (path: string, method: string) => Promise<unknown>): Promise<DesktopInfo | null> {
+/**
+ * The desktop state, or null outside the desktop app (`{ desktop: false }`), on older servers and
+ * on HTTP errors. A request the network lost is asked again until the server answers (ask-again.ts).
+ */
+export async function loadDesktop(get: (path: string, method: string) => Promise<unknown>, signal?: AbortSignal): Promise<DesktopInfo | null> {
   try {
-    const r = await get(DESKTOP_API, 'GET');
+    const r = await askUntilAnswered(() => get(DESKTOP_API, 'GET'), signal);
     return isDesktopInfo(r) ? r : null;
   } catch {
     return null;
