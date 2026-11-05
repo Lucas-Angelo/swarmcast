@@ -164,6 +164,15 @@ ours were running; on 2026-11-05 one waited 18 minutes, 15:27-15:45, with none o
 Two runs at once (two pull requests, or one with a soak batch) still need up to 8 runners. Four
 lanes leave one runner for another run's job.
 
+Proof (three pipeline runs dispatched one after the other on a `soak/*` marker branch,
+2026-11-05, 42081315067, 42089261822 and 42093902489, the first one overlapping the end of a
+pull request's run in the old layout): all green, no job dropped, at most 4 macOS jobs of a run
+at once, and the account never at 5 while one of their jobs waited, so none waited behind our
+own jobs. GitHub's waits stayed: 13 of the 24 macOS jobs started within a minute, the others after
+2.5 to 18.2 minutes (most 5-6 minutes), each while 0 to 4 of the account's 5 macOS runners were
+busy. Wall times 49, 28 and 30 minutes (the old layout: p50 33, p90 79 over the 58 successful
+Pipeline runs of 2026-11-04 and 2026-11-05).
+
 ## Shared pieces
 
 | Path | What |
