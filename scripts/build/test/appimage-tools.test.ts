@@ -2,7 +2,9 @@
 // folder, the pin checks (also of a linuxdeploy copy the bundler has patched), the files and modes
 // it leaves, the download cache, the runtime check of a built AppImage, and that the pins still
 // match the bundler of the @tauri-apps/cli in package-lock.json. Downloads go to a local server
-// on 127.0.0.1 (port 0) through fetch-binaries.mjs, with no back-off between tries.
+// on 127.0.0.1 (port 0) through fetch-binaries.mjs, with no back-off between tries. Every call
+// names its download cache (a temp folder, or null for none): the default, SC_DOWNLOAD_CACHE, is
+// set in CI jobs and is the runner's real cache.
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -177,7 +179,7 @@ describe('prepareAppImageTools', () => {
     const toolsDir = path.join(tmp, 'tauri');
 
     // Act
-    const env = await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: undefined, pins: pinsFor(base) });
+    const env = await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins: pinsFor(base) });
 
     // Assert
     expect(fs.readdirSync(toolsDir).sort()).toEqual(['AppRun-x86_64', APPIMAGE_PLUGIN, 'linuxdeploy-07333c6-x86_64.AppImage', 'runtime-x86_64'].sort());
@@ -199,7 +201,7 @@ describe('prepareAppImageTools', () => {
     const { base, requests } = await serve({ failFirst: 2, status: 504 });
 
     // Act
-    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir: path.join(tmp, 'tauri'), cacheDir: undefined, pins: pinsFor(base) });
+    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir: path.join(tmp, 'tauri'), cacheDir: null, pins: pinsFor(base) });
 
     // Assert
     expect(requests).toEqual(['AppRun-x86_64', 'AppRun-x86_64', 'AppRun-x86_64', 'linuxdeploy-x86_64.AppImage', 'runtime-x86_64']);
@@ -210,7 +212,7 @@ describe('prepareAppImageTools', () => {
     const { base, requests } = await serve();
     const toolsDir = path.join(tmp, 'tauri');
     const pins = pinsFor(base);
-    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: undefined, pins });
+    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins });
     const linuxdeploy = path.join(toolsDir, 'linuxdeploy-07333c6-x86_64.AppImage');
     const patched = fs.readFileSync(linuxdeploy);
     patched.fill(0, 8, 11);
@@ -218,7 +220,7 @@ describe('prepareAppImageTools', () => {
     requests.length = 0;
 
     // Act
-    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: undefined, pins });
+    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins });
 
     // Assert
     expect(requests).toEqual([]);
@@ -234,7 +236,7 @@ describe('prepareAppImageTools', () => {
     fs.writeFileSync(path.join(toolsDir, APPIMAGE_PLUGIN), appImageBytes('a continuous plugin'), { mode: 0o755 });
 
     // Act
-    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: undefined, pins: pinsFor(base) });
+    await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins: pinsFor(base) });
 
     // Assert
     expect(requests).toContain('AppRun-x86_64');
@@ -284,7 +286,7 @@ describe('prepareAppImageTools', () => {
     const toolsDir = path.join(tmp, 'tauri');
 
     // Act
-    const run = prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: undefined, pins });
+    const run = prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins });
 
     // Assert
     await expect(run).rejects.toThrow(/Checksum mismatch .*AppRun-x86_64/);
@@ -293,7 +295,7 @@ describe('prepareAppImageTools', () => {
 
   it('refuses a target without AppImage tools', async ({ tmp }) => {
     // Act
-    const run = prepareAppImageTools('macos-arm64', { ...quiet, toolsDir: path.join(tmp, 'tauri'), cacheDir: undefined, pins: pinsFor('http://127.0.0.1:9') });
+    const run = prepareAppImageTools('macos-arm64', { ...quiet, toolsDir: path.join(tmp, 'tauri'), cacheDir: null, pins: pinsFor('http://127.0.0.1:9') });
 
     // Assert
     await expect(run).rejects.toThrow(/No tauri-apprun for macos-arm64/);
