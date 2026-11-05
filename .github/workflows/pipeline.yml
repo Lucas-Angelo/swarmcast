@@ -8,6 +8,9 @@ name: Pipeline
 #            ├─ site (when the site changed) ──────────────────────────────────────────┤
 #            └─ docker (when the Docker suites or what they run changed) ──────────────┘
 #
+# - macOS: at most 4 of the account's 5 macOS runners at once, in four lanes (README.md,
+#   "macOS concurrency"): e2e chat; e2e media; node, then e2e ui; desktop macos-arm64 (build,
+#   clean-machine), then desktop macos-x64 (build, then the Intel clean-machine).
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
 # - docker: the Linux Docker suites (_docker.yml: AppImage on minimal hosts, OBS streaming to the
@@ -135,9 +138,13 @@ jobs:
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
+  # macOS lane 4 (README.md, "macOS concurrency"): after the macos-arm64 call, so the two
+  # targets' four macOS jobs take one runner at a time. It needs nothing of macos-arm64's and
+  # runs whatever that call's result (not when the run is cancelled).
   desktop-macos-x64:
     name: desktop macos-x64
-    needs: [changes, build]
+    needs: [changes, build, desktop-macos-arm64]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' }}
     uses: ./.github/workflows/_desktop.yml
     with:
       target: macos-x64
@@ -166,15 +173,51 @@ jobs:
     secrets: *tauri-key
 
   # ---------------------------------------------------------------- test stage
+  # The macOS jobs are separate calls in lanes, at most 4 macOS runners at once (README.md,
+  # "macOS concurrency"); each call names its stage like the others, so the checks still read
+  # `node / ... (macos-latest)` and `e2e / <group> (macos-latest)`.
   node:
     name: node
     needs: [quick, build]
     uses: ./.github/workflows/_node.yml
+    with:
+      os: ${{ github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest"]' || '["ubuntu-24.04","windows-latest"]' }}
+
+  # macOS lane 3, first: node; then e2e-macos-ui.
+  node-macos:
+    name: node
+    needs: [quick, build]
+    uses: ./.github/workflows/_node.yml
+    with:
+      os: '["macos-latest"]'
 
   e2e:
     name: e2e
     needs: [quick, build]
     uses: ./.github/workflows/_e2e.yml
+    with:
+      os: ${{ github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest"]' || '["ubuntu-24.04"]' }}
+      chat-windows: true
+
+  # macOS lanes 1 and 2: the two longest groups (chat with the viewer chat UI, media), at once.
+  e2e-macos:
+    name: e2e
+    needs: [quick, build]
+    uses: ./.github/workflows/_e2e.yml
+    with:
+      os: '["macos-latest"]'
+      groups: '["chat","media"]'
+
+  # macOS lane 3, second: the ui group after the macOS node job, whatever its result (not when
+  # the run is cancelled).
+  e2e-macos-ui:
+    name: e2e
+    needs: [quick, build, node-macos]
+    if: ${{ !cancelled() && needs.quick.result == 'success' && needs.build.result == 'success' }}
+    uses: ./.github/workflows/_e2e.yml
+    with:
+      os: '["macos-latest"]'
+      groups: '["ui"]'
 
   windows:
     name: windows
@@ -203,7 +246,7 @@ jobs:
   # little it does. Each stage's jobs write their own results to their summaries.
   ci-ok:
     name: ci-ok
-    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, e2e, windows, site, docker]
+    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, node-macos, e2e, e2e-macos, e2e-macos-ui, windows, site, docker]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -221,7 +264,7 @@ jobs:
           DOCKER: ${{ needs.changes.outputs.docker }}
           ATTEMPT: ${{ github.run_attempt }}
         run: |
-          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node e2e windows'
+          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node node-macos e2e e2e-macos e2e-macos-ui windows'
           bad=0
           {
             echo '## ci-ok'
