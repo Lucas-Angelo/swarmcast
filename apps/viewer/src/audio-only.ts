@@ -171,6 +171,103 @@ export function reloadAudioOnlyInPlace(hls: ReloadablePlayer, url: string, o: Re
 }
 
 /**
+ * Browsers whose media engine is GStreamer: WebKit on Linux (GNOME Web and the other WebKitGTK and
+ * WPE browsers). WebKit by its user agent (AppleWebKit, not Chromium-based: those name AppleWebKit
+ * too), Linux by `navigator.platform` or the user agent: a WebKit browser may send a macOS-like
+ * user agent (Playwright's WebKit on Linux sends Desktop Safari's), never a macOS platform.
+ */
+export function usesGStreamer(userAgent: string, platform = ''): boolean {
+  const webkit = /AppleWebKit\//.test(userAgent) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|Android/.test(userAgent);
+  return webkit && (/^Linux/i.test(platform) || /\bLinux\b/.test(userAgent));
+}
+
+/** Seconds a sound-only start plays from the window start before it moves to live. */
+export const WINDOW_START_PLAY_S = 0.25;
+
+/** The part of hls.js a sound-only start at the window start uses. */
+export interface WindowStartPlayer {
+  config: { startPosition: number };
+  /** Where hls.js would start or catch up to now; null before it knows. */
+  readonly liveSyncPosition: number | null;
+}
+
+/** The part of the media element a sound-only start at the window start uses. */
+export interface WindowStartMedia {
+  readonly seeking: boolean;
+  readonly paused: boolean;
+  currentTime: number;
+  addEventListener(type: 'timeupdate', fn: () => void): void;
+  removeEventListener(type: 'timeupdate', fn: () => void): void;
+}
+
+export interface WindowStart {
+  /**
+   * Call before every load of the source on a new MediaSource (hls.js `loadSource`), with the URL
+   * loaded: for the audio-only playlist on an engine that needs it, hls.js starts at the first
+   * segment of the live window, and the playhead moves to the live sync position once playback
+   * has run WINDOW_START_PLAY_S from there; any other load starts where hls.js picks (live).
+   */
+  beforeLoad(url: string): void;
+  /** A start at the window start is waiting to move to live: hls.js must not move the playhead meanwhile (watch.ts fitLatency). */
+  readonly active: boolean;
+}
+
+/**
+ * Starts sound-only playback on a new MediaSource where its media begins, and seeks to live only
+ * once it plays. Linux WebKit (GStreamer, `usesGStreamer`) kills the page's web process when a
+ * new sound-only pipeline is sought before it has played anything: SIGSEGV on the main thread, at
+ * the same WebKit address every time, 0.7-1 s after the seek. hls.js always seeks there on such a
+ * start: the element starts at 0 and hls.js buffers the segment at its live sync position (about
+ * 20 s on), then sets `currentTime` to it, right after the first append; WebKit flushes its
+ * pipeline before the first sample went out, and the pipeline then drops its video sink and
+ * builds its audio sink while the seek is pending (its GStreamer log ends there). About one
+ * sound-only start in 100-150 (a page that starts on audio only) and one switch to audio only in
+ * 500 on the Linux CI runners; never for video (0 of about 2,560 switches back), never on a kept
+ * MediaSource (reloadAudioOnlyInPlace), never once the pipeline plays. Neither holding the
+ * appends during that seek, nor seeking before the first append, nor an <audio> element, nor
+ * hls.js without its first-fragment prefetch avoided it. Starting at the first segment of the
+ * window needs no seek (the media begins where the element is), and the jump to live comes when
+ * the pipeline already plays, as any Go live does. The cost there: a quarter of a second of the
+ * oldest sound of the window, and its first segments. Elsewhere `enabled` is false and nothing
+ * changes. Diagnosis: docs/QUALITY.md "Audio only".
+ */
+export function createWindowStart(hls: WindowStartPlayer, media: WindowStartMedia, o: { enabled: boolean; base: string; audioUrl?: string }): WindowStart {
+  const target = new URL(o.audioUrl ?? AUDIO_ONLY_URL, o.base).pathname;
+  let armed: (() => void) | null = null;
+  // hls.js reads startPosition when it starts loading a source; any later load starts live again
+  // unless beforeLoad says otherwise (reloadAudioOnlyInPlace places its read from hls.js's start).
+  const disarm = (): void => {
+    armed?.();
+    armed = null;
+    hls.config.startPosition = -1;
+  };
+  return {
+    get active() {
+      return armed !== null;
+    },
+    beforeLoad(url) {
+      disarm();
+      if (!o.enabled || new URL(url, o.base).pathname !== target) return;
+      hls.config.startPosition = 0;
+      let from: number | null = null;
+      const onTime = (): void => {
+        if (media.seeking || media.paused) return;
+        if (from === null) {
+          from = media.currentTime;
+          return;
+        }
+        if (media.currentTime < from + WINDOW_START_PLAY_S) return;
+        disarm();
+        const live = hls.liveSyncPosition;
+        if (live !== null && live > media.currentTime + 1) media.currentTime = live;
+      };
+      media.addEventListener('timeupdate', onTime);
+      armed = () => media.removeEventListener('timeupdate', onTime);
+    },
+  };
+}
+
+/**
  * hls.js resets of the MediaSource (`mediaSourceRequiresReset`) within AUDIO_ONLY_BROKEN_WINDOW_MS
  * after which audio-only playback gives up for this page and the video comes back. A browser that
  * cannot output the sound plays video on the picture's clock, but sound alone not at all: Firefox

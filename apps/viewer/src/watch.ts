@@ -28,7 +28,7 @@ import {
   swarmIdBuilderFor,
   urgentSecondsFor,
 } from './player-config.js';
-import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
+import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, createWindowStart, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, usesGStreamer, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
 import { p2pConnecting, type P2PConnectState } from './p2p-status.js';
@@ -578,6 +578,9 @@ async function main(): Promise<void> {
   // the player sat frozen until the stall watchdog moved it again.
   let lastWindow: PlaylistWindow | null = null;
   let lastShortest: PlaylistWindow | null = null;
+  // Sound alone on a new MediaSource starts at the window start on Linux WebKit, and moves to live
+  // once it plays (audio-only.ts createWindowStart): hls.js's catch-up jump waits for that too.
+  const soundStart = createWindowStart(hls, video, { enabled: usesGStreamer(navigator.userAgent, navigator.platform), base: location.href });
   const fitLatency = (): void => {
     const known = playlistsKnown(hls.audioTracks.length > 0, liveDetails());
     if (known) {
@@ -586,7 +589,7 @@ async function main(): Promise<void> {
     }
     const w = lastWindow;
     const fit = latencyFor(loadProfile(), w);
-    const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
+    const max = (video.paused && !video.ended && !adaptive?.holding) || soundStart.active ? Infinity : fit.liveMaxLatencyDuration;
     // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
     // the target itself; the shortest window only stops the controller building delay past it.
     const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
@@ -688,6 +691,7 @@ async function main(): Promise<void> {
     debugLog(`reloading the source (${why})`);
     const url = source.url();
     if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, { base: location.href, events: Hls.Events })) return;
+    soundStart.beforeLoad(url);
     hls.loadSource(url);
   };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
@@ -823,6 +827,7 @@ async function main(): Promise<void> {
 
   showOverlay('watch.waiting');
   setStatus('watch.connecting');
+  soundStart.beforeLoad(source.url());
   hls.loadSource(source.url());
   hls.attachMedia(video);
   (window as unknown as { __hls: unknown }).__hls = hls;
