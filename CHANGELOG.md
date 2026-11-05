@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Up-to-date building blocks.** The video player (hls.js 1.7.4), parts of SwarmCast's own web server and of the desktop app get their makers' latest fixes. Nothing changes in how SwarmCast looks or works.
+
 ## [0.5.1] - 2026-11-05
 
 ### Added
