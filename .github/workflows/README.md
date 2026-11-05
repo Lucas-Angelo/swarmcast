@@ -254,7 +254,12 @@ download into its tools folder (`~/.cache/tauri` on the runners): `AppRun-<arch>
 `scripts/build/versions.json` and downloaded by `fetch-binaries.mjs` (6 tries with back-off,
 resume, `SC_DOWNLOAD_CACHE`), plus the AppImage runtime (`LDAI_RUNTIME_FILE`) and an empty,
 non-executable `linuxdeploy-plugin-appimage.AppImage` that makes linuxdeploy use its built-in
-appimage plugin. Details and the bundler's source lines: [apps/desktop/README.md](../../apps/desktop/README.md).
+appimage plugin. AppRun and linuxdeploy (fixed release tags) must arrive or the build stops; the
+runtime comes from a rolling `continuous` release, so when no source gives the pinned bytes (all
+sources failed, or upstream has a newer build and the `ci-deps` mirror lacks ours) the build gets a
+`::warning::` with the cause and goes on as before the pin: appimagetool downloads the runtime
+itself and the runtime check is skipped, with a line saying so. Details and the bundler's source
+lines: [apps/desktop/README.md](../../apps/desktop/README.md).
 
 Why: in 10x stability run 42000871599 (`soak/p10-0.5.2`), `docker / Build linux-arm64` failed in
 "Package, AppImage and a release folder" after `tauri build` had compiled:
@@ -272,7 +277,8 @@ check. The appimage plugin (`continuous`, rebuilt every month) was optional ther
 inside it, downloaded the runtime (also `continuous`) at bundle time with one try as well. Every
 AppImage build, the release's too, depended on these downloads from github.com, four per
 architecture. Now the bundler's log shows no `Downloading` line, `desktop.mjs` logs where each tool
-came from, and it checks that each AppImage starts with the pinned runtime.
+came from, and it checks that each AppImage starts with the pinned runtime (unless the runtime
+fell back, see above).
 
 ## Caches
 

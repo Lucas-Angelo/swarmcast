@@ -238,7 +238,13 @@ const common = ['--target', spec.triple, '--ci', ...(insecure ? ['--features', '
 // Linux: the AppImage tools in the bundler's tools folder before it would download them itself
 // (once, without a retry: a 504 from github.com failed a build), pinned and checked
 // (appimage-tools.mjs); LDAI_RUNTIME_FILE hands appimagetool the pinned AppImage runtime.
-if (isLinux && buildBundles.includes('appimage')) Object.assign(env, await prepareAppImageTools(target));
+// A runtime it could not pin (appimage-tools.mjs, `fallbacks`) is downloaded by appimagetool as
+// before, with a warning, and its check below is skipped.
+const appImageTools = isLinux && buildBundles.includes('appimage') ? await prepareAppImageTools(target) : null;
+if (appImageTools) {
+  delete env.LDAI_RUNTIME_FILE;
+  Object.assign(env, appImageTools.env);
+}
 const tauriArgs = ['build', '--bundles', buildBundles.join(','), '--config', overlayFile, ...common];
 if (arg('runner')) tauriArgs.push('--runner', arg('runner'));
 const res = spawnSync(process.execPath, [tauriCli, ...tauriArgs], { stdio: 'inherit', cwd: desktopDir, env });
@@ -364,8 +370,11 @@ for (const b of bundles) {
 }
 
 // Each AppImage starts with the pinned runtime: appimagetool took the file it was given and did
-// not download one.
-if (env.LDAI_RUNTIME_FILE) {
+// not download one. Skipped (and said so) when the runtime could not be pinned for this build.
+const runtimeFallback = appImageTools?.fallbacks.find((f) => f.tool === 'appimage-runtime');
+if (runtimeFallback && collected.some((c) => c.endsWith('.AppImage'))) {
+  console.log(`⚠ runtime check skipped: the AppImage runtime was not pinned for this build (${runtimeFallback.reason})`);
+} else if (env.LDAI_RUNTIME_FILE) {
   const runtime = fs.readFileSync(env.LDAI_RUNTIME_FILE);
   for (const f of collected.filter((c) => c.endsWith('.AppImage'))) {
     const head = Buffer.alloc(runtime.length + 1);

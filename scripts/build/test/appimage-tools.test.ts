@@ -19,7 +19,7 @@ import tauriConf from '../../../apps/desktop/src-tauri/tauri.conf.json' with { t
 import { it } from './fixtures.js';
 
 type Asset = { asset: string; sha256: string; binary: string; mirrors?: string[] };
-type Spec = { version: string; url: string; env?: string; appimageTool?: boolean; tauriCli?: string; assets: Record<string, Asset> };
+type Spec = { version: string; build?: string; url: string; env?: string; optional?: boolean; appimageTool?: boolean; tauriCli?: string; assets: Record<string, Asset> };
 
 const isWindows = process.platform === 'win32';
 const sha256 = (b: Uint8Array): string => crypto.createHash('sha256').update(b).digest('hex');
@@ -40,12 +40,15 @@ function pinsFor(base: string): Record<string, Spec> {
     mediamtx: { version: 'v1', url: `${base}/{asset}`, assets: {} },
     'tauri-apprun': { version: 'apprun-old', appimageTool: true, url: `${base}/{asset}`, assets: { 'linux-x64': asset('AppRun-x86_64', 'AppRun-x86_64') } },
     linuxdeploy: { version: 'linuxdeploy-07333c6', appimageTool: true, url: `${base}/{asset}`, assets: { 'linux-x64': asset('linuxdeploy-x86_64.AppImage', 'linuxdeploy-07333c6-x86_64.AppImage') } },
-    'appimage-runtime': { version: 'continuous', appimageTool: true, env: 'LDAI_RUNTIME_FILE', url: `${base}/{asset}`, assets: { 'linux-x64': asset('runtime-x86_64', 'runtime-x86_64') } },
+    'appimage-runtime': { version: 'continuous', build: 'abc1234', appimageTool: true, env: 'LDAI_RUNTIME_FILE', optional: true, url: `${base}/{asset}`, assets: { 'linux-x64': asset('runtime-x86_64', 'runtime-x86_64') } },
   };
 }
 
-/** A local server for FILES; `fail` answers the first n requests with that status (a 504 from github.com). */
-async function serve(o: { failFirst?: number; status?: number } = {}): Promise<{ base: string; requests: string[] }> {
+/**
+ * A local server for FILES; `failFirst` answers the first n requests with `status` (a 504 from
+ * github.com); `answers` replaces a file by other bytes or by a status for every request.
+ */
+async function serve(o: { failFirst?: number; status?: number; answers?: Record<string, Buffer | number> } = {}): Promise<{ base: string; requests: string[] }> {
   const requests: string[] = [];
   const server = http.createServer((req, res) => {
     const name = decodeURIComponent((req.url ?? '/').slice(1));
@@ -54,7 +57,12 @@ async function serve(o: { failFirst?: number; status?: number } = {}): Promise<{
       res.writeHead(o.status ?? 504).end();
       return;
     }
-    const body = FILES[name];
+    const answer = o.answers?.[name];
+    if (typeof answer === 'number') {
+      res.writeHead(answer).end();
+      return;
+    }
+    const body = answer ?? FILES[name];
     if (!body) {
       res.writeHead(404).end();
       return;
@@ -179,13 +187,14 @@ describe('prepareAppImageTools', () => {
     const toolsDir = path.join(tmp, 'tauri');
 
     // Act
-    const env = await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins: pinsFor(base) });
+    const { env, fallbacks } = await prepareAppImageTools('linux-x64', { ...quiet, toolsDir, cacheDir: null, pins: pinsFor(base) });
 
     // Assert
     expect(fs.readdirSync(toolsDir).sort()).toEqual(['AppRun-x86_64', APPIMAGE_PLUGIN, 'linuxdeploy-07333c6-x86_64.AppImage', 'runtime-x86_64'].sort());
     expect(fs.readFileSync(path.join(toolsDir, 'AppRun-x86_64'))).toEqual(APPRUN);
     expect(fs.readFileSync(path.join(toolsDir, 'linuxdeploy-07333c6-x86_64.AppImage'))).toEqual(LINUXDEPLOY);
     expect(env).toEqual({ LDAI_RUNTIME_FILE: path.join(toolsDir, 'runtime-x86_64') });
+    expect(fallbacks).toEqual([]);
     expect(fs.readFileSync(env.LDAI_RUNTIME_FILE!)).toEqual(RUNTIME);
     expect(fs.statSync(path.join(toolsDir, APPIMAGE_PLUGIN)).size).toBe(0);
     if (!isWindows) {
@@ -293,6 +302,46 @@ describe('prepareAppImageTools', () => {
     expect(fs.readdirSync(toolsDir)).toEqual([]);
   });
 
+  it('goes on without the runtime pin, with a warning, when no source can be downloaded', async ({ tmp }) => {
+    // Arrange
+    const { base } = await serve({ answers: { 'runtime-x86_64': 503 } });
+    const pins = pinsFor(base);
+    pins['appimage-runtime']!.assets['linux-x64']!.mirrors = [`${base}/mirror/runtime-x86_64`];
+    const toolsDir = path.join(tmp, 'tauri');
+    fs.mkdirSync(toolsDir);
+    fs.writeFileSync(path.join(toolsDir, 'runtime-x86_64'), 'an older runtime');
+    const lines: string[] = [];
+
+    // Act
+    const { env, fallbacks } = await prepareAppImageTools('linux-x64', { download, log: (l: string) => lines.push(l), toolsDir, cacheDir: null, pins });
+
+    // Assert
+    expect(env).toEqual({});
+    expect(fallbacks).toEqual([{ tool: 'appimage-runtime', reason: expect.stringMatching(/^no source could be downloaded: HTTP 404 .*mirror.*; then HTTP 503 /) }]);
+    expect(lines.filter((l) => l.startsWith('::warning title=AppImage tools::appimage-runtime not pinned for this build (no source could be downloaded'))).toHaveLength(1);
+    expect(fs.existsSync(path.join(toolsDir, 'runtime-x86_64'))).toBe(false);
+    expect(fs.readFileSync(path.join(toolsDir, 'linuxdeploy-07333c6-x86_64.AppImage'))).toEqual(LINUXDEPLOY);
+  });
+
+  it('goes on without the runtime pin, with a warning, when upstream has another build', async ({ tmp }) => {
+    // Arrange
+    const { base } = await serve({ answers: { 'runtime-x86_64': appImageBytes('a newer continuous runtime'), 'mirror/runtime-x86_64': 404 } });
+    const pins = pinsFor(base);
+    pins['appimage-runtime']!.assets['linux-x64']!.mirrors = [`${base}/mirror/runtime-x86_64`];
+    const toolsDir = path.join(tmp, 'tauri');
+    const lines: string[] = [];
+
+    // Act
+    const { env, fallbacks } = await prepareAppImageTools('linux-x64', { download, log: (l: string) => lines.push(l), toolsDir, cacheDir: path.join(tmp, 'cache'), pins });
+
+    // Assert
+    expect(env).toEqual({});
+    expect(fallbacks).toEqual([{ tool: 'appimage-runtime', reason: expect.stringMatching(/^upstream's file is not the pinned build abc1234: HTTP 404 .*; then Checksum mismatch for .*runtime-x86_64/) }]);
+    expect(lines.filter((l) => l.startsWith("::warning title=AppImage tools::appimage-runtime not pinned for this build (upstream's file is not the pinned build abc1234"))).toHaveLength(1);
+    expect(fs.existsSync(path.join(toolsDir, 'runtime-x86_64'))).toBe(false);
+    expect(fs.existsSync(path.join(tmp, 'cache', `${sha256(RUNTIME)}-runtime-x86_64`))).toBe(false);
+  });
+
   it('refuses a target without AppImage tools', async ({ tmp }) => {
     // Act
     const run = prepareAppImageTools('macos-arm64', { ...quiet, toolsDir: path.join(tmp, 'tauri'), cacheDir: null, pins: pinsFor('http://127.0.0.1:9') });
@@ -342,5 +391,13 @@ describe('versions.json AppImage tools', () => {
       'appimage-runtime': 'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64',
     });
     expect(runtimeMirrors).toEqual([1, 1]);
+  });
+
+  it('let only the rolling runtime fall back; AppRun and linuxdeploy (fixed tags) must arrive', () => {
+    // Act
+    const optional = Object.fromEntries(Object.entries(tools).map(([tool, t]) => [tool, t.optional === true]));
+
+    // Assert
+    expect(optional).toEqual({ 'tauri-apprun': false, linuxdeploy: false, 'appimage-runtime': true });
   });
 });

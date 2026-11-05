@@ -30,7 +30,12 @@
 // executable when it looks for plugins and uses its built-in one, whose appimagetool and mksquashfs
 // are byte for byte those of the `continuous` plugin the bundler fetched before (checked on
 // 2026-11-05). Every download goes through fetch-binaries.mjs (tries with back-off, resume, mirrors,
-// SHA-256) and SC_DOWNLOAD_CACHE, the cache CI's setup action restores.
+// SHA-256) and SC_DOWNLOAD_CACHE, the cache CI's setup action restores. AppRun and linuxdeploy
+// (fixed release tags) must arrive or the build stops. The runtime is `optional` in versions.json:
+// its `continuous` release is replaced by every upstream build, so when no source gives the pinned
+// bytes (every source failed, or the publisher has a newer build and no mirror has ours) the build
+// gets a ::warning:: with the cause and goes on as before the pin (no LDAI_RUNTIME_FILE:
+// appimagetool downloads the runtime itself, and desktop.mjs skips its runtime check).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -118,27 +123,43 @@ async function pinnedBytes(spec, a, { cacheDir, download }) {
 
 /**
  * Puts the pinned AppImage tools for `target` (linux-x64, linux-arm64) into `toolsDir` and returns
- * the environment the build needs (LDAI_RUNTIME_FILE). A file already there is kept when it is the
- * pin. `cacheDir` is SC_DOWNLOAD_CACHE; `download` (fetch-binaries.mjs downloadFirst) is for tests.
+ * `{ env, fallbacks }`: the environment the build needs (LDAI_RUNTIME_FILE) and, for each optional
+ * tool it could not get, `{ tool, reason }` (see the header). A file already there is kept when it
+ * is the pin. `cacheDir` is SC_DOWNLOAD_CACHE; `download` (fetch-binaries.mjs downloadFirst) is for
+ * tests.
  */
 export async function prepareAppImageTools(target, { toolsDir = tauriToolsDir(), cacheDir = process.env.SC_DOWNLOAD_CACHE, download = downloadFirst, pins = versions, log = console.log } = {}) {
   fs.mkdirSync(toolsDir, { recursive: true });
   const env = {};
+  const fallbacks = [];
   for (const [tool, spec] of Object.entries(appImageTools(pins))) {
     const a = spec.assets[target];
     if (!a) throw new Error(`No ${tool} for ${target} (the AppImage is built on Linux x64 and arm64)`);
     const dest = path.join(toolsDir, a.binary);
     // A file handed over in an environment variable (the runtime) is only read; the others run.
     const mode = spec.env ? 0o644 : 0o755;
-    if (spec.env) env[spec.env] = dest;
     if (fs.existsSync(dest) && matchesPin(fs.readFileSync(dest), a.sha256)) {
       fs.chmodSync(dest, mode);
+      if (spec.env) env[spec.env] = dest;
       log(`✓ ${tool} ${spec.version}: ${a.binary} already in ${toolsDir}`);
       continue;
     }
-    const { bytes, from } = await pinnedBytes(spec, a, { cacheDir: cacheDir && path.resolve(cacheDir), download });
-    writeFile(dest, bytes, mode);
-    log(`✓ ${tool} ${spec.version}: ${a.binary} from ${from} (${a.sha256.slice(0, 12)}…)`);
+    let got;
+    try {
+      got = await pinnedBytes(spec, a, { cacheDir: cacheDir && path.resolve(cacheDir), download });
+    } catch (err) {
+      if (!spec.optional) throw err;
+      // A copy that is not the pin is never handed over.
+      fs.rmSync(dest, { force: true });
+      const why = err.checksum || err.cause?.checksum ? `upstream's file is not the pinned build ${spec.build ?? spec.version}` : 'no source could be downloaded';
+      const reason = `${why}: ${err.message.replace(/\s+/g, ' ')}`;
+      fallbacks.push({ tool, reason });
+      log(`::warning title=AppImage tools::${tool} not pinned for this build (${reason}); ${spec.env ? `no ${spec.env}, so ` : ''}it is downloaded at bundle time as before (re-pin: docs/RELEASING.md, section 8)`);
+      continue;
+    }
+    writeFile(dest, got.bytes, mode);
+    if (spec.env) env[spec.env] = dest;
+    log(`✓ ${tool} ${spec.version}: ${a.binary} from ${got.from} (${a.sha256.slice(0, 12)}…)`);
   }
   // Empty and not executable: the bundler does not download the plugin, linuxdeploy does not use
   // this file and takes its built-in plugin (see the header).
@@ -149,7 +170,7 @@ export async function prepareAppImageTools(target, { toolsDir = tauriToolsDir(),
     writeFile(plugin, Buffer.alloc(0), 0o644);
   }
   log(`✓ ${APPIMAGE_PLUGIN}: linuxdeploy's built-in plugin (an empty, non-executable placeholder in ${toolsDir})`);
-  return env;
+  return { env, fallbacks };
 }
 
 function arg(name, fallback) {
@@ -160,7 +181,7 @@ function arg(name, fallback) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const dir = arg('dir');
   prepareAppImageTools(arg('target', hostTarget()), dir ? { toolsDir: path.resolve(dir) } : {})
-    .then((env) => console.log(`LDAI_RUNTIME_FILE=${env.LDAI_RUNTIME_FILE}`))
+    .then(({ env }) => console.log(`LDAI_RUNTIME_FILE=${env.LDAI_RUNTIME_FILE ?? '(not set)'}`))
     .catch((err) => {
       console.error(`✗ ${err.message}`);
       process.exit(1);

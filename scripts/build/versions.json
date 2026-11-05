@@ -213,9 +213,10 @@
     "bundle": false,
     "appimageTool": true,
     "env": "LDAI_RUNTIME_FILE",
+    "optional": true,
     "tauriCli": "2.12.4",
     "license": "MIT",
-    "notes": "The AppImage runtime (AppImage/type2-runtime), the first part of every SwarmCast AppImage. appimagetool (inside linuxdeploy's appimage plugin) downloads it from the `continuous` release at bundle time unless LDAI_RUNTIME_FILE names one, which appimage-tools.mjs does. `continuous` is replaced on every upstream commit, so the build of commit fedfad5 (2026-10-19, the runtime of SwarmCast 0.5.1's AppImages) is pinned and mirrored in ci-deps; update-binaries.mjs --check reports a newer upstream build. Re-pin: docs/RELEASING.md, section 8.",
+    "notes": "The AppImage runtime (AppImage/type2-runtime), the first part of every SwarmCast AppImage. appimagetool (inside linuxdeploy's appimage plugin) downloads it from the `continuous` release at bundle time unless LDAI_RUNTIME_FILE names one, which appimage-tools.mjs does. `continuous` is replaced on every upstream commit, so the build of commit fedfad5 (2026-10-19, the runtime of SwarmCast 0.5.1's AppImages) is pinned, with a ci-deps mirror. `optional`: when no source gives the pinned bytes (all fail, or the publisher has a newer build and the mirror is missing), the build warns and goes on as before the pin (appimagetool downloads the runtime itself, no runtime check). update-binaries.mjs --check reports a newer upstream build. Re-pin: docs/RELEASING.md, section 8.",
     "url": "https://github.com/AppImage/type2-runtime/releases/download/{version}/{asset}",
     "assets": {
       "linux-x64": {

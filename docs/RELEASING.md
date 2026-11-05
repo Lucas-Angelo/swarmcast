@@ -459,7 +459,8 @@ Delete an old file only when no supported branch pins it any more.
 AppImage) is mirrored for another reason: its publisher, AppImage/type2-runtime, only has a rolling
 `continuous` release, whose files are replaced on every upstream build, so the publisher's URL
 serves the pinned bytes only until the next one. The mirror (`type2-runtime-<commit>-<target>`) keeps
-the pin buildable. `node scripts/build/update-binaries.mjs --check` (the "Upstream binaries" step of
+the pin buildable. Without it, a build after an upstream rebuild warns and lets appimagetool download
+the runtime itself, as before the pin (`appimage-tools.mjs`). `node scripts/build/update-binaries.mjs --check` (the "Upstream binaries" step of
 every pipeline) reports a new upstream build. To move to it: download `runtime-x86_64` and
 `runtime-aarch64` from the `continuous` release, upload them as `type2-runtime-<short commit of the
 release>-linux-x64` and `-linux-arm64` (steps 2-4), then set `build`, each `sha256` and `mirrors` of
