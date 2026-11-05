@@ -47,6 +47,19 @@ describe('onboarding: auto-open', () => {
     expect(get).toHaveBeenCalledWith(ONBOARDING_API, 'GET');
     expect(answers).toEqual([false, true, null, null, null]);
   });
+
+  it('asks again when the network lost the request, so a fresh install still opens the tutorial', async () => {
+    // Arrange
+    vi.useFakeTimers();
+    const get = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce({ done: false });
+    // Act
+    const done = loadDone(get);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    // Assert
+    expect(await done).toBe(false);
+    expect(get).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe('onboarding: completion persistence', () => {

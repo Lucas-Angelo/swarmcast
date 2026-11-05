@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Up-to-date building blocks.** The video player (hls.js 1.7.4), parts of SwarmCast's own web server and of the desktop app get their makers' latest fixes. Nothing changes in how SwarmCast looks or works.
 
+### Fixed
+
+- **The panel no longer misses a part when a connection drops as it opens.** Rarely, your computer dropped one of the panel's first requests, and then the setup tutorial did not open by itself on a fresh install, **Your page** showed "Failed to fetch", or **Problem report** had no log setting, until you reloaded the panel. The panel now asks again by itself.
+
 ## [0.5.1] - 2026-11-05
 
 ### Added

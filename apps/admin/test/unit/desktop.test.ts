@@ -43,6 +43,19 @@ describe('desktop app state', () => {
     expect(failed).toBeNull();
   });
 
+  it('asks GET /api/desktop again when the network lost the request', async () => {
+    // Arrange
+    vi.useFakeTimers();
+    const get = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValueOnce(info());
+    // Act
+    const loaded = loadDesktop(get);
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    // Assert
+    expect(await loaded).toEqual(info());
+    expect(get).toHaveBeenCalledTimes(2);
+  });
+
   it('the store keeps the last state', () => {
     // Act
     setDesktop(info({ version: '9' }));

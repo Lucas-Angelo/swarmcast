@@ -19,6 +19,12 @@ inputs:
       Restore the download cache (pinned tools, pkg's Node.js binaries) for a job that runs
       fetch-binaries.mjs or package.mjs. Implied by ffmpeg.
     default: 'false'
+  downloads-for:
+    description: >-
+      The target whose pinned binaries the job fetches (`package.mjs --target`), when it is not
+      the runner's own OS and architecture (for example `windows-x64` on Linux). Part of the
+      download cache's key, so each entry holds one target's files.
+    default: ''
   apt-debs:
     description: >-
       Linux: a name for a .deb cache (for example `playwright-<hash>`). Sets APT_DEBS, which
@@ -159,19 +165,30 @@ runs:
     # depend on github.com for them. One release run was lost to a github.com connect timeout.
     # restore-keys: after a pin changes, the old entry still serves the rest (fetch-binaries.mjs
     # deletes what is no longer pinned). Saved on main only (./.github/actions/setup/save).
+    # The key names the target whose binaries the job fetches (`for-<target>`; downloads-for, or
+    # the runner's own): an entry is saved once and an exact hit is never saved again, so when
+    # the Windows package job (windows-x64 on Linux) saved the Linux x64 entry first, every
+    # Linux x64 job found it, without its own MediaMTX and cloudflared, and downloaded them
+    # each run (.github/workflows/README.md, "Pinned downloads in Docker").
     - name: Download cache keys
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
       id: dl
       shell: bash
       env:
         WITH_FFMPEG: ${{ inputs.ffmpeg }}
+        FOR: ${{ inputs.downloads-for }}
         PINS: ${{ hashFiles('scripts/build/versions.json') }}
         LOCK: ${{ hashFiles('package-lock.json') }}
       run: |
         echo "SC_DOWNLOAD_CACHE=$RUNNER_TEMP/sc-cache/downloads" >> "$GITHUB_ENV"
         echo "PKG_CACHE_PATH=$RUNNER_TEMP/sc-cache/pkg" >> "$GITHUB_ENV"
+        # The runner's own target, as fetch-binaries.mjs names it (hostTarget).
+        if [ -z "$FOR" ]; then
+          case "$RUNNER_OS" in Linux) FOR=linux ;; macOS) FOR=macos ;; Windows) FOR=windows ;; *) echo "::error::unknown RUNNER_OS $RUNNER_OS"; exit 1 ;; esac
+          case "$RUNNER_ARCH" in X64) FOR="$FOR-x64" ;; ARM64) FOR="$FOR-arm64" ;; *) echo "::error::unknown RUNNER_ARCH $RUNNER_ARCH"; exit 1 ;; esac
+        fi
         # A job without ffmpeg must not save the entry that jobs with ffmpeg restore.
-        dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-"
+        dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-for-$FOR-"
         pkg="sc-pkg-$RUNNER_OS-$RUNNER_ARCH-"
         { echo "dl-prefix=$dl"; echo "dl-key=$dl$PINS"; echo "pkg-prefix=$pkg"; echo "pkg-key=$pkg$LOCK"; } >> "$GITHUB_OUTPUT"
     - name: Restore the download cache

@@ -21,7 +21,7 @@ import path from 'node:path';
 import type { Locator, Page, Route } from '@playwright/test';
 import { contrastRatio } from '@swarmcast/shared';
 import { buildPixPayload, defaultBranding, deriveTheme, qrMatrix, type AdminBrandingState, type Branding, type BrandSlot } from '@swarmcast/shared/branding';
-import { adminApi, expect, openPanel, test } from './fixtures.js';
+import { adminApi, expect, loseFirstGet, openPanel, test } from './fixtures.js';
 
 /** The panel (English or `lang`) scrolled to its "Your page" card. */
 async function openBrandCard(page: Page, lang?: 'en' | 'pt-BR'): Promise<Locator> {
@@ -566,6 +566,20 @@ test('Your page: nothing to type into before the saved page loads, and a key typ
   await expect(card.getByTestId('brand-name')).toHaveValue('Ana Plays!');
   await expect(card.getByTestId('brand-preview').locator('.sc-brand-name')).toHaveText('Ana Plays!');
   await expect(card.getByTestId('brand-save')).toBeEnabled();
+});
+
+test('Your page when the network lost its first load: asked again, the saved page shows', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  await mockBranding(page, { saved: { name: 'Ana Plays' } });
+  const lost = await loseFirstGet(page, '**/api/branding');
+
+  // Act
+  const card = await openBrandCard(page);
+
+  // Assert
+  await expect(card.getByTestId('brand-name')).toHaveValue('Ana Plays');
+  await expect(card.getByTestId('brand-error')).toHaveCount(0);
+  expect(lost()).toBe(1);
 });
 
 test('Your page when the saved page cannot be loaded: the error, and no form whose Save would erase it', { tag: '@ui' }, async ({ page }) => {
