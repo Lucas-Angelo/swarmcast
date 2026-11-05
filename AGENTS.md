@@ -32,7 +32,7 @@ Promises no change may break ([CONTRIBUTING.md](CONTRIBUTING.md), "Ground rules"
   download counters); viewer pages contact only their own origin and STUN (GIFs only if the streamer turns
   them on and the viewer agrees).
 - **Private by default:** members-only links, the stream key and viewers' data stay protected (§9).
-- **Lay users:** plain, short words; errors say what to do next; installers and scripts never ask questions.
+- **Lay users:** plain, short words; errors say what to do next; installers never ask questions.
 - **Two languages:** every text in the panel, viewer pages, desktop app, installers and website is in
   English and Brazilian Portuguese. Code, comments, commits and developer docs are English.
 - **Sober look:** Forest & Cream ([assets/brand/README.md](assets/brand/README.md)), colours only through
@@ -55,7 +55,8 @@ Promises no change may break ([CONTRIBUTING.md](CONTRIBUTING.md), "Ground rules"
 
 The desktop app is a Tauri shell running the same server as a sidecar (`swarmcast-server --desktop`, JSON
 lines on stdio prefixed `@@swarmcast`); it shows the panel and updates itself from signed `latest.json`
-feeds. Script mode installs the same executable with the start scripts and a Go tray helper.
+feeds. The desktop app is the only way streamers install SwarmCast; running the server without
+`--desktop` is for development and tests.
 
 Where to start reading:
 
@@ -74,7 +75,8 @@ Where to start reading:
   `sidecar.rs`, `protocol.rs`, `updater.rs` (stable + beta feeds, never a downgrade), `window.rs`.
 - **Packaging:** `apps/server/build.mjs` (esbuild bundle) → `scripts/build/package.mjs` (@yao-pkg/pkg
   executable with Node 24; MediaMTX and cloudflared pinned by SHA-256 in `scripts/build/versions.json`;
-  ffmpeg is never shipped) → `scripts/build/desktop.mjs` (installers).
+  ffmpeg is never shipped; it stages `release/staging/<target>/`, the sidecar and its resources) →
+  `scripts/build/desktop.mjs` (installers).
 
 Diagrams and verified facts: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); per-area docs in §10.
 
@@ -83,10 +85,10 @@ Diagrams and verified facts: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); per-a
 | Path | What |
 |---|---|
 | `apps/server`, `apps/viewer`, `apps/admin` | server, viewer pages, streamer's panel (npm workspaces) |
-| `apps/desktop`, `apps/tray` | desktop app (`src-tauri/` Rust shell, `splash/`, mock server in `test/`); Go tray helper |
+| `apps/desktop` | desktop app (`src-tauri/` Rust shell, `splash/`, mock server in `test/`) |
 | `packages/shared` | schemas, constants, i18n, chat and branding logic, shared brand CSS (`web/`) |
 | `site/` | website and guides (Astro Starlight; own `package-lock.json`, not a workspace) |
-| `scripts/` | `start-*` / `uninstall-*` (release assets), `build/`, `releases/`, `stats/`, `ci/` (soak), `docs/`, `test/` (system harnesses) |
+| `scripts/` | `build/`, `releases/`, `stats/`, `ci/` (soak), `coverage/`, `docs/`, `test/` (system harnesses) |
 | `docs/`, `assets/brand/` | developer docs ([index](docs/README.md)); logo, icons, mascot, fonts, tokens |
 | `.github/` | `workflows/` (`pipeline.yml` + reusable `_*.yml`), `actions/`, `scripts/`, `soak-plan.json` |
 | `.claude/skills/`, `.claude/agents/` | Claude Code testing skill and test agent (the rest of `.claude/` is ignored) |
@@ -94,8 +96,8 @@ Diagrams and verified facts: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md); per-a
 ## 4. Setup and everyday commands
 
 Node 24 (`.nvmrc`). Desktop: Rust 1.99.1 (`apps/desktop/src-tauri/rust-toolchain.toml`) and the Tauri
-prerequisites. Tray: Go (`go.mod` 1.23, CI 1.27.x). Integration and e2e: ffmpeg (on `PATH` or `FFMPEG_BIN`)
-and Google Chrome. Run from the repository root.
+prerequisites. Integration and e2e: ffmpeg (on `PATH` or `FFMPEG_BIN`) and Google Chrome. Run from the
+repository root.
 
 | Command | What |
 |---|---|
@@ -111,7 +113,7 @@ and Google Chrome. Run from the repository root.
 | `npm run desktop:test` | `cargo test`; in `apps/desktop/src-tauri` also `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` |
 | `npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome` | the viewer in a real Android Chrome (after `scripts/test/devices/setup.sh install android`; iOS: `--project=ios-safari` on macOS 26) |
 | `cd site && npm run build && npm run check` | website build (fails on a broken link) and types; `npm run test:e2e` for its browser tests |
-| `npm run dev -w @swarmcast/server -- --no-tunnel --no-tray --no-autostart` | the app from source (data in `.cache/dev-data`), after `build`, with the environment of §5 (arguments reach the server only through `-w`) |
+| `npm run dev -w @swarmcast/server -- --no-tunnel --no-autostart` | the app from source (data in `.cache/dev-data`), after `build`, with the environment of §5 (arguments reach the server only through `-w`) |
 
 Before pushing: `npm run lint && npm run typecheck && npm test` plus the suites of what you touched. Flags,
 environment variables, `config.json` and the version policy: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md);
@@ -121,14 +123,13 @@ packages and installers: [apps/desktop/README.md](apps/desktop/README.md).
 
 The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may touch them.
 
-- **Data:** packaged builds (start scripts, desktop app) use the real data folder
+- **Data:** packaged builds (the desktop app, a staged server) use the real data folder
   (`~/Library/Application Support/SwarmCast`, `%LOCALAPPDATA%\SwarmCast`, `~/.local/share/swarmcast`); a run
   from the source checkout defaults to `<repo>/.cache/dev-data`. Anything packaged you start gets
   `SWARMCAST_DATA_DIR="$(mktemp -d)"` (or `--data-dir`), and log exports `SWARMCAST_DOWNLOADS_DIR`.
 - **No pop-ups:** `SWARMCAST_NO_OPEN=1` (no browser; server and desktop shell) and `SWARMCAST_NO_NOTIFY=1`.
 - **Hands off:** OBS and its settings, `/Applications` and `~/Applications`, login and autostart items, the
-  router (tests use the mock IGD). Never run the start or uninstall scripts or the installers on the host;
-  their harnesses (`scripts/test/run.sh`, `scripts/test/uninstall.sh`) isolate themselves.
+  router (tests use the mock IGD). Never run the installers on the host.
   `scripts/test/windows/`, `desktop/verify.mjs` and `preflight/verify.mjs` change the machine (CI or a
   throwaway VM only), and `obs-e2e/` rewrites OBS's own settings ([scripts/README.md](scripts/README.md)).
 - **Processes:** stop only the PIDs you started; never `pkill` / `killall` SwarmCast, MediaMTX, cloudflared,
@@ -181,7 +182,7 @@ The maintainer's computer runs a real SwarmCast and OBS. Nothing you run may tou
   (`node scripts/build/gen-unicode-tables.mjs`), `assets/brand/tokens.*` (`assets/brand/tools/palettes.py`),
   desktop icons (`npm run desktop:icons`), `docs/img/*.png` and the guide pictures of SwarmCast's own
   screens in `site/src/assets/guides/` (`node scripts/docs/screenshots.mjs`, which lists them),
-  `site/public/og/*.png` (`npm run og` in `site/`); the offline guide comes from the site pages.
+  `site/public/og/*.png` (`npm run og` in `site/`).
 
 ## 7. Testing
 
@@ -234,7 +235,7 @@ flake": find its cause in the product or the test, with evidence, and fix it at 
 
 ## 9. Security
 
-- Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) (chat threats T1–T19, branding B1–B16, accepted risks)
+- Read [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) (chat threats T1–T21, branding B1–B16, accepted risks)
   and [docs/SECURITY_RESEARCH.md](docs/SECURITY_RESEARCH.md) before changing access control, sessions,
   `/control`, the tracker, chat, branding, Direct mode, the CSP or the updater. Vulnerabilities are reported
   privately ([SECURITY.md](SECURITY.md)), never in a public issue.

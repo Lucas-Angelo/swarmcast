@@ -50,7 +50,10 @@ export interface TickInput {
    * as a trend (+0.2 s/s on a 30 Mbps link, called unstable).
    */
   liveLag?: number | null;
-  /** hls.js bandwidth estimate, bits/s. */
+  /**
+   * hls.js bandwidth estimate, bits/s; 0 = not measured yet (no headroom sample): before hls.js
+   * has timed a segment it returns its starting guess, which adaptive-delay.ts does not pass on.
+   */
   bandwidthEstimate: number;
   /** Bitrate of the rendition playing, bits/s (0 = unknown). */
   levelBitrate: number;

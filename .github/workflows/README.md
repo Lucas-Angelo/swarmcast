@@ -9,14 +9,14 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | Workflow | Runs on | What |
 |---|---|---|
 | `pipeline.yml` | pull requests, push to `main`, monthly, by hand, called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
-| `release.yml` | push of a `v*` tag | the pipeline in release flavour, then sign and publish the GitHub release |
+| `release.yml` | push of a `v*` tag | the pipeline in release flavour (desktop installers signed with the updater key), then publish the GitHub release |
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
-| `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Go, Rust, the workflows |
+| `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Rust, the workflows |
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates; fails on any single failed run |
 | `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
 | `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
 | `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
-| `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`) with the real Cloudflare tunnel check; pull requests and `main` run them as the pipeline's `docker` stage |
+| `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`); pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 | `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
 
@@ -27,8 +27,8 @@ organization-owned repositories only, and this one belongs to a user.
 ## The pipeline
 
 ```
-changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×5 ──────────────┐
-         ├─ build (web + windows pkgs) ─┤                                             ├─ ci-ok
+changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×4 ──────────────┐
+         ├─ build (web + windows pkg) ──┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
          ├─ site (when the site changed) ─────────────────────────────────────────────┤
          └─ docker (when the Docker suites or what they run changed) ─────────────────┘
@@ -36,19 +36,19 @@ changes ─┬─ quick ──────────────────�
 
 | Stage | File | Jobs | What |
 |---|---|---|---|
-| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `scripts`, `docker`; and that `ci-ok` waits for every job |
-| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, the streamer guides, tray cross-builds and `go vet`, `cargo fmt` |
-| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the windows-x64 package and a "newer" one → `pkg-windows-x64`; both checked for development dependencies first |
-| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their package → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the package and the installers checked for development dependencies first |
+| changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
+| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
+| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first |
+| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel) | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences; the start and uninstall scripts when they changed (here, not in clean-machine, which is on the critical path) |
+| node | `_node.yml` | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
 | e2e | `_e2e.yml` | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
-| windows | `_windows.yml` | 5 | the Windows suites: installer, app, quality, direct, obs |
-| site | `_site.yml` | 1 | the website's unit, type, link and browser tests and the streamer guides |
-| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own package and AppImage builds: start script and package, AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
+| windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
+| site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
+| docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
-That is 30 jobs for a change to the app (8 on macOS, 7 on Windows), 31 when it also touches the
+That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
 5 of them on macOS.
 
@@ -62,19 +62,18 @@ site, 12 more when it touches the Docker suites or what they run. GitHub Free ru
 | Rust: clippy, `cargo test`, crate licences | 24.04 | | ✓ | | ✓ |
 | e2e (Playwright: Chrome, Firefox, WebKit) | 24.04 | Docker (Chromium, Firefox) | ✓ | | |
 | viewer chat UI, mock hub | 24.04 (+ phones) | | ✓ (+ phones) | | Chrome, Edge, Firefox |
-| Windows suites (installer, app, quality, direct, obs) | | | | | ✓ |
-| preflight (package, stream, watch, P2P, tunnel) | 22.04, 24.04 | | ✓ | ✓ | ✓ |
+| Windows suites (app, quality, direct, obs) | | | | | ✓ |
+| preflight (staged server: stream, watch, P2P, tunnel) | 22.04, 24.04 | | ✓ | ✓ | ✓ |
 | desktop app: install, update, uninstall | 22.04, 24.04 | 24.04 | ✓ | ✓ | ✓ |
 | AppImage on a minimal host | 22.04 (+ Docker bases) | 24.04 (+ Docker bases) | | | |
-| start and uninstall scripts | 24.04 (+ the start script on the Docker bases) | the start script on the Docker bases | ✓ | | ✓ (PowerShell 5.1) |
 | OBS Studio | Docker | Docker | | | ✓ |
 | website | 24.04 | | | | |
 
 "Docker" is the `docker` stage (Ubuntu 22.04, 24.04 and Debian 12 containers on native x64 and arm64
 runners, no emulation). The monthly run adds `ubuntu-latest` to the node and e2e jobs as a canary.
 
-**Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` six times (two
-Windows packages, one per macOS and Linux target) and `tauri build` ten times (A and the real build
+**Build once.** `npm run build` runs once per pipeline (`build`), `package.mjs` five times (one
+staged server per target) and `tauri build` ten times (A and the real build
 per target). Every test job downloads those artifacts, so all of them test the same bytes.
 The artifacts are tar files, because `upload-artifact` drops the executable bit;
 `.github/actions/get-build` downloads and unpacks them. They are kept 3 days for pull requests and 14 days
@@ -94,9 +93,7 @@ locally); it never picks up a key file by itself.
   Docker suites, CodeQL, stats, Dependabot, issue forms). Without it every app stage is skipped.
 - `site` is `site/`, `scripts/releases/` (the beta update feed is built with the site), the screenshots, the brand assets, the shared translations, the actions and
   these workflow files.
-- `scripts` is `scripts/` (not `scripts/ci` or `scripts/test/docker`), the actions and the
-  node workflow (where those tests run): the install-script tests run only then, as before.
-- `docker` is `scripts/test/docker/`, the Linux start and uninstall scripts, `_docker.yml`,
+- `docker` is `scripts/test/docker/`, `_docker.yml`,
   `linux-docker.yml` and `pipeline.yml`, the e2e specs and server (`apps/server/test/e2e/`) and
   `playwright.config.ts`. A Docker suite that fails then fails `ci-ok`, so it cannot turn `main`
   red after the merge.
@@ -120,9 +117,11 @@ schedules and releases are never cancelled.
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional Go, the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
+| `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
+| `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
@@ -130,6 +129,7 @@ schedules and releases are never cancelled.
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
+| `.github/scripts/npm-network-error.mjs` | tells `setup` whether a failed `npm ci` failed on the network (npm's own errors, or prebuild-install's download in an install script), so it runs once more (tested in `scripts/ci/test`) |
 | `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
@@ -185,6 +185,65 @@ runtime, and the fallback does not depend on that client.
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
 
+### Remote actions
+
+The remote actions our own actions run (setup-node, actions/cache, download-artifact,
+Swatinem/rust-cache), and taiki-e/install-action in `_node.yml`, are not downloaded by the runner:
+`./.github/actions/fetch-remote` fetches each with git, at its pin, into
+`.git/remote-actions/<owner>/<repo>` of the workspace, and the step runs it from there
+(`uses: ./.git/remote-actions/Swatinem/rust-cache`, `./.git/remote-actions/actions/cache/save`).
+The pins are the `uses:` lines of `.github/actions/remote-pins/action.yml`, a composite action that
+never runs (each step is `if: false`), in that format so Dependabot keeps bumping the SHAs and
+their `# vX.Y.Z` comments; `scripts/ci/test/fetch-remote.test.ts` fails when one of our actions
+uses a remote action directly, when a fetched action has no pin or no fetch step before it, and
+when a workflow pins the same repository at another commit.
+
+Why: in 10x stability run 41636784175 (`soak/p10-0.5.0`), `desktop macos-arm64 / build
+(macos-latest)` failed in `setup-rust` before any of its steps ran:
+
+```
+Prepare all required actions
+Getting action download info
+Download action repository 'Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0' (SHA:d1527c8f67ef9af357290475d4af4b0fab8f12e0)
+##[error]An action could not be found at the URI 'https://codeload.github.com/Swatinem/rust-cache/tar.gz/d1527c8f67ef9af357290475d4af4b0fab8f12e0' (AF6A:3C6DDB:2098B:3F849:6AE9DB6B)
+##[error]Failed to download archive '...' after 1 attempts.
+```
+
+The commit exists (v2.9.3) and codeload served it again straight after. What the runner does
+(actions/runner v2.338.2, the version of that job, `src/Runner.Worker/ActionManager.cs`):
+
+- `DownloadRepositoryArchive` (line 1644) tries 3 times, 10-30 s apart, after a network error, a
+  5xx or a 20-minute timeout, but a 404 throws `ActionNotFoundException` at once ("It doesn't make
+  sense to retry in this case", line 1691): "after 1 attempts".
+- That one function downloads every remote action: the job's own steps in "Set up job"
+  (`JobExtension.cs` line 301, `PrepareActionsAsync`) and the steps of a local composite action
+  when it starts (`ActionRunner.cs` lines 83-92, "Handle Composite Local Actions"; it cannot be
+  done earlier, the composite's `action.yml` is in the repository, which is not checked out yet).
+  So moving a `uses:` from a composite action to the job would only move the same single try to
+  "Set up job", which fails the job just the same.
+- The one download it skips is from the runner image's action archive cache
+  (`ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE`, line 1232, a setting of the runner's own environment that
+  a workflow cannot set): a few first-party actions at their release commits (actions/action-versions:
+  checkout, cache, setup-node, upload-artifact, ...). Swatinem/rust-cache,
+  download-artifact and install-action at our pins are not in it, and an action bumped to a release
+  newer than the image is not either.
+
+A git fetch goes to github.com (like actions/checkout), not codeload, and git checks every object
+against its hash, so the copy is exactly the pinned commit (for every pin, the same files as
+codeload's tarball). `fetch.mjs` tries 4 times, 5, 10 and 20 s apart, each git command limited to
+30 s (a fetch takes 0.7-1.6 s), with a warning for every failed try; an action already fetched in
+the job is not fetched again. One that only speeds the job up (actions/cache, rust-cache) is
+`optional`: if it cannot be fetched, the caches are skipped with a warning, where the runner's
+download failure used to fail the job even though the rust-cache step is `continue-on-error`.
+When download-artifact cannot be fetched, `fetch-artifact` goes straight to its REST fallback.
+Inside `.git`, the copies are out of the way of everything that reads the workspace (git status
+and clean, ESLint, a later checkout). Still downloaded by the runner, so still exposed to a 404:
+actions/checkout (it puts `fetch-remote` there in the first place) and actions/upload-artifact,
+both in the image's action archive cache at our pins, and, outside the pipeline, the
+github/codeql-action, actions/attest and GitHub Pages steps. How often: in the 485 failed jobs of
+the 192 failed runs before it (every failed run from 2026-10-25 to 2026-11-03), no action
+download had failed.
+
 ## Caches
 
 GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
@@ -200,7 +259,6 @@ again (a cold run). What is saved, all from `main` unless noted:
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
 | `sc-pkg-*` | `setup/save`: pkg's Node.js binaries | 3 | 0.13 GB |
-| `setup-go-*` | setup-go, per OS (also on other branches) | 4 | 0.08 GB |
 | `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
 
 That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
@@ -218,7 +276,7 @@ nobody restores again, and prints each deletion with its reason and the size bef
   (`node-cache-Linux-x64-npm-*`, `v0-rust-checks-node-Linux-x64-*-*`, `codeql-trap-1-*-javascript-*`).
   It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
   the workflows compute: the npm cache's three files, `package-lock.json`,
-  `scripts/build/versions.json`, `apps/tray/go.sum`, and `main`'s commit for CodeQL), the newest
+  `scripts/build/versions.json`, and `main`'s commit for CodeQL), the newest
   or the most recently used entry of a family, nor an older entry still used after the newest was
   saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
   image version still being rolled out). An older entry last used before the newest was saved is
@@ -271,8 +329,8 @@ run 41293187839, and `soak/cache-stall-sim`, run 41293309829):
   have `timeout-minutes` ("Unexpected value 'timeout-minutes'").
 
 So: every `actions/cache` restore goes through `./.github/actions/cache-restore`. It runs
-`actions/cache`'s own restore code (its `restore-only` entry point, which the runner downloads for
-any job that references `actions/cache`) as a child process, cuts a try off after 90 s (kills the
+`actions/cache`'s own restore code (its `restore-only` entry point, in the copy it fetches with
+git at the pin, see "Remote actions") as a child process, cuts a try off after 90 s (kills the
 process group, so its `tar` too, and clears what the try may have half-extracted), and tries
 once more after a try that timed out or failed; a plain miss is not retried. The npm cache is no
 longer setup-node's: `setup` restores it with the same key and path (so existing entries keep
@@ -280,10 +338,11 @@ working) and saves it from `main` with `actions/cache` in `lookup-only` mode (it
 when `main` has no entry for the key). And `setup` sets npm's `fetch-timeout` (the idle limit of
 its connections) to 60 s and `fetch-retries` to 4 for the job, and runs `npm ci` once more after a
 network error npm's own retries did not get past (npm does not retry a download that broke off
-mid-transfer); any other `npm ci` failure fails the step.
+mid-transfer), or a failed download of prebuild-install in an install script
+(`.github/scripts/npm-network-error.mjs`); any other `npm ci` failure fails the step.
 Worst case for one stalled cache in `setup`: 2 x 90 s, then a cold `npm ci` (at most 47 s
 measured, plus a minute per stalled request), about 5 minutes over a 24-61 s warm setup, under
-the step's 8-minute limit. Not covered: the restores built into setup-go and Swatinem/rust-cache
+the step's 8-minute limit. Not covered: the restore built into Swatinem/rust-cache
 (`setup-rust`), which cannot be wrapped; `setup-rust`'s step limit applies to them.
 
 Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage blocked for the first
@@ -292,6 +351,23 @@ Proved on `soak/cache-stall-sim` (Ubuntu, `iptables`): the cache's storage block
 disruption of the registry during `npm ci` (one in five connections stops after 100 kB), a plain
 `npm ci` failed with `ETIMEDOUT` after 110 s while `setup` took 201 s and passed (both restores cut
 off, `npm ci` failed on `ETIMEDOUT`, the second run took 5 s; run 41295992201).
+
+**Install scripts that download (2026-11-03).** `npm ci` on `main` after #102 (pipeline run
+41664754395, `desktop macos-x64 / clean-machine (macos-15-intel)`) failed in node-datachannel's
+install script: its prebuild-install download of the native binary from GitHub stopped at its 30 s
+limit ("prebuild-install warn install Request timed out"), the build from source it falls back to
+failed ("prebuild ERR! build TypeError: expected first argument to be an array") after installing
+the package's own development dependencies for 3 minutes, and the step's pattern knew npm's errors
+only. The npm cache would not have helped: prebuild-install keeps what it downloads in
+`<npm cache>/_prebuilds` (npm hands install scripts `npm_config_cache`), which the npm cache
+holds per OS and CPU, but #102 changed `setup/action.yml`, part of the key, and `main` restores
+only its exact key, so its first run was cold. node-datachannel is a native WebRTC addon that only
+bittorrent-tracker's client loads (through @thaunknown/simple-peer and webrtc-polyfill); SwarmCast
+runs `bittorrent-tracker/server` and viewers use their browser's WebRTC, so nothing ever loaded it.
+It is now a local stand-in (`apps/server/shims/node-datachannel`, an npm override like the `ip`
+shim) that throws when loaded, so no install script in our lockfiles downloads anything, and
+`scripts/ci/test/install-scripts.test.ts` fails on a new package with an install script until it
+is looked at. The prebuild-install pattern stays for the next one.
 
 ## Coverage
 
@@ -319,17 +395,18 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), the pinned
+  then the REST fallback, each a warning), the remote actions our steps run (`fetch-remote`: a git
+  fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
+  41636784175), the pinned
   downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
-  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error (`setup`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
+  timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error, npm's or a prebuild-install download's (`setup`, `npm-network-error.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
   60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
   images are the test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's
   mirror), and a mirror serving a half-synchronised archive is outside our control: pipeline run
   41273197813 lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds
-  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there: the start script's own
-  `apt-get install curl` (`run.sh` part b) runs once.
+  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there.
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
   at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
   artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long
@@ -358,17 +435,19 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   workspace's `devDependencies`, an `@types/*` package, or a first-party test file shows up in: the
   server bundle's inputs and run-time requires (`apps/server/dist/meta.json`), the viewer's and the
   panel's module graphs (their Vite builds, and `apps/*/dist` must be exactly those builds), a
-  package (`release/staging/<target>`: the files in the server executable's pkg snapshot, no
+  staged server (`release/staging/<target>`: the files in the server executable's pkg snapshot, no
   `node_modules`, `web/` the checked dist), or a desktop installer (each unpacked: the sidecar's
   snapshot, `web/`, no `node_modules`). It runs in `_build.yml` and `_desktop.yml` before their
-  artifacts are uploaded, and in `release.yml` on the signed packages and their archives. Run it
-  locally after `npm run build` and `node scripts/build/package.mjs --target <host> --no-archive`:
+  artifacts are uploaded, so the release publishes only checked installers. Run it locally after
+  `npm run build` and `node scripts/build/package.mjs --target <host>`:
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
   download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
   (`codeql.yml`: `security-events: write`; `cache-hygiene.yml`: `actions: write` to delete caches; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
-  Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA.
+  Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA (those run
+  from a git fetch, in `.github/actions/remote-pins/action.yml`; a new one of our actions that
+  needs a remote action fetches it with `fetch-remote`, see "Remote actions").
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
   (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
   Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside

@@ -1,0 +1,127 @@
+/*
+ * Reactions over the video (reactions.ts, docs/CHAT.md "Reactions"). The layer sits inside the
+ * player, over the picture and under the player's controls, and never takes a click. Floaters rise
+ * from above the control bar on the right; only transform and opacity animate (the compositor's
+ * work). With "reduce motion" nothing floats: a counter per kind in the same corner. Colours only
+ * from the tokens (light text on the --scrim, as the controls).
+ */
+.rx-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  pointer-events: none;
+  contain: strict;
+}
+.rx-layer[hidden] {
+  display: none;
+}
+.rx-float {
+  position: absolute;
+  right: var(--rx-x, 10%);
+  bottom: 64px;
+  width: 40px;
+  height: 40px;
+  opacity: 0;
+  will-change: transform, opacity;
+  animation: rx-rise var(--rx-dur, 3s) ease-out var(--rx-delay, 0ms) both;
+  user-select: none;
+}
+@keyframes rx-rise {
+  0% {
+    opacity: 0;
+    transform: translate(0, 0) scale(0.6);
+  }
+  12% {
+    opacity: 1;
+    transform: translate(calc(var(--rx-sway, 0px) * 0.25), calc(var(--rx-rise, 200px) * -0.12)) scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--rx-sway, 0px), calc(var(--rx-rise, 200px) * -1)) scale(1);
+  }
+}
+
+/* "Reduce motion": a calm counter per kind, counting up in place. */
+.rx-tally {
+  position: absolute;
+  right: var(--sp-2);
+  bottom: 64px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-1);
+  max-width: 60%;
+}
+.rx-tally[hidden] {
+  display: none;
+}
+.rx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 2px var(--sp-2) 2px 2px;
+  border-radius: var(--sc-radius-pill);
+  background: var(--scrim);
+  color: var(--on-video);
+  font-size: var(--fs-sm);
+  font-weight: var(--sc-weight-semibold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.rx-chip img {
+  width: 24px;
+  height: 24px;
+}
+
+/* The React button in the chat's tools, and its popover above the message box. */
+button.chat-tool.react-btn img {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+.chat-react {
+  bottom: 96px;
+  max-width: 280px;
+}
+.react-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--sp-1);
+}
+button.react-opt {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 44px;
+  padding: var(--sp-1);
+  background: transparent;
+  border-color: transparent;
+  border-radius: var(--sc-radius-md);
+}
+button.react-opt:hover {
+  background: var(--hover);
+}
+button.react-opt:active {
+  background: var(--sc-accent-soft);
+}
+button.react-opt img {
+  display: block;
+  width: 32px;
+  height: 32px;
+}
+
+@media (max-width: 720px) {
+  .rx-float {
+    width: 32px;
+    height: 32px;
+    bottom: 56px;
+  }
+  .rx-tally {
+    bottom: 56px;
+  }
+}

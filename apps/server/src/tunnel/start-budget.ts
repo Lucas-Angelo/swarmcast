@@ -3,8 +3,8 @@
  * step), and the schedule inside it.
  *
  * No imports, on purpose: the system test harnesses (scripts/test/lib/app.mjs, which Node loads
- * with its built-in type stripping; scripts/test/docker/run.sh, which reads the number from this
- * file) wait for the live link as long as this step may take, and no longer. A harness that gave up
+ * with its built-in type stripping) wait for the live link as long as this step may take, and no
+ * longer. A harness that gave up
  * earlier would fail while SwarmCast was still recovering by design (a new tunnel over TCP, another
  * try after Cloudflare refused); one that waited longer would hide a step that ran past its limit.
  *

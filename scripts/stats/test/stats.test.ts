@@ -46,7 +46,7 @@ describe('classifyAsset', () => {
     ['SwarmCast-v0.1.0-windows-x64-installer.zip', { kind: 'installer', os: 'windows' }],
     ['SwarmCast-v0.1.0-linux-arm64.tar.gz', { kind: 'package', os: 'linux' }],
     ['SwarmCast-v0.1.0-macos-x64.tar.gz', { kind: 'package', os: 'macos' }],
-  ])('counts the script-mode zip or package %s', (name, expected) => {
+  ])('counts the script-mode zip or package %s of a release before 0.5.1', (name, expected) => {
     // Act
     const c = classifyAsset(name);
 

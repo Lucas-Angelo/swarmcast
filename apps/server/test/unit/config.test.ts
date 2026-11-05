@@ -119,7 +119,7 @@ describe('config', () => {
     expect(m.config).toMatchObject({ security: { requireBrowserCheck: true } });
   });
 
-  it.each([5, 6])('migration: a version %i file is left alone', (configVersion) => {
+  it.each([6, 7])('migration: a version %i file is left alone', (configVersion) => {
     // Act
     const m = migrateConfig({ configVersion, security: { requireBrowserCheck: false } });
     // Assert
@@ -165,9 +165,27 @@ describe('config', () => {
     // Act
     const c = loadConfig(f);
     // Assert
-    expect(c.configVersion).toBe(5);
+    expect(c.configVersion).toBe(CONFIG_VERSION);
     expect(c.allowViewerShare).toBe(true);
-    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: 5, allowViewerShare: true });
+    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: CONFIG_VERSION, allowViewerShare: true });
+  });
+
+  it('version 6 adds reactions over the video to the chat, on, written back; a saved "off" is kept', () => {
+    // Arrange
+    const f = configFile();
+    const v5 = { ...defaultConfig(), configVersion: 5 } as Record<string, unknown> & { chat: Record<string, unknown> };
+    delete v5.chat.reactions;
+    fs.writeFileSync(f, JSON.stringify(v5));
+    // Act
+    const c = loadConfig(f);
+    // Assert
+    expect(c.configVersion).toBe(6);
+    expect(c.chat.reactions).toBe(true);
+    expect(JSON.parse(fs.readFileSync(f, 'utf8'))).toMatchObject({ configVersion: 6, chat: { reactions: true } });
+    // Act
+    saveConfig(f, { ...c, chat: { ...c.chat, reactions: false } });
+    // Assert
+    expect(loadConfig(f).chat.reactions).toBe(false);
   });
 
   it('a saved "off" for sharing is kept', () => {

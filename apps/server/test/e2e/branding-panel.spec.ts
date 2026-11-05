@@ -37,9 +37,16 @@ interface Upload {
   bytes: Buffer;
 }
 
+interface MockOptions {
+  /** The page as saved before the panel opens. */
+  saved?: Partial<Branding>;
+  /** GET /api/branding answers only once this settles (a slow first load). */
+  holdLoad?: Promise<void>;
+}
+
 /** A fake branding API in the page (docs/BRANDING.md contract). */
-async function mockBranding(page: Page): Promise<{ puts: unknown[]; uploads: Upload[]; state: () => Branding }> {
-  let branding: Branding = defaultBranding();
+async function mockBranding(page: Page, o: MockOptions = {}): Promise<{ puts: unknown[]; uploads: Upload[]; state: () => Branding }> {
+  let branding: Branding = { ...defaultBranding(), ...o.saved };
   const files = new Map<string, { type: string; bytes: Buffer }>();
   const images: Partial<Record<BrandSlot, string>> = {};
   const puts: unknown[] = [];
@@ -57,7 +64,10 @@ async function mockBranding(page: Page): Promise<{ puts: unknown[]; uploads: Upl
   await page.route(/\/api\/branding(\/.*)?$/, async (route) => {
     const req = route.request();
     const p = new URL(req.url()).pathname;
-    if (p === '/api/branding' && req.method() === 'GET') return answer(route);
+    if (p === '/api/branding' && req.method() === 'GET') {
+      await o.holdLoad;
+      return answer(route);
+    }
     if (p === '/api/branding' && req.method() === 'PUT') {
       const body = req.postDataJSON() as Partial<Branding>;
       puts.push(body);
@@ -517,6 +527,57 @@ test('Your page without branding routes on the server: defaults, a note, nothing
   await expect(card.getByTestId('brand-preview').locator('.sc-brand-name')).toHaveText('Ana Plays');
   await expect(card.getByTestId('brand-save')).toBeDisabled();
   await expect(page.getByTestId('error')).toHaveCount(0);
+});
+
+test('Your page: nothing to type into before the saved page loads, and a key typed right after stays', { tag: '@ui' }, async ({ page }) => {
+  // Arrange: the saved page answers only when the test lets it.
+  let release!: () => void;
+  const loading = page.waitForRequest((r) => new URL(r.url()).pathname === '/api/branding' && r.method() === 'GET');
+  await mockBranding(page, { saved: { name: 'Ana Plays' }, holdLoad: new Promise<void>((resolve) => (release = resolve)) });
+  const card = await openBrandCard(page);
+  await loading;
+
+  // Assert: a form shown now would hold the defaults, and the answer would replace what was typed.
+  await expect(card.getByTestId('brand-loading')).toHaveText('Loading…');
+  for (const id of ['brand-enabled', 'brand-name', 'brand-section-identity', 'brand-save', 'brand-reset']) await expect(card.getByTestId(id)).toHaveCount(0);
+
+  // Act: the moment the name field appears, in the microtask after the render that adds it, a key
+  // is typed; then Preact's effects run (the next frame and the task it queues).
+  await page.evaluate(() => {
+    const w = window as unknown as { __typed?: Promise<{ shown: string; after: string }> };
+    w.__typed = new Promise((resolve) => {
+      const seen = new MutationObserver(() => {
+        const el = document.querySelector<HTMLInputElement>('[data-testid="brand-name"]');
+        if (!el) return;
+        seen.disconnect();
+        const shown = el.value;
+        el.value = `${shown}!`;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        requestAnimationFrame(() => setTimeout(() => resolve({ shown, after: el.value })));
+      });
+      seen.observe(document.body, { childList: true, subtree: true });
+    });
+  });
+  release();
+  const typed = await page.evaluate(() => (window as unknown as { __typed: Promise<{ shown: string; after: string }> }).__typed);
+
+  // Assert
+  expect(typed).toEqual({ shown: 'Ana Plays', after: 'Ana Plays!' });
+  await expect(card.getByTestId('brand-name')).toHaveValue('Ana Plays!');
+  await expect(card.getByTestId('brand-preview').locator('.sc-brand-name')).toHaveText('Ana Plays!');
+  await expect(card.getByTestId('brand-save')).toBeEnabled();
+});
+
+test('Your page when the saved page cannot be loaded: the error, and no form whose Save would erase it', { tag: '@ui' }, async ({ page }) => {
+  // Arrange
+  await page.route(/\/api\/branding(\/.*)?$/, (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }));
+
+  // Act
+  const card = await openBrandCard(page);
+
+  // Assert
+  await expect(card.getByTestId('brand-error')).toHaveText('Request failed (500)');
+  for (const id of ['brand-enabled', 'brand-name', 'brand-save', 'brand-reset', 'brand-loading']) await expect(card.getByTestId(id)).toHaveCount(0);
 });
 
 const SHOTS = process.env.BRAND_SCREENSHOTS;

@@ -1,8 +1,8 @@
 # SwarmCast brand
 
 The visual identity of SwarmCast: symbol, wordmark, app icon, tray icons, favicon, mascot and design
-tokens. **Forest & Cream** is the chosen palette: the panel, the viewer pages, the desktop app, the
-website and the offline guide all use it (see [How the apps use it](#how-the-apps-use-it)).
+tokens. **Forest & Cream** is the chosen palette: the panel, the viewer pages, the desktop app and the
+website all use it (see [How the apps use it](#how-the-apps-use-it)).
 
 ![Overview of the four directions](explorations/overview-ABCD.jpg)
 
@@ -93,11 +93,9 @@ consumers' own steps below and commit the results.
 | Panel and viewer pages (`apps/admin`, `apps/viewer`) | [`packages/shared/web/brand.css`](../../packages/shared/web/brand.css) imports `tokens.css`; each app's `style.css` imports `brand.css` first and uses only `--sc-*` tokens (plus the few derived values `brand.css` builds from them). Vite bundles it all into `/assets`, so the strict CSP needs nothing but `'self'` | `brand.css` sets the symbol (`symbol/swarmcast-symbol.svg`, `-on-dark.svg` in the dark theme) and the mascot (256 px WebP copies in `packages/shared/web/img/`); the HTML pages link `favicon/favicon.svg`. Details: [packages/shared/README.md](../../packages/shared/README.md) |
 | Desktop app (`apps/desktop`) | The splash page: `src-tauri/build.rs` copies `tokens.css` next to it at every build | [`apps/desktop/icons.mjs`](../../apps/desktop/icons.mjs) (`npm run desktop:icons`) makes every app icon from `icon/app-icon-1024.png` (small `.ico` sizes from `icon/sizes/`) and copies `tray/tray-{off,waiting,live}-32.png`. The window shows the panel, so it follows the panel |
 | Website (`site/`) | `site/src/styles/tokens.css` imports `tokens.css`; `starlight.css` maps Starlight onto it; `site/src/tokens.mjs` reads literal values at build time (theme colour, contrast test) | [`site/src/brand.mjs`](../../site/src/brand.mjs) names the files used from this folder (symbol light/dark, mascot); `site/public/favicon.svg` is a copy of `favicon/favicon.svg`. Fredoka is subset into `site/src/fonts/` |
-| Offline guide (installer zips) | `scripts/build/guide-html.mjs` reads the light and dark values from `tokens.css` | — |
 
-The script-mode tray helper (`apps/tray`) uses copies of `tray/tray-{off,waiting,live}-32.png` and
-`tray/tray-<state>.ico` in `apps/tray/icons/` (byte-identical today); re-copy them when the tray icons
-change. The desktop app copies the same PNGs with `npm run desktop:icons`.
+The desktop app is the only user of the tray icons: it copies `tray/tray-{off,waiting,live}-32.png` with
+`npm run desktop:icons`; run it again when they change.
 
 ## Type
 

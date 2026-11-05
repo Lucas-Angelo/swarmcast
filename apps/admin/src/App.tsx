@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useState } from 'preact/hooks';
 import { HASH_FAILURE_THRESHOLD } from '@swarmcast/shared/constants';
 import type { ActivityEntry, AdminLogMessage, AdminState, DirectCheckResponse, Settings, ViewerInfo } from '@swarmcast/shared';
 import { formatNumber, getLang, guideUrl, humanDuration, LANGS, t, tc, toLang, translate, type Lang } from '@swarmcast/shared/i18n';
@@ -72,7 +72,7 @@ export function App() {
       ),
     [],
   );
-  // Desktop app only (null in script mode: its card and banner stay hidden).
+  // Desktop app only (null outside it, in development and tests: its card and banner stay hidden).
   useEffect(() => {
     void loadDesktop((p, m) => api(p, m)).then((d) => {
       if (d) setDesktop(d);
@@ -451,7 +451,7 @@ export function App() {
       </div>
 
       {directOpen && <DirectModal onClose={() => setDirectOpen(false)} />}
-      <Onboarding state={s} />
+      <Onboarding state={s} chat={chatPanel} />
     </div>
   );
 }
@@ -541,7 +541,9 @@ function SettingsForm({
   onSave: (s: Settings) => void;
 }) {
   const [v, setV] = useState(settings);
-  useEffect(
+  // In the commit, not in a useEffect, which Preact runs after the next frame: on the first render
+  // that one put the saved settings back over a change made in the meantime (see Security.tsx).
+  useLayoutEffect(
     () => setV(settings),
     [settings.uploadLimitMbps, settings.autoStopMinutes, settings.alsoStreamingElsewhere, settings.showViewerCount, settings.allowViewerShare, settings.allowViewerP2P, settings.maxViewers, settings.maxSessionsPerDevice],
   );

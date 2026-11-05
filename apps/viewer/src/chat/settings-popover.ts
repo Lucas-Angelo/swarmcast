@@ -1,6 +1,7 @@
 // The chat's gear menu: your name colour (when the streamer lets viewers choose and has not
-// locked yours), show times, highlight messages that mention me, text size. Choices about this device are kept in prefs.ts; the
-// colour goes to the server (chat.color), which tells everyone.
+// locked yours), show times, highlight messages that mention me, show reactions on the video, text
+// size. Choices about this device are kept in prefs.ts; the colour goes to the server
+// (chat.color), which tells everyone.
 import { t } from '@swarmcast/shared/i18n';
 import { createColorChooser } from './color-ui.js';
 import { createPopover, type Popover } from './popover.js';
@@ -12,6 +13,8 @@ export interface SettingsPopover {
   setColor(state: { color: string; nick: string; locked: boolean } | null): void;
   /** GIF section (consent, animation): shown while the streamer has GIFs on. */
   setGifs(state: { provider: string; consented: boolean; animate: boolean } | null): void;
+  /** "Show reactions on the video": shown while the streamer has reactions on. */
+  setReactions(available: boolean): void;
 }
 
 export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor(color: string): void; onPrefs(p: ChatPrefs): void }): SettingsPopover {
@@ -51,6 +54,19 @@ export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor
   mentions.append(mentionsBox, mentionsText);
   mentionsBox.addEventListener('change', () => opts.onPrefs(savePrefs({ mentions: mentionsBox.checked })));
 
+  // Reactions over the video (docs/CHAT.md, "Reactions"): shown while the streamer has them on.
+  const reactions = document.createElement('label');
+  reactions.className = 'check-row';
+  reactions.hidden = true;
+  const reactionsBox = document.createElement('input');
+  reactionsBox.type = 'checkbox';
+  reactionsBox.checked = prefs.reactions;
+  reactionsBox.dataset.testid = 'chat-reactions-show';
+  const reactionsText = document.createElement('span');
+  reactionsText.textContent = t('chat.viewer.reactions');
+  reactions.append(reactionsBox, reactionsText);
+  reactionsBox.addEventListener('change', () => opts.onPrefs(savePrefs({ reactions: reactionsBox.checked })));
+
   const size = document.createElement('fieldset');
   size.className = 'size-row';
   const legend = document.createElement('legend');
@@ -88,11 +104,14 @@ export function createSettingsPopover(button: HTMLButtonElement, opts: { onColor
   gifAnimate.text.textContent = t('chat.viewer.animate');
   gifs.append(gifConsent.label, gifAnimate.label);
   gifs.hidden = true;
-  panel.append(colorSection, times, mentions, size, gifs);
+  panel.append(colorSection, times, mentions, reactions, size, gifs);
   const popover = createPopover(button, panel);
 
   return {
     popover,
+    setReactions(available) {
+      reactions.hidden = !available;
+    },
     setGifs(state) {
       gifs.hidden = state === null;
       if (!state) return;

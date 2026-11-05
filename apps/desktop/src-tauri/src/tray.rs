@@ -1,4 +1,4 @@
-//! Tray / menu bar icon: off / waiting / live icons (same as apps/tray), localized tooltip
+//! Tray / menu bar icon: off / waiting / live icons (assets/brand/tray), localized tooltip
 //! and menu (Open SwarmCast, Start live, Stop live, Check for updates, Export logs…, Quit).
 
 use std::sync::{Arc, Mutex};

@@ -123,6 +123,7 @@ pub fn create(app: &App, shell: &Arc<Shell>, visible: bool) -> tauri::Result<()>
     #[cfg(windows)]
     let builder = builder.additional_browser_args(&webview2_args(crate::i18n::locale()));
     let window = builder.build()?;
+    shell.watch_first_page();
     let close_shell = shell.clone();
     window.on_window_event(move |event| {
         if let tauri::WindowEvent::CloseRequested { api, .. } = event {

@@ -17,6 +17,7 @@ import {
   loadAudioOnly,
   mismatchWindow,
   playlistsKnown,
+  playOnLoad,
   type applyProfile,
   loadProfile,
   p2pCoreConfigFor,
@@ -27,7 +28,7 @@ import {
   swarmIdBuilderFor,
   urgentSecondsFor,
 } from './player-config.js';
-import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, fetchPosterBrand, mountAudioOnlyPoster, showPlayerNotice, type AudioOnlySwitch } from './audio-only.js';
+import { AUDIO_ONLY_GONE_AFTER, audioOnlyState, createAudioOnlySwitch, createWindowStart, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, usesGStreamer, type AudioOnlySwitch } from './audio-only.js';
 import { installStallRecovery } from './stall-recovery.js';
 import { needHeaders, needRequestSetup, type NeedSource } from './need-header.js';
 import { p2pConnecting, type P2PConnectState } from './p2p-status.js';
@@ -41,6 +42,7 @@ import { installPlayerExtras } from './player-extras.js';
 import { createSettingsMenu } from './settings-menu.js';
 import { mountPlayerControls, type PlayerControls } from './player-controls.js';
 import { exitFullscreen } from './player-caps.js';
+import { createOverlayMode, type OverlayMode } from './overlay-mode.js';
 import fallbackArtworkUrl from '../../../assets/brand/favicon/favicon-512.png?url';
 // ---- branding: watch ----
 import { createBrandRouter } from './branding/loader.js';
@@ -65,6 +67,16 @@ const delayEl = $<HTMLSpanElement>('delay');
 
 let ended = false;
 let adaptive: AdaptiveDelay | null = null;
+/** The chat over the video in full screen (overlay-mode.ts): made right after the player's controls. */
+let overlayMode: OverlayMode | null = null;
+/** This browser's storage for the page's own choices (theater, shortcuts, the chat over the video); undefined when blocked. */
+const pageStorage = (() => {
+  try {
+    return localStorage;
+  } catch {
+    return undefined;
+  }
+})();
 /** The stream's first picture is there (set on loadeddata; "Go live" and the big Play button wait for it). */
 let started = false;
 
@@ -101,6 +113,8 @@ const controls = ((): PlayerControls | null => {
       onPlayRefused: () => {
         unmute.hidden = false;
       },
+      // An iPhone without element full screen fills the page instead while the chat shows over the video.
+      fillScreen: () => overlayMode?.on === true,
     });
   } catch (err) {
     console.error(err);
@@ -115,10 +129,23 @@ for (const ev of ['loadeddata', 'playing'] as const) {
   });
 }
 
+// The chat over the video in full screen (overlay-mode.ts): its button in the player's bar and
+// its switch in Settings; the chat chunk draws it.
+overlayMode = createOverlayMode({
+  player: video.parentElement!,
+  doc: document,
+  storage: pageStorage,
+  setting: { row: $<HTMLElement>('chat-overlay-row'), box: $<HTMLInputElement>('chat-overlay') },
+  labels: { button: t('watch.chatOverlay'), tip: t('watch.chatOverlay.tip') },
+});
+controls?.addButton(overlayMode.button);
+
 // Chat: a separate, lazily loaded chunk (chat/loader.ts); the player never depends on it.
 const chat = createChatRouter({
   root: $<HTMLElement>('chat'),
   showButton: $<HTMLButtonElement>('chat-show'),
+  player: video.parentElement!,
+  overlay: overlayMode,
   nickname: () => $('nick').textContent ?? '',
   send: (msg) => sendControl(msg),
   debug: (msg) => debugLog(msg),
@@ -351,13 +378,7 @@ installPlayerExtras({
   goLive,
   unmute,
   chatRoot: $<HTMLElement>('chat'),
-  storage: (() => {
-    try {
-      return localStorage;
-    } catch {
-      return undefined;
-    }
-  })(),
+  storage: pageStorage,
   stats: {
     video,
     hls: () => playerHls,
@@ -370,6 +391,8 @@ installPlayerExtras({
   clipboard: navigator.clipboard,
   debug: (msg) => debugLog(msg),
   onAction: () => controls?.reveal(),
+  ...(controls ? { toggleFullscreen: () => controls.toggleFullscreen() } : {}),
+  chatOverVideo: () => overlayMode?.openInput() ?? false,
 });
 
 // Settings (settings-menu.ts): playback, P2P, the nickname, shortcuts and stats, in a menu under
@@ -430,8 +453,9 @@ function endScreen(titleKey: MessageKey, textKey: MessageKey): void {
   void share.setAllowed(false);
   goLive.hidden = true;
   viewerCountWrap.hidden = true;
-  // The end card is outside the player: a full-screen player would hide it.
+  // The end card is outside the player: a full-screen (or page-filling) player would hide it.
   exitFullscreen(video, document);
+  controls?.exitFill();
   try {
     video.pause();
   } catch {
@@ -554,6 +578,9 @@ async function main(): Promise<void> {
   // the player sat frozen until the stall watchdog moved it again.
   let lastWindow: PlaylistWindow | null = null;
   let lastShortest: PlaylistWindow | null = null;
+  // Sound alone on a new MediaSource starts at the window start on Linux WebKit, and moves to live
+  // once it plays (audio-only.ts createWindowStart): hls.js's catch-up jump waits for that too.
+  const soundStart = createWindowStart(hls, video, { enabled: usesGStreamer(navigator.userAgent, navigator.platform), base: location.href });
   const fitLatency = (): void => {
     const known = playlistsKnown(hls.audioTracks.length > 0, liveDetails());
     if (known) {
@@ -562,7 +589,7 @@ async function main(): Promise<void> {
     }
     const w = lastWindow;
     const fit = latencyFor(loadProfile(), w);
-    const max = video.paused && !video.ended && !adaptive?.holding ? Infinity : fit.liveMaxLatencyDuration;
+    const max = (video.paused && !video.ended && !adaptive?.holding) || soundStart.active ? Infinity : fit.liveMaxLatencyDuration;
     // The latencyFor rule (target ≤ min(max, window − 2 TD) − 2 TD): a playlist mismatch caps
     // the target itself; the shortest window only stops the controller building delay past it.
     const room = (x: PlaylistWindow | null): number | null => (x ? Math.max(2 * x.targetDurationS, Math.floor(latencyFor(loadProfile(), x).liveMaxLatencyDuration - 2 * x.targetDurationS)) : null);
@@ -655,16 +682,22 @@ async function main(): Promise<void> {
   window.addEventListener('pagehide', () => saveEstimate(hls));
 
   // Every load of the source after the first goes through here, so the stats count it.
-  const reloadSource = (why: string): void => {
+  // `keepMedia`: audio only reads its playlist again in place, on the same MediaSource
+  // (audio-only.ts reloadAudioOnlyInPlace: a new one can crash Linux WebKit). Not for the stall
+  // watchdog or the audio-only switch: those need a fresh MediaSource or another playlist.
+  const reloadSource = (why: string, o: { keepMedia?: boolean } = {}): void => {
     stats.reloads += 1;
     stats.lastReload = why;
     debugLog(`reloading the source (${why})`);
-    hls.loadSource(source.url());
+    const url = source.url();
+    if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, { base: location.href, events: Hls.Events })) return;
+    soundStart.beforeLoad(url);
+    hls.loadSource(url);
   };
   // The set of qualities can change when OBS reconnects (quality options turned on or off,
   // or ffmpeg fell back to the original quality): a media playlist the player knows may be
   // gone for good. Repeated 404s on media playlists re-read the multivariant playlist.
-  const reloader = createManifestReloader(() => reloadSource('media playlists gone'), () => (source.active ? AUDIO_ONLY_GONE_AFTER : 3));
+  const reloader = createManifestReloader(() => reloadSource('media playlists gone', { keepMedia: true }), () => (source.active ? AUDIO_ONLY_GONE_AFTER : 3));
   hls.on(Hls.Events.LEVEL_LOADED, () => reloader.reset());
 
   let networkErrors = 0;
@@ -700,7 +733,7 @@ async function main(): Promise<void> {
   });
   hls.on(Hls.Events.MANIFEST_PARSED, () => {
     networkErrors = 0;
-    void video.play().catch(() => {
+    playOnLoad(video, () => {
       unmute.hidden = false;
     });
   });
@@ -794,6 +827,7 @@ async function main(): Promise<void> {
 
   showOverlay('watch.waiting');
   setStatus('watch.connecting');
+  soundStart.beforeLoad(source.url());
   hls.loadSource(source.url());
   hls.attachMedia(video);
   (window as unknown as { __hls: unknown }).__hls = hls;

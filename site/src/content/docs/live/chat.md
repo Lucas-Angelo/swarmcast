@@ -1,6 +1,6 @@
 ---
 title: Chat
-description: 'Talk with your viewers under the video: polls, predictions, replies, @mentions, pins and shortcuts, with delete, mute, slow mode and flood protection.'
+description: 'Talk with your viewers under the video: reactions, polls, predictions, replies, @mentions, pins and shortcuts, with delete, mute, slow mode and flood protection.'
 ---
 
 Your live has a chat. Viewers write under the video, you read and answer in the panel's **Live chat**, and everyone sees the messages within a second. It is **on by default**: nothing to set up.
@@ -19,7 +19,7 @@ Everyone watching sees the nicknames in the chat. The join page says so before p
 - **Emoji and emotes:** the usual emoji from the phone or the picker, plus the bee emotes that come with SwarmCast (`:gg:`, `:love:`, `:wow:`…).
 - **GIFs:** only if you turn them on with your own free key. See [Get a GIF key](/swarmcast/live/gif-key/).
 
-Your own messages, sent from the box **Send as …** at the bottom of the Live chat, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", or with a look-alike of the name of someone already watching.
+Your own messages, sent from the box **Send as …** at the bottom of the Live chat, carry a **Streamer** badge. Nobody else can get that badge, whatever nickname they pick, and nobody can join with a name like "Streamer", "Admin" or "Moderator", with your own name in the chat, or with a look-alike of any of these or of the name of someone already watching. Set your name in the chat in the setup tutorial or under **Chat settings** → **Looks**. If someone watching already has a name like the one you pick, they keep it until they join again.
 
 ## Keep the chat friendly
 
@@ -86,6 +86,17 @@ There are no points or prizes: a poll is just a friendly way to ask the chat.
 
 ![The poll on the viewer page, above the messages: 1 the time left, 2 each answer with its live result (their vote marked), 3 how many voted.](../../../assets/guides/live/en/chat-poll-viewer.webp)
 
+## Reactions over the video
+
+Viewers tap the bee next to the message box and pick one of eight reactions (Love, Hype, Funny, Wow, GG, Fire, Sad, Hi). It floats up over the video for a moment, for everyone watching, also in full screen. They are **on by default**.
+
+- They are only pictures of the bee emotes: nobody can write anything with them.
+- They use almost none of your internet: SwarmCast adds up everyone's taps and sends them once a second, and a busy moment never puts more than a handful on the screen.
+- **Muted** people cannot react. Reactions pause by themselves while the chat is **locked to current viewers** and when your computer is busy, and stop with the chat.
+- The **Live chat** shows a small count under its numbers: "Reactions in the last minute: Fire 12 · Love 3".
+- To turn them off for everyone, untick **Reactions on the video** in the chat settings and click **Save chat settings**.
+- Each viewer can hide them on their own screen (**Show reactions on the video** in their chat settings). Someone who asked their device to reduce motion sees a small counter in the corner of the video instead of floating bees.
+
 ## Shortcuts: type / in the box
 
 The Live chat box also takes short commands. Type **/** and a list of the matching ones shows, with how to write each one; **?** next to **Send** lists them all. English and Portuguese names both work, with or without accents. The buttons stay: a command is only a faster way.
@@ -135,7 +146,7 @@ Click **Settings** in the Live chat, or scroll down to the **Chat** card, change
 - **Links:** **Show as text** (default) or **Block** messages that contain one.
 - **Blocked words:** one per line. Messages with one are refused, also when written with look-alike letters, accents or spaces.
 - **Allowed alphabets:** **Any**, or **Latin only** for a local audience.
-- **Viewers choose their name colour**, **Your name in the chat** and **Tell the chat when someone is muted**.
+- **Viewers choose their name colour**, **Your name in the chat**, **Tell the chat when someone is muted** and **Reactions on the video**.
 - **SwarmCast emotes:** turns the bee emotes on or off.
 
 ![The Chat card with the chat settings: 1 the chat on/off switch; what viewers can send, pace (slow mode, length, emoji, new viewers, repeats, history), safety (automatic flood protection, blocked words, links, alphabets), looks, GIFs, emotes, and 2 Save chat settings.](../../../assets/guides/live/en/chat-settings.webp)
@@ -152,8 +163,10 @@ To turn the chat off for everyone, use the switch at the top of the Chat card (1
 - **Replies** with a short quote of the message they answer; a click on the quote jumps to it while it is still in the chat. A message that **mentions them** has a honey-coloured bar and their name marked (7); while the chat is hidden, **Show chat** counts those mentions.
 - **Reply** on each message (pointing at it, tapping it on a phone, or with the arrow keys from the chat) and **@** in the message box to mention someone who wrote.
 - **Polls and predictions** above the messages, with the live results and their own vote. On a phone the poll starts folded to one line, so the chat keeps its room: a tap opens it. While the chat is hidden, **Show chat** says **Poll**.
+- **Reactions**: the bee next to the message box sends one, and everyone's float over the video.
+- **Chat on the video** in full screen, if they turn it on: the latest messages over the bottom left of the video, with a small button to write from there.
 - **Hide chat** hides it on that device (remembered); **Show chat** brings it back.
-- **Chat settings** for their own name colour, times, **Highlight messages that mention me** and text size. SwarmCast keeps every colour readable on light and dark screens.
+- **Chat settings** for their own name colour, times, **Highlight messages that mention me**, **Show reactions on the video** and text size. SwarmCast keeps every colour readable on light and dark screens.
 
   ![The viewer's chat settings: Your name colour with twelve colours and Other colour…, a preview of the name on the light and the dark theme, Show times, Highlight messages that mention me and Text size.](../../../assets/guides/live/en/chat-viewer-settings.webp)
 

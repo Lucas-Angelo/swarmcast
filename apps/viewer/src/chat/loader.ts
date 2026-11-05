@@ -5,6 +5,7 @@
 import type { ChatServerMessage, ChatSnapshot } from '@swarmcast/shared/chat';
 import type { ChatController } from './chat.js';
 import type { ClientFrame } from './session.js';
+import type { OverlayHost } from '../overlay-mode.js';
 
 const QUEUE_MAX = 200;
 
@@ -24,6 +25,10 @@ export type MountChat = (typeof import('./chat.js'))['mountChat'];
 export function createChatRouter(opts: {
   root: HTMLElement;
   showButton: HTMLButtonElement;
+  /** The player container: reactions float over the video inside it (absent: they are not drawn). */
+  player?: HTMLElement;
+  /** The chat over the video in full screen (overlay-mode.ts; absent: never drawn). */
+  overlay?: OverlayHost;
   nickname: () => string;
   send(msg: ClientFrame): boolean;
   debug?: (msg: string) => void;
@@ -56,7 +61,7 @@ export function createChatRouter(opts: {
     loading = true;
     loadMountChat()
       .then((mountChat) => {
-        controller = mountChat({ root: opts.root, showButton: opts.showButton, nickname: opts.nickname(), sendFrame: opts.send });
+        controller = mountChat({ root: opts.root, showButton: opts.showButton, ...(opts.player ? { player: opts.player } : {}), ...(opts.overlay ? { overlay: opts.overlay } : {}), nickname: opts.nickname(), sendFrame: opts.send });
         controller.connection(open);
         const queued = pending;
         pending = [];

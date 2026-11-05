@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-05
+
+### Added
+
+- **Reactions over the video.** Viewers tap the bee next to the chat box and pick one of eight reactions (Love, Hype, Funny, Wow, GG, Fire, Sad, Hi): it floats up over the video for a moment for everyone, also in full screen. SwarmCast adds up everyone's taps and sends them once a second, so even a big moment uses almost none of your internet and never fills the screen. Muted people cannot react, and reactions pause by themselves while the chat is locked to current viewers or your computer is busy. The **Live chat** shows a small count of the last minute ("Fire 12 · Love 3"); untick **Reactions on the video** in the chat settings to turn them off. Each viewer can hide them on their own screen, and people who asked their device for less motion see a small counter instead of floating bees. Pages left open from an older version simply do not show them.
+- **The chat over the video in full screen.** Viewers who want it (it is off until they turn it on) see the latest chat messages over the bottom left of the video while it fills the screen, a few seconds each, above the controls and readable on any picture. A small button there opens the message box, so they can write and react without leaving full screen. The button is in the video's bar in full screen and in the watch page's **Settings**, and the browser remembers the choice. On an iPhone with an older iOS, where only the iPhone's own player can go full screen (and it cannot show the chat), the full-screen button then fills the browser window with the video instead.
+
+### Changed
+
+- **The setup tutorial asks for your name in the chat.** Its second step, **Your name in the chat**, comes right after the welcome: type the name your messages show next to the **Streamer** badge (it starts with the name of **Your page** when that one fits), and SwarmCast tells you right away if it cannot be used. Viewers cannot join with that name or anything that looks like it, so nobody can pass for you. It is optional: left empty, your messages show "Streamer". Change it any time in the **Chat** card (**Chat settings** → **Looks**), with the same check as you type. Someone already watching with a name like your new one keeps it until they join again; from then on nobody can take it.
+
+### Removed
+
+- **Script mode is gone: SwarmCast now comes only as the desktop app.** Releases no longer have the start and uninstall scripts or the installer zips.
+
+### Fixed
+
+- **Viewers on a fast connection get closer to live again.** The player could take a fast connection for a shaky one: when the video took a second or two to start, or now and then while it moved closer to live. It then added a few seconds of delay for about half a minute, or stopped moving closer, instead of getting as close to live as the connection allows. It now judges the connection only by what it has really measured.
+- **The app window no longer stays on the splash screen.** On Linux, the app window could, rarely, stay on "Starting SwarmCast…" for good, although SwarmCast had started, until you closed the app. If the panel has not opened 5 seconds after SwarmCast is ready, the app now opens it again by itself (on every system).
+- **Audio only no longer closes the watch page in Linux WebKit browsers.** A viewer using GNOME Web or another WebKit browser on Linux could see the watch page crash, now and then, right after picking **Audio only** or when the page opened on audio only. Audio only now starts in a way those browsers handle; other browsers are unchanged.
+- **Audio only no longer goes quiet when SwarmCast drops a lower quality.** A viewer listening with **Audio only** could lose the sound for several seconds, or for up to 20 seconds, when your computer stopped making the lower qualities (for example when it got busy). The sound now carries on.
+- **The poll form keeps what you do right after opening it.** Clicking **Prediction** at once could switch the form back to a poll a moment later, so a prediction could start as a plain poll; and on a Mac or on Linux, a click on an answer box right away could send what you typed into the question instead. Both now stay where you clicked.
+- **Settings keep what you type and click.** In **Chat settings**, a number typed fast could lose a digit (**123** became **13**). And a box clicked in **Protection**, **Your internet** or **Chat settings** right as the panel opened could flip back on its own a moment later. Both now keep what you did.
+- **Your page keeps what you type while it opens.** The **Your page** card showed empty fields for a moment while it loaded your saved page, and whatever you typed or picked in that moment was replaced by the saved page once it arrived. The card now says "Loading…" until your page is there, and if it cannot be loaded it says so instead of offering a form whose **Save** would put the empty fields over your page.
+
+## [0.5.0] - 2026-11-05
+
 ### Added
 
 - **A Share button for viewers.** On the watch page, **Share** sends the link of your live to a friend: on a phone it opens the share menu (WhatsApp, Messages…), on a computer it copies the link and says **Link copied**. It is on by default; turn off **Viewers can share the link** in the **Your internet** card if only you should hand out the link. After **Generate new link**, people who came in with the old link keep watching but lose the button, so whoever got a leaked link cannot pass the new one on.
@@ -35,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Audio only no longer closes the page on Linux browsers built on WebKit (such as GNOME Web).** When your PC turned off its last converted quality, a viewer listening to **Audio only** in such a browser could lose the whole page now and then and had to open the link again. The sound now carries on, with a pause of a fraction of a second, in every browser.
+- **On a Mac, SwarmCast could close by itself when a connection dropped at the wrong moment.** If a program SwarmCast talks to (its own video server while you press **Stop**, your router, an internet check) cut a connection just as SwarmCast opened it, the whole app could quit without a word. Now only that one request fails and SwarmCast carries on.
 - **On an iPhone, a tap on the join page right as it opened could do nothing.** "Checking your browser…" used to appear a moment after the page, and a tap that landed just then (on the nickname box, say) was ignored by Safari, so the viewer had to tap again. The line is now there from the start whenever the check will run.
 - **Viewers who join right after OBS connects start smoothly.** When OBS sent its first seconds all at once (as it can when it connects or catches up after a hiccup), people who opened the live in the next half minute or so could wait a few seconds for the sound to line up with the picture, and on Linux browsers built on WebKit (such as GNOME Web) the video could freeze for good. Sound and picture now start together.
 - **A rush of real viewers is no longer taken for an attack.** When many people joined within a few seconds while your upload was full (which happens by itself when they all start watching), the attack protection could switch to "attack": it then refused new people as "stream full" and gave the rest a slower browser check. Many people joining now only turns on the light browser check; real attack signs (refused links, too many requests) still trigger the protection as before.
@@ -262,7 +291,9 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.3.0...v0.4.0

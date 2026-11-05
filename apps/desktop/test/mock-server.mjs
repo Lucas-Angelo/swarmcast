@@ -18,6 +18,9 @@
 //   MOCK_AUTOSTART=0        do not start the live after ready (like the real server, the
 //                           mock turns it on by itself unless --no-autostart is passed)
 //   MOCK_READY_DELAY_MS=n   time before ready (default 800)
+//   MOCK_LOSE_PANEL_LOADS=n never answers the first n requests of /auth/<token>, so the
+//                           window's panel navigation neither commits nor fails, as when
+//                           WebKit loses it (docs/DESKTOP.md, "Panel load watchdog")
 //
 // Every protocol line it receives is logged as `mock: got …`. It writes
 // <data>/mock-config.json on first start so update tests can check the data is kept.
@@ -175,10 +178,18 @@ if (${env.MOCK_AUTOTEST === '1'}) {
 }
 </script></body></html>`;
 
+const loseLoads = Number(env.MOCK_LOSE_PANEL_LOADS ?? 0);
+let lostLoads = 0;
 const server = http.createServer((req, res) => {
   const url = new URL(req.url ?? '/', 'http://x');
   if (env.MOCK_LOG_REQUESTS === '1') log(`http ${req.method} ${url.pathname}`);
+  if (url.pathname === `/auth/${token}` && lostLoads < loseLoads) {
+    lostLoads += 1;
+    log(`holding panel load ${lostLoads} of ${loseLoads} without an answer (MOCK_LOSE_PANEL_LOADS)`);
+    return;
+  }
   if (url.pathname === `/auth/${token}`) {
+    log('answering the panel load');
     // Same as the real server: a SameSite=Strict cookie and a page that opens the panel from
     // this origin (meta refresh), so the cookie is sent although the splash started the navigation.
     res.writeHead(200, {

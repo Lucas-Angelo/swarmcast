@@ -4,7 +4,10 @@
 // name colour that reaches every viewer readable on both themes (set through the CSSOM, under the
 // real CSP), the streamer's badge, links never clickable, still one WebSocket per viewer, and
 // replies and @mentions between real pages (the quote, the @ list of people who wrote, the mark for
-// the mentioned viewer only, the quote wiped when the original is deleted).
+// the mentioned viewer only, the quote wiped when the original is deleted), reactions over the
+// video between real pages (a tap floats over the other page's video, under the real CSP), and the
+// chat over the video in full screen (another viewer's message over the picture, a message written
+// from there).
 // The same UI flows run without a server in apps/viewer/test/chat/chat-ui.spec.ts (mock hub);
 // panel-side moderation is chat-moderation.spec.ts and chat-moderation-api.spec.ts.
 //
@@ -195,4 +198,67 @@ test('a reply with a mention between real pages: the quote for everyone, the mar
   await chatReady(d.page);
   await expect(chatMessage(d.page, answer).getByTestId('chat-reply-quote')).toContainText('Original message deleted');
   await expect(d.page.getByTestId('chat-list')).not.toContainText(question);
+});
+
+/** The reactions a page drew over its video so far (the chat's own counters, never a racing look at the screen). */
+const drawn = (page: Page) => page.evaluate(() => (window as unknown as { __swarmcastChat: { stats: { reactions: { spawned: number } } } }).__swarmcastChat.stats.reactions.spawned);
+
+test("reactions between real pages: a tap floats over the other viewer's video under the real CSP; turned off, the button goes for everyone", { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  const a = await viewers.join(uid('rxA'));
+  const b = await viewers.join(uid('rxB'));
+  await chatReady(a.page, b.page);
+  const csp: string[] = [];
+  b.page.on('console', (m) => {
+    if (/Content.Security.Policy/i.test(m.text())) csp.push(m.text());
+  });
+  const before = await drawn(b.page);
+
+  // Act
+  await a.page.getByTestId('chat-react-button').click();
+  await a.page.getByTestId('chat-react-option').nth(5).click();
+
+  // Assert
+  await expect.poll(() => drawn(b.page), { timeout: 5_000 }).toBeGreaterThan(before);
+  expect(await drawn(a.page)).toBeGreaterThan(0);
+  await expect(b.page.locator('.player > [data-testid="reactions"]')).toBeAttached();
+  expect(csp).toEqual([]);
+
+  // Act
+  await chat.change({ reactions: false });
+
+  // Assert
+  await expect(a.page.getByTestId('chat-react-button')).toBeHidden({ timeout: 5_000 });
+  await expect(b.page.getByTestId('chat-react-button')).toBeHidden({ timeout: 5_000 });
+});
+
+test('the chat over the video in full screen: another viewer\'s message shows over the picture, and one written from there reaches them', { tag: '@ui' }, async ({ viewers, chat }) => {
+  // Arrange
+  await chat.change(FAST_CHAT);
+  const a = await viewers.join(uid('ovA'));
+  const b = await viewers.join(uid('ovB'));
+  await chatReady(a.page, b.page);
+  await a.page.getByTestId('settings-open').click();
+  await a.page.getByTestId('chat-overlay-setting').check();
+  await a.page.getByTestId('settings-close').click();
+  await a.page.getByTestId('fullscreen').click();
+  await expect.poll(() => a.page.evaluate(() => document.fullscreenElement === document.querySelector('.player'))).toBe(true);
+  const fromB = `por cima do vídeo ${uid('b')}`;
+  const fromA = `escrevi em tela cheia ${uid('a')}`;
+
+  // Act
+  await say(b.page, fromB);
+
+  // Assert
+  await expect(a.page.getByTestId('chat-overlay')).toBeVisible();
+  await expect(a.page.getByTestId('chat-overlay-lines').locator('.ov-line').filter({ hasText: fromB })).toHaveCount(1, { timeout: 5_000 });
+
+  // Act
+  await a.page.getByTestId('chat-overlay-write').click();
+  await a.page.getByTestId('chat-overlay-input').getByTestId('chat-input').fill(fromA);
+  await a.page.getByTestId('chat-overlay-input').getByTestId('chat-input').press('Enter');
+
+  // Assert
+  await sees(b.page, fromA);
+  await expect(a.page.getByTestId('chat-overlay-lines').locator('.ov-line').filter({ hasText: fromA })).toHaveCount(1, { timeout: 5_000 });
 });

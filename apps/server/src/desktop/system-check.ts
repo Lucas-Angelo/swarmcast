@@ -10,12 +10,11 @@ import { isPortFree } from '../core/ports.js';
 import { throwIfAborted } from '../core/retry.js';
 
 /**
- * The start scripts' system check (scripts/start-*: check_os … report_and_confirm,
- * write_system_check), in TypeScript for the desktop app's first start. Same ids, statuses,
- * thresholds, value texts and `system-check.json` format, so the setup tutorial shows it
- * unchanged. Differences, on purpose: the ports SwarmCast itself is using count as free, the
+ * The system check of the desktop app's first start (it began as the old start scripts' check,
+ * kept with the same ids, statuses, thresholds, value texts and `system-check.json` format, so
+ * the setup tutorial shows it unchanged). The ports SwarmCast itself is using count as free, the
  * release row names the installed app, and github.com is checked once (it is only needed for
- * updates, like a script run from a local bundle).
+ * updates).
  */
 
 // Same thresholds as the scripts (SC_MIN_* / SC_REC_*).
@@ -71,7 +70,7 @@ export function parseOsRelease(text: string): Record<string, string> {
   return out;
 }
 
-/** check_os of start-linux.sh. */
+/** The operating system check on Linux. */
 export function linuxOsInfo(rel: Record<string, string> | null, kernel: string): OsInfo {
   const id = rel?.ID ?? '';
   const idLike = ` ${rel?.ID_LIKE ?? ''} `;
@@ -84,7 +83,7 @@ export function linuxOsInfo(rel: Record<string, string> | null, kernel: string):
   return { desc, status: 'warn', note: `not a tested distribution (${tested}); it will probably work` };
 }
 
-/** check_os of start-macos.command (`sw_vers -productVersion`). */
+/** The operating system check on macOS (`sw_vers -productVersion`). */
 export function macOsInfo(productVersion: string): OsInfo {
   const ver = productVersion.trim() || 'unknown';
   const desc = `macOS ${ver}`;
@@ -94,7 +93,7 @@ export function macOsInfo(productVersion: string): OsInfo {
 }
 
 /**
- * Get-OsInfo of start-windows.ps1. `release` is os.release() ("10.0.22631"), `version` is
+ * The operating system check on Windows. `release` is os.release() ("10.0.22631"), `version` is
  * os.version() ("Windows 10 Pro"; Windows 11 still calls itself 10 there, so the build decides).
  */
 export function windowsOsInfo(release: string, version: string): OsInfo {

@@ -77,6 +77,7 @@ describe('never while typing', () => {
     ['an ARIA text box', '<div id="x" role="textbox" tabindex="0"></div>'],
     ['a menu item', '<div role="menu"><button id="x" role="menuitem">Delete</button></div>'],
     ['a button in the chat column', '<aside id="chat"><button id="x" type="button">😀</button></aside>'],
+    ['a button of the chat over the video', '<div class="chat-overlay"><button id="x" type="button">✎</button></div>'],
     ['a button in a dialog', '<dialog open><button id="x" type="button">Close</button></dialog>'],
   ])('%s', (_what, html) => {
     // Arrange

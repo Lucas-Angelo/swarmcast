@@ -52,7 +52,7 @@ flowchart LR
 
 ## Settings and defaults
 
-Saved in `config.json` → `chat` (config version 4; older files get the defaults). Schema:
+Saved in `config.json` → `chat` (config version 4, `reactions` since version 6; older files get the defaults). Schema:
 `chatSettingsSchema` in [`packages/shared/src/chat/schemas.ts`](../packages/shared/src/chat/schemas.ts).
 The panel changes them with `PUT /api/chat/settings`; viewers get the effective values in
 `chat.settings`.
@@ -70,7 +70,7 @@ The panel changes them with `PUT /api/chat/settings`; viewers get the effective 
 | `links` | `text` | `text`, `block` | Links are never clickable either way; `block` refuses messages that contain one |
 | `blockedWords` | none | ≤ 200 entries, 1–40 graphemes each | Matched on the comparison key, so look-alike letters, accents, case, fullwidth forms and spacing do not get around them. The sender is not told which word |
 | `viewerColors` | on | on/off | Viewers pick their name colour; off = the default colour per author |
-| `streamerName` | "" | nickname rules, ≤ 24 graphemes | Shown next to the "Streamer" badge; "" = the translated "Streamer" |
+| `streamerName` | "" | nickname rules, ≤ 24 graphemes | Shown next to the "Streamer" badge; "" = the translated "Streamer". Reserved for joins; asked in the setup tutorial ("The streamer's chat name") |
 | `announceMutes` | off | on/off | A system line "X was muted" in the chat |
 | `scripts` | `any` | `any`, `latin` | `latin`: every grapheme must be Latin, Common or Inherited, else `text.script` |
 | `autoProtect` | on | on/off | Automatic flood protection (below) |
@@ -80,6 +80,7 @@ The panel changes them with `PUT /api/chat/settings`; viewers get the effective 
 | `gif.rating` | `pg` | `g`, `pg`, `pg-13` | Mapped to KLIPY's `content_filter` (`high`, `medium`, `low`) or GIPHY's `rating` |
 | `gif.consent` | `ask` | `ask` | Each viewer agrees before their browser contacts the provider; there is no way to skip it |
 | `emotes.builtin` | on | on/off | The built-in SwarmCast emote pack |
+| `reactions` | on | on/off | Reactions over the video ("Reactions"); they pause by themselves in lockdown and while the event-loop guard is busy |
 
 What applies at a given moment is computed by `effectiveChat()` in
 [`apps/server/src/chat/settings.ts`](../apps/server/src/chat/settings.ts): the manual settings, raised
@@ -104,10 +105,11 @@ server recognises it before decoding it.
 | `chat.color` | `color` `#rrggbb` | Choose my name colour (rate limited, ignored while locked) |
 | `chat.resume` | `after` (a seq) | I missed items after `after` (gap or reconnect) |
 | `chat.vote` | `n`, `id` (the poll, `p[0-9a-z]{1,10}`), `o` (option, 0–4) | My vote in a poll or prediction ("Polls and predictions") |
+| `chat.react` | `c`: taps per reaction kind (`c[i]` of `CHAT_REACTIONS[i]`, 1–8 entries, 1–10 taps in all) | Reactions over the video ("Reactions"); never answered |
 
-Reaction frames (`{"t":"chat.react"…`, reserved for 0.5.0, no handler yet) have a frame budget of
-their own, so a viewer who taps reactions while chatting can never reach the chat budget that
-terminates the socket (and its P2P channel); see "Item classes and frame budgets" below.
+Reaction frames have a frame budget of their own, so a viewer who taps reactions while chatting can
+never reach the chat budget that terminates the socket (and its P2P channel); see "Item classes and
+frame budgets" below.
 
 A GIF is never a URL: `gif = {p: provider, id: [A-Za-z0-9_-]{1,64}, w, h}` with `w`, `h` between 16
 and 498. Clients build the image URL from a fixed template for that provider.
@@ -139,6 +141,7 @@ Items inside a batch or snapshot:
 | `pin` | Pin changed | `p`: the pinned message (`s`, `a`, `x` or `g`, `at` when pinned, `endsIn` ms left for a timed pin) or `null` |
 | `poll` | Poll changed | `p`: the poll or prediction (`id`, `kind`, `q`, `o`, `st`, `c`, `endsIn` while open, `win` once answered, `newOnly`, `mine` in a snapshot) or `null` |
 | `pt` | Vote counts | `id`, `c`: the counts of that poll now (ephemeral, latest-wins) |
+| `rx` | Reactions | `c`: everyone's taps of one window per kind, each at most 20 (ephemeral, merged; "Reactions") |
 
 The **author key** `a` is an opaque base36 counter per live, never the session id. The **tag** is 4
 base32 characters from an HMAC of the session id with a per-live salt; it tells apart two people
@@ -182,7 +185,7 @@ without a resume.
   they name and before the next batch, instead of a snapshot; owing more than
   `CHAT_STATE_MISSED_MAX` (64) keys, or a durable item as well, still means a snapshot.
 - **Ephemeral items** (`ChatBatcher.pushLatest(key, item, merge?)`: the vote counts `pt` under `pt`,
-  and later reaction counts):
+  and the reaction counts `rx` under `rx`, merged: the counts add up, each still capped):
   latest-wins state, at most one pending per key (a newer one replaces the pending one, or `merge`
   folds the two), at most `CHAT_EPHEMERAL_PENDING_MAX` (32) keys, sent after the batch's other
   items. Under upload pressure they are the first to go, silently (no `skip`, which counts
@@ -358,6 +361,32 @@ live at the same time. The same device may rejoin with its own name.
 
 **The streamer's identity never comes from a name.** Her messages carry `r: streamer`, and the
 viewer draws a translated "Streamer" badge from that role. A viewer can never get the role.
+
+### The streamer's chat name
+
+`chat.streamerName` in `config.json` is the one source of truth: it is the name on her messages
+(`ChatHub.streamerMember`) and the extra reserved name of every join (`reservedNames` in
+`core/live.ts` → `/api/join`). The "Your page" channel name is a different field (it may have emoji
+and 40 graphemes) and reserves nothing.
+
+- **Rules:** `validateStreamerName()` in `nickname.ts`: the viewers' rules above (so not
+  "Streamer", "admin"… either), or empty, which shows the translated "Streamer". The server's save
+  (`PUT /api/chat/settings`, `admin.chat.err.streamerName`), the setup tutorial and the chat
+  settings form use it, so the panel's instant feedback never disagrees with the server.
+- **Asked once:** the setup tutorial's second step, "Your name in the chat", right after the
+  welcome. It starts from the saved name, else from the "Your page" name when that one passes the
+  rules. Next (or Enter) saves a valid change with the chat settings; an invalid name keeps the step
+  open with its reason; closing the tutorial saves a valid change and drops an invalid one. Later
+  it is changed in the Chat card, Chat settings → Looks, with the same instant check.
+- **Changed while viewers watch:** the new name is reserved from the next `/api/join` on. A viewer
+  who already holds a name that now looks like it keeps it for the rest of that session (it ends
+  with Stop, "Disconnect everyone", a kick, or about 10 minutes away from the page, when the
+  session cookie runs out); nobody is renamed or dropped, since a rename the viewer
+  did not ask for would be more confusing than the badge, which still tells the two apart. Any new
+  join with that name, from any device, including the same one, gets `nickname.reserved`. The
+  streamer's name wins over a viewer's only on joins, so a viewer who joined first cannot block the
+  streamer from taking her own name. Integration test: `chat.test.ts`, "the streamer takes a name
+  a viewer has".
 
 ## Rendering rules (viewer and panel)
 
@@ -582,6 +611,125 @@ answer** on each option of a prediction whose guesses ended, and **Remove** for 
 activity log says when one opened, ended (with its count), was answered (how many got it right) or was
 removed.
 
+## Reactions
+
+Viewers tap one of eight bee emotes and it floats up over the video for a moment for everyone, like
+the live reactions of the big streaming sites. A reaction carries no text: it is an index into
+`CHAT_REACTIONS` (`love`, `hype`, `lol`, `wow`, `gg`, `fire`, `sad`, `hi`; append only, the index is
+the wire format), drawn from the built-in emote images on our own origin, the same on every OS. The
+server side is `onReact` in [`hub.ts`](../apps/server/src/chat/hub.ts) and
+[`reactions.ts`](../apps/server/src/chat/reactions.ts) (pure, on an injected clock); the page side is
+[`apps/viewer/src/chat/reactions.ts`](../apps/viewer/src/chat/reactions.ts).
+
+- **On by default** (`reactions`, the Chat card's "Reactions on the video"). They apply only while the
+  chat is on, not in lockdown and while the event-loop guard is calm (like GIFs, the first extra to
+  pause); viewers learn it from `reactions: true` in the public settings, and a page sends `chat.react`
+  only while it is there.
+- **The page's frames.** The first tap goes at once, the taps after it together: at most one frame per
+  `CHAT_REACT_FRAME_MS` (2 s), at most `CHAT_REACT_PER_FRAME_MAX` (10) taps per frame, and the same tap
+  bucket as the server (`CHAT_REACT_BURST` 10, refilled at `CHAT_REACT_REFILL_PER_S` 2 per second), so a
+  tap the page draws is a tap the server takes. At most 5 frames per 10 s: half the socket's own
+  reaction budget, so timer jitter never gets near it.
+- **Frame budget** ("Item classes and frame budgets"): reaction frames never count as chat frames; past
+  10 per 10 s they are ignored, past 20 the socket is terminated. The flood detector does not count them
+  as offered frames either: an audience tapping together (0.5 frames/s each) would read as a flood and
+  slow everyone's chat down. A script past the ceiling is counted, as a termination.
+- **Checks**, O(1) and silent (there is no answer: a refusal would cost more upload than the tap): the
+  reactions are on and the viewer may take part (`mayTakePart`: not muted, past the new-viewer wait, no
+  lockdown, the guard has not paused the chat), then the device's tap bucket and the address's (2 taps/s
+  × the sessions behind it, at most 10, as the message bucket), before `JSON.parse`; then
+  `chatReactSchema` (strict: 1 to 8 whole counts, 1 to 10 taps in all). A frame with more taps than the
+  buckets allow keeps as many as they do.
+- **Added up.** An accepted tap only bumps a counter of its kind (`ReactionTally`). Once per window
+  (`CHAT_REACT_WINDOW_MS`, 1 s; `CHAT_REACT_WINDOW_MS_LARGE`, 2 s, above 40 viewers, under protection,
+  under event-loop pressure or with the upload budget in debt) everyone gets one ephemeral `rx` item with
+  the counts, each capped at `CHAT_REACT_BROADCAST_MAX_PER_KIND` (20); two windows still waiting for the
+  same batch merge, still capped. Never in the ring, a snapshot or a resume answer, never a seq, dropped
+  first under budget pressure, and a slow socket that misses one gets the next (no snapshot, no `skip`).
+  About 35 bytes per viewer per window: some 17 kbps at 120 viewers.
+- **Memory only.** The counters, the buckets and the panel's tally are wiped by Stop; nothing about who
+  reacted is kept, logged or shown.
+
+| Moderation or setting | Reactions |
+|---|---|
+| Mute | A muted viewer cannot react (dropped; the page has no React button); they still see everyone's |
+| Kick | The session and its socket end; the device is banned for the live |
+| New-viewer wait | No reactions until it is over (no React button) |
+| Slow mode, content modes, blocked words, links | Not affected (reactions carry no text) |
+| Protection `slow` | On, sent every 2 s |
+| Lockdown | Off for everyone |
+| Event-loop guard degrade or pause | Off |
+| Clear chat | Not affected (nothing is kept) |
+| Chat off | Off: no button, nothing drawn |
+| Reconnect, snapshot, resume | Nothing to send (they are ephemeral) |
+| Slow socket | Misses a window silently; the next one comes |
+| Stop | The counters, the buckets and any taps waiting are wiped |
+
+**Viewer page.** A React button (a bee) next to the emoji picker opens the eight reactions as buttons
+with translated names (aria-label and tooltip; ←/→/↑/↓, Home, End; Escape closes and gives the focus
+back), and the popover stays open for more taps. The page's own tap floats at once, and the page takes
+its own taps of the last `OWN_ECHO_MS` (6 s) off the counts that come back, so nobody sees their own
+reaction twice. Floaters live in a layer inside the player (`.player > .rx-layer`, so they show in full
+screen too), over the picture and under the controls, with `pointer-events: none` and `aria-hidden`
+(the chat list stays the accessible chat). Each is an `<img>` of a built-in emote whose place, timing
+and rise are CSS custom properties set through the CSSOM (no `style` attribute; the CSP is unchanged),
+and only transform and opacity animate. At most `CHAT_FLOATERS_SPAWN_PER_WINDOW` (8) start per window
+(every kind that came at least once, the rest shared by the counts) and `CHAT_FLOATERS_MAX` (24) are on
+screen at once; nothing is drawn while the tab is hidden, so nothing piles up. With **reduce motion**
+nothing floats: a small counter per kind in the corner counts up in place and goes after 4 quiet
+seconds. **Show reactions on the video** (chat settings, on by default, remembered in this browser)
+hides them for this viewer only; sending still works. Hiding the chat hides them too.
+
+**Panel.** The live chat shows a small tally under its counters, "Reactions in the last minute: Fire
+12 · Love 3" (`counters.reactions`: taps taken per kind in the last minute; the panel's `/ws` also gets
+each window's `rx` with the counts before the cap), "No reactions in the last minute." or, while they
+are paused, why.
+
+**Compatibility.** A page older than 0.5.1 ignores the `rx` kind and the `reactions` field, and has no
+button, so it never sends `chat.react` (`chat-compat.test.ts`); a current page sends reactions only to
+a server that announces them.
+
+## Chat over the video
+
+While the player fills the screen, the viewer can show the chat as lines over the picture, like the
+big streaming sites do in full screen. It is the viewer's own choice, **off by default** and
+remembered in that browser (`swarmcast.chatOverlay`): the **Chat on the video** button in the
+player's bar (only while it fills the screen) or **Chat on the video in full screen** in the watch
+page's Settings. Nothing changes on the server or the wire: the page draws what its chat already
+has. The switches and the state are in [`overlay-mode.ts`](../apps/viewer/src/overlay-mode.ts) (the
+main bundle; the player never depends on the chat), the lines in
+[`chat/overlay.ts`](../apps/viewer/src/chat/overlay.ts) (the chat chunk).
+
+- **When it shows.** The viewer turned it on, there is a chat (on, and not hidden by the viewer:
+  "Hide chat" means no chat over the video either), and the player fills the screen: the player
+  container in full screen (computers, Android, iPad, iPhones on iOS 26), or **fill the screen** on an
+  iPhone whose Safari has no element full screen. There, while this is on, the full-screen button
+  fixes the player over the whole page (`pc-fill`; the button again or Escape leaves; Safari's own
+  bars may stay) instead of opening iOS's own player, which shows nothing of the page over the
+  picture. With it off, that button opens iOS's player as before. Picture-in-picture shows the video
+  only.
+- **What shows.** The last `CHAT_OVERLAY_LINES` (6) messages and system lines at the bottom left,
+  each for `CHAT_OVERLAY_FADE_S` (12 s) from when it came (a snapshot's messages only for what is left
+  of that time), fading over its last 1.2 s; two lines at most each; GIFs are left out. Deleting a
+  message, Clear chat and a new snapshot take lines away as in the list. Lines are built by the
+  list's own code (`ChatList.overlayLine`: text nodes, `<bdi>` boxes, the shared invariants, emotes,
+  mentions) without the Reply button or the quote, so there is no second renderer.
+- **Readable on any picture.** Each line sits on a strong scrim, 72 % of `--video-bg`, with
+  `--on-video` text; names are made readable (4.5:1) against the lightest that scrim gets, over a white
+  picture, so they also hold over a dark one. Both themes look the same (the video tokens do not
+  change with the theme).
+- **Never in the way.** The overlay sits under the player's bar in the stacking order and just above
+  it on screen (the bar's height is measured, also with a phone's safe area); the lines take no click
+  (`pointer-events: none`) and are hidden from screen readers (the chat list stays the accessible
+  chat); at most 38 % of the player's width (72 % on a phone). Reactions float on the right, the lines
+  on the left.
+- **Writing.** A small button opens the chat's own message box over the video (the same form, moved
+  into the overlay and back, so slow mode, mutes, replies, mentions and React work there), and **C**
+  does too while the overlay shows. The emoji and GIF pickers stay in the chat column. Closing the box,
+  or leaving full screen, puts it back in the chat. Keys typed there never trigger the page's
+  shortcuts. Escape in full screen is the browser's (it leaves full screen).
+- **Reduce motion**: lines come and go without fading.
+
 ## Slash commands
 
 A shortcut for the streamer in the panel's message box; the buttons stay (a command is never the only
@@ -775,7 +923,7 @@ with zod ([`apps/server/src/admin/chat-routes.ts`](../apps/server/src/admin/chat
 The panel's `/ws` gets chat items in their own message type (`{type: 'chat', reset, items,
 sessions, counters}`), so the big panel snapshot never carries chat. Counters: accepted and rejected
 per minute, skipped, G, chat upload and budget, guard state, protection and its reason, and whether
-the chat stopped itself.
+the chat stopped itself, and the reaction taps of the last minute per kind.
 
 ## Deferred to 0.4.1
 
@@ -794,7 +942,7 @@ the chat stopped itself.
 | Quotes (graphemes, bytes, bidi, zero-width, the corpus) and mentions (longest name, word and grapheme boundaries, look-alikes, RTL names, the @ list's query, suggestions and insertion) | [`quote.test.ts`](../packages/shared/test/chat/quote.test.ts), [`mentions.test.ts`](../packages/shared/test/chat/mentions.test.ts) |
 | Hub: replies (present, long, GIF, gone, deleted, cleared, blocked quote, streamer) and mentions (who counts, look-alikes, the streamer's names, every limit, reset) | [`chat-replies.test.ts`](../apps/server/test/unit/chat-replies.test.ts) |
 | Protocol shapes, reject codes translated, settings defaults, the highlight and pin bodies, `hl` and `pin` seq-less, `re` and `mn` bounds | [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts) |
-| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume; highlights and pins (also missed by a slow socket and in a reconnect hello), replies and mentions show only on the current page | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
+| Backward compatibility: the frames this server sends, fed to the v0.4.2 chat session (frozen in [`test/fixtures/chat-0.4.2`](../apps/server/test/fixtures/chat-0.4.2/session.ts)) and to the current one: same messages, no resume; highlights and pins (also missed by a slow socket and in a reconnect hello), replies and mentions show only on the current page; reactions (also missed by a slow socket and across a reconnect) are drawn only by the current page | [`chat-compat.test.ts`](../apps/server/test/unit/chat-compat.test.ts) |
 | Network keys (IPv4, IPv6 /64, IPv4-mapped) against Node's `BlockList` on random addresses in every spelling | [`network.test.ts`](../apps/server/test/unit/network.test.ts) |
 | Unknown or malformed items and `sys` codes never throw (viewer session and list, panel store, fuzzed); highlighted rows and the pinned bar (text nodes, hide, Show more, chat off), and the panel store's highlights and pin; replies (quote, gone, GIF, unsafe quote, jump, the Reply button, the arrow keys, taps) and mentions (spans, the mark and its setting), the reply bar and the @ list | [`chat-session.test.ts`](../apps/viewer/test/unit/chat-session.test.ts), [`chat-render.test.ts`](../apps/viewer/test/unit/chat-render.test.ts), [`chat-input.test.ts`](../apps/viewer/test/unit/chat-input.test.ts), [`chat-store.test.ts`](../apps/admin/test/unit/chat-store.test.ts), [`i18n.test.ts`](../apps/server/test/unit/i18n.test.ts) |
 | Hub: pipeline, slow mode, burst, duplicates, modes, blocked words, mutes, colours, roles, snapshot, resume, ring, reset, G, lockdown, failure isolation; highlight (cap, delta) and pin (replace, delete, clear, timer, Stop, mute and kick keep it, snapshots under lockdown, roster prune, slow sockets, resume) | [`apps/server/test/unit/chat-hub.test.ts`](../apps/server/test/unit/chat-hub.test.ts) |
@@ -802,14 +950,16 @@ the chat stopped itself.
 | Buckets, detector, adaptive slow mode, guard, batcher (ephemeral items, state items, referred authors) | [`chat-limits.test.ts`](../apps/server/test/unit/chat-limits.test.ts) |
 | Admin routes, shield cap, upload reserve | [`chat-admin.test.ts`](../apps/server/test/unit/chat-admin.test.ts) |
 | GIF CSP and settings | [`chat-gif.test.ts`](../apps/server/test/unit/chat-gif.test.ts) |
+| The chat over the video: the viewer's choice (default, remembered, blocked storage), when it shows (full screen, the page-filling mode, a chat), the bar button and the Settings switch, C; the lines (at most 6, the fade and the end on a manual clock, a snapshot's, deletes, clears) and the message box moved over the video and back; the page-filling mode on an iPhone (and iOS's own player while it is off); F through the player's toggle | [`apps/viewer/test/unit/chat-overlay.test.ts`](../apps/viewer/test/unit/chat-overlay.test.ts), [`player-controls.test.ts`](../apps/viewer/test/unit/player-controls.test.ts), [`player-extras.test.ts`](../apps/viewer/test/unit/player-extras.test.ts), [`shortcuts.test.ts`](../apps/viewer/test/unit/shortcuts.test.ts) |
+| Reactions: the tally, the merge and the tap allowance; the effective switch (lockdown, guard, chat off); the hub (one `rx` per window for everyone, capped, never a seq, a snapshot or an answer; the device and address buckets, CGNAT; mute, new-viewer wait, lockdown, off; hostile frames; not a flood for the detector; slow sockets, merged windows, budget pressure; the panel's counts; the window's timer; Stop); the frame schema; the page's sender (first tap at once, the rest together, the bucket, its own taps taken off), the floaters (sampled, capped, hidden tab, reduce motion), the picker (names, keys) and the session's `rx` guard; the panel's tally line | [`chat-reactions.test.ts`](../apps/server/test/unit/chat-reactions.test.ts), [`protocol.test.ts`](../packages/shared/test/chat/protocol.test.ts), [`apps/viewer/test/unit/chat-reactions.test.ts`](../apps/viewer/test/unit/chat-reactions.test.ts), [`chat-logic.test.ts`](../apps/admin/test/unit/chat-logic.test.ts) |
 | Polls: the state machine on a manual clock (lifecycle, timers to the millisecond, one vote per device, per network with IPv4 and IPv6 /64, "only people already watching", kick, counts), the hub (frames, three sessions and tabs of one device, moderation refusals, hostile and replayed frames, counts at most one per window, slow sockets, snapshots and resume, Clear, chat off, Stop, the panel's `rn`, 120 votes at once); slash commands (both languages, accents, every command and error, text stays text, a fuzzed property: total, round trip, linear) | [`chat-polls.test.ts`](../apps/server/test/unit/chat-polls.test.ts), [`commands.test.ts`](../packages/shared/test/chat/commands.test.ts), [`chat-logic.test.ts`](../apps/admin/test/unit/chat-logic.test.ts) |
-| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop); polls (one vote across tabs and sessions of a browser, a late joiner, a kick, a prediction, Stop; a burst of 120 vote frames from one network) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
+| Real server and sockets: delivery, slow mode, flood termination, mutes across rejoin, nicknames, settings push, resume, kick during a flood, Stop, highlight and pin (a new joiner's hello, clear, Stop); polls (one vote across tabs and sessions of a browser, a late joiner, a kick, a prediction, Stop; a burst of 120 vote frames from one network); reactions (a burst of frames from one address: sockets kept, a script past the ceiling ended, the taps added up and capped, one `rx` per batch at most; a muted viewer and reactions off reach nobody; Stop) | [`apps/server/test/integration/chat.test.ts`](../apps/server/test/integration/chat.test.ts) |
 | Join page nickname feedback | [`apps/server/test/e2e/nickname.spec.ts`](../apps/server/test/e2e/nickname.spec.ts) |
-| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
+| The viewer chat against the real server in Chrome, Firefox and WebKit: both ways, slow mode and translated rejects, hide chat, colours under the real CSP, streamer badge, one socket, a reply with a mention between real pages, a reaction from one page floating on the other under the real CSP, the chat over the video in full screen (a message from another page over the picture, one written from there) | [`apps/server/test/e2e/chat.spec.ts`](../apps/server/test/e2e/chat.spec.ts) |
 | Moderation from the panel's chat API reaching viewer pages: delete, clear, mute for a time and until the end of the live, colour lock, presets (text only refuses emoji), blocked words; highlight and pin (later joiners, mute and modes keep them, delete and clear unpin); replies and mentions under the content modes, blocked words, mute and clear | [`apps/server/test/e2e/chat-moderation-api.spec.ts`](../apps/server/test/e2e/chat-moderation-api.spec.ts) |
-| The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (reply, highlight, pin, unpin), the @ list, "Mentions you", settings, protection | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
+| The panel's live chat (on screen without scrolling, desktop window and narrow, also with a pin) and Chat card: feed, moderation menu (reply, highlight, pin, unpin), the @ list, "Mentions you", settings, protection, the reactions tally and switch | [`apps/server/test/e2e/chat-moderation.spec.ts`](../apps/server/test/e2e/chat-moderation.spec.ts) |
 | The video-first gate: a flood from scripted viewers while a real viewer plays; no extra stalls, HLS answers within 20 %, a kick within 1 s | [`apps/server/test/e2e/chat-flood.spec.ts`](../apps/server/test/e2e/chat-flood.spec.ts) (`@media`) |
-| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones); the poll card (place, mouse and keyboard votes, live percentages, ended / waiting / answered, reload, mute, Portuguese, folded on phones) and `/help` | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-poll.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
+| The viewer chat UI against a mock hub, and the whole corpus rendered in every engine and on phones (boxes clip, nothing hidden, no errors, still responsive); highlight and pin in both themes, keyboard only, in Portuguese, with the chat hidden or off, and on phones; replies and mentions (hover, keyboard only, delete, the @ list, the mark in both themes, the setting, Portuguese, phones); the poll card (place, mouse and keyboard votes, live percentages, ended / waiting / answered, reload, mute, Portuguese, folded on phones) and `/help`; reactions (the React button and its named reactions by mouse and keyboard, floaters inside the player under its controls and never taking a click, at most 8 per window and 24 at once, no double own tap, reduce motion, "Show reactions" remembered, turned off by the streamer, an older server, mutes, chat off, Portuguese, both themes, a storm, phones); the chat over the video in full screen (off by default, the bar button only in full screen and the Settings switch, remembered; the lines above the controls taking no click; readable in both themes; the message box over the video with React; C; hide chat and chat off; deletes and Clear; Portuguese; reduce motion; an iPhone without element full screen fills the page; phones) | [`apps/viewer/test/chat/`](../apps/viewer/test/chat/) (`chat-ui.spec.ts`, `chat-poll.spec.ts`, `chat-reactions.spec.ts`, `chat-overlay.spec.ts`, `chat-render.spec.ts`; run in the e2e `ui` group) |
 | Polls and commands end to end: the panel's form and card with real viewer pages (live results, a late viewer, a reload, End now, Remove), a prediction answered from the panel, commands in Portuguese and English (suggestions, the ? list, `/limpar` asks first), moderation (mute, chat off, Clear), a narrow panel | [`apps/server/test/e2e/chat-polls.spec.ts`](../apps/server/test/e2e/chat-polls.spec.ts) |
 
 ## Load and soak
@@ -832,6 +982,7 @@ protection, tunnel in-flight) and checks each scenario after a 5 s calm baseline
 | gif-spam | 30 | GIFs as fast as allowed | at most one GIF per 30 s per viewer |
 | reconnect-storm | 120 | everyone drops and reconnects at once (`?chatAfter`) | everyone gets their hello back within 10 s |
 | vote-storm | 120 | lively chat; a poll opens and every bot votes within 1 s | every vote answered and counted; at most one vote count per 2 s per viewer; delivery p95 ≤ 1 s |
+| react-storm | 120 | lively chat; every bot taps reactions as fast as the page sends, 10 scripts far above it (up to the ceiling) | at most one `rx` per 2 s per viewer and never two in one batch, counts capped, taps within the device buckets; no protection; delivery p95 ≤ 1 s |
 
 In every scenario: no bot that keeps to the limits loses its socket, the event-loop p99 stays within
 30 ms of calm, chat adds no connection, and chat upload stays within its budget (twice the budget while

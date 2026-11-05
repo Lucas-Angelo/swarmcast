@@ -23,7 +23,7 @@ FunctionEnd
 ; cloudflared). Normally nothing is left: closing SwarmCast.exe closes its Job object, which
 ; ends the server and every process it started (ffmpeg included).
 ; Never the uninstaller itself: run in place (`uninstall.exe /S _?=<dir>`, as
-; scripts/uninstall-windows.ps1 does) it lives in the install folder too, and killing it ended
+; scripts/test/desktop/verify.mjs does) it lives in the install folder too, and killing it ended
 ; every such uninstall with exit code -1 before its own steps ran.
 !macro SwarmCastStopProcesses
   nsExec::Exec `"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$$dir = '$INSTDIR\'; Get-Process | Where-Object { $$_.Path -and $$_.Path.StartsWith($$dir, [StringComparison]::OrdinalIgnoreCase) -and [IO.Path]::GetFileName($$_.Path) -ne 'uninstall.exe' } | Stop-Process -Force -ErrorAction SilentlyContinue"`
@@ -60,7 +60,7 @@ FunctionEnd
 
 !macro NSIS_HOOK_POSTUNINSTALL
   ; The data folder (settings, secrets, logs, ffmpeg) is kept unless the user ticked
-  ; "delete the application data", and never on updates. Script mode uses the same folder.
+  ; "delete the application data", and never on updates.
   ${If} $DeleteAppDataCheckboxState = 1
   ${AndIf} $UpdateMode <> 1
     SetShellVarContext current

@@ -30,6 +30,243 @@ export const AUDIO_ONLY_URL = `/hls/${AUDIO_ONLY_PLAYLIST}`;
  */
 export const AUDIO_ONLY_GONE_AFTER = 1;
 
+/** The parts of TimeRanges and of the media element a reload in place touches. */
+export interface Ranges {
+  readonly length: number;
+  start(i: number): number;
+  end(i: number): number;
+}
+export interface KeptElement {
+  readonly buffered: Ranges;
+  readonly seeking: boolean;
+  currentTime: number;
+  addEventListener(type: 'seeked', fn: () => void, o: { once: true }): void;
+}
+
+/** What hls.js `transferMedia()` hands over: the element with its MediaSource and SourceBuffers. */
+export interface KeptMedia {
+  media: KeptElement;
+}
+
+/** The part of hls.js a reload of the audio-only playlist uses. */
+export interface ReloadablePlayer {
+  /** The source loaded last (absolute). */
+  readonly url: string | null;
+  /** Where hls.js starts the source it loaded (for a live one, its live sync position); -1 before it knows. */
+  readonly startPosition: number;
+  loadSource(url: string): void;
+  /** Detaches the media but keeps its MediaSource and SourceBuffers (hls.js ≥ 1.6), or null. */
+  transferMedia(): KeptMedia | null;
+  attachMedia(media: never): void;
+  on(event: never, fn: never): void;
+  off(event: never, fn: never): void;
+  trigger(event: never, data: never): unknown;
+}
+
+export interface ReloadInPlaceOptions {
+  /** The page's URL, to resolve the sources against. */
+  base: string;
+  events: { FRAG_BUFFERED: string; BUFFER_FLUSHING: string };
+  audioUrl?: string;
+}
+
+/** A few ms at either edge of a range do not count. */
+const EDGE_S = 0.01;
+
+/** `r` holds media between `from` and `to`. */
+const holds = (r: Ranges, from: number, to: number): boolean => {
+  for (let i = 0; i < r.length; i++) if (r.start(i) < to - EDGE_S && r.end(i) > from + EDGE_S) return true;
+  return false;
+};
+
+/** What `r` holds outside [start, end]. */
+function outside(r: Ranges, start: number, end: number): Array<[number, number]> {
+  const out: Array<[number, number]> = [];
+  for (let i = 0; i < r.length; i++) {
+    const a = r.start(i);
+    const z = r.end(i);
+    if (a < start - EDGE_S) out.push([a, Math.min(z, start)]);
+    if (z > end + EDGE_S) out.push([Math.max(a, end), z]);
+  }
+  return out;
+}
+
+/**
+ * Reads the audio-only playlist again while audio only plays (a media playlist it listed went
+ * away: the quality ladder's audio, once the ladder fell back to the original quality) and keeps
+ * the element's MediaSource and its audio SourceBuffer: hls.js `transferMedia()` hands them over,
+ * `loadSource()` reads the playlist again, `attachMedia()` takes them back. A plain
+ * `hls.loadSource()` detaches the media and gives the element a new MediaSource, and Linux WebKit
+ * (GStreamer) kills the page's process doing that for sound alone (SIGSEGV on the web process's
+ * main thread, always at the same address in WebKit; about 1 audio-only reload in 300-900 on the
+ * Linux CI runners, with or without a sound server, a bare hls.js page too; never for video):
+ * the viewer's tab is gone.
+ *
+ * The playlist then starts afresh on that MediaSource, as on a new one: hls.js places a playlist
+ * it reads anew from the first segment its live window lists now (at 0 on the element's
+ * timeline), while what the element buffered and its playhead sit on the timeline of the read
+ * before, which began where the window began then. Left as they were, the two lay apart by as
+ * much as the window had moved on since: once a viewer's window had moved 32 s, the playhead
+ * stood 28 s "ahead of live", the old buffer played out, the sound froze 2 s and hls.js jumped
+ * back to its live sync position, playing 15 s of sound again (Chromium and WebKit alike; the
+ * reload probe of soak run 41757062883 took that jump back, after 26 reloads in a row, for a
+ * stop). So once the first segment of the new read is buffered, the playhead moves into it, to
+ * where hls.js starts (hls.js itself only moves a playhead that is before its start position),
+ * and, once that seek is over, what the buffer held besides that segment, all from the read
+ * before, goes through hls.js's own flush (leaving out the segments of the new read buffered
+ * meanwhile). Until then the old buffer plays on: emptied any earlier, the element waits with
+ * nothing buffered, which the adaptive delay takes for a network stall and holds playback for,
+ * and Linux WebKit then stayed paused for good about one time in two (soak run 41766158247).
+ * Flushed while the seek still runs, Linux WebKit (GStreamer) then played about one time in
+ * eight with no clock: the buffer ran through in a fraction of a second and every new segment
+ * vanished as it came, so the sound stopped (main run 41828698597; logged probe 18 in 120,
+ * against none in 120 with the flush after `seeked`, soak runs 41838099514, 41841700897).
+ * A second append of the segment hls.js seeks into does the same, which is why the player
+ * turns off hls.js's interstitials (player-config.ts hlsConfigFor), and why `play()` is sent
+ * after the reload only to a paused element (player-config.ts playOnLoad).
+ * Diagnosis: docs/QUALITY.md "Audio only".
+ *
+ * Returns false and does nothing unless the player has the audio-only playlist loaded, `url` is
+ * that playlist and hls.js can hand the media over; the caller then loads the source as usual.
+ */
+export function reloadAudioOnlyInPlace(hls: ReloadablePlayer, url: string, o: ReloadInPlaceOptions): boolean {
+  const path = (u: string | null): string => (u ? new URL(u, o.base).pathname : '');
+  const target = path(o.audioUrl ?? AUDIO_ONLY_URL);
+  if (path(hls.url) !== target || path(url) !== target) return false;
+  const kept = hls.transferMedia();
+  if (!kept) return false;
+  const media = kept.media;
+  const onBuffered = ((_e: unknown, data: { frag: { type: string; start: number; end: number } }) => {
+    if (data.frag.type !== 'main') return;
+    hls.off(o.events.FRAG_BUFFERED as never, onBuffered);
+    const { start, end } = data.frag;
+    if (!media.seeking && !(media.currentTime >= start && media.currentTime < end)) {
+      const at = hls.startPosition;
+      media.currentTime = at >= start && at < end ? at : start;
+    }
+    const old = outside(media.buffered, start, end);
+    // The new read grows on from `end` while the seek runs; none of that is old.
+    let newEnd = end;
+    const grow = ((_e: unknown, d: { frag: { type: string; start: number; end: number } }) => {
+      if (d.frag.type === 'main' && d.frag.start <= newEnd + EDGE_S) newEnd = Math.max(newEnd, d.frag.end);
+    }) as never;
+    const flushOld = (): void => {
+      hls.off(o.events.FRAG_BUFFERED as never, grow);
+      for (const [a, z] of old) {
+        const from = a >= end - EDGE_S ? Math.max(a, newEnd) : a;
+        if (z > from + EDGE_S && holds(media.buffered, from, z)) hls.trigger(o.events.BUFFER_FLUSHING as never, { startOffset: from, endOffset: z, type: null } as never);
+      }
+    };
+    if (!media.seeking) {
+      flushOld();
+      return;
+    }
+    hls.on(o.events.FRAG_BUFFERED as never, grow);
+    media.addEventListener('seeked', flushOld, { once: true });
+  }) as never;
+  hls.on(o.events.FRAG_BUFFERED as never, onBuffered);
+  hls.loadSource(url);
+  hls.attachMedia(kept as never);
+  return true;
+}
+
+/**
+ * Browsers whose media engine is GStreamer: WebKit on Linux (GNOME Web and the other WebKitGTK and
+ * WPE browsers). WebKit by its user agent (AppleWebKit, not Chromium-based: those name AppleWebKit
+ * too), Linux by `navigator.platform` or the user agent: a WebKit browser may send a macOS-like
+ * user agent (Playwright's WebKit on Linux sends Desktop Safari's), never a macOS platform.
+ */
+export function usesGStreamer(userAgent: string, platform = ''): boolean {
+  const webkit = /AppleWebKit\//.test(userAgent) && !/Chrome\/|Chromium\/|CriOS\/|Edg\/|Android/.test(userAgent);
+  return webkit && (/^Linux/i.test(platform) || /\bLinux\b/.test(userAgent));
+}
+
+/** Seconds a sound-only start plays from the window start before it moves to live. */
+export const WINDOW_START_PLAY_S = 0.25;
+
+/** The part of hls.js a sound-only start at the window start uses. */
+export interface WindowStartPlayer {
+  config: { startPosition: number };
+  /** Where hls.js would start or catch up to now; null before it knows. */
+  readonly liveSyncPosition: number | null;
+}
+
+/** The part of the media element a sound-only start at the window start uses. */
+export interface WindowStartMedia {
+  readonly seeking: boolean;
+  readonly paused: boolean;
+  currentTime: number;
+  addEventListener(type: 'timeupdate', fn: () => void): void;
+  removeEventListener(type: 'timeupdate', fn: () => void): void;
+}
+
+export interface WindowStart {
+  /**
+   * Call before every load of the source on a new MediaSource (hls.js `loadSource`), with the URL
+   * loaded: for the audio-only playlist on an engine that needs it, hls.js starts at the first
+   * segment of the live window, and the playhead moves to the live sync position once playback
+   * has run WINDOW_START_PLAY_S from there; any other load starts where hls.js picks (live).
+   */
+  beforeLoad(url: string): void;
+  /** A start at the window start is waiting to move to live: hls.js must not move the playhead meanwhile (watch.ts fitLatency). */
+  readonly active: boolean;
+}
+
+/**
+ * Starts sound-only playback on a new MediaSource where its media begins, and seeks to live only
+ * once it plays. Linux WebKit (GStreamer, `usesGStreamer`) kills the page's web process when a
+ * new sound-only pipeline is sought before it has played anything: SIGSEGV on the main thread, at
+ * the same WebKit address every time, 0.7-1 s after the seek. hls.js always seeks there on such a
+ * start: the element starts at 0 and hls.js buffers the segment at its live sync position (about
+ * 20 s on), then sets `currentTime` to it, right after the first append; WebKit flushes its
+ * pipeline before the first sample went out, and the pipeline then drops its video sink and
+ * builds its audio sink while the seek is pending (its GStreamer log ends there). About one
+ * sound-only start in 100-150 (a page that starts on audio only) and one switch to audio only in
+ * 500 on the Linux CI runners; never for video (0 of about 2,560 switches back), never on a kept
+ * MediaSource (reloadAudioOnlyInPlace), never once the pipeline plays. Neither holding the
+ * appends during that seek, nor seeking before the first append, nor an <audio> element, nor
+ * hls.js without its first-fragment prefetch avoided it. Starting at the first segment of the
+ * window needs no seek (the media begins where the element is), and the jump to live comes when
+ * the pipeline already plays, as any Go live does. The cost there: a quarter of a second of the
+ * oldest sound of the window, and its first segments. Elsewhere `enabled` is false and nothing
+ * changes. Diagnosis: docs/QUALITY.md "Audio only".
+ */
+export function createWindowStart(hls: WindowStartPlayer, media: WindowStartMedia, o: { enabled: boolean; base: string; audioUrl?: string }): WindowStart {
+  const target = new URL(o.audioUrl ?? AUDIO_ONLY_URL, o.base).pathname;
+  let armed: (() => void) | null = null;
+  // hls.js reads startPosition when it starts loading a source; any later load starts live again
+  // unless beforeLoad says otherwise (reloadAudioOnlyInPlace places its read from hls.js's start).
+  const disarm = (): void => {
+    armed?.();
+    armed = null;
+    hls.config.startPosition = -1;
+  };
+  return {
+    get active() {
+      return armed !== null;
+    },
+    beforeLoad(url) {
+      disarm();
+      if (!o.enabled || new URL(url, o.base).pathname !== target) return;
+      hls.config.startPosition = 0;
+      let from: number | null = null;
+      const onTime = (): void => {
+        if (media.seeking || media.paused) return;
+        if (from === null) {
+          from = media.currentTime;
+          return;
+        }
+        if (media.currentTime < from + WINDOW_START_PLAY_S) return;
+        disarm();
+        const live = hls.liveSyncPosition;
+        if (live !== null && live > media.currentTime + 1) media.currentTime = live;
+      };
+      media.addEventListener('timeupdate', onTime);
+      armed = () => media.removeEventListener('timeupdate', onTime);
+    },
+  };
+}
+
 /**
  * hls.js resets of the MediaSource (`mediaSourceRequiresReset`) within AUDIO_ONLY_BROKEN_WINDOW_MS
  * after which audio-only playback gives up for this page and the video comes back. A browser that

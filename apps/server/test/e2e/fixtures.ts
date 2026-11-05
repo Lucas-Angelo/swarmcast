@@ -242,7 +242,8 @@ export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpd
  * the goto waits only for the answer ("commit"), not for the `load` of a page that is replaced
  * at once: WebKit sometimes never reports that load, and the goto then hung until the test
  * timeout (calibration soak, diagnostics on ubuntu-24.04 WebKit: 150 s, 1.5 s on the retry).
- * Where it lands is what the tests check, web-first.
+ * Where it lands is what the tests check, web-first. (A first goto that never even commits is
+ * another WebKit fault: routeFirstRequestOfEachPage.)
  */
 export async function loginPanel(page: Page, login = serverEnv().adminLoginUrl): Promise<void> {
   await page.goto(login, { waitUntil: 'commit' });
@@ -259,6 +260,32 @@ export async function openPanel(page: Page, lang?: 'en' | 'pt-BR'): Promise<void
   await loginPanel(page, login);
   if (lang) await page.goto(new URL(`/?lang=${lang}`, login).toString());
   await expect(page.getByTestId('status')).toBeVisible();
+}
+
+/**
+ * Makes the page click the checkbox `[data-testid=<testid>]` in the same task as the render
+ * that first adds it (a MutationObserver runs in the microtask right after Preact's commit), before
+ * Preact runs that render's effects (after the next frame or a 35 ms timer), as a fast click on a
+ * busy page can. Then it waits for those effects: they were scheduled first, so they run before
+ * this frame's own callback and the task it queues. Call it before opening the page; the returned
+ * function tells whether the box was checked before the click and once the effects have run.
+ */
+export async function clickOnFirstRender(page: Page, testid: string): Promise<() => Promise<{ before: boolean; after: boolean }>> {
+  await page.addInitScript((id) => {
+    const w = window as unknown as { __clickOnFirstRender?: Promise<{ before: boolean; after: boolean }> };
+    w.__clickOnFirstRender = new Promise((resolve) => {
+      const added = new MutationObserver(() => {
+        const box = document.querySelector<HTMLInputElement>(`[data-testid="${id}"]`);
+        if (box === null) return;
+        added.disconnect();
+        const before = box.checked;
+        box.click();
+        requestAnimationFrame(() => setTimeout(() => resolve({ before, after: box.checked })));
+      });
+      added.observe(document, { childList: true, subtree: true });
+    });
+  }, testid);
+  return () => page.evaluate(() => (window as unknown as { __clickOnFirstRender: Promise<{ before: boolean; after: boolean }> }).__clickOnFirstRender);
 }
 
 /**
@@ -364,6 +391,47 @@ export interface JoinPageOptions extends BrowserOptions {
   prepare?: (page: Page) => Promise<void>;
 }
 
+/**
+ * In WebKit, the first request of every page the specs open (its first navigation) goes through a
+ * route that lets it through unchanged (route.fallback, once), so that WebKit can never lose that
+ * navigation.
+ *
+ * Both servers send `Cross-Origin-Opener-Policy: same-origin`, so a page's first navigation to
+ * them (from its initial about:blank) moves to a new web process once the response arrives: the
+ * network process asks the UI process to swap. The old web process also tells the UI process that
+ * the navigation started (DidStartProvisionalLoadForFrame), over its own connection. When that
+ * message comes second, the UI process takes it for a new navigation and cancels the provisional
+ * page of the swap ("cancel any pending one in a provisional process",
+ * WebPageProxy::didStartProvisionalLoadForFrameShared, WebKit main as of 2026-11): the navigation
+ * neither commits nor fails, and `goto` waits until the test times out. With a route, the request
+ * waits in the web process until the route answers, and that question travels to the UI process on
+ * the same connection, after DidStartProvisionalLoadForFrame: the UI process has handled the start
+ * before the request even reaches the network process, so the swap can no longer overtake it.
+ *
+ * Measured on Linux with Playwright 1.64.1 (WPE), no SwarmCast: a new page's first goto to a
+ * local page with COOP never committed in 12 of 30,000 tries on a busy machine, and in 0 of 30,000
+ * with this route, run side by side (0 of 10,000 without COOP; a new page in a long-lived context
+ * stalls too); CI runners 5 of 24,000. first-goto.spec.ts failed 4 runs in 30 without the route.
+ * The e2e soaks hit it about once in 1000 to 3000 WebKit tests, as a test's first goto (e.g.
+ * loginPanel). Not media: closing the watch page's player before its context changed nothing.
+ * WebKitGTK 2.52 (GNOME Web's engine) loses such loads too.
+ *
+ * Only that first request, so the rest of the page loads as it would without the fixtures: a
+ * route sends every request through this process and turns the HTTP cache off, and once a
+ * context's close() is called Playwright answers no route, so a request still in flight then
+ * stayed held (the screenshot Playwright takes of each page at close waited 5 s for its fonts).
+ * A spec's own routes come first and work as before. Other engines are left alone.
+ */
+function routeFirstRequestOfEachPage(context: BrowserContext): void {
+  if (context.browser()?.browserType().name() !== 'webkit') return;
+  const newPage = context.newPage.bind(context);
+  context.newPage = async (): Promise<Page> => {
+    const page = await newPage();
+    await page.route('**/*', (route) => route.fallback(), { times: 1 });
+    return page;
+  };
+}
+
 /** The `viewers` fixture: browsers of their own (one context each), all closed after the test. */
 export class Audience {
   private readonly contexts: BrowserContext[] = [];
@@ -374,6 +442,7 @@ export class Audience {
   async browserContext(o: BrowserOptions = {}): Promise<BrowserContext> {
     const context = await this.browser.newContext(o.context);
     this.contexts.push(context);
+    routeFirstRequestOfEachPage(context);
     await o.setup?.(context);
     return context;
   }
@@ -780,6 +849,11 @@ export class ScriptedViewer {
     return n;
   }
 
+  /** Reaction taps per kind (docs/CHAT.md, "Reactions"): fire-and-forget, never answered. */
+  react(c: number[]): void {
+    this.ws.send(JSON.stringify({ t: 'chat.react', c }));
+  }
+
   /** The server's answer to a vote: the option it counted, or the reject code. */
   async voteAnswer(n: number): Promise<{ o?: number; code?: string }> {
     let found: { o?: number; code?: string } | undefined;
@@ -972,6 +1046,12 @@ export const test = base.extend<E2EFixtures>({
     },
     { auto: true },
   ],
+  // Playwright's own context, whose newPage() makes the `page` fixture: its pages are routed like
+  // the viewers' (routeFirstRequestOfEachPage).
+  context: async ({ context }, use) => {
+    routeFirstRequestOfEachPage(context);
+    await use(context);
+  },
   viewers: async ({ browser }, use) => {
     const audience = new Audience(browser);
     await use(audience);

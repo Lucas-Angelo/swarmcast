@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useLayoutEffect, useState } from 'preact/hooks';
 import {
   CHAT_BLOCKED_WORDS_MAX,
   CHAT_DUPLICATE_WINDOW_MAX_S,
@@ -18,7 +18,7 @@ import {
 import { t } from '@swarmcast/shared/i18n';
 import { errorText } from '../api.js';
 import { Info } from '../Info.js';
-import { CONTENT_PRESETS, parseBlockedWords, presetNeedsGifs, presetOf, sameSettings } from './logic.js';
+import { CONTENT_PRESETS, parseBlockedWords, presetNeedsGifs, presetOf, sameSettings, streamerNameFeedback } from './logic.js';
 
 type Patch = (p: Partial<Settings>) => void;
 
@@ -32,7 +32,11 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<unknown>(null);
   const [saved, setSaved] = useState(false);
-  useEffect(() => {
+  // The saved settings replace the form when they change (a save, a /slow command, the other
+  // window). In the commit, not in a useEffect: Preact runs those after the next frame (or a 35 ms
+  // timer), and on the first render that one put the saved settings back over a change made in
+  // the meantime.
+  useLayoutEffect(() => {
     setV(settings);
     setWords(settings.blockedWords.join('\n'));
   }, [JSON.stringify(settings)]);
@@ -43,7 +47,9 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
   const noContent = !v.content.text && !v.content.emotes && !v.content.gifs;
   const keyOk = v.gif.key === '' || GIF_KEY_RE.test(v.gif.key);
   const gifsNeedKey = v.content.gifs && v.gif.key === '';
-  const invalid = noContent || !keyOk || gifsNeedKey || blocked.tooLong.length > 0;
+  // The same rules as the setup tutorial and the server: an error shows while she types.
+  const name = streamerNameFeedback(v.streamerName);
+  const invalid = noContent || !keyOk || gifsNeedKey || blocked.tooLong.length > 0 || name.kind === 'error';
   const patch: Patch = (p) => {
     setSaved(false);
     setV({ ...v, ...p });
@@ -194,13 +200,22 @@ export function ChatSettingsForm({ settings, onSave }: { settings: Settings; onS
                 size={CHAT_STREAMER_NAME_MAX}
                 placeholder={t('admin.chat.streamerName.placeholder')}
                 value={v.streamerName}
+                aria-invalid={name.kind === 'error'}
                 onInput={(e) => patch({ streamerName: (e.target as HTMLInputElement).value })}
               />
             </label>{' '}
             <Info text={t('admin.chat.streamerName.tip')} />
+            {name.kind === 'error' && (
+              <p class="err small" data-testid="chat-streamer-name-error">
+                {t(name.key, name.params)}
+              </p>
+            )}
           </div>
           <div class="field">
             <Check label="admin.chat.announceMutes" checked={v.announceMutes} testid="chat-announce" onChange={(c) => patch({ announceMutes: c })} /> <Info text={t('admin.chat.announceMutes.tip')} />
+          </div>
+          <div class="field">
+            <Check label="admin.chat.reactions" checked={v.reactions} testid="chat-reactions" onChange={(c) => patch({ reactions: c })} /> <Info text={t('admin.chat.reactions.tip')} />
           </div>
         </fieldset>
 
@@ -291,7 +306,10 @@ function Check({ label, checked, onChange, testid, disabled }: { label: MessageK
 /** A whole number in [min, max]: any text may be typed, only valid values reach the settings; blur shows the value in force. */
 function Num({ value, min, max, onChange, testid, unit }: { value: number; min: number; max: number; onChange: (n: number) => void; testid: string; unit?: MessageKey }) {
   const [text, setText] = useState(String(value));
-  useEffect(() => setText(String(value)), [value]);
+  // In the commit, not in a useEffect. Preact runs those after the next frame, and a render before
+  // then runs the pending one first, with the value of its own render: while she types "123" the
+  // "1" came back over the "12", and the next key made it "13".
+  useLayoutEffect(() => setText(String(value)), [value]);
   return (
     <>
       <input

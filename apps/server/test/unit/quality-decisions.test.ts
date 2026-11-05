@@ -20,7 +20,7 @@ import { SOURCE_1080P, qualitySettings } from './helpers-b.js';
 // - At runtime the load guard drops the most expensive rendition (never the source) when the
 //   converter falls behind (speed < 1.0× for 10 s) or the whole machine stays saturated (OBS would
 //   drop frames), then waits 30 s before another drop. A short CPU spike is fine.
-// - ffmpeg is found in <data>/tools/ffmpeg (start scripts, panel); SWARMCAST_FFMPEG and the
+// - ffmpeg is found in <data>/tools/ffmpeg (the app's first start, panel); SWARMCAST_FFMPEG and the
 //   config's path win over it.
 
 const NVENC: EncoderProbeResult = { id: 'h264_nvenc', hardware: true, ok: true, fps: 600, cpuSeconds: 0.12, videoSeconds: 1 };
@@ -408,7 +408,7 @@ describe('ffmpeg location', () => {
   /** The pinned build as ffmpeg.ts describes it (only its sha256 goes into the PIN stamp). */
   const PIN = { url: 'https://example.invalid/f.zip', asset: 'f.zip', sha256: 'a'.repeat(64), binary: 'ffmpeg', license: 'LGPL' };
 
-  it('is <data>/tools/ffmpeg/ffmpeg[.exe] when installed by the start scripts or the panel', () => {
+  it('is <data>/tools/ffmpeg/ffmpeg[.exe] when installed by the app\'s first start or the panel', () => {
     // Arrange
     const { data } = dataDir(false);
     // Act

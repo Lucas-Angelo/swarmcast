@@ -7,9 +7,16 @@
 //   is a third, which a full 20 s buffer refill right after the switch stays under);
 // - the choice is remembered per browser: after a reload the player starts on audio only, and an
 //   OBS reconnect (the stream's next run) keeps it playing on audio only;
+// - on Linux WebKit, the switch and the reload never seek the new sound-only MediaSource before it
+//   plays (a seek there kills the page's process now and then): it starts at the window start and
+//   moves to live once it plays;
 // - with the quality ladder on, when the streamer's PC drops its last converted quality, the
 //   ladder's audio playlist (audio.m3u8) goes away with it and the stream goes on with the
-//   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze;
+//   original (MediaMTX's audio playlist): the audio-only viewer follows without a long freeze,
+//   on the MediaSource it had (a new one for sound alone can crash Linux WebKit's page);
+// - when a media playlist it plays goes away (a 404), audio only reads its playlist again on that
+//   MediaSource and plays on from the live window it reads, never "ahead of live" on the timeline
+//   of the window it joined;
 // - with the sound on: where the device has a sound output, audio only plays on; where it has none
 //   (Firefox on the Linux runners fails a sound-only element with "OnMediaSinkAudioError" once it
 //   is unmuted, and hls.js used to reset and reload the whole audio playlist every 2 s, forever:
@@ -124,6 +131,9 @@ async function followRuns(page: Page): Promise<void> {
 /** The newest run of the stream the player buffered audio from (followRuns). */
 const lastRunBuffered = (page: Page): Promise<number> => page.evaluate(() => (window as unknown as { __lastRun: number }).__lastRun);
 
+/** The blob: URL of the MediaSource the video element plays (a new one after every hls.js MediaSource reset). */
+const mediaSourceUrl = (page: Page): Promise<string> => page.evaluate(() => document.querySelector('video')!.src);
+
 /** The viewer's remembered choice. */
 const savedChoice = (page: Page): Promise<string | null> => page.evaluate(() => localStorage.getItem('sc.audio-only'));
 
@@ -134,9 +144,38 @@ async function rememberAudioOnly(context: BrowserContext): Promise<void> {
 
 const MEASURE_MS = 8000;
 
-test('a viewer switches to audio only and back while live: far less data, no picture, the choice survives a reload and an OBS reconnect', { tag: '@media' }, async ({ viewers }) => {
+/**
+ * Counts, in the page, the seeks made while the player loads the audio-only playlist and the
+ * element has not started playing it (readyState below HAVE_FUTURE_DATA). Linux WebKit (GStreamer)
+ * kills the page's process now and then when a new sound-only MediaSource is sought before it
+ * plays, which every live start of hls.js does (it seeks to its live sync position right after
+ * the first append); there the player starts sound alone at the window start instead and seeks
+ * to live once it plays (audio-only.ts createWindowStart).
+ */
+const recordEarlySoundSeeks = (): void => {
+  const w = window as unknown as { __earlySoundSeeks: number; __hls?: { url: string | null } };
+  w.__earlySoundSeeks = 0;
+  const ct = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'currentTime')!;
+  Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', {
+    ...ct,
+    set(this: HTMLMediaElement, t: number) {
+      const url = w.__hls?.url;
+      if (this.readyState < HTMLMediaElement.HAVE_FUTURE_DATA && url && new URL(url, location.href).pathname === '/hls/audio-only.m3u8') w.__earlySoundSeeks += 1;
+      ct.set!.call(this, t);
+    },
+  });
+};
+const earlySoundSeeks = (page: Page): Promise<number> => page.evaluate(() => (window as unknown as { __earlySoundSeeks: number }).__earlySoundSeeks);
+
+/** Linux WebKit: sound alone on a new MediaSource is never sought before it plays (recordEarlySoundSeeks). */
+async function noEarlySoundSeek(page: Page, browserName: string): Promise<void> {
+  if (browserName !== 'webkit' || process.platform !== 'linux') return;
+  expect(await earlySoundSeeks(page), 'seeks of the new sound-only MediaSource before it played').toBe(0);
+}
+
+test('a viewer switches to audio only and back while live: far less data, no picture, the choice survives a reload and an OBS reconnect', { tag: '@media' }, async ({ viewers, browserName }) => {
   // Arrange
-  const { page } = await viewers.join(uid('audio'));
+  const { page } = await viewers.join(uid('audio'), { setup: async (c) => void (await c.addInitScript(recordEarlySoundSeeks)) });
   const received = hlsBytes(page);
   await waitPlaying(page);
   await expect(qualityMenu.entries(page).last()).toHaveText(AUDIO_ONLY);
@@ -149,6 +188,7 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await playingAudioOnly(page);
   await playsOn(page, 3);
   await atLive(page);
+  await noEarlySoundSeek(page, browserName);
   expect(await savedChoice(page)).toBe('on');
   const audioBytes = await bytesDuring(page, received, MEASURE_MS);
   console.log(`bytes in ${MEASURE_MS / 1000} s: video ${videoBytes}, audio only ${audioBytes} (${Math.round((audioBytes / videoBytes) * 100)} %)`);
@@ -162,6 +202,7 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await playingAudioOnly(page);
   await waitPlaying(page);
   await atLive(page);
+  await noEarlySoundSeek(page, browserName);
 
   // Act: OBS drops its connection and publishes again, as its own reconnect does.
   await followRuns(page);
@@ -266,6 +307,7 @@ test('with the quality ladder on, audio only keeps playing when the PC drops its
   await playingAudioOnly(page);
   await waitPlaying(page);
   expect((await player(page)).media).toBe('/hls/audio.m3u8');
+  const mediaSource = await mediaSourceUrl(page);
   await startStallMonitor(page);
 
   // Act
@@ -276,9 +318,81 @@ test('with the quality ladder on, audio only keeps playing when the PC drops its
   await expect.poll(async () => (await player(page)).media, { timeout: STARTING_DELAY_MS, intervals: [500] }).not.toBe('/hls/audio.m3u8');
   await playingAudioOnly(page);
   await playsOn(page, 2);
+  // The same MediaSource plays on: a new one for sound alone can crash Linux WebKit (audio-only.ts reloadAudioOnlyInPlace).
+  expect(await mediaSourceUrl(page), 'the element kept its MediaSource').toBe(mediaSource);
   const after = await stallReport(page);
   const s = await stats(page);
   console.log(`audio only, rendition dropped: longest stall ${Math.round(after.maxStallMs)} ms, ${s.reloads} source reloads (last: ${s.lastReload ?? 'none'})`);
   expect(after.maxStallMs, 'stall while the audio-only viewer moves to the original').toBeLessThan(4000);
+  expect(await savedChoice(page)).toBe('on');
+});
+
+/** hls.js's view of the audio-only player: how far behind live it plays, and where the live window starts on the element's timeline. */
+const liveWindow = (page: Page): Promise<{ latency: number; windowStart: number }> =>
+  page.evaluate(() => {
+    const h = (window as unknown as { __hls: { latency: number; levels: Array<{ details?: { fragmentStart: number } }> } }).__hls;
+    return { latency: h.latency, windowStart: h.levels[0]?.details?.fragmentStart ?? 0 };
+  });
+
+/**
+ * Counts, in the page, the seconds the element plays while hls.js reckons its playhead is past
+ * the live edge (hls.js `latency` below 0): a player on the playlist's own timeline never is.
+ */
+async function countAheadOfLive(page: Page): Promise<() => Promise<number>> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __hls: { latency: number }; __ahead: number };
+    const v = document.querySelector('video')!;
+    let prev = v.currentTime;
+    w.__ahead = 0;
+    window.setInterval(() => {
+      const step = v.currentTime - prev;
+      prev = v.currentTime;
+      if (step > 0 && step < 1 && w.__hls.latency < 0) w.__ahead += step;
+    }, 100);
+  });
+  return () => page.evaluate(() => (window as unknown as { __ahead: number }).__ahead);
+}
+
+test('audio only reads a vanished playlist again on the same MediaSource and plays on from the live window it reads, not the one it joined', { tag: '@media' }, async ({ viewers }) => {
+  // Arrange: hls.js places a playlist it reads afresh from the first segment its window lists
+  // then; what the element holds sits where the window started when the viewer joined. Once the
+  // window has moved on by more than the viewer's delay (+10 s), a reload that kept both would
+  // leave the playhead that far "ahead of live" (audio-only.ts reloadAudioOnlyInPlace).
+  test.setTimeout(180_000);
+  const { page } = await viewers.join(uid('audioReread'), { setup: rememberAudioOnly });
+  await playingAudioOnly(page);
+  await waitPlaying(page);
+  const media = (await player(page)).media;
+  const mediaSource = await mediaSourceUrl(page);
+  await expect
+    .poll(async () => {
+      const w = await liveWindow(page);
+      return w.windowStart - w.latency;
+    }, { timeout: 120_000, intervals: [1000], message: 'the live window moved on by more than the delay + 10 s' })
+    .toBeGreaterThan(10);
+  const reloads = (await stats(page)).reloads;
+  const ahead = await countAheadOfLive(page);
+  let answered404 = false;
+  await page.route(
+    (url) => url.pathname === media,
+    async (route) => {
+      if (answered404) return route.continue();
+      answered404 = true;
+      // As the ladder's audio playlist answers once the ladder fell back to the original.
+      await route.fulfill({ status: 404, body: 'gone' });
+    },
+  );
+
+  // Act
+  await expect.poll(async () => (await stats(page)).reloads, { timeout: 15_000, message: 'the 404 reloaded the source' }).toBe(reloads + 1);
+
+  // Assert
+  expect((await stats(page)).lastReload).toBe('media playlists gone');
+  await playsOn(page, 6);
+  expect(await mediaSourceUrl(page), 'the element kept its MediaSource').toBe(mediaSource);
+  const s = await ahead();
+  const w = await liveWindow(page);
+  console.log(`audio only, playlist read again: ${s.toFixed(1)} s played ahead of live; now ${w.latency.toFixed(1)} s behind live`);
+  expect(s, 'seconds played "ahead of live" (on the timeline of the window the viewer joined)').toBeLessThan(0.5);
   expect(await savedChoice(page)).toBe('on');
 });

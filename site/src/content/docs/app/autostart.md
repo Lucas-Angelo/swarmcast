@@ -24,5 +24,3 @@ The menu also has **Start live** / **Stop live**, **Check for updates**, **Expor
 - If you moved or reinstalled SwarmCast, the card may say **It opens an older copy of SwarmCast**. Click **Fix it**.
 - Linux AppImage: keep the file in the same place, because the setting remembers where it is.
 - Uninstalling SwarmCast removes it from the startup list.
-
-This setting exists only in the desktop app, not in the [script install](/swarmcast/advanced/script-install/).

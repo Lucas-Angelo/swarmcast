@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'preact/hooks';
+import { useEffect, useLayoutEffect, useRef, useState } from 'preact/hooks';
 import { checkChatInvariants, CHAT_POLL_OPTION_MAX_GRAPHEMES, CHAT_POLL_OPTIONS_MAX, CHAT_POLL_OPTIONS_MIN, CHAT_POLL_QUESTION_MAX_GRAPHEMES, CHAT_POLL_SECONDS_DEFAULT, CHAT_POLL_SECONDS_PRESETS, type ChatPollKind, type ChatPollPublic } from '@swarmcast/shared';
 import { t } from '@swarmcast/shared/i18n';
 import { chatApi, errorText } from '../api.js';
@@ -50,7 +50,15 @@ export function PollForm({ kind: initialKind, onClose }: { kind: ChatPollKind; o
   const [newOnly, setNewOnly] = useState<boolean | null>(null);
   const [local, setLocal] = useState<string | null>(null);
   const [busy, err, run] = useAction();
-  useEffect(() => setKind(initialKind), [initialKind]);
+  // A /poll or /prediction typed while the form is open switches it. In the commit, not in a
+  // useEffect: Preact runs those after the next frame (or a 35 ms timer), and on the first render
+  // that one put back the initial kind over a choice the streamer had clicked in the meantime.
+  useLayoutEffect(() => setKind(initialKind), [initialKind]);
+  // The question takes the focus in the commit too, not through `autofocus`: browsers apply that
+  // at a later rendering update, and WebKit then moved the focus back to the question from a field
+  // the streamer had already clicked, so what they typed there went into the question.
+  const questionInput = useRef<HTMLInputElement>(null);
+  useLayoutEffect(() => questionInput.current?.focus(), []);
   // "Only people already watching": on by default for a prediction, off for a poll, until changed.
   const only = newOnly ?? kind === 'prediction';
 
@@ -96,7 +104,7 @@ export function PollForm({ kind: initialKind, onClose }: { kind: ChatPollKind; o
       </fieldset>
       <label class="chat-poll-field small">
         <span>{t('admin.chat.poll.question')}</span>
-        <input type="text" class="text-input" data-testid="chat-poll-question" maxLength={500} value={question} onInput={(e) => setQuestion((e.target as HTMLInputElement).value)} autoFocus />
+        <input type="text" class="text-input" data-testid="chat-poll-question" maxLength={500} value={question} onInput={(e) => setQuestion((e.target as HTMLInputElement).value)} ref={questionInput} />
       </label>
       {options.map((o, i) => (
         <div class="row tight chat-poll-field" key={i}>

@@ -8,12 +8,14 @@ import {
   CHAT_BLOCKED_WORDS_MAX,
   CHAT_POLL_OPTION_MAX_GRAPHEMES,
   CHAT_POLL_QUESTION_MAX_GRAPHEMES,
+  CHAT_REACTIONS,
   checkChatInvariants,
   countGraphemes,
   cutQuote,
   findMentionSpans,
   plainNameKey,
   tokenizeChat,
+  validateStreamerName,
   type ChatAuthor,
   type ChatCommand,
   type ChatCounters,
@@ -31,7 +33,7 @@ import {
   type MessageKey,
   type MessageParams,
 } from '@swarmcast/shared';
-import { translate, translateWire } from '@swarmcast/shared/i18n';
+import { t, translate, translateWire } from '@swarmcast/shared/i18n';
 
 /** Pure helpers of the chat card (unit tested in apps/admin/test/unit/chat-logic.test.ts). */
 
@@ -86,6 +88,22 @@ export function chatStatus(enabled: boolean, eff: ChatPublicSettings | null, cou
   if (eff?.autoSlow || protect === 'slow') return { key: 'admin.chat.status.autoSlow', params: { count: slow }, tone: 'wait' };
   if (slow > 0) return { key: 'admin.chat.status.slow', params: { count: slow }, tone: 'ok' };
   return { key: 'admin.chat.status.on', tone: 'ok' };
+}
+
+/**
+ * The live chat's reactions line (docs/CHAT.md, "Reactions"): the taps of the last minute per kind,
+ * most first; paused (lockdown, a busy computer) while the streamer has them on but viewers cannot
+ * send them; null while the streamer has them off.
+ */
+export function reactionsLine(settingOn: boolean, eff: ChatPublicSettings | null, counts: readonly number[] | undefined): { key: MessageKey; params?: MessageParams } | null {
+  if (!settingOn) return null;
+  if (eff?.enabled && eff.reactions !== true) return { key: 'admin.chat.reactions.paused' };
+  const kinds = CHAT_REACTIONS.map((code, i) => ({ code, n: Math.max(0, Math.floor(counts?.[i] ?? 0)) }))
+    .filter((k) => k.n > 0)
+    .sort((a, b) => b.n - a.n);
+  if (kinds.length === 0) return { key: 'admin.chat.reactions.none' };
+  const list = kinds.map((k) => t('admin.chat.reactions.item', { name: t(`chat.react.${k.code}`), count: k.n })).join(' · ');
+  return { key: 'admin.chat.reactions.tally', params: { list } };
 }
 
 /** A mute still in force at `now` (a timed mute in the past is over). */
@@ -359,4 +377,18 @@ export function pollRequest(kind: 'poll' | 'prediction', question: string, optio
   const empty = opts.findIndex((o) => o === '');
   if (empty >= 0) return { ok: false, key: 'admin.chat.err.pollOption', params: { n: empty + 1, max: CHAT_POLL_OPTION_MAX_GRAPHEMES } };
   return { ok: true, body: { kind, question: q, options: opts, seconds, newOnly } };
+}
+
+export type NameFeedback = { kind: 'ok'; value: string } | { kind: 'empty' } | { kind: 'error'; key: MessageKey; params?: Record<string, number> };
+
+/**
+ * Instant feedback on the streamer's chat name while she types (setup tutorial and chat settings):
+ * the rules the server applies on save (validateStreamerName).
+ */
+export function streamerNameFeedback(draft: string): NameFeedback {
+  const r = validateStreamerName(draft);
+  if (r.ok) return r.value ? { kind: 'ok', value: r.value } : { kind: 'empty' };
+  // "Reserved" for the streamer means SwarmCast's own labels, not someone else's name.
+  if (r.code === 'nickname.reserved') return { kind: 'error', key: 'admin.chat.err.nameReserved' };
+  return r.params ? { kind: 'error', key: r.code, params: r.params } : { kind: 'error', key: r.code };
 }
