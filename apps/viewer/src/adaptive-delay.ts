@@ -160,6 +160,16 @@ export function attachAdaptiveDelay(
     };
     ctl.onFragment(sample);
   });
+  // hls.bandwidthEstimate is hls.js' starting guess (abrEwmaDefaultEstimate: the last visit's
+  // estimate or 2 Mbps, player-config.ts) until it has timed a segment, which it does once the
+  // first one is buffered (abr-controller onFragBuffered: main, not an init segment, not aborted),
+  // not when it is loaded. The guess is no measurement: as a headroom sample next to the measured
+  // ones it raised the headroom's variation for a whole minute, and a fast link whose first
+  // segment took a second or two to buffer looked unstable (docs/QUALITY.md, "Adaptive delay").
+  let bandwidthMeasured = false;
+  hls.on(o.events.FRAG_BUFFERED, (_e, data) => {
+    if (data.frag.type === 'main' && data.frag.sn !== 'initSegment' && !data.stats.aborted) bandwidthMeasured = true;
+  });
 
   const endHold = (): void => {
     if (holdTimer) clearTimeout(holdTimer);
@@ -237,7 +247,7 @@ export function attachAdaptiveDelay(
       latency: latency(),
       forwardBuffer: forwardBuffer(video),
       liveLag: liveLag(),
-      bandwidthEstimate: hls.bandwidthEstimate,
+      bandwidthEstimate: bandwidthMeasured ? hls.bandwidthEstimate : 0,
       levelBitrate: level?.bitrate ?? 0,
       playing: started && !video.paused && !holding && stallAt === null && !video.seeking && video.readyState >= 3,
       p2pEnabled: o.p2pEnabled(),
