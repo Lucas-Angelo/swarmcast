@@ -48,6 +48,13 @@ Toolchain per CI runner (everything is non-interactive; `tauri build` runs with 
 - **Linux** (`ubuntu-22.04` for x64, `ubuntu-22.04-arm` for arm64; the deb is built against the oldest glibc we support): Node 24, the pinned Rust and
   `sudo apt-get install -y build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils`.
   `desktop.mjs` sets `APPIMAGE_EXTRACT_AND_RUN=1` (no FUSE on runners). AppImages are built for the runner's architecture only.
+  Before `tauri build`, `desktop.mjs` puts the AppImage tools where the Tauri bundler looks for them (`scripts/build/appimage-tools.mjs`, also runnable alone with `--target` and `--dir`), so the build downloads nothing at bundle time:
+  its tools folder is `$XDG_CACHE_HOME/tauri` or `~/.cache/tauri` (tauri-bundler 2.10.4, the one in `@tauri-apps/cli` 2.12.4: `src/bundle/linux/appimage/linuxdeploy.rs`), where it uses
+  `AppRun-<arch>` and `linuxdeploy-07333c6-<arch>.AppImage` (`<arch>`: `x86_64`, `aarch64`) when they exist and otherwise downloads them once from `github.com/tauri-apps/binary-releases`, without a retry.
+  The script writes them from the pins in `scripts/build/versions.json` (`appimageTool` entries; SHA-256 checked, downloaded by `fetch-binaries.mjs` with tries and back-off, kept in `SC_DOWNLOAD_CACHE`),
+  plus the AppImage runtime, which appimagetool would otherwise download from AppImage/type2-runtime's `continuous` release (`LDAI_RUNTIME_FILE` hands it the pinned file; after the build `desktop.mjs` checks that each AppImage starts with it).
+  For `linuxdeploy-plugin-appimage.AppImage`, which the bundler would download from that plugin's monthly `continuous` build, it writes an empty file that is not executable: the bundler then skips the download and linuxdeploy, which ignores plugins that are not executable, uses the appimage plugin built into it (the same appimagetool and mksquashfs).
+  The gtk and gstreamer plugin scripts come from the bundler itself. When `@tauri-apps/cli` changes, `scripts/build/test/appimage-tools.test.ts` fails until the pins are checked against the new bundler's `prepare_tools`.
 - **Windows installer from Linux** (optional, unsigned exe): `apt-get install nsis lld llvm clang libayatana-appindicator3-dev`, `rustup target add x86_64-pc-windows-msvc`, `cargo install --locked cargo-xwin`, `XWIN_ACCEPT_LICENSE=1`, then `desktop.mjs --target windows-x64 --runner cargo-xwin`.
 - All: the signing secrets `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` in the environment (otherwise the build has no `.sig` files and prints a warning).
 

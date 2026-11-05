@@ -45,6 +45,7 @@ import { execFileSync, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { debianVersion } from '../releases/semver.mjs';
 import { setDebVersion } from './deb-version.mjs';
+import { prepareAppImageTools, startsWithRuntime } from './appimage-tools.mjs';
 import { hostTarget } from './fetch-binaries.mjs';
 import { writeThirdPartyLicenses } from './licenses.mjs';
 
@@ -234,6 +235,10 @@ const dmg = isMac && bundles.includes('dmg');
 let buildBundles = dmg ? bundles.filter((b) => b !== 'dmg') : bundles;
 if (dmg && !buildBundles.includes('app')) buildBundles = ['app', ...buildBundles];
 const common = ['--target', spec.triple, '--ci', ...(insecure ? ['--features', 'insecure-updates'] : []), ...(flag('debug') ? ['--debug'] : [])];
+// Linux: the AppImage tools in the bundler's tools folder before it would download them itself
+// (once, without a retry: a 504 from github.com failed a build), pinned and checked
+// (appimage-tools.mjs); LDAI_RUNTIME_FILE hands appimagetool the pinned AppImage runtime.
+if (isLinux && buildBundles.includes('appimage')) Object.assign(env, await prepareAppImageTools(target));
 const tauriArgs = ['build', '--bundles', buildBundles.join(','), '--config', overlayFile, ...common];
 if (arg('runner')) tauriArgs.push('--runner', arg('runner'));
 const res = spawnSync(process.execPath, [tauriCli, ...tauriArgs], { stdio: 'inherit', cwd: desktopDir, env });
@@ -356,6 +361,20 @@ if (updaterArtifacts && !collected.some((f) => f.endsWith('.sig'))) console.warn
 const PRODUCES = { nsis: /-setup\.exe$/, dmg: /\.dmg$/, app: /SwarmCast\.app$/, deb: /\.deb$/, appimage: /\.AppImage$/ };
 for (const b of bundles) {
   if (PRODUCES[b] && !collected.some((f) => PRODUCES[b].test(f))) throw new Error(`the ${b} bundle was not produced in ${rel(bundleDir)}`);
+}
+
+// Each AppImage starts with the pinned runtime: appimagetool took the file it was given and did
+// not download one.
+if (env.LDAI_RUNTIME_FILE) {
+  const runtime = fs.readFileSync(env.LDAI_RUNTIME_FILE);
+  for (const f of collected.filter((c) => c.endsWith('.AppImage'))) {
+    const head = Buffer.alloc(runtime.length + 1);
+    const fd = fs.openSync(f, 'r');
+    const n = fs.readSync(fd, head, 0, head.length, 0);
+    fs.closeSync(fd);
+    if (!startsWithRuntime(head.subarray(0, n), runtime)) throw new Error(`${rel(f)} does not start with the pinned AppImage runtime (${env.LDAI_RUNTIME_FILE})`);
+    console.log(`✓ ${path.basename(f)} starts with the pinned AppImage runtime`);
+  }
 }
 
 // 6. Linux: the server inside each package must start. linuxdeploy once broke it in the AppImage

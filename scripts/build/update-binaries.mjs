@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Bumps the third-party binaries pinned in scripts/build/versions.json (MediaMTX and
-// cloudflared) to their newest upstream GitHub release and refreshes the SHA-256 values.
+// cloudflared) to their newest upstream GitHub release and refreshes the SHA-256 values, and
+// reports a pin of a rolling `continuous` release (the AppImage runtime) that upstream has
+// rebuilt since (exit 1; re-pinned by hand, never rewritten here).
 //
 //   node scripts/build/update-binaries.mjs            rewrite versions.json
 //   node scripts/build/update-binaries.mjs --check    only report; exit 1 if anything is outdated
@@ -151,6 +153,26 @@ async function planTool(tool, spec) {
   return { tool, from: spec.version, to: release.tag_name, changed: true, notes, next };
 }
 
+/**
+ * A pin of a rolling release (`"version": "continuous"`, the AppImage runtime): its files are
+ * replaced on every upstream build, so there is no newer tag to move to, only other bytes under the
+ * same names. Reports the pinned assets whose upstream digest changed. Never rewritten by this
+ * script: the new files must be mirrored in ci-deps first (docs/RELEASING.md, section 8).
+ */
+async function checkRolling(tool, spec) {
+  const repo = githubRepo(spec.url);
+  const release = await getJson(`https://api.github.com/repos/${repo}/releases/tags/${spec.version}`);
+  const byName = new Map(release.assets.map((a) => [a.name, a]));
+  const moved = [];
+  for (const [target, entry] of Object.entries(spec.assets)) {
+    const asset = byName.get(entry.asset);
+    if (!asset) throw new Error(`${tool}: asset ${entry.asset} (for ${target}) not found in ${repo}'s ${spec.version} release`);
+    const sha = await assetSha256(asset);
+    if (sha !== entry.sha256) moved.push(`${target}: ${entry.asset} sha256 ${entry.sha256.slice(0, 12)}… -> ${sha.slice(0, 12)}… (${asset.updated_at})`);
+  }
+  return { tool, build: spec.build, moved };
+}
+
 function displayPath(file) {
   const rel = path.relative(process.cwd(), file);
   return rel.startsWith('..') || path.isAbsolute(rel) ? file : rel;
@@ -164,6 +186,18 @@ async function main() {
   const plans = [];
   // Entries that are not GitHub releases with semver tags (ffmpeg autobuilds) are bumped by hand.
   for (const [tool, spec] of Object.entries(versions)) if (spec.bundle !== false) plans.push(await planTool(tool, spec));
+  const rolling = [];
+  for (const [tool, spec] of Object.entries(versions)) if (spec.version === 'continuous') rolling.push(await checkRolling(tool, spec));
+  for (const r of rolling) {
+    if (r.moved.length === 0) {
+      console.log(`${r.tool}: continuous build ${r.build} is still upstream's`);
+      continue;
+    }
+    console.log(`${r.tool}: upstream's continuous build is no longer ${r.build}`);
+    for (const m of r.moved) console.log(`  ${m}`);
+    console.warn(`  warning: re-pin it by hand after mirroring the new files in ci-deps (docs/RELEASING.md, section 8)`);
+    process.exitCode = 1;
+  }
 
   let outdated = false;
   for (const p of plans) {

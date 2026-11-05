@@ -244,6 +244,36 @@ github/codeql-action, actions/attest and GitHub Pages steps. How often: in the 4
 the 192 failed runs before it (every failed run from 2026-10-25 to 2026-11-03), no action
 download had failed.
 
+### AppImage tools
+
+Every job that builds an AppImage runs `scripts/build/desktop.mjs` (`_docker.yml`'s builds, the
+Linux builds of `_desktop.yml`, so also `release.yml`), and that runs
+`scripts/build/appimage-tools.mjs` before `tauri build`. It writes what the Tauri bundler would
+download into its tools folder (`~/.cache/tauri` on the runners): `AppRun-<arch>` and
+`linuxdeploy-07333c6-<arch>.AppImage` (`x86_64`, `aarch64`), pinned by SHA-256 in
+`scripts/build/versions.json` and downloaded by `fetch-binaries.mjs` (6 tries with back-off,
+resume, `SC_DOWNLOAD_CACHE`), plus the AppImage runtime (`LDAI_RUNTIME_FILE`) and an empty,
+non-executable `linuxdeploy-plugin-appimage.AppImage` that makes linuxdeploy use its built-in
+appimage plugin. Details and the bundler's source lines: [apps/desktop/README.md](../../apps/desktop/README.md).
+
+Why: in 10x stability run 42000871599 (`soak/p10-0.5.2`), `docker / Build linux-arm64` failed in
+"Package, AppImage and a release folder" after `tauri build` had compiled:
+
+```
+ Downloading https://github.com/tauri-apps/binary-releases/releases/download/apprun-old/AppRun-aarch64
+ Downloading https://github.com/tauri-apps/binary-releases/releases/download/linuxdeploy-07333c6/linuxdeploy-aarch64.AppImage
+failed to bundle project: `http status: 504`
+```
+
+tauri-bundler 2.10.4 (in `@tauri-apps/cli` 2.12.4) downloads each missing tool with one GET and no
+retry (`src/utils/http_utils.rs`, `download`) and fails the build on any error
+(`src/bundle/linux/appimage/linuxdeploy.rs`, `prepare_tools`); a file that exists is used without a
+check. The appimage plugin (`continuous`, rebuilt every month) was optional there, and appimagetool,
+inside it, downloaded the runtime (also `continuous`) at bundle time with one try as well. Every
+AppImage build, the release's too, depended on these downloads from github.com, four per
+architecture. Now the bundler's log shows no `Downloading` line, `desktop.mjs` logs where each tool
+came from, and it checks that each AppImage starts with the pinned runtime.
+
 ## Caches
 
 GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
@@ -254,7 +284,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads, per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too) | 7 | 0.65 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
@@ -398,7 +428,8 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   then the REST fallback, each a warning), the remote actions our steps run (`fetch-remote`: a git
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
   41636784175), the pinned
-  downloads (`fetch-binaries.mjs`), cache restores (`cache-restore`: one more try after a try that
+  downloads (`fetch-binaries.mjs`; also the AppImage tools, through `appimage-tools.mjs`, so the
+  Tauri bundler downloads nothing without a retry: run 42000871599, "AppImage tools" above), cache restores (`cache-restore`: one more try after a try that
   timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error, npm's or a prebuild-install download's (`setup`, `npm-network-error.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
   bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
   (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
@@ -454,11 +485,11 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
-  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared) is saved by pull requests too, because
+  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared, the AppImage tools) is saved by pull requests too, because
   some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
   request pays one slow download, its later runs restore it. A pull request cannot poison it:
-  each entry is a pinned file, and `fetch-binaries.mjs` uses it only when its SHA-256 matches
-  `scripts/build/versions.json`.
+  each entry is a pinned file, and `fetch-binaries.mjs` and `appimage-tools.mjs` use it only when
+  its SHA-256 matches `scripts/build/versions.json`.
 - **Runner images:** pinned where an image switch must not land in the middle of a change
   (`ubuntu-24.04`; `ubuntu-22.04` for the Linux builds' glibc baseline, retired by GitHub in April
   2027; `macos-15-intel`, the last Intel image, until August 2027); `macos-latest` (macOS 26 on
