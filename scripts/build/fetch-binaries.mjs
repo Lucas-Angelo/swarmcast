@@ -230,8 +230,9 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
   for (const [tool, spec] of Object.entries(versions)) {
     if (only) {
       if (tool !== only) continue;
-    } else if (spec.testOnly) {
-      // ffmpeg-test (the GPL build CI's test feeds use) is fetched only by name (--only).
+    } else if (spec.testOnly || spec.appimageTool) {
+      // ffmpeg-test (the GPL build CI's test feeds use) is fetched only by name (--only); the
+      // AppImage build tools only by appimage-tools.mjs.
       continue;
     } else if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) {
       // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
