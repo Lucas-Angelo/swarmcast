@@ -53,7 +53,7 @@ jobs:
     # images its HTTP service's sandbox cannot read; apps/server/test/devices/ios.ts), so this job
     # stays on macOS 26 until a safaridriver update fixes that.
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash
@@ -88,8 +88,8 @@ jobs:
       # up, which iOS takes for a long press: the touch reached the element and no click followed
       # (runs 41184587941, 41190536745, 41227486868). A failed test keeps its screenshot and logs.
       - name: Device tests, iOS
-        timeout-minutes: 25
-        run: DEVICES_VIDEO=off npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests
+        timeout-minutes: 55
+        run: DEVICES_VIDEO=off npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests --repeat-each=1
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -124,7 +124,7 @@ jobs:
     name: Android Chrome (emulator)
     if: inputs.platform != 'ios' && (inputs.every-event || github.event_name != 'pull_request' || github.event.label.name == 'devices')
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     defaults:
       run:
         shell: bash
@@ -169,13 +169,13 @@ jobs:
       # A crashed emulator leaves a core (its private memory only: coredump_filter 0x1 keeps the
       # guest's RAM out), for the backtrace below.
       - name: Device tests, Android
-        timeout-minutes: 25
+        timeout-minutes: 55
         run: |
           sudo mkdir -p /tmp/cores && sudo chmod 1777 /tmp/cores
           sudo sysctl -w kernel.core_pattern=/tmp/cores/core.%e.%p
           ulimit -c unlimited
           echo 0x1 >/proc/self/coredump_filter
-          npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
+          npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests --repeat-each=1
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true

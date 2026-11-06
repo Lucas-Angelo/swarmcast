@@ -476,15 +476,9 @@ export class AndroidPhone implements Phone {
    * raise it any more. Playwright's own calls in tap() and type() still count as gestures; they run
    * right before or after the finger's touch, which is one.
    */
-  async evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R> {
-    if (!this.cdp) throw new Error('no page yet: open() a link first');
-    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
-      expression: `(${fn.toString()})(${arg === undefined ? '' : JSON.stringify(arg)})`,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    if (exceptionDetails) throw new Error(`evaluate in the page: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
-    return result.value as R;
+  // NO FIX (soak branch only): Playwright's page.evaluate, as on main.
+  evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R> {
+    return this.current.evaluate(fn as (arg: unknown) => R, arg);
   }
 
   async tap(selector: string): Promise<void> {
