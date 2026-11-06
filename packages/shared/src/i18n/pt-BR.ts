@@ -59,6 +59,7 @@ export const ptBR: Messages = {
   'warn.tunnelDropped': 'O túnel caiu ({reason}). Reconectando…',
   'warn.tunnelNewAddress': 'O túnel voltou com um endereço NOVO. Mande o novo link para quem está assistindo.',
   'warn.tunnelNotAnswering': 'O túnel reconectou, mas ainda não está respondendo.',
+  'warn.tunnelLost': 'Seu link parou de funcionar: a Cloudflare não alcança mais este computador. O SwarmCast está abrindo um túnel novo; mande o novo link quando ele aparecer.',
   'warn.routerPortUnconfirmed': 'Não deu para confirmar que a porta do roteador foi fechada: {details}',
   'warn.speedTestFailed': 'O teste de velocidade falhou: {error}',
   'warn.tunnelLimit': 'O túnel grátis está perto do limite: umas {used} de {limit} conexões em uso (cada espectador mantém uma aberta, mais os downloads do vídeo). Passando disso, quem chega não consegue entrar e o vídeo trava. Peça para ligarem "Ajudar a transmissão (P2P)"; para um público maior, use o seu próprio domínio ou o modo direto.',

@@ -11,6 +11,7 @@ import {
   START_RETRY_DELAYS_MS,
   classifyStartFailure,
   cloudflaredReason,
+  isConnectionLine,
   isErrorLine,
   isQuicFailureLine,
   isRegisteredLine,
@@ -70,6 +71,8 @@ export class QuickTunnel extends TunnelProvider {
   private restarts = 0;
   private abort = new AbortController();
   private transport: TunnelTransport = 'auto';
+  /** Set by replace(): the next exit of cloudflared is ours, not a drop. */
+  private replacing = false;
 
   constructor(
     private readonly binary: string,
@@ -191,6 +194,9 @@ export class QuickTunnel extends TunnelProvider {
         }
         // Its fatal error is a bare line (no timestamp, no level): as important as an ERR line.
         if (isErrorLine(line)) this.log.warn({ cloudflared: kept }, 'cloudflared');
+        // Its connection to Cloudflare coming and going: in the log, to tell later whether the
+        // tunnel was connected when the address failed.
+        else if (isConnectionLine(line)) this.log.info({ cloudflared: kept }, 'cloudflared');
         else this.log.debug({ cloudflared: kept }, 'cloudflared');
       });
       child.once('exit', (code) => {
@@ -202,15 +208,32 @@ export class QuickTunnel extends TunnelProvider {
             reject(new StartAttemptError(classifyStartFailure([...first, ...last]), code));
             return;
           }
-          if (this.wanted && this.child === child) void this.recover(code);
+          if (this.wanted && this.child === child) {
+            const replaced = this.replacing;
+            this.replacing = false;
+            void this.recover(code, replaced);
+          }
         });
       });
     });
   }
 
-  /** The connector died during the live: restart it. The address will usually change. */
-  private async recover(code: number | null): Promise<void> {
-    this.emit('down', `cloudflared exited (code ${code})`);
+  /**
+   * Replaces the running tunnel with a new one (a new address), as after a drop: the live asks for
+   * it when Cloudflare keeps answering the address with its own error page while cloudflared stays
+   * up (tunnel/watch.ts). Emits `url` with the new address; no `down` (the live says why itself).
+   */
+  override async replace(): Promise<boolean> {
+    // No address: not started, or already restarting after a drop.
+    if (!this.wanted || !this.child || this.current === null) return false;
+    this.replacing = true;
+    await this.child.stop();
+    return true;
+  }
+
+  /** The connector died during the live (or replace() stopped it): restart it. The address will usually change. */
+  private async recover(code: number | null, replaced = false): Promise<void> {
+    if (!replaced) this.emit('down', `cloudflared exited (code ${code})`);
     this.current = null;
     while (this.wanted && this.restarts < 20) {
       this.restarts += 1;

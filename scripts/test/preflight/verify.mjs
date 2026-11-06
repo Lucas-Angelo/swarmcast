@@ -12,20 +12,24 @@
 // through a real Cloudflare quick tunnel.
 //
 // Every step runs once and stops the check at its first failure (no retry): waits are for their
-// condition, with a deadline. The one infra recovery is the brand-new quick-tunnel name that the
-// runner's resolver may not know yet (scripts/test/lib/viewer.mjs). The helpers are shared with
+// condition, with a deadline. The infra recoveries: the brand-new quick-tunnel name that the
+// runner's resolver may not know yet (scripts/test/lib/viewer.mjs), and a link that Cloudflare's
+// edge answers with its own 530 page (no connection for the tunnel) although cloudflared runs on
+// (gate run 42164021587): the app's tunnel watch must then replace the tunnel and show a new link
+// in time, and the viewer opens that one (joinAndPlay). The helpers are shared with
 // the Windows suites (scripts/test/lib). --junit also writes the steps as JUnit XML.
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { bareEnv, barePath, loginFromOutput, waitLiveLink } from '../lib/app.mjs';
+import { WATCH_REPLACE_WITHIN_MS } from '../../../apps/server/src/tunnel/watch.ts';
+import { LIVE_LINK_WAIT_MS, bareEnv, barePath, loginFromOutput, waitLiveLink } from '../lib/app.mjs';
 import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
-import { joinIn, pageState, playerStats, probeHealth, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
+import { CLOUDFLARE_NO_TUNNEL, joinOpened, openLink, pageState, playerStats, probeHealth, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 import { orTimeout, poll } from '../lib/wait.mjs';
 
 const args = process.argv.slice(2);
@@ -96,14 +100,41 @@ function pushStream(rtmpUrl, key) {
   });
 }
 
-async function joinAndPlay(browser, link, nickname) {
+/**
+ * How long the app may take to replace a tunnel whose address Cloudflare answers with its 530 page:
+ * its watch notices within WATCH_REPLACE_WITHIN_MS (apps/server/src/tunnel/watch.ts), then the new
+ * tunnel opens as at start (LIVE_LINK_WAIT_MS).
+ */
+const RELINK_WAIT_MS = WATCH_REPLACE_WITHIN_MS + LIVE_LINK_WAIT_MS;
+
+/**
+ * Opens `link`, joins and waits for playback. With `app` (the tunnel session): when Cloudflare
+ * answers the link with its own 530 page, the app must notice, replace the tunnel and show a new
+ * link within RELINK_WAIT_MS (what the streamer then sends); the viewer opens that one. Returns the
+ * link that played.
+ */
+async function joinAndPlay(browser, link, nickname, app) {
   const context = await browser.newContext();
   const page = await context.newPage();
   pages.add({ page, label: nickname });
-  await joinIn(page, link, nickname);
+  const res = await openLink(page, link);
+  if (app && res?.status() === CLOUDFLARE_NO_TUNNEL) {
+    const t0 = Date.now();
+    const s = await poll(
+      async () => {
+        const st = await app.state();
+        return st.liveLink && st.liveLink !== link ? st : null;
+      },
+      { timeoutMs: RELINK_WAIT_MS, what: `a new live link after Cloudflare answered ${CLOUDFLARE_NO_TUNNEL}` },
+    );
+    console.log(`infra recovery: Cloudflare answered the live link with ${CLOUDFLARE_NO_TUNNEL} (no connection for the tunnel at its edge); the app replaced the tunnel and showed a new link after ${Math.round((Date.now() - t0) / 1000)} s`);
+    link = s.liveLink;
+    await openLink(page, link);
+  }
+  await joinOpened(page, nickname);
   await page.waitForURL(/\/watch$/, { timeout: 30_000, waitUntil: 'commit' });
   await waitPlaying(page);
-  return { context, page };
+  return { context, page, link };
 }
 
 async function runSession({ tunnel, browser }) {
@@ -129,7 +160,7 @@ async function runSession({ tunnel, browser }) {
     await poll(async () => (await app.state()).phase === 'live', { timeoutMs: 90_000, what: 'phase live', abortOn: [ffmpeg, inst.owner] });
     step(`[${label}] OBS-like RTMP stream accepted (phase live)`, true);
 
-    const a = await joinAndPlay(browser, s0.liveLink, `alice-${label}`);
+    const a = await joinAndPlay(browser, s0.liveLink, `alice-${label}`, tunnel ? app : undefined);
     step(`[${label}] viewer plays the stream in ${browser.browserType().name()}${channel ? ` (${channel})` : ''}`, true);
 
     if (!tunnel) {
@@ -161,7 +192,7 @@ async function runSession({ tunnel, browser }) {
     }
     await a.context.close();
 
-    const publicBase = s0.liveLink.replace(/\/join\/.*/, '');
+    const publicBase = a.link.replace(/\/join\/.*/, '');
     const stop = await app.api('/api/live/stop', {});
     step(`[${label}] "Stop everything" verified`, stop.verified === true);
     const stillUp = !!(await probeHealth(publicBase));

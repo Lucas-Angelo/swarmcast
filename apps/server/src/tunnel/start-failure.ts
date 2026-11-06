@@ -122,6 +122,17 @@ export function isQuicFailureLine(line: string): boolean {
   return QUIC_FAILURE.some((re) => re.test(line));
 }
 
+/**
+ * cloudflared's lines about its connection to Cloudflare coming and going (2026.10.7,
+ * supervisor/ and connection/): `INF Registered tunnel connection connIndex=0 … location=…
+ * protocol=quic`, `INF Unregistered tunnel connection connIndex=0 …`, `INF Retrying connection in up
+ * to 2s …`, `ERR Connection terminated connIndex=0`. The INF ones are logged at info (the ERR one is a
+ * warning anyway, isErrorLine).
+ */
+export function isConnectionLine(line: string): boolean {
+  return /\b(?:Registered tunnel connection|Unregistered tunnel connection|Connection terminated|Retrying connection in|Lost connection with the edge)\b/i.test(line);
+}
+
 /** cloudflared's line once a connection to Cloudflare works (`INF Registered tunnel connection connIndex=0 … protocol=quic`). */
 export function isRegisteredLine(line: string): boolean {
   return /\bRegistered tunnel connection\b/.test(line);

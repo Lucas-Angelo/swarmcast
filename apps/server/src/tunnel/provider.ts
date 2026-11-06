@@ -4,6 +4,7 @@ import https from 'node:https';
 import net, { type LookupFunction } from 'node:net';
 import { abortable, sleep } from '../core/retry.js';
 import type { TransientCause } from './start-failure.js';
+import type { PublicCheck } from './watch.js';
 
 /** Cloudflare refused or failed a new tunnel; the provider tries again after `delayMs`. */
 export interface TunnelRetry {
@@ -53,6 +54,13 @@ export abstract class TunnelProvider extends EventEmitter<TunnelEvents> {
   abstract start(localPort: number, opts?: TunnelStartOptions): Promise<string>;
   abstract stop(): Promise<void>;
   abstract get url(): string | null;
+  /**
+   * Replace the running tunnel with a new one, which comes with `url` (its address usually changes).
+   * False when this provider cannot (no tunnel running, or one the user runs).
+   */
+  async replace(): Promise<boolean> {
+    return false;
+  }
   /** Process id of the connector, if any (used by the shutdown verification). */
   get pid(): number | undefined {
     return undefined;
@@ -142,11 +150,17 @@ export interface ReachabilityIo {
   /** Whether this machine's own resolver (getaddrinfo, the OS's DNS cache) has an address for `hostname`. */
   system(hostname: string): Promise<boolean>;
   /**
-   * GET `url` and return its X-SwarmCast header, or null when it does not answer 200. With `ip`
-   * the connection goes to that address (TLS and Host still name the host); without it, a name
-   * is resolved by this machine's resolver.
+   * GET `url` on a new connection: its status and X-SwarmCast header (the header only with a 200),
+   * or null when nothing answered. With `ip` the connection goes to that address (TLS and Host
+   * still name the host); without it, a name is resolved by this machine's resolver.
    */
-  health(url: URL, ip: string | undefined, headers: Record<string, string>): Promise<string | null>;
+  health(url: URL, ip: string | undefined, headers: Record<string, string>): Promise<HealthAnswer | null>;
+}
+
+/** What a GET of /healthz got back. Cloudflare's own error pages (530: no tunnel connection) have no marker. */
+export interface HealthAnswer {
+  status: number;
+  marker: string | null;
 }
 
 const realIo: ReachabilityIo = {
@@ -157,9 +171,10 @@ const realIo: ReachabilityIo = {
   ),
   health: async (url, ip, headers) => {
     if (url.protocol !== 'https:') {
-      const res = await fetch(url, { signal: AbortSignal.timeout(5000), cache: 'no-store', headers });
+      const res = await fetch(url, { signal: AbortSignal.timeout(5000), cache: 'no-store', headers }).catch(() => null);
+      if (!res) return null;
       await res.body?.cancel();
-      return res.ok ? res.headers.get('x-swarmcast') : null;
+      return { status: res.status, marker: res.status === 200 ? res.headers.get('x-swarmcast') : null };
     }
     const lookup: LookupFunction | undefined = ip
       ? (_host, opts, cb) => {
@@ -168,9 +183,12 @@ const realIo: ReachabilityIo = {
         }
       : undefined;
     return new Promise((resolve) => {
-      const req = https.get(url, { lookup, timeout: 5000, headers: { 'cache-control': 'no-store', ...headers } }, (res) => {
+      // agent: false: a new connection every time, so each check meets the edge afresh (a kept-alive
+      // one would keep asking the same edge server).
+      const req = https.get(url, { lookup, agent: false, timeout: 5000, headers: { 'cache-control': 'no-store', ...headers } }, (res) => {
         res.resume();
-        resolve(res.statusCode === 200 ? ((res.headers['x-swarmcast'] as string | undefined) ?? null) : null);
+        const status = res.statusCode ?? 0;
+        resolve({ status, marker: status === 200 ? ((res.headers['x-swarmcast'] as string | undefined) ?? null) : null });
       });
       req.on('timeout', () => req.destroy());
       req.on('error', () => resolve(null));
@@ -198,10 +216,29 @@ const realIo: ReachabilityIo = {
 export async function probeHealth(url: string, probe?: string, io: ReachabilityIo = realIo): Promise<string | null> {
   const u = new URL('/healthz', url);
   const headers: Record<string, string> = probe ? { 'x-swarmcast-probe': probe } : {};
-  if (u.protocol !== 'https:' || isIpHost(u.hostname)) return io.health(u, undefined, headers);
+  if (u.protocol !== 'https:' || isIpHost(u.hostname)) return (await io.health(u, undefined, headers))?.marker ?? null;
   const answer = await io.cloudflare(u.hostname);
   if (answer === 'unknown') return null;
-  return io.health(u, answer === 'unreachable' ? undefined : answer.ip, headers);
+  return (await io.health(u, answer === 'unreachable' ? undefined : answer.ip, headers))?.marker ?? null;
+}
+
+/**
+ * One check of the live's public address during the live (tunnel/watch.ts), resolved as probeHealth
+ * does: `ok` with this live's marker; `edge-error` when Cloudflare answered without it (its 530
+ * error page: no tunnel connection for the address) or no longer knows the name; `no-answer` when
+ * nothing answered (this computer's own connection).
+ */
+export async function checkPublicAddress(url: string, expectMarker: string, probe: string, io: ReachabilityIo = realIo): Promise<PublicCheck> {
+  const u = new URL('/healthz', url);
+  let ip: string | undefined;
+  if (u.protocol === 'https:' && !isIpHost(u.hostname)) {
+    const answer = await io.cloudflare(u.hostname);
+    if (answer === 'unknown') return 'edge-error';
+    if (answer !== 'unreachable') ip = answer.ip;
+  }
+  const got = await io.health(u, ip, { 'x-swarmcast-probe': probe });
+  if (!got) return 'no-answer';
+  return got.marker === expectMarker ? 'ok' : 'edge-error';
 }
 
 /**
