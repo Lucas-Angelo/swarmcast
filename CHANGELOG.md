@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.2] - 2026-11-08
+
+### Changed
+
+- **Up-to-date building blocks.** The video player (hls.js 1.7.4), parts of SwarmCast's own web server and of the desktop app get their makers' latest fixes. Nothing changes in how SwarmCast looks or works.
+
 ### Fixed
 
 - **SwarmCast notices when your link stops working while the tunnel looks fine.** Rarely, Cloudflare answered your link with its own error page (error 530) although the tunnel had not dropped, and viewers could not get in while the panel showed nothing wrong. SwarmCast now checks your link during the live. If Cloudflare keeps answering it with errors, the panel says so, SwarmCast opens a new tunnel by itself, and the panel and a notification give you the new link to send.
@@ -297,7 +303,8 @@ First public release.
 - One-script install, update and start for Windows, macOS and Linux; release archives
   ship with a `SHA256SUMS.txt` file and pinned, checksum-verified MediaMTX and cloudflared.
 
-[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.2...HEAD
+[0.5.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.1...v0.5.2
 [0.5.1]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.2...v0.5.0
 [0.4.2]: https://github.com/Lucas-Angelo/swarmcast/compare/v0.4.1...v0.4.2
