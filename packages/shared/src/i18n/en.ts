@@ -64,6 +64,7 @@ export const en = {
   'warn.tunnelDropped': 'The tunnel dropped ({reason}). Reconnecting…',
   'warn.tunnelNewAddress': 'The tunnel reconnected with a NEW address. Send the new link to your viewers.',
   'warn.tunnelNotAnswering': 'The tunnel reconnected but is not answering yet.',
+  'warn.tunnelLost': 'Your link stopped working: Cloudflare no longer reaches this computer. SwarmCast is opening a new tunnel; send the new link when it appears.',
   'warn.routerPortUnconfirmed': 'Could not confirm the router port is closed: {details}',
   'warn.speedTestFailed': 'Speed test failed: {error}',
   'warn.tunnelLimit': 'The free tunnel is near its limit: about {used} of {limit} connections in use (each viewer keeps one open, plus video downloads). Beyond it, new viewers cannot join and video stutters. Ask viewers to turn on "Help the stream (P2P)"; for a bigger audience use your own domain or Direct mode.',

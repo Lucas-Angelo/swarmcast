@@ -56,7 +56,7 @@ function recordingIo(cloudflare: CloudflareAnswer[], markers: Array<string | nul
     health: async (url, ip) => {
       const marker = next(markers);
       calls.push(`GET ${url.href} via ${ip ?? 'system'}: ${marker}`);
-      return marker;
+      return marker === null ? { status: 530, marker: null } : { status: 200, marker };
     },
   };
   return { io, calls };
