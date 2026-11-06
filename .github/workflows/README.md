@@ -8,14 +8,14 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 
 | Workflow | Runs on | What |
 |---|---|---|
-| `pipeline.yml` | pull requests, push to `main`, monthly, by hand, called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
+| `pipeline.yml` | pull requests, push to `main`, monthly, by hand (also as a release rehearsal, `release-flavour`), called by `release.yml` | everything that tests the app; its `ci-ok` job is the one required check |
 | `release.yml` | push of a `v*` tag | the pipeline in release flavour (desktop installers signed with the updater key), then publish the GitHub release |
 | `site.yml` | push to `main` touching the site, after Usage stats, by hand | build and deploy the website (pull requests test it through the pipeline) |
 | `codeql.yml` | pull requests and `main` (not docs-only), monthly | code scanning: TypeScript, Rust, the workflows |
 | `soak.yml` | the `soak` label on a pull request, by hand once on `main` | repeat suites from `soak-plan.json` and report pass rates; fails on any single failed run |
 | `chat-load.yml` | the `chat-load` label on a pull request, by hand once on `main`, monthly | the chat load bench (`scripts/test/chat/bench.ts`, 9 scenarios) on Ubuntu and Windows; the chat and branding property tests at 1,000,000 runs and the exhaustive 24-bit colour sweeps (`fuzz`, `branding-fuzz`) |
-| `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
-| `devices.yml` | the `devices` label on a pull request, by hand | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
+| `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly, a pipeline run with `release-flavour` | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
+| `devices.yml` | the `devices` label on a pull request, by hand, a pipeline run with `release-flavour` | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`); pull requests and `main` run them as the pipeline's `docker` stage |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 | `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
@@ -45,11 +45,14 @@ changes ─┬─ quick ──────────────────�
 | e2e | `_e2e.yml`, called three times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos`: macOS `chat`, `media`; `e2e-macos-ui`: macOS `ui`, after `node-macos`) | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
+| devices | `devices.yml` (`every-event: true`), only with `release-flavour` | 2 (iOS Simulator on `macos-26`, Android emulator on Ubuntu) | the viewer in real mobile browsers, after `e2e-macos-ui` (macOS lane 3) |
+| rendering | `rendering.yml`, only with `release-flavour` | 3 (Windows, macOS, Ubuntu) | the chat corpus and viewer chat UI in every engine, plus phone emulation, after `e2e-macos` (macOS lane 1) |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
 That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
-site, 12 more when it touches the Docker suites or what they run. GitHub Free runs 20 jobs at once,
+site, 12 more when it touches the Docker suites or what they run. A release rehearsal runs all of
+them plus `devices` and `rendering`: 47 jobs (10 on macOS, 7 on Windows). GitHub Free runs 20 jobs at once,
 5 of them on macOS; a pipeline uses at most 4 of those 5 at once (see "macOS concurrency" below).
 Every call of a stage keeps the stage's name, so the checks read `node / ... (macos-latest)` and
 `e2e / <group> (macos-latest)` whichever call ran them.
@@ -87,6 +90,10 @@ through a `latest.json` it writes and serves on `127.0.0.1`. Pull requests and `
 release profile without LTO and with 16 codegen units (`CARGO_PROFILE_RELEASE_*`, so the
 `tauri bundle` step that retries the macOS `.dmg` still finds the binary) and sign with a key pair
 made in the job. A release builds with `Cargo.toml`'s profile (fat LTO) and the real updater key.
+A release rehearsal (`release-flavour`) builds exactly as a release does (`Cargo.toml`'s profile,
+the same bundles, the 45-minute build limit; the step "Build profile (release flavour)" prints the
+profile and fails if a `CARGO_PROFILE_RELEASE_*` variable overrides it) but signs with the job's
+key pair, as pull requests do.
 `desktop.mjs` signs only with a key it is given (`TAURI_SIGNING_PRIVATE_KEY`, or `--release-key`
 locally); it never picks up a key file by itself.
 
@@ -115,24 +122,60 @@ ruleset (docs/RELEASING.md, section 2).
 **Concurrency.** A newer push to a pull request cancels its running pipeline. Runs on `main`, tags,
 schedules and releases are never cancelled.
 
+### Running it by hand
+
+**Actions → Pipeline → Run workflow**, or `gh workflow run pipeline.yml --ref <branch> -f <input>=<value>`.
+A dispatched run runs every stage (`changes.sh --all`: app, site and Docker), whatever the branch
+changed. Dispatch it on a `soak/*` marker branch (a commit of its own on top of what you test),
+never on `main`'s commit: a failure there shows red on `main`.
+
+| Input | Default | What |
+|---|---|---|
+| `windows-runners` | `["windows-latest"]` | the Windows suites' runners, a JSON list (for example `["windows-2022","windows-11-arm"]`) |
+| `windows-suites` | `["app","quality","direct","obs"]` | the Windows suites to run, a JSON list |
+| `screenshots` | `false` | also capture the Windows installer pages and app window for the website guide (artifact only) |
+| `release-flavour` | `false` | a release rehearsal that publishes nothing (below) |
+
+**Release rehearsal** (`release-flavour: true`): the run a release makes (`release.yml` calling the
+pipeline with `release: true`), without the release. What it adds to a plain dispatch:
+
+- the five desktop targets build in release flavour: `Cargo.toml`'s profile (fat LTO, one
+  codegen unit), the same bundles and the release jobs' 45-minute limit, signed with a key pair
+  made in the job (`tauri signer generate --ci --password test`), and build A trusts that key;
+- `devices` (`devices.yml` with `every-event: true`: iOS Simulator and Android emulator) and
+  `rendering` (`rendering.yml`), chained into the macOS lanes ("macOS concurrency" below);
+- `ci-ok` needs them too: it is red if either is skipped, fails or is cancelled.
+
+What it never does: name the `release` environment, read `secrets.*` (the updater key is passed on
+only with `release: true`, which only `release.yml` can set), or create a tag, release, draft,
+attestation or Pages deployment; its artifacts are the usual 14-day workflow artifacts. It is for
+proving a release candidate or the pipeline itself stable, many runs in a row. Start them one
+after the other (the next when the last has ended): one run uses at most four of the account's
+five macOS runners, two at once ask for up to eight, and GitHub drops a macOS job that waits too
+long ("macOS concurrency" below). `devices.yml` and `rendering.yml` take the calling run's own
+concurrency group, so runs on the same branch never cancel each other's calls.
+
 ### macOS concurrency
 
-A pipeline's eight macOS jobs run in four lanes, so it never has more than four on macOS at once
-(`needs` in `pipeline.yml`; a chained call runs whatever the result of the call before it, not when
-the run is cancelled):
+A pipeline's eight macOS jobs (ten in a release rehearsal) run in four lanes, so it never has more
+than four on macOS at once (`needs` in `pipeline.yml`; a chained call runs whatever the result of
+the call before it, not when the run is cancelled):
 
 | Lane | Jobs, in order | Minutes (p50, max) |
 |---|---|---|
-| 1 | `e2e / chat` (with the viewer chat UI) | 17.8, 24.4 |
+| 1 | `e2e / chat` (with the viewer chat UI); release rehearsal: then `rendering / macos-latest`, once `e2e / chat` and `e2e / media` are both done | 17.8, 24.4; rendering 1-6 |
 | 2 | `e2e / media` | 17.0, 19.6 |
-| 3 | `node / unit, integration, rust`, then `e2e / ui` | 4.3 + 12.2 = 16.5; 6.7 + 16.8 |
+| 3 | `node / unit, integration, rust`, then `e2e / ui`; release rehearsal: then `devices / iOS Safari (Simulator)` (`macos-26`) | 4.3 + 12.2 = 16.5; 6.7 + 16.8; devices 6-12 |
 | 4 | `desktop macos-arm64` (build, clean-machine), then `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 4.1 + 2.7 + 4.1 + 3.7 = 14.6; 12.1 + 3.8 + 10.7 + 5.8 in a release |
 
 (Job times of the successful Pipeline and Release runs from 2026-11-03 12:00 to 2026-11-05 18:00
 UTC.) Lanes 3 and 4 end before lane 1 on a pull request or `main`, so the wall time is the same
 as with every macOS job at once, when runners come straight away. A release builds with fat LTO
 (macOS builds 5-12.5 minutes), so lane 4 there takes up to about 30 minutes against 22 for
-lane 1. A cold Rust cache (a `Cargo.lock` or toolchain change) doubles the two builds. Each
+lane 1. A release rehearsal ends lane 3 with `devices` (about 16.5 + 10 minutes) and lane 1 with
+`rendering`, both still within lane 4's release builds. (`rendering` and `devices` also run Ubuntu
+and Windows jobs; the chain delays those too, which costs nothing, since lane 4 ends later.) A cold
+Rust cache (a `Cargo.lock` or toolchain change) doubles the two builds. Each
 chained job waits for its own runner.
 
 **Why.** GitHub Free gives the account 5 macOS jobs at once, Apple silicon and Intel together.
@@ -590,7 +633,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   needs a remote action fetches it with `fetch-remote`, see "Remote actions").
 - **Secrets:** only release jobs see the updater key. They name the `release` environment
   (deployment rule: tags `v*`), whose secrets no other job can read (docs/RELEASING.md, section 3).
-  Pull request runs sign their test builds with a throwaway key. Never reference `secrets.*` outside
+  Pull request runs and release rehearsals (`release-flavour`) sign their builds with a throwaway key. Never reference `secrets.*` outside
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
@@ -610,4 +653,4 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
 - **Job names** read `<stage> / <what> (<runner>)` in the checks list.
 - **Windows options:** run `pipeline.yml` by hand with `windows-runners` (for example
   `["windows-2022","windows-11-arm"]`) and `windows-suites`, or `screenshots` for the website
-  guide's Windows pictures.
+  guide's Windows pictures ("Running it by hand" above, with `release-flavour`).

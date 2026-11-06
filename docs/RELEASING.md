@@ -137,7 +137,10 @@ workflow fails").
 **CI.** One workflow, `pipeline.yml`, runs automatically on every pull request and push to `main`
 (standard runners are free on a public repository), again on the 1st of every month with everything (to
 catch dead third-party downloads or runner image changes), and by hand from **Actions → Pipeline → Run
-workflow**; the **Re-run** button repeats a run, but never use it to turn a failed run green: a failure
+workflow** (with **release-flavour**, a release rehearsal: every stage, the desktop installers built as
+a release builds them but signed with a throwaway key, the phone and rendering suites too, and nothing
+published; dispatch it on a `soak/*` marker branch, [.github/workflows/README.md](../.github/workflows/README.md#running-it-by-hand));
+the **Re-run** button repeats a run, but never use it to turn a failed run green: a failure
 is a bug, fixed at its cause (network steps already retry by themselves,
 [.github/workflows/README.md](../.github/workflows/README.md#rules)), and `ci-ok` fails on any re-run
 (a run attempt after the first), so a re-run cannot turn the required check green either. A newer push to a pull request
@@ -239,7 +242,8 @@ version only after both were verified.** `vX.Y.Z-beta.1`, then **Verify a beta**
 through the beta feed; only then `vX.Y.Z`. `X.Y.0` is refused by the release workflow unless
 `vX.Y.0-beta.N` (or `-rc.N`) is published. Merge and release only after every check passed on the pull
 request (not only `ci-ok`), and a change to the tests or the pipeline lands only after repeated full
-pipeline runs with no failure at all.
+pipeline runs with no failure at all (release rehearsals, section 2, "CI", run everything a release
+runs without publishing anything).
 
 **A published release is never changed.** Release immutability is on (section 1): once published, its
 assets and its tag cannot be edited, replaced or deleted, and GitHub adds a release attestation.

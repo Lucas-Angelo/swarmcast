@@ -11,7 +11,10 @@ name: desktop
 # CARGO_PROFILE_RELEASE_*, so `tauri bundle` still finds target/<triple>/release), and sign the
 # updater artifacts with a key pair made in the job. A release (release: true, from release.yml)
 # builds with the profile in Cargo.toml (fat LTO) and signs with TAURI_SIGNING_PRIVATE_KEY from
-# the `release` environment; A then trusts the release key. The macOS and Linux builds first
+# the `release` environment; A then trusts the release key. A release rehearsal (release-flavour:
+# true, pipeline.yml dispatched by hand) builds exactly as a release does (Cargo.toml's profile,
+# the same bundles and time limits) but signs like a pull request, with the job's own key pair:
+# it never names the `release` environment or reads its secrets. The macOS and Linux builds first
 # stage their server package (release/staging/<target>, pkg-<target>: pkg's macOS binaries need
 # a Mac to be signed) from web-dist; Windows takes release/staging/windows-x64 from
 # pkg-windows-x64 (_build.yml).
@@ -43,6 +46,10 @@ on:
         required: true
       release:
         description: Release build (fat LTO, updater artifacts signed with TAURI_SIGNING_PRIVATE_KEY).
+        type: boolean
+        default: false
+      release-flavour:
+        description: Build as a release does (fat LTO, the release time limits), signed with the job's throwaway key. No environment, no secrets.
         type: boolean
         default: false
       screenshots:
@@ -93,7 +100,7 @@ jobs:
     environment: ${{ inputs.release && 'release' || '' }}
     # Warm-cache p99 8.8 min; a cold Rust cache (a Cargo.lock or toolchain change) costs about
     # twice that, so 2 x 8.8 x 1.5. Release builds (fat LTO) have no measurements yet.
-    timeout-minutes: ${{ inputs.release && 45 || 27 }}
+    timeout-minutes: ${{ (inputs.release || inputs.release-flavour) && 45 || 27 }}
     defaults:
       run:
         shell: bash
@@ -130,10 +137,20 @@ jobs:
       # Before setup-rust: rust-cache puts every CARGO_* variable into its key, so test builds and
       # release builds never share a cache entry.
       - name: Build profile (test builds; releases keep Cargo.toml's)
-        if: ${{ !inputs.release }}
+        if: ${{ !inputs.release && !inputs.release-flavour }}
         run: |
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
+      # The log shows which profile a release or rehearsal built, and fails if anything overrode it.
+      - name: Build profile (release flavour, Cargo.toml's)
+        if: ${{ inputs.release || inputs.release-flavour }}
+        run: |
+          sed -n '/^\[profile\.release\]/,/^\[/p' apps/desktop/src-tauri/Cargo.toml
+          if env | grep '^CARGO_PROFILE_RELEASE_'; then
+            echo "::error::a CARGO_PROFILE_RELEASE_* variable overrides Cargo.toml's release profile"
+            exit 1
+          fi
+          echo "release flavour: Cargo.toml's [profile.release], updater key: $([ "$RELEASE" = true ] && echo release || echo throwaway)"
       - uses: ./.github/actions/setup-rust
         timeout-minutes: 8
         with:
