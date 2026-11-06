@@ -1,6 +1,6 @@
 {
   "name": "@swarmcast/shared",
-  "version": "0.5.2-beta.2",
+  "version": "0.5.2",
   "private": true,
   "type": "module",
   "exports": {
