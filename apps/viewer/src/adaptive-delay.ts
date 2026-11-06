@@ -24,6 +24,12 @@ export interface AdaptiveDelay {
   /** Playback is paused by us inside a stall (show "Buffering", not "Paused"). */
   readonly holding: boolean;
   setProfile(id: DelayProfileId): void;
+  /**
+   * The player reads its source again (watch.ts reloadSource): like a seek, it starts over. The
+   * old samples no longer apply, a hold in progress ends, and a `waiting` right after is the old
+   * read running out, not the network (see `sourceReloaded` below).
+   */
+  sourceReloaded(): void;
   /** Hard upper limit from a playlist mismatch (player-config.ts latencyFor), null = none. */
   setCeiling(seconds: number | null): void;
   /** How far back the shortest live playlist reaches: no delay is built past it. */
@@ -209,9 +215,10 @@ export function attachAdaptiveDelay(
   });
   video.addEventListener('waiting', () => {
     const now = clock();
-    // Not a network stall: before the first frame, while seeking (Go live, profile switch), while
-    // paused / already held, or with media still buffered ahead (Chrome on the 3-vCPU macOS CI
-    // runners froze about 3 s every few minutes of playback with ~20 s buffered: this hold).
+    // Not a network stall: before the first frame, while seeking (Go live, profile switch) or
+    // right after a seek or a source reload (startOver), while paused / already held, or with
+    // media still buffered ahead (Chrome on the 3-vCPU macOS CI runners froze about 3 s every few
+    // minutes of playback with ~20 s buffered: this hold).
     if (!started || holding || stallAt !== null || video.paused || video.seeking || now - lastSeekAt < 1.5) return;
     if (forwardBuffer(video) >= STARVED_BELOW_S) return;
     stallAt = now;
@@ -228,13 +235,15 @@ export function attachAdaptiveDelay(
       holdTimer = setTimeout(resume, d.holdS * 1000);
     }
   });
-  video.addEventListener('seeking', () => {
+  // Go live, a profile switch, the stall watchdog, a source read again: the old samples no longer
+  // apply, and a hold in progress ends.
+  const startOver = (): void => {
     lastSeekAt = clock();
-    // Go live, a profile switch, the stall watchdog: the old samples no longer apply.
     recent.length = 0;
     stallAt = null;
     if (holding) resume();
-  });
+  };
+  video.addEventListener('seeking', startOver);
   video.addEventListener('play', () => {
     // The viewer pressed play during a hold: they win.
     if (holding) endHold();
@@ -294,6 +303,19 @@ export function attachAdaptiveDelay(
       else endHold();
       ctl.reset(id, clock());
       applyTarget();
+    },
+    // When the ladder falls back to the original quality, audio only reads its playlist again in
+    // place (audio-only.ts reloadAudioOnlyInPlace) just as its old buffer runs out: a viewer on a
+    // young ladder stream holds about 2 s, and the server lists no new audio for about 2 s (the
+    // ladder stops, then the original is served). The element then waits a few ms into the
+    // reload, before the new read's first segment is appended 20-50 ms later. Taken for a
+    // network stall, that wait was held 4 s (maxHoldS); only a seek ended the hold, and the reload
+    // seeks only when the playhead lies outside the new read's first segment: the sound froze
+    // 3.9-4.1 s in about one ladder fallback in six on Linux WebKit (logged soak run 42131529290:
+    // a wait in 51 of 120, 8-32 ms after the reload; held to the end in 19), for media buffered
+    // 40 ms later. A source read again is no network stall, whatever made it run out.
+    sourceReloaded() {
+      startOver();
     },
     setCeiling(seconds) {
       ctl.setCeiling(seconds);

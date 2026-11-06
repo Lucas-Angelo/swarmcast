@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - **The panel no longer misses a part when a connection drops as it opens.** Rarely, your computer dropped one of the panel's first requests, and then the setup tutorial did not open by itself on a fresh install, **Your page** showed "Failed to fetch", or **Problem report** had no log setting, until you reloaded the panel. The panel now asks again by itself.
+- **Audio only no longer goes silent for 4 seconds when your PC drops its last converted quality.** When SwarmCast turned off the qualities it converts (your PC could not keep up), viewers on **Audio only (saves data)** sometimes heard nothing for about 4 seconds while their player moved to the original quality. It now plays on with at most a short break.
 
 ## [0.5.1] - 2026-11-05
 
