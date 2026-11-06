@@ -7,9 +7,11 @@ name: Devices
 # and sends the browser to the background and back.
 #
 # Start it: the `devices` label on a pull request (remove and add it again for another run), or by
-# hand once this file is on the default branch. It reports separately: `ci-ok` (pipeline.yml)
-# does not wait for it. No schedule yet: a scheduled run reports on main's commit, so it starts
-# only once the suite has had its run of consecutive green dispatches (docs/TESTING.md).
+# hand once this file is on the default branch, or as part of a pipeline dispatched with
+# release-flavour (pipeline.yml, every-event: true; ci-ok then waits for it). Otherwise it reports
+# separately: `ci-ok` does not wait for it. No schedule yet: a scheduled run reports on main's
+# commit, so it starts only once the suite has had its run of consecutive green dispatches
+# (docs/TESTING.md).
 on:
   pull_request:
     types: [labeled]
@@ -32,8 +34,11 @@ on:
 permissions:
   contents: read
 
+# Called from a pipeline run (every-event), the group is that run's own: a called workflow's
+# concurrency is evaluated in the caller's context, and with one shared group per branch a third
+# rehearsal on the same branch would cancel the second's pending devices call.
 concurrency:
-  group: devices-${{ github.event.pull_request.number || github.ref }}
+  group: devices-${{ inputs.every-event && github.run_id || github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 env:

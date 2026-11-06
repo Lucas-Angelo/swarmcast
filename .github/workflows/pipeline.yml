@@ -9,8 +9,9 @@ name: Pipeline
 #            └─ docker (when the Docker suites or what they run changed) ──────────────┘
 #
 # - macOS: at most 4 of the account's 5 macOS runners at once, in four lanes (README.md,
-#   "macOS concurrency"): e2e chat; e2e media; node, then e2e ui; desktop macos-arm64 (build,
-#   clean-machine), then desktop macos-x64 (build, then the Intel clean-machine).
+#   "macOS concurrency"): e2e chat, then rendering; e2e media; node, then e2e ui, then devices
+#   (iOS); desktop macos-arm64 (build, clean-machine), then desktop macos-x64 (build, then the
+#   Intel clean-machine). rendering and devices run only with release-flavour (below).
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
 # - docker: the Linux Docker suites (_docker.yml: AppImage on minimal hosts, OBS streaming to the
@@ -26,6 +27,11 @@ name: Pipeline
 # Also runs monthly with everything (catches rot: dead downloads, runner image changes, and
 # ubuntu-latest as a canary), by hand (workflow_dispatch, with the Windows options below), and
 # from release.yml with `release: true` (fat LTO desktop builds signed with the updater key).
+# By hand with `release-flavour`: a release rehearsal that publishes nothing. Every stage, the
+# desktop apps built as a release builds them (fat LTO, the release time limits) but signed with
+# a throwaway key made in the job (never the `release` environment or its secrets), plus the
+# phone suites (devices.yml) and rendering.yml; ci-ok waits for all of them. Dispatch it on a
+# soak/* marker branch, never on main's commit (README.md, "The pipeline").
 # No merge_group: GitHub offers the merge queue to organization-owned repositories only, and this
 # one belongs to a user (https://github.blog/changelog/2023-07-12-pull-request-merge-queue-is-now-generally-available/).
 on:
@@ -44,6 +50,10 @@ on:
         default: '["app","quality","direct","obs"]'
       screenshots:
         description: Also capture the Windows installer pages and app window for the website guide (artifact only).
+        type: boolean
+        default: false
+      release-flavour:
+        description: 'Release rehearsal: desktop builds as in a release (fat LTO) signed with a throwaway key, plus devices and rendering. Publishes nothing.'
         type: boolean
         default: false
   workflow_call:
@@ -115,7 +125,7 @@ jobs:
 
   # One call per target: its build, then its clean-machine jobs (one per runner image), which
   # start as soon as that target's build is done. Only a release passes the updater key on (from
-  # release.yml); other runs sign with a throwaway key made in the job.
+  # release.yml); other runs sign with a throwaway key made in the job, release-flavour included.
   desktop-windows-x64:
     name: desktop windows-x64
     needs: [changes, build]
@@ -123,6 +133,7 @@ jobs:
     with:
       target: windows-x64
       release: ${{ inputs.release == true }}
+      release-flavour: ${{ inputs.release-flavour == true }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: &tauri-key
       TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
@@ -135,6 +146,7 @@ jobs:
     with:
       target: macos-arm64
       release: ${{ inputs.release == true }}
+      release-flavour: ${{ inputs.release-flavour == true }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -149,6 +161,7 @@ jobs:
     with:
       target: macos-x64
       release: ${{ inputs.release == true }}
+      release-flavour: ${{ inputs.release-flavour == true }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -159,6 +172,7 @@ jobs:
     with:
       target: linux-x64
       release: ${{ inputs.release == true }}
+      release-flavour: ${{ inputs.release-flavour == true }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -169,6 +183,7 @@ jobs:
     with:
       target: linux-arm64
       release: ${{ inputs.release == true }}
+      release-flavour: ${{ inputs.release-flavour == true }}
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
@@ -227,6 +242,26 @@ jobs:
       runners: ${{ inputs.windows-runners || '["windows-latest"]' }}
       suites: ${{ inputs.windows-suites || '["app","quality","direct","obs"]' }}
 
+  # ---------------------------------------------------------------- release-flavour only
+  # The phone suites and the rendering checks, which otherwise run on their labels. Chained after
+  # the macOS e2e calls so the run stays within four macOS runners (README.md, "macOS
+  # concurrency"): devices' iOS job (macos-26) in lane 3 after e2e ui, rendering's macOS job in
+  # lane 1 once chat and media are done. Both build what they test themselves; like the other
+  # chained calls they run whatever the result of the call before them (not when cancelled).
+  devices:
+    name: devices
+    needs: [changes, e2e-macos-ui]
+    if: ${{ !cancelled() && inputs.release-flavour == true && needs.changes.result == 'success' }}
+    uses: ./.github/workflows/devices.yml
+    with:
+      every-event: true
+
+  rendering:
+    name: rendering
+    needs: [changes, e2e-macos]
+    if: ${{ !cancelled() && inputs.release-flavour == true && needs.changes.result == 'success' }}
+    uses: ./.github/workflows/rendering.yml
+
   site:
     name: site
     needs: changes
@@ -246,7 +281,7 @@ jobs:
   # little it does. Each stage's jobs write their own results to their summaries.
   ci-ok:
     name: ci-ok
-    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, node-macos, e2e, e2e-macos, e2e-macos-ui, windows, site, docker]
+    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, node-macos, e2e, e2e-macos, e2e-macos-ui, devices, rendering, windows, site, docker]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -255,13 +290,15 @@ jobs:
       # stage the change needs did not run (skipped), or when this is a re-run: GitHub shows only
       # the latest attempt on the pull request, so a green re-run would hide the failure. A
       # failure is fixed and pushed (or, after a GitHub outage, a new run is started), never
-      # re-run until green. Green with every stage skipped for a docs-only change.
+      # re-run until green. Green with every stage skipped for a docs-only change. devices and
+      # rendering are needed only with release-flavour.
       - name: Verdict
         env:
           NEEDS: ${{ toJSON(needs) }}
           APP: ${{ needs.changes.outputs.app }}
           SITE: ${{ needs.changes.outputs.site }}
           DOCKER: ${{ needs.changes.outputs.docker }}
+          FLAVOUR: ${{ inputs.release-flavour == true }}
           ATTEMPT: ${{ github.run_attempt }}
         run: |
           app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node node-macos e2e e2e-macos e2e-macos-ui windows'
@@ -269,7 +306,7 @@ jobs:
           {
             echo '## ci-ok'
             echo
-            echo "Change: app=${APP:-?}, site=${SITE:-?}, docker=${DOCKER:-?}"
+            echo "Change: app=${APP:-?}, site=${SITE:-?}, docker=${DOCKER:-?}, release-flavour=${FLAVOUR}"
             echo
             echo '| stage | result | |'
             echo '|---|---|---|'
@@ -281,6 +318,7 @@ jobs:
             [ "$APP" = true ] && [[ " $app_stages " == *" $stage "* ]] && needed=true
             [ "$SITE" = true ] && [ "$stage" = site ] && needed=true
             [ "$DOCKER" = true ] && [ "$stage" = docker ] && needed=true
+            [ "$FLAVOUR" = true ] && [[ "$stage" == devices || "$stage" == rendering ]] && needed=true
             verdict=ok
             case "$result" in
               success) ;;
