@@ -167,7 +167,11 @@ sideways layout; iOS: the sideways layout).
   keyboard, a touch does. The join page is touched only once Watch is enabled (`joinPageReady`):
   its address says `/join` as soon as the browser commits it, while the head's stylesheet still
   holds the parser (the startup guard's inline script waits for it), so `document.body` can be
-  null then (Devices run 42286829225).
+  null then (Devices run 42286829225). The Android harness reads the page through DevTools'
+  Runtime.evaluate (`AndroidPhone.evaluate`), not Playwright's `page.evaluate`, which counts as a
+  user gesture: after one, Chrome raises the keyboard for any focus of a text field, and it came up
+  by itself for the join page's autofocus before the tap (Devices run 42307812551). `joinOnPhone`
+  checks that the viewer's tap is the join page's first gesture.
 - **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
   tap reaches the field as trusted touch events and the field has focus, with or without the Mac's
   keyboard connected; and Send Keys delivers key events but inserts nothing (WebKit gives UIKit no

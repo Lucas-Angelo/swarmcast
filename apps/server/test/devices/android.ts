@@ -465,8 +465,26 @@ export class AndroidPhone implements Phone {
     return this.current.url();
   }
 
-  evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R> {
-    return this.current.evaluate(fn as (arg: unknown) => R, arg);
+  /**
+   * `fn(arg)` in the page through DevTools' Runtime.evaluate, which the page does not count as a
+   * user gesture. Playwright's page.evaluate does (Runtime.callFunctionOn with userGesture: true):
+   * the page has "been active" from the first read on (navigator.userActivation.hasBeenActive),
+   * and Chrome raises the on-screen keyboard for any later focus of a text field, the join page's
+   * autofocus included (Blink's Element::Focus shows it once the page has had a gesture). In
+   * Devices run 42307812551 one read landed while the join page was still loading, before its
+   * autofocus: the keyboard came up by itself 5 s before the test's tap, and the tap could not
+   * raise it any more. Playwright's own calls in tap() and type() still count as gestures; they run
+   * right before or after the finger's touch, which is one.
+   */
+  async evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R> {
+    if (!this.cdp) throw new Error('no page yet: open() a link first');
+    const { result, exceptionDetails } = await this.cdp.send('Runtime.evaluate', {
+      expression: `(${fn.toString()})(${arg === undefined ? '' : JSON.stringify(arg)})`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    if (exceptionDetails) throw new Error(`evaluate in the page: ${exceptionDetails.exception?.description ?? exceptionDetails.text}`);
+    return result.value as R;
   }
 
   async tap(selector: string): Promise<void> {

@@ -136,6 +136,10 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
   await joinPageReady(phone);
+  // The viewer's tap is the page's first user gesture, as on a phone: Chrome raises the keyboard
+  // for the field's autofocus only on a page that has had one (AndroidPhone.evaluate says how a
+  // read once counted as one), and tapToType checks that the tap raised it.
+  expect(await phone.evaluate(() => navigator.userActivation.hasBeenActive), 'the join page has had no user gesture before the viewer taps the nickname field').toBe(false);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
   await expect.poll(() => fieldValue(phone, '#nickname'), { message: 'the nickname is in the field' }).toBe(nickname);
@@ -225,11 +229,14 @@ export const KEYBOARD_MIN_PX = 150;
  * Taps a text field and waits until the on-screen keyboard it raised is up and the page has
  * stopped moving. On a phone with no on-screen keyboard under automation (`onScreenKeyboard`
  * false: the iOS Simulator), it waits instead for the tap to reach the field as a finger's
- * (trusted touch events on it) and the field to have focus, then for the page to stop moving. Up: the visible part of the page (the visual viewport) is at least a keyboard
- * shorter than before the tap. That holds whether the browser only covers the page (Chrome's
- * default, Safari) or resizes it (a page with interactive-widget=resizes-content, where the
- * layout viewport shrinks with it). The keyboard slides in after the tap and the browser then
- * scrolls (Chrome also zooms) the field into view, and a tap computed while that moves lands off
+ * (trusted touch events on it) and the field to have focus, then for the page to stop moving.
+ * Up: the visible part of the page (the visual viewport) is at least a keyboard shorter than
+ * before the tap. That holds whether the browser only covers the page (Chrome's default, Safari)
+ * or resizes it (a page with interactive-widget=resizes-content, where the layout viewport
+ * shrinks with it). On the join page the keyboard is down before the tap: Chrome raises it for a
+ * focus the page gives a field itself (the nickname's autofocus) only once the page has had a
+ * user gesture, and the tap is its first (joinOnPhone checks it; AndroidPhone.evaluate is not
+ * one). The keyboard slides in after the tap and the browser then scrolls (Chrome also zooms) the field into view, and a tap computed while that moves lands off
  * target (it missed Watch once), so this also waits for two readings in a row alike. While
  * waiting, the polled value says what the page and the system show.
  */
