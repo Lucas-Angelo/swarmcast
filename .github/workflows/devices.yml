@@ -89,7 +89,7 @@ jobs:
       # (runs 41184587941, 41190536745, 41227486868). A failed test keeps its screenshot and logs.
       - name: Device tests, iOS
         timeout-minutes: 25
-        run: DEVICES_VIDEO=off npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests
+        run: DEVICES_VIDEO=off npx playwright test -c apps/server/test/devices/playwright.config.ts --project=ios-safari --fail-on-flaky-tests --repeat-each=3
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -175,7 +175,7 @@ jobs:
           sudo sysctl -w kernel.core_pattern=/tmp/cores/core.%e.%p
           ulimit -c unlimited
           echo 0x1 >/proc/self/coredump_filter
-          npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests
+          npx playwright test -c apps/server/test/devices/playwright.config.ts --project=android-chrome --fail-on-flaky-tests --repeat-each=3
       - name: Results in the job summary
         if: ${{ !cancelled() }}
         continue-on-error: true

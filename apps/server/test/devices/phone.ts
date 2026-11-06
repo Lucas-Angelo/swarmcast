@@ -135,6 +135,8 @@ export async function joinPageReady(phone: Phone): Promise<void> {
 export async function joinOnPhone(phone: Phone, nickname: string, link: string): Promise<Joined> {
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
+  const early = await phone.evaluate(() => ({ readyState: document.readyState, body: !!document.body, nickname: !!document.getElementById('nickname') })).catch((e: Error) => ({ error: e.message }));
+  console.log(`[diag-join] ${phone.platform} right after /join: ${JSON.stringify(early)}`);
   await joinPageReady(phone);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
