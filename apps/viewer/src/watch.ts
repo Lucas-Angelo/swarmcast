@@ -689,6 +689,8 @@ async function main(): Promise<void> {
     stats.reloads += 1;
     stats.lastReload = why;
     debugLog(`reloading the source (${why})`);
+    // Like a seek for the adaptive delay: the media running out meanwhile is not the network.
+    adaptive?.sourceReloaded();
     const url = source.url();
     if (o.keepMedia && source.active && reloadAudioOnlyInPlace(hls, url, { base: location.href, events: Hls.Events })) return;
     soundStart.beforeLoad(url);
