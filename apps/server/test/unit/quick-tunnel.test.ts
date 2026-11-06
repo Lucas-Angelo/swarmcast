@@ -419,7 +419,7 @@ function networkWhereOnly(reachableHost: string, publicPort: () => number | null
       if (url.hostname !== reachableHost) return null;
       const res = await fetch(`http://127.0.0.1:${publicPort()}/healthz`, { headers });
       await res.body?.cancel();
-      return res.ok ? res.headers.get('x-swarmcast') : null;
+      return { status: res.status, marker: res.ok ? res.headers.get('x-swarmcast') : null };
     },
   };
 }
@@ -508,5 +508,95 @@ describe('the live opens a new tunnel over TCP when UDP is blocked', () => {
     expect(err.message).toBe("The secure tunnel did not open within 1 min. Check your internet connection (a firewall may block Cloudflare's tunnel, port 7844) and turn SwarmCast on again.");
     expect(tunnel.pid).toBeUndefined();
     expect(tunnelStep(live)).toMatchObject({ status: 'error' });
+  });
+});
+
+// Cloudflare's edge can answer a quick tunnel's address with its own error page (HTTP 530: no
+// connection for that tunnel) while cloudflared runs on without an error line (gate run
+// 42164021587: the address had answered SwarmCast's marker, then the first viewer got the 530
+// page). The live watches the address (tunnel/watch.ts, its pace shortened here) and replaces such
+// a tunnel through the restart path of a drop: new address, new link, the streamer is told. The
+// edge is a double: names it lists reach the live's public server, any other name gets the 530.
+const FRESH_URL = 'https://fresh-tunnel-after-error.trycloudflare.com';
+
+/** Cloudflare's edge as a double: hosts in `connected` reach the live's public server, any other gets the 530 page; `asked` counts the GETs. */
+function edgeNetwork(connected: Set<string>, publicPort: () => number | null) {
+  const net = { asked: 0, answering: true };
+  const io: ReachabilityIo = {
+    cloudflare: async () => ({ ip: '192.0.2.10' }),
+    system: async () => true,
+    health: async (url, _ip, headers) => {
+      net.asked += 1;
+      if (!net.answering) return null;
+      if (!connected.has(url.hostname)) return { status: 530, marker: null };
+      const res = await fetch(`http://127.0.0.1:${publicPort()}/healthz`, { headers });
+      await res.body?.cancel();
+      return { status: res.status, marker: res.ok ? res.headers.get('x-swarmcast') : null };
+    },
+  };
+  return { io, net };
+}
+
+/** A live on a QuickTunnel running `attempts`, behind the edge double, with a fast watch. */
+function liveBehindEdge(attempts: Attempt[], connected: Set<string>) {
+  const t = tunnelWith(attempts);
+  let port: () => number | null = () => null;
+  const edge = edgeNetwork(connected, () => port());
+  const { live } = makeController(undefined, { tunnel: t.tunnel, egress: { lookup: async () => ({}) }, tunnelCheck: { io: edge.io, watch: { everyMs: 50, recheckMs: 20 } } });
+  port = () => live.publicPort;
+  onTestFinished(async () => void (await live.stop()));
+  return { ...t, live, net: edge.net };
+}
+
+const host = (url: string): string => new URL(url).hostname;
+
+describe('the live replaces a tunnel Cloudflare answers with its error page', () => {
+  it('while cloudflared runs on without an error: a new tunnel, a new link, and the streamer is told', async () => {
+    // Arrange
+    const connected = new Set([host(URL_)]);
+    const { live, launches } = liveBehindEdge([{ url: URL_, after: [REGISTERED] }, { url: FRESH_URL }], connected);
+    await live.start();
+    const changed = new Promise<string>((resolve) => live.once('link-changed', resolve));
+    // Act
+    connected.clear();
+    connected.add(host(FRESH_URL));
+    const link = await changed;
+    // Assert
+    expect(link).toMatch(/^https:\/\/fresh-tunnel-after-error\.trycloudflare\.com\/join\//);
+    expect(live.snapshot().liveLink).toBe(link);
+    expect(launches).toHaveLength(2);
+    const codes = live.activity.list().map((e) => e.code);
+    expect(codes).toEqual(expect.arrayContaining(['warn.tunnelLost', 'warn.tunnelNewAddress']));
+    expect(codes).not.toContain('warn.tunnelDropped');
+    expect(translate('en', 'warn.tunnelLost')).toBe('Your link stopped working: Cloudflare no longer reaches this computer. SwarmCast is opening a new tunnel; send the new link when it appears.');
+    expect(translate('pt-BR', 'warn.tunnelLost')).toBe('Seu link parou de funcionar: a Cloudflare não alcança mais este computador. O SwarmCast está abrindo um túnel novo; mande o novo link quando ele aparecer.');
+  });
+
+  it("keeps the tunnel and its link while nothing answers at all (the streamer's own connection)", async () => {
+    // Arrange
+    const connected = new Set([host(URL_)]);
+    const { live, launches, net } = liveBehindEdge([{ url: URL_ }], connected);
+    await live.start();
+    const before = live.snapshot().liveLink;
+    const asked = net.asked;
+    // Act
+    net.answering = false;
+    await expect.poll(() => net.asked - asked, { timeout: 10_000 }).toBeGreaterThanOrEqual(10);
+    // Assert
+    expect(launches).toHaveLength(1);
+    expect(live.snapshot().liveLink).toBe(before);
+    expect(live.activity.list().map((e) => e.code)).not.toContain('warn.tunnelLost');
+  });
+
+  it("logs cloudflared's connection lines at info, to tell later whether it was connected", async () => {
+    // Arrange
+    const { log, lines } = captureLog('info');
+    const unregistered = '2026-11-06T04:50:30Z INF Unregistered tunnel connection connIndex=0 event=0 ip=198.41.200.13';
+    const { tunnel } = tunnelWith([{ url: URL_, after: [REGISTERED, unregistered], exit: 1 }], { log });
+    // Act
+    await tunnel.start(18080);
+    await nextDown(tunnel);
+    // Assert
+    expect(lines().filter((l) => l.level === 30 && l.cloudflared).map((l) => l.cloudflared)).toEqual([REGISTERED.slice(0, 300), unregistered]);
   });
 });

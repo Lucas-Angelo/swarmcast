@@ -1,4 +1,4 @@
-import type { Page } from 'playwright';
+import type { Page, Response } from 'playwright';
 
 /** Waits until a quick tunnel's brand-new name is known to Cloudflare's resolvers, then looks it up once on this machine. Other hosts return at once. */
 export function waitForTunnelName(
@@ -6,10 +6,14 @@ export function waitForTunnelName(
   log?: (line: string) => void,
   dns?: { resolve4?: (host: string) => Promise<string[]>; lookup?: (host: string) => Promise<unknown> },
 ): Promise<void>;
-/** Opens a live link once its name resolves, until the response commits. */
-export function openLink(page: Page, url: string, log?: (line: string) => void): Promise<void>;
+/** Opens a live link once its name resolves, until the response commits; returns the response. */
+export function openLink(page: Page, url: string, log?: (line: string) => void): Promise<Response | null>;
+/** HTTP status of Cloudflare's own error page for a tunnel address it has no connection for. */
+export const CLOUDFLARE_NO_TUNNEL: number;
 /** Opens the join link, picks a nickname and clicks Watch. */
 export function joinIn(page: Page, link: string, nickname: string, log?: (line: string) => void): Promise<void>;
+/** joinIn once the link is open in the page. */
+export function joinOpened(page: Page, nickname: string): Promise<void>;
 /** Resolves once the video plays past `minTime` seconds. */
 export function waitPlaying(page: Page, timeoutMs?: number, minTime?: number): Promise<void>;
 export function playerStats(page: Page): Promise<unknown>;

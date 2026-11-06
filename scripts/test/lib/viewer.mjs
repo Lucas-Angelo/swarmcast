@@ -55,11 +55,14 @@ export async function waitForTunnelName(url, log = console.log, dns = {}) {
   if (misses) log(`infra recovery: DNS: ${host} known to ${CLOUDFLARE_RESOLVERS[0]} after ${Math.round((Date.now() - t0) / 1000)} s (${misses} lookups there said unknown: a brand-new name)`);
 }
 
-/** Opens `url` (a live link) in `page` once its name resolves (waitForTunnelName): until the response commits. */
+/** Opens `url` (a live link) in `page` once its name resolves (waitForTunnelName): until the response commits. Returns the response. */
 export async function openLink(page, url, log) {
   await waitForTunnelName(url, log);
-  await page.goto(url, { timeout: 60_000, waitUntil: 'commit' });
+  return page.goto(url, { timeout: 60_000, waitUntil: 'commit' });
 }
+
+/** Cloudflare's own answer for a tunnel address it has no connection for (its error page, "error 1033"). */
+export const CLOUDFLARE_NO_TUNNEL = 530;
 
 /**
  * Opens the join link in `page`, waits until Watch is enabled, picks a nickname and clicks Watch
@@ -75,6 +78,11 @@ export async function openLink(page, url, log) {
  */
 export async function joinIn(page, link, nickname, log) {
   await openLink(page, link, log);
+  await joinOpened(page, nickname);
+}
+
+/** joinIn after the link is open in `page`: waits for the join page and Watch, picks the nickname, clicks Watch. */
+export async function joinOpened(page, nickname) {
   await page.waitForURL(/\/join$/, { timeout: 60_000, waitUntil: 'commit' });
   await page.locator('#join:enabled').waitFor({ timeout: 30_000 });
   await page.fill('#nickname', nickname);

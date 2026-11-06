@@ -39,8 +39,9 @@ import type { PublicBlocklists } from '../security/blocklists.js';
 import { SecurityShield } from '../security/shield.js';
 import { runSpeedTest, speedTestUrls } from '../speedtest/speedtest.js';
 import { TrackerService } from '../tracker/tracker.js';
-import { probeHealth, waitForReachable, type ReachabilityIo, type TunnelProvider, type TunnelRetry, type TunnelTransport } from '../tunnel/provider.js';
+import { checkPublicAddress, probeHealth, waitForReachable, type ReachabilityIo, type TunnelProvider, type TunnelRetry, type TunnelTransport } from '../tunnel/provider.js';
 import { REACHABLE_TIMEOUT_MS, TUNNEL_START_BUDGET_MS } from '../tunnel/start-budget.js';
+import { TunnelWatch, type PublicCheck } from '../tunnel/watch.js';
 import { ActivityLog } from './activity.js';
 import type { AppConfig } from './config.js';
 import type { Logger } from './logger.js';
@@ -80,7 +81,7 @@ export interface LiveDeps {
   /** Replaces parts of the own-public-address watch (tests: a fake lookup, fast ticks). */
   egress?: Partial<Omit<EgressWatchOptions, 'log'>>;
   /** Replaces the tunnel step's network checks and limits (tests; defaults: tunnel/start-budget.ts). */
-  tunnelCheck?: { io?: ReachabilityIo; reachableMs?: number; budgetMs?: number };
+  tunnelCheck?: { io?: ReachabilityIo; reachableMs?: number; budgetMs?: number; watch?: { everyMs?: number; recheckMs?: number } };
 }
 
 type StepDef = { id: string; labelKey: MessageKey };
@@ -147,6 +148,8 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
   /** Last count broadcast to viewers (undefined = nothing sent yet). */
   private sentCount: number | null | undefined;
   private tunnelDrops = 0;
+  /** Checks the public address during a Secure-mode live and replaces a tunnel Cloudflare no longer reaches (tunnel/watch.ts). */
+  private readonly tunnelWatch: TunnelWatch;
   /** Aborted when the tunnel reports UDP blocked while the tunnel step waits for its address. */
   private tunnelUdpBlocked: AbortController | null = null;
   private busy: Promise<unknown> = Promise.resolve();
@@ -172,6 +175,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     this.control = new ControlChannel(this.access, d.log);
     // Viewers' tracker traffic rides on their /control socket (one WebSocket per viewer).
     this.control.tracker = this.tracker;
+    this.tunnelWatch = new TunnelWatch({ check: () => this.checkPublicAddress(), onLost: () => void this.onTunnelLost(), ...d.tunnelCheck?.watch });
     this.egress = new EgressWatch({ lookup: lookupPublicIps, now: d.now, ...d.egress, log: d.log });
     this.egress.on('changed', () => this.egressChanged());
     const q = d.quality ?? { binDir: '/nonexistent', dataDir: '/nonexistent', runDir: '/nonexistent', reaper: null };
@@ -333,6 +337,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
     d.tunnel.on('url', (url) => this.onTunnelUrl(url));
     d.tunnel.on('down', (reason) => {
       this.tunnelDrops += 1;
+      this.tunnelWatch.stop();
       this.warn('warn.tunnelDropped', { reason });
     });
     d.tunnel.on('retry', (r) => this.onTunnelRetry(r));
@@ -552,6 +557,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
         this.startedAt = this.now();
         this.phase = this.origin.available ? 'live' : 'waiting-obs';
         this.startTimers();
+        this.watchTunnel();
         this.d.log.info('live started; waiting for OBS');
         this.activity.action('log.started');
         this.changed();
@@ -623,16 +629,41 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
 
   private async onTunnelUrl(url: string): Promise<void> {
     if (this.mode !== 'secure' || !this.access.live) return;
-    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal, probe: this.access.probeToken() }).catch(() => false);
-    if (this.quitting.signal.aborted) return;
+    const ok = await waitForReachable(url, this.access.liveId, { timeoutMs: 60_000, signal: this.quitting.signal, probe: this.access.probeToken(), io: this.d.tunnelCheck?.io }).catch(() => false);
+    if (this.quitting.signal.aborted || this.mode !== 'secure' || !this.access.live) return;
     this.baseUrl = url;
     this.tunnelUrlChangedAt = this.now();
     this.warn(ok ? 'warn.tunnelNewAddress' : 'warn.tunnelNotAnswering');
+    this.watchTunnel();
     const link = this.liveLink;
     if (link) {
       notify('SwarmCast: new stream link', 'The tunnel address changed. Open the panel and send the new link.');
       this.emit('link-changed', link);
     }
+  }
+
+  /** Watch the public address while a quick tunnel carries the live (the only tunnel SwarmCast can replace). */
+  private watchTunnel(): void {
+    if (this.mode === 'secure' && this.access.live && this.baseUrl && this.d.tunnel.name === 'cloudflare-quick') this.tunnelWatch.start();
+  }
+
+  private checkPublicAddress(): Promise<PublicCheck> {
+    const url = this.baseUrl;
+    if (!url || this.mode !== 'secure' || !this.access.live) return Promise.resolve('ok');
+    return checkPublicAddress(url, this.access.liveId, this.access.probeToken(), this.d.tunnelCheck?.io);
+  }
+
+  /**
+   * Cloudflare keeps answering the link with its own error page while cloudflared stays up: nobody
+   * can watch. Say so, then replace the tunnel; its new address comes through onTunnelUrl (new link,
+   * notification), as after a drop.
+   */
+  private async onTunnelLost(): Promise<void> {
+    if (this.mode !== 'secure' || !this.access.live) return;
+    this.tunnelDrops += 1;
+    this.d.log.warn('cloudflare answers the public address with errors: replacing the tunnel');
+    this.warn('warn.tunnelLost');
+    if (!(await this.d.tunnel.replace())) this.watchTunnel();
   }
 
   private createServer(mode: 'secure' | 'direct', https?: Parameters<typeof createPublicServer>[1]['https']): Promise<FastifyInstance> {
@@ -779,6 +810,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       }
     };
     this.stopTimers();
+    this.tunnelWatch.stop();
     const tunnelUrl = this.baseUrl;
     const directWasOn = this.d.direct.active;
     await run('viewers', async () => {
@@ -1005,6 +1037,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       if (this.mode === 'direct') throw new CodedError('err.directAlreadyOn');
       const base = await this.d.direct.enable(opts);
       // Switching modes changes the address: new link, old sessions dropped.
+      this.tunnelWatch.stop();
       await this.d.tunnel.stop();
       this.mode = 'direct';
       this.baseUrl = base;
@@ -1030,6 +1063,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       this.baseUrl = await this.openTunnel();
       this.access.rotateLink();
       this.tunnelUrlChangedAt = this.now();
+      this.watchTunnel();
       this.activity.action('log.directOff');
       this.changed();
       return this.liveLink;
