@@ -107,12 +107,35 @@ export interface Joined {
 }
 
 /**
+ * Waits until the join page takes a viewer's input: "Watch" enabled, which join.ts does once
+ * it handles the form and the page is shown (join-form.ts), as the e2e harness types only then
+ * (fixtures.ts joinFrom). The address says /join as soon as the browser commits the page, while
+ * its document is still being parsed: the head's stylesheet holds the startup guard's inline
+ * script, and the parser with it, so there is no <body> and no nickname field until that
+ * stylesheet has arrived (Devices run 42286829225: "MutationObserver.observe: parameter 1 is
+ * not of type 'Node'" on document.body). A page that lost a script on the way reloads itself
+ * before that (its startup guard), so nothing typed is lost with the page it replaces.
+ */
+export async function joinPageReady(phone: Phone): Promise<void> {
+  await expect
+    .poll(
+      async () => {
+        const ready = await phone.evaluate(() => (document.getElementById('join') as HTMLButtonElement | null)?.disabled === false);
+        return ready ? 'ready' : `not yet: ${await joinPageState(phone)}`;
+      },
+      { message: 'the join page takes input (Watch enabled)' },
+    )
+    .toBe('ready');
+}
+
+/**
  * Opens the live link on the phone, picks the nickname with the on-screen keyboard and taps
  * Watch, then waits for the watch page. A join page that shows an error fails at once with it.
  */
 export async function joinOnPhone(phone: Phone, nickname: string, link: string): Promise<Joined> {
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
+  await joinPageReady(phone);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
   await expect.poll(() => fieldValue(phone, '#nickname'), { message: 'the nickname is in the field' }).toBe(nickname);

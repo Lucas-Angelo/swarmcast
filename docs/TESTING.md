@@ -164,7 +164,10 @@ sideways layout; iOS: the sideways layout).
   launchBrowser disables renderer backgrounding) and detaches before backgrounding (focus emulation
   keeps an attached page visible); taps wait for the keyboard and for two identical layout readings
   and aim at the visible part of an enabled, uncovered element; a mouse click does not raise the
-  keyboard, a touch does.
+  keyboard, a touch does. The join page is touched only once Watch is enabled (`joinPageReady`):
+  its address says `/join` as soon as the browser commits it, while the head's stylesheet still
+  holds the parser (the startup guard's inline script waits for it), so `document.body` can be
+  null then (Devices run 42286829225).
 - **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
   tap reaches the field as trusted touch events and the field has focus, with or without the Mac's
   keyboard connected; and Send Keys delivers key events but inserts nothing (WebKit gives UIKit no
