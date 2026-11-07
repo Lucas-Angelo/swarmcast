@@ -205,14 +205,14 @@ export class AndroidDevice {
   }
 
   /**
-   * How busy the device and the machine are, for device.log: the guest's CPU pressure (the
-   * "some" line of /proc/pressure/cpu: the share of time a task waited for a CPU) and the host's
-   * load average. With two cores the guest stayed near 90 % through a run (docs/TESTING.md "Real
+   * How busy the device and the machine are, for device.log: the guest's load average
+   * (/proc/loadavg; /proc/pressure is not readable from `adb shell`) and the host's, with the
+   * host's cores. With two cores the guest stayed CPU-bound through a run (docs/TESTING.md "Real
    * devices", setup.sh hw.cpu.ncore).
    */
   private async load(): Promise<string> {
-    const pressure = (await this.shellOut(['cat', '/proc/pressure/cpu']).catch(() => '')).split('\n')[0] || '(no pressure file)';
-    return `guest cpu ${pressure}; host load ${os.loadavg().map((l) => l.toFixed(2)).join(' ')} on ${os.availableParallelism()} cpus`;
+    const guest = (await this.shellOut(['cat', '/proc/loadavg']).catch((e: Error) => `(unreadable: ${e.message})`)).split(' ').slice(0, 3).join(' ');
+    return `guest load ${guest}; host load ${os.loadavg().map((l) => l.toFixed(2)).join(' ')} on ${os.availableParallelism()} cpus`;
   }
 
   /**

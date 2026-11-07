@@ -202,12 +202,13 @@ sideways layout; iOS: the sideways layout).
   runs beside it); its "isn't responding" dialog took the window focus from Chrome, so Android
   refused Chrome's requests for the keyboard ("onFailed at PHASE_CLIENT_VIEW_SERVED") while the
   suite's touches, which reach the page over DevTools, still focused the field. In the same run
-  Gboard was killed for a background ANR mid-test, with the chat input focused. `keyboardOnce`
-  waits for Chrome's window to have the input focus before its tap, and the keyboard's state in
-  a failure names the focused window; `device.log` records each boot's cores and, for each
-  test's Chrome, the guest's CPU pressure and the host's load. CI boots it the suite's
-  way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
-  leaves a core and its backtrace with the job's artifacts.
+  Gboard was killed for a background ANR mid-test, with the chat input focused. With four cores
+  the 15 boots of three runs of 25 tests (Devices runs 42321838235, 42321840933, 42321843458)
+  had no ANR at all. `keyboardOnce` waits for Chrome's window to have the input focus before its
+  tap, and the keyboard's state in a failure names the focused window; `device.log` records each
+  boot's cores and, for each test's Chrome, the guest's and the host's load. CI boots it the
+  suite's way, after `setup.sh install android`, so `emulator.log` keeps its output and exit,
+  and a crash leaves a core and its backtrace with the job's artifacts.
 - **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
   saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
   in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the
