@@ -28,9 +28,14 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
       const baseURL = workerInfo.project.use.baseURL;
       if (!baseURL) throw new Error('the devices config sets use.baseURL (the e2e server)');
       const device = platform === 'android' ? await AndroidDevice.attach({ publicPort: Number(new URL(baseURL).port), logDir }) : await IosDevice.attach({ logDir });
-      if (device instanceof AndroidDevice) await device.keyboardOnce(await liveLink());
-      await use(device);
-      await device.release();
+      // Released whatever happens before use(): an emulator left to the worker's exit dies by
+      // SIGKILL, without its shutdown and with its log cut short.
+      try {
+        if (device instanceof AndroidDevice) await device.keyboardOnce(await liveLink());
+        await use(device);
+      } finally {
+        await device.release();
+      }
     },
     // A cold emulator boot or a simulator's first boot after its automation settings.
     { scope: 'worker', timeout: 600_000 },

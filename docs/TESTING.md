@@ -168,6 +168,19 @@ sideways layout; iOS: the sideways layout).
   its address says `/join` as soon as the browser commits it, while the head's stylesheet still
   holds the parser (the startup guard's inline script waits for it), so `document.body` can be
   null then (Devices run 42286829225).
+- **Keyboard up before the tap (Chrome on Android):** Chrome raises the on-screen keyboard for a
+  focus the page gives a field itself (the join page's autofocus) once the page has had a user
+  gesture (Blink `Element::Focus`, sticky user activation). On the emulator the join page has one
+  before any tap: Chrome gives it as the page finishes loading (`navigator.userActivation`
+  turns active as `readyState` becomes complete, whether the link came as a VIEW intent or by
+  DevTools' Page.navigate; not in desktop Chrome with the same page; Devices run 42315128472), and
+  Playwright's `page.evaluate` is one as well (it runs with `userGesture: true`). The autofocus
+  usually comes first and the keyboard stays down until the tap; when it comes after, the keyboard
+  comes up by itself as the page opens (Devices run 42307812551). A viewer may see that too, and
+  it is fine on a page whose only job is the nickname. So `tapToType` waits for the keyboard to be
+  up (the system reports it shown, it covers at least `KEYBOARD_MIN_PX` of the page, the field
+  has the tap and the focus, the page has stopped moving), never for the visible height to change
+  across the tap.
 - **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
   tap reaches the field as trusted touch events and the field has focus, with or without the Mac's
   keyboard connected; and Send Keys delivers key events but inserts nothing (WebKit gives UIKit no
@@ -181,9 +194,21 @@ sideways layout; iOS: the sideways layout).
   `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
   versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
   held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), and `setup.sh`
-  pins version 37.2.12 (a known build, not whatever is newest). CI boots it the suite's
-  way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
-  leaves a core and its backtrace with the job's artifacts.
+  pins version 37.2.12 (a known build, not whatever is newest). The AVD has four cores
+  (`hw.cpu.ncore`, the CI runner's count): with the default two the guest stayed CPU-bound
+  through the run (CPU pressure near 90 % in every ANR report) and system apps missed Android's
+  deadlines. In Devices run 42316622933 SystemUI did not start in time at two cold boots of the
+  eight ("ANR in com.android.systemui"; none in the other six, nor in the ten boots of the two
+  runs beside it); its "isn't responding" dialog took the window focus from Chrome, so Android
+  refused Chrome's requests for the keyboard ("onFailed at PHASE_CLIENT_VIEW_SERVED") while the
+  suite's touches, which reach the page over DevTools, still focused the field. In the same run
+  Gboard was killed for a background ANR mid-test, with the chat input focused. With four cores
+  the 15 boots of three runs of 25 tests (Devices runs 42321838235, 42321840933, 42321843458)
+  had no ANR at all. `keyboardOnce` waits for Chrome's window to have the input focus before its
+  tap, and the keyboard's state in a failure names the focused window; `device.log` records each
+  boot's cores and, for each test's Chrome, the guest's and the host's load. CI boots it the
+  suite's way, after `setup.sh install android`, so `emulator.log` keeps its output and exit,
+  and a crash leaves a core and its backtrace with the job's artifacts.
 - **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
   saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
   in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the

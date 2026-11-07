@@ -25,7 +25,7 @@ import { chromium, type Browser, type CDPSession, type Page } from '@playwright/
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
-import { touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
+import { joinPageReady, touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
 
 const run = promisify(execFile);
 
@@ -184,10 +184,12 @@ export class AndroidDevice {
       abortOn: own ? [own] : [],
     });
     this.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
-    // What the emulator gave Android (EMULATOR_FEATURES: neither should be on), for the record.
+    // What the emulator gave Android (EMULATOR_FEATURES: neither should be on; the cores of
+    // setup.sh's hw.cpu.ncore), for the record.
     const vulkan = await this.shellOut(['getprop', 'ro.hardware.vulkan']);
     const hostDecoder = await this.shellOut(['getprop', 'ro.boot.qemu.hwcodec.avcdec']);
-    fs.appendFileSync(path.join(o.logDir, 'device.log'), `${new Date().toISOString()} ${serial} booted; ro.hardware.vulkan=${vulkan || '(unset)'} ro.boot.qemu.hwcodec.avcdec=${hostDecoder || '(unset)'}\n`);
+    const cpus = await this.shellOut(['nproc']);
+    this.record(`${serial} booted; cpus=${cpus} ro.hardware.vulkan=${vulkan || '(unset)'} ro.boot.qemu.hwcodec.avcdec=${hostDecoder || '(unset)'}`);
     for (const scale of ['window_animation_scale', 'transition_animation_scale', 'animator_duration_scale']) await this.shell(['settings', 'put', 'global', scale, '0']);
     await this.shell(['svc', 'power', 'stayon', 'true']);
     // Android shows "Viewing full screen" the first time an app goes full screen, over the page.
@@ -197,6 +199,34 @@ export class AndroidDevice {
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
   }
 
+  /** A line in device.log in the log folder, with the time. */
+  private record(line: string): void {
+    fs.appendFileSync(path.join(this.o.logDir, 'device.log'), `${new Date().toISOString()} ${line}\n`);
+  }
+
+  /**
+   * How busy the device and the machine are, for device.log: the guest's load average
+   * (/proc/loadavg; /proc/pressure is not readable from `adb shell`) and the host's, with the
+   * host's cores. With two cores the guest stayed CPU-bound through a run (docs/TESTING.md "Real
+   * devices", setup.sh hw.cpu.ncore).
+   */
+  private async load(): Promise<string> {
+    const guest = (await this.shellOut(['cat', '/proc/loadavg']).catch((e: Error) => `(unreadable: ${e.message})`)).split(' ').slice(0, 3).join(' ');
+    return `guest load ${guest}; host load ${os.loadavg().map((l) => l.toFixed(2)).join(' ')} on ${os.availableParallelism()} cpus`;
+  }
+
+  /**
+   * The window that has the input focus (`mCurrentFocus` of `dumpsys window displays`). The
+   * input method serves only that window: under a system dialog (an app's "isn't responding"),
+   * Chrome's requests for the keyboard are refused (ImeTracker "onFailed at
+   * PHASE_CLIENT_VIEW_SERVED"), while the suite's touches, which reach the page over DevTools,
+   * still focus its fields.
+   */
+  async focusedWindow(): Promise<string> {
+    const line = (await this.shellOut(['dumpsys', 'window', 'displays'])).split('\n').find((l) => /^\s*mCurrentFocus=/.test(l));
+    return line?.trim().replace(/^mCurrentFocus=/, '') ?? '(none)';
+  }
+
   /**
    * Brings the on-screen keyboard up once after the boot, on the join page of `link` (a tap on the
    * nickname field), waits until the input method service reports it shown, and closes Chrome: a
@@ -204,13 +234,23 @@ export class AndroidDevice {
    * boot is slow: in Devices run 41226056177 Gboard drew its first frame in 13.9 s ("Davey!
    * duration=13945ms") on the first test's tap, the system killed it for not responding ("ANR in
    * com.google.android.inputmethod.latin", then "Killing ... bg anr") and showed it again 10 s
-   * later; the page never saw the keyboard in time, and the later tests were fine.
+   * later; the page never saw the keyboard in time, and the later tests were fine. The tap waits
+   * for the join page to take input (phone.ts joinPageReady) and for Chrome's window to have the
+   * input focus: in Devices run 42316622933 SystemUI's "isn't responding" dialog had taken it
+   * at a cold boot on a two-core guest, and the keyboard never came up.
    */
   async keyboardOnce(link: string): Promise<void> {
     const phone = await this.newPhone();
     try {
       await phone.open(link);
       await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
+      await joinPageReady(phone);
+      let focus = '';
+      await until(async () => (focus = await this.focusedWindow()).includes(` ${CHROME}/`), {
+        timeoutMs: 30_000,
+        what: "Chrome's window to have the input focus",
+        detail: () => `the focus is on ${focus}`,
+      });
       await phone.tap('#nickname');
       let state = '';
       await until(
@@ -220,7 +260,7 @@ export class AndroidDevice {
         },
         { timeoutMs: 120_000, what: 'the on-screen keyboard up once after the boot', detail: () => state, pollMs: 1_000 },
       );
-      fs.appendFileSync(path.join(this.o.logDir, 'device.log'), `${new Date().toISOString()} keyboard shown once after the boot\n`);
+      this.record('keyboard shown once after the boot');
     } finally {
       await phone.close();
     }
@@ -318,6 +358,7 @@ export class AndroidDevice {
       },
       { timeoutMs: 60_000, what: 'Chrome started and idle', detail: () => JSON.stringify(seen) },
     );
+    this.record(`new Chrome; ${await this.load()}`);
     return new AndroidPhone(this);
   }
 
@@ -515,9 +556,18 @@ export class AndroidPhone implements Phone {
   }
 
   /** The input method service's view: whether the keyboard is shown, and which keyboard app it is. */
-  async keyboardState(): Promise<string> {
+  private async inputMethodState(): Promise<string> {
     const lines = (await this.device.shellOut(['dumpsys', 'input_method'])).split('\n').map((l) => l.trim());
     return lines.filter((l) => /^(mInputShown|mImeWindowVis|mCurMethodId)=/.test(l)).join(' ') || '(no input method state)';
+  }
+
+  /** The input method service's view and the window it may serve (AndroidDevice.focusedWindow). */
+  async keyboardState(): Promise<string> {
+    return `${await this.inputMethodState()} focus=${await this.device.focusedWindow()}`;
+  }
+
+  async keyboardShown(): Promise<boolean> {
+    return (await this.inputMethodState()).includes('mInputShown=true');
   }
 
   /** The page itself (without system bars), for a failed test's report. */
