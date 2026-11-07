@@ -32,15 +32,24 @@ const WATCHING_S = 1.5;
 /** Seconds the video must play on (not paused) after a step for playback to count as going on. */
 const PLAYS_ON_S = 3;
 /**
- * Segments the live makes while the phone is in the background: 3 x 2 s. The page is away for
- * that plus the trip itself (Home, Chrome stopped, Chrome back in front: about 6 s on CI), and
- * it must come back behind by more than the distance at which "Go live" offers to jump (max(4 s,
- * two segments): watch.ts setupGoLive) yet less than the most the stable profile lets the player
- * fall behind before hls.js brings it back to the live point by itself (liveMaxLatencyDuration 36 s
- * − liveSyncDuration 20 s = 16 s, packages/shared PLAYER_LIVE_DELAYS). With 5 segments the page
- * was away 18 s in Devices run 41237131465 and came back at the live point.
+ * Whole segments of live while the phone is in the background: 4 x 2 s, so 8 to 10 s of live
+ * (liveMovesOn counts from the first new segment it sees). The page comes back behind by about the
+ * time its video stood paused, and that must be more than the distance at which "Go live" offers
+ * to jump (max(4 s, two segments): watch.ts setupGoLive), with room for the catch-up that starts
+ * as playback goes on (the adaptive delay's 1.05x, while the check first waits for 3 s of
+ * playback), yet less than the most the stable profile lets the player fall behind before hls.js
+ * brings it back to the live point by itself (liveMaxLatencyDuration 36 s − liveSyncDuration 20 s
+ * = 16 s, packages/shared PLAYER_LIVE_DELAYS).
+ * The video stands paused for less than Chrome's window is away. With three segments counted from
+ * the call (4 to 6 s of live), Chrome's window was hidden for 5.9 s in release-rehearsal run
+ * 42382536965, but its main thread was busy for 1.2 s as it went ("Skipped 71 frames"), and the
+ * page came back only 4 s behind: "Go live −4 s" for a moment, then "LIVE" as the catch-up began.
+ * In 30 trips of that length with a record of the page (Devices runs 42385971521 and 42387936202)
+ * it was hidden 4.4 to 6.5 s and read 5.0 to 8.4 s behind when the check passed; once hls.js moved
+ * its live sync position back a second for a 50 ms stall just before the trip (it adds a second
+ * per stall, up to a segment), which "behind" counts from: little room for a shorter pause.
  */
-const AWAY_SEGMENTS = 3;
+const AWAY_SEGMENTS = 4;
 /** Go live lands within this many seconds of the live point (as in the e2e viewer spec). */
 const AT_LIVE_S = 4;
 

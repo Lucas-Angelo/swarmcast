@@ -190,6 +190,14 @@ sideways layout; iOS: the sideways layout).
   keyboard would (`IosPhone.type`), and every other check runs (`Phone.onScreenKeyboard`).
 - **Background on iOS:** under safaridriver the session ends as Safari leaves the screen ("invalid
   session id" from then on), so the trip to the background runs on Android (`@android`).
+- **Time away (Android):** the phone stays in the background for whole segments of live counted
+  from the first new one (`liveMovesOn`), four of them (8 to 10 s): the page must come back behind
+  by more than Go live's 4 s, after the catch-up has begun, and by less than the 16 s past which
+  hls.js jumps to the live point by itself. Three new segments counted from the call lasted 4 to
+  6 s, and the video stands paused for less than Chrome's window is hidden (its main thread was busy
+  for 1.2 s as the window went in release-rehearsal run 42382536965): the page came back only 4 s
+  behind and showed "LIVE" once the catch-up began. Thirty such trips with a record of the page
+  (Devices runs 42385971521 and 42387936202) read 5.0 to 8.4 s behind when the check passed.
 - **Android emulator:** `-gpu swangle_indirect` (`android.ts` `EMULATOR_GPU`): with
   `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
   versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
