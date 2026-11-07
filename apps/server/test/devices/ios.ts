@@ -43,6 +43,20 @@ const AUTOMATION_KEYS = [
 ] as const;
 
 /**
+ * Safari's tips (TipKit) off: TipKit's own switch, the defaults key of its launch argument
+ * `-com.apple.TipKit.HideAllTips 1`, read as Safari starts. A new simulator's Safari showed its
+ * "More" button tip over the join page 1 s before the first tap (Devices run in release-rehearsal
+ * pipeline 42399897758: TipKit "TipForMoreButton ... viewDidAppear" at 18:33:02.761, the tap at
+ * 18:33:03.844); the popover took the tap to close itself, and the page got no touch and no
+ * click at all, not even after 30 s. The tip appears once in a simulator's life, a few seconds
+ * after a page has loaded, so it hit a tap only when it came up just before one.
+ */
+const SAFARI_TIPS_OFF = ['com.apple.mobilesafari', 'com.apple.TipKit.HideAllTips'] as const;
+
+/** Every defaults key the simulator needs set (true), checked at each attach. */
+const SIMULATOR_KEYS = [...AUTOMATION_KEYS, SAFARI_TIPS_OFF] as const;
+
+/**
  * Launchd jobs of the simulator a page in Safari never needs, turned off (unusedJobsOff). With them
  * the 3-core CI Mac stayed saturated through the whole run (load average 300 to 550, 3 % idle,
  * Devices run 41544831758), where a tap reached the element and no click followed (runs
@@ -281,12 +295,12 @@ export class IosDevice {
     await simctl(['bootstatus', sim.udid, '-b']);
     note('booted');
     const missing: string[] = [];
-    for (const [domain, key] of AUTOMATION_KEYS) {
+    for (const [domain, key] of SIMULATOR_KEYS) {
       const value = await simctl(['spawn', sim.udid, 'defaults', 'read', domain, key]).catch(() => '');
       if (value !== '1') missing.push(`${domain} ${key}`);
     }
     if (missing.length > 0) {
-      for (const [domain, key] of AUTOMATION_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
+      for (const [domain, key] of SIMULATOR_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
       // webinspectord and Safari read them at start.
       await simctl(['shutdown', sim.udid]);
       await simctl(['boot', sim.udid]);
