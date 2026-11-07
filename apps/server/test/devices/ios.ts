@@ -49,7 +49,7 @@ const AUTOMATION_KEYS = [
  * up until the next tap. A tap while it was still coming up (1.1 s after "viewDidAppear", its view
  * drawn for the first time meanwhile) went to the popover, which closed: the page got no touch
  * and no click at all (release-rehearsal pipeline 42399897758, the first test of the iOS job).
- * Taps 3 s or more after it appeared reached the page and closed it. Measured side by side
+ * Taps 2.5 s or more after it appeared reached the page and closed it. Measured side by side
  * (Devices run 42403184245): the tip came up in both simulators without the key and in none of
  * the two with it. IosDevice.tipsShown checks after each test that none came up.
  */
