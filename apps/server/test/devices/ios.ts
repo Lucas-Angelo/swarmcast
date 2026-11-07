@@ -43,6 +43,22 @@ const AUTOMATION_KEYS = [
 ] as const;
 
 /**
+ * Safari's tips (TipKit) off: TipKit's own switch, the defaults key of its launch argument
+ * `-com.apple.TipKit.HideAllTips 1`, read as Safari starts. A new simulator's Safari shows its
+ * "More" button tip once, over the first page, a few seconds after it has loaded, and it stays
+ * up until the next tap. A tap while it was still coming up (1.1 s after "viewDidAppear", its view
+ * drawn for the first time meanwhile) went to the popover, which closed: the page got no touch
+ * and no click at all (release-rehearsal pipeline 42399897758, the first test of the iOS job).
+ * Taps 2.5 s or more after it appeared reached the page and closed it. Measured side by side
+ * (Devices run 42403184245): the tip came up in both simulators without the key and in none of
+ * the two with it. IosDevice.tipsShown checks after each test that none came up.
+ */
+const SAFARI_TIPS_OFF = ['com.apple.mobilesafari', 'com.apple.TipKit.HideAllTips'] as const;
+
+/** Every defaults key the simulator needs set (true), checked at each attach. */
+const SIMULATOR_KEYS = [...AUTOMATION_KEYS, SAFARI_TIPS_OFF] as const;
+
+/**
  * Launchd jobs of the simulator a page in Safari never needs, turned off (unusedJobsOff). With them
  * the 3-core CI Mac stayed saturated through the whole run (load average 300 to 550, 3 % idle,
  * Devices run 41544831758), where a tap reached the element and no click followed (runs
@@ -281,12 +297,12 @@ export class IosDevice {
     await simctl(['bootstatus', sim.udid, '-b']);
     note('booted');
     const missing: string[] = [];
-    for (const [domain, key] of AUTOMATION_KEYS) {
+    for (const [domain, key] of SIMULATOR_KEYS) {
       const value = await simctl(['spawn', sim.udid, 'defaults', 'read', domain, key]).catch(() => '');
       if (value !== '1') missing.push(`${domain} ${key}`);
     }
     if (missing.length > 0) {
-      for (const [domain, key] of AUTOMATION_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
+      for (const [domain, key] of SIMULATOR_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
       // webinspectord and Safari read them at start.
       await simctl(['shutdown', sim.udid]);
       await simctl(['boot', sim.udid]);
@@ -338,6 +354,18 @@ export class IosDevice {
    */
   private sessionLogs(from: Date): Promise<string> {
     return this.logs(from, 'session', 'process CONTAINS[c] "webinspector" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "webdriver" OR subsystem CONTAINS[c] "webinspector" OR subsystem CONTAINS[c] "webkit"');
+  }
+
+  /**
+   * The tips Safari has shown since `from` (TipKit's "viewDidAppear" lines in the simulator's
+   * log): none, with SAFARI_TIPS_OFF. One can take a tap meant for the page.
+   */
+  async tipsShown(from: Date): Promise<string[]> {
+    const start = from.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '+0000');
+    const { stdout } = await run('xcrun', ['simctl', 'spawn', this.udid, 'log', 'show', '--style', 'compact', '--info', '--start', start, '--predicate', 'subsystem == "com.apple.TipKit" AND eventMessage CONTAINS "viewDidAppear"'], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout.split('\n').filter((line) => line.includes('viewDidAppear'));
   }
 
   /** Appends one tap's timing (IosPhone.tap) to taps.log in the log folder. */

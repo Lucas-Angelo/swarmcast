@@ -233,6 +233,8 @@ SIM_NAME="SwarmCast iPhone"
 SIM_TYPE=com.apple.CoreSimulator.SimDeviceType.iPhone-17
 # Web Inspector and remote automation switches inside the simulator (apps/server/test/devices/ios.ts).
 SIM_KEYS="com.apple.webinspectord:RemoteInspectorEnabled com.apple.webinspectord:RemoteAutomationEnabled com.apple.webinspectord:WIRRemoteAutomationEnabled com.apple.mobilesafari:WebKitDeveloperExtrasEnabledPreferenceKey com.apple.mobilesafari:WebInspectorEnabled com.apple.mobilesafari:RemoteAutomationEnabled com.apple.mobilesafari:WebKitRemoteAutomationEnabled"
+# Safari's tips (TipKit) off: one popped up over the page and took a tap (ios.ts SAFARI_TIPS_OFF).
+SIM_KEYS="$SIM_KEYS com.apple.mobilesafari:com.apple.TipKit.HideAllTips"
 # Daemons a page in Safari never needs, turned off for every later boot: the push daemon's retry
 # loop and the rest kept the CI Mac saturated (apps/server/test/devices/ios.ts UNUSED_JOBS).
 SIM_UNUSED_JOBS="com.apple.apsd com.apple.identityservicesd com.apple.StatusKitAgent com.apple.remindd com.apple.healthd com.apple.fitcore com.apple.fitnessintelligenced com.apple.finhealthd com.apple.assistantd com.apple.mediaanalysisd com.apple.chronod"

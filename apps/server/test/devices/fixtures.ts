@@ -3,19 +3,20 @@
 // - `device` (worker): the project's phone, once for the run: the Android emulator (attached or
 //   booted) or the iOS Simulator with safaridriver;
 // - `phone` (test): a fresh browser on it. Its screen is recorded; a failed test keeps the
-//   recording, a screenshot of the whole screen and the device's log.
+//   recording, a screenshot of the whole screen and the device's log. On iOS, Safari must have
+//   shown none of its tips meanwhile.
 import fs from 'node:fs';
 import path from 'node:path';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
 import { loopbackBase } from '../../../../scripts/test/lib/loopback.mjs';
 import { e2ePorts } from '../../../../scripts/test/lib/ports.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
-import { liveLink, test as e2e } from '../e2e/fixtures.js';
+import { expect, liveLink, test as e2e } from '../e2e/fixtures.js';
 import { AndroidDevice, AndroidPhone } from './android.js';
 import { IosDevice } from './ios.js';
 import type { Phone, Platform } from './phone.js';
 
-export { expect } from '../e2e/fixtures.js';
+export { expect };
 
 type Device = AndroidDevice | IosDevice;
 
@@ -41,6 +42,7 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
     { scope: 'worker', timeout: 600_000 },
   ],
   phone: async ({ device }, use, testInfo) => {
+    const started = new Date();
     const phone = await device.newPhone();
     const recordingFile = testInfo.outputPath(device instanceof AndroidDevice ? 'screen.mp4' : 'screen.mov');
     const recording = process.env.DEVICES_VIDEO === 'off' ? null : device.startRecording(recordingFile);
@@ -74,6 +76,8 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
       else fs.rmSync(recordingFile, { force: true });
       await phone.close();
     }
+    // A tip of Safari's over the page takes the tap meant for it (ios.ts SAFARI_TIPS_OFF).
+    if (device instanceof IosDevice) expect(await device.tipsShown(started), "Safari's tips shown during the test").toEqual([]);
   },
 });
 
