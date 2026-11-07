@@ -164,10 +164,15 @@ install_android() {
     record avd "$AVD_NAME"
   fi
   # The on-screen keyboard (no hardware keyboard: the suite checks that it does not cover the
-  # chat input), and enough memory for Chrome with a live video.
+  # chat input), and enough memory and CPU for Chrome with a live video. Four cores, the CI
+  # runner's count: with the AVD's default two the guest stayed CPU-bound through the run (CPU
+  # pressure near 90 %), and system apps missed Android's deadlines; SystemUI's "isn't
+  # responding" dialog then took the window focus from Chrome at a cold boot, so the keyboard
+  # never came up, and Gboard was killed mid-test (Devices run 42316622933, docs/TESTING.md
+  # "Real devices").
   local cfg="$HOME/.android/avd/$AVD_NAME.avd/config.ini"
   local key value
-  for kv in hw.keyboard=no hw.ramSize=4096 disk.dataPartition.size=6G hw.audioOutput=yes; do
+  for kv in hw.keyboard=no hw.ramSize=4096 hw.cpu.ncore=4 disk.dataPartition.size=6G hw.audioOutput=yes; do
     key="${kv%%=*}"
     value="${kv#*=}"
     if grep -q "^${key}[ ]*=" "$cfg"; then

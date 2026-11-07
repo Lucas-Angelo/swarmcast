@@ -194,7 +194,18 @@ sideways layout; iOS: the sideways layout).
   `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
   versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
   held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), and `setup.sh`
-  pins version 37.2.12 (a known build, not whatever is newest). CI boots it the suite's
+  pins version 37.2.12 (a known build, not whatever is newest). The AVD has four cores
+  (`hw.cpu.ncore`, the CI runner's count): with the default two the guest stayed CPU-bound
+  through the run (CPU pressure near 90 % in every ANR report) and system apps missed Android's
+  deadlines. In Devices run 42316622933 SystemUI did not start in time at two cold boots of the
+  eight ("ANR in com.android.systemui"; none in the other six, nor in the ten boots of the two
+  runs beside it); its "isn't responding" dialog took the window focus from Chrome, so Android
+  refused Chrome's requests for the keyboard ("onFailed at PHASE_CLIENT_VIEW_SERVED") while the
+  suite's touches, which reach the page over DevTools, still focused the field. In the same run
+  Gboard was killed for a background ANR mid-test, with the chat input focused. `keyboardOnce`
+  waits for Chrome's window to have the input focus before its tap, and the keyboard's state in
+  a failure names the focused window; `device.log` records each boot's cores and, for each
+  test's Chrome, the guest's CPU pressure and the host's load. CI boots it the suite's
   way, after `setup.sh install android`, so `emulator.log` keeps its output and exit, and a crash
   leaves a core and its backtrace with the job's artifacts.
 - **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
