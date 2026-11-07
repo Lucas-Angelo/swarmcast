@@ -88,12 +88,15 @@ async function sinceSegmentMs(): Promise<number | null> {
 }
 
 /**
- * Resolves once the live has made `segments` new segments: how long a viewer stays away to fall
- * that far behind (the e2e server's fake OBS makes one every SEGMENT_DURATION_S).
+ * Resolves once the live has moved on by at least `segments` whole segments: how long a viewer
+ * stays away to fall that far behind (the e2e server's fake OBS makes one every
+ * SEGMENT_DURATION_S). Counted from the first new segment seen, not from the call: the first one
+ * can come at once, so `segments` new segments alone span anywhere from `segments` − 1 to
+ * `segments` durations (4 to 6 s for three).
  */
 export async function liveMovesOn(segments: number): Promise<void> {
   let last = (await sinceSegmentMs()) ?? Number.POSITIVE_INFINITY;
-  let seen = 0;
+  let seen = -1;
   await until(
     async () => {
       const since = await sinceSegmentMs();
@@ -101,6 +104,6 @@ export async function liveMovesOn(segments: number): Promise<void> {
       if (since !== null) last = since;
       return seen >= segments;
     },
-    { timeoutMs: (segments + 5) * 2 * SEGMENT_DURATION_S * 1000, what: `${segments} new live segments`, detail: () => `${seen} seen`, pollMs: 200 },
+    { timeoutMs: (segments + 6) * 2 * SEGMENT_DURATION_S * 1000, what: `${segments} whole live segments`, detail: () => `${Math.max(0, seen)} seen after the first`, pollMs: 200 },
   );
 }
