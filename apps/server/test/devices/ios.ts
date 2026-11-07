@@ -44,12 +44,14 @@ const AUTOMATION_KEYS = [
 
 /**
  * Safari's tips (TipKit) off: TipKit's own switch, the defaults key of its launch argument
- * `-com.apple.TipKit.HideAllTips 1`, read as Safari starts. A new simulator's Safari showed its
- * "More" button tip over the join page 1 s before the first tap (Devices run in release-rehearsal
- * pipeline 42399897758: TipKit "TipForMoreButton ... viewDidAppear" at 18:33:02.761, the tap at
- * 18:33:03.844); the popover took the tap to close itself, and the page got no touch and no
- * click at all, not even after 30 s. The tip appears once in a simulator's life, a few seconds
- * after a page has loaded, so it hit a tap only when it came up just before one.
+ * `-com.apple.TipKit.HideAllTips 1`, read as Safari starts. A new simulator's Safari shows its
+ * "More" button tip once, over the first page, a few seconds after it has loaded, and it stays
+ * up until the next tap. A tap while it was still coming up (1.1 s after "viewDidAppear", its view
+ * drawn for the first time meanwhile) went to the popover, which closed: the page got no touch
+ * and no click at all (release-rehearsal pipeline 42399897758, the first test of the iOS job).
+ * Taps 3 s or more after it appeared reached the page and closed it. Measured side by side
+ * (Devices run 42403184245): the tip came up in both simulators without the key and in none of
+ * the two with it. IosDevice.tipsShown checks after each test that none came up.
  */
 const SAFARI_TIPS_OFF = ['com.apple.mobilesafari', 'com.apple.TipKit.HideAllTips'] as const;
 
@@ -352,6 +354,18 @@ export class IosDevice {
    */
   private sessionLogs(from: Date): Promise<string> {
     return this.logs(from, 'session', 'process CONTAINS[c] "webinspector" OR process CONTAINS[c] "safari" OR process CONTAINS[c] "webdriver" OR subsystem CONTAINS[c] "webinspector" OR subsystem CONTAINS[c] "webkit"');
+  }
+
+  /**
+   * The tips Safari has shown since `from` (TipKit's "viewDidAppear" lines in the simulator's
+   * log): none, with SAFARI_TIPS_OFF. One can take a tap meant for the page.
+   */
+  async tipsShown(from: Date): Promise<string[]> {
+    const start = from.toISOString().replace('T', ' ').replace(/\.\d+Z$/, '+0000');
+    const { stdout } = await run('xcrun', ['simctl', 'spawn', this.udid, 'log', 'show', '--style', 'compact', '--info', '--start', start, '--predicate', 'subsystem == "com.apple.TipKit" AND eventMessage CONTAINS "viewDidAppear"'], {
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    return stdout.split('\n').filter((line) => line.includes('viewDidAppear'));
   }
 
   /** Appends one tap's timing (IosPhone.tap) to taps.log in the log folder. */
