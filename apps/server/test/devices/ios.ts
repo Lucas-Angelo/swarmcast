@@ -569,6 +569,11 @@ export class IosPhone implements Phone {
     return this.device.keyboardState();
   }
 
+  /** Never: the iOS Simulator under safaridriver raises no on-screen keyboard (onScreenKeyboard). */
+  async keyboardShown(): Promise<boolean> {
+    return false;
+  }
+
   async close(): Promise<void> {
     await this.session.delete().catch(() => {});
   }

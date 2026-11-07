@@ -167,11 +167,20 @@ sideways layout; iOS: the sideways layout).
   keyboard, a touch does. The join page is touched only once Watch is enabled (`joinPageReady`):
   its address says `/join` as soon as the browser commits it, while the head's stylesheet still
   holds the parser (the startup guard's inline script waits for it), so `document.body` can be
-  null then (Devices run 42286829225). The Android harness reads the page through DevTools'
-  Runtime.evaluate (`AndroidPhone.evaluate`), not Playwright's `page.evaluate`, which counts as a
-  user gesture: after one, Chrome raises the keyboard for any focus of a text field, and it came up
-  by itself for the join page's autofocus before the tap (Devices run 42307812551). `joinOnPhone`
-  checks that the viewer's tap is the join page's first gesture.
+  null then (Devices run 42286829225).
+- **Keyboard up before the tap (Chrome on Android):** Chrome raises the on-screen keyboard for a
+  focus the page gives a field itself (the join page's autofocus) once the page has had a user
+  gesture (Blink `Element::Focus`, sticky user activation). On the emulator the join page has one
+  before any tap: Chrome gives it as the page finishes loading (`navigator.userActivation`
+  turns active as `readyState` becomes complete, whether the link came as a VIEW intent or by
+  DevTools' Page.navigate; not in desktop Chrome with the same page; Devices run 42315128472), and
+  Playwright's `page.evaluate` is one as well (it runs with `userGesture: true`). The autofocus
+  usually comes first and the keyboard stays down until the tap; when it comes after, the keyboard
+  comes up by itself as the page opens (Devices run 42307812551). A viewer may see that too, and
+  it is fine on a page whose only job is the nickname. So `tapToType` waits for the keyboard to be
+  up (the system reports it shown, it covers at least `KEYBOARD_MIN_PX` of the page, the field
+  has the tap and the focus, the page has stopped moving), never for the visible height to change
+  across the tap.
 - **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
   tap reaches the field as trusted touch events and the field has focus, with or without the Mac's
   keyboard connected; and Send Keys delivers key events but inserts nothing (WebKit gives UIKit no

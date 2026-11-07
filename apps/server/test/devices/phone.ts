@@ -40,6 +40,11 @@ export interface Phone {
   screenshot(): Promise<Buffer>;
   /** What the system says about the on-screen keyboard, for a failure message (Android: the input method service). */
   keyboardState(): Promise<string>;
+  /**
+   * Whether the system reports the on-screen keyboard shown (Android: the input method service's
+   * mInputShown). Asked only where `onScreenKeyboard` is true.
+   */
+  keyboardShown(): Promise<boolean>;
   /** Ends the test's browser session. */
   close(): Promise<void>;
 }
@@ -136,10 +141,6 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
   await joinPageReady(phone);
-  // The viewer's tap is the page's first user gesture, as on a phone: Chrome raises the keyboard
-  // for the field's autofocus only on a page that has had one (AndroidPhone.evaluate says how a
-  // read once counted as one), and tapToType checks that the tap raised it.
-  expect(await phone.evaluate(() => navigator.userActivation.hasBeenActive), 'the join page has had no user gesture before the viewer taps the nickname field').toBe(false);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
   await expect.poll(() => fieldValue(phone, '#nickname'), { message: 'the nickname is in the field' }).toBe(nickname);
@@ -226,30 +227,32 @@ export async function still(phone: Phone): Promise<void> {
 export const KEYBOARD_MIN_PX = 150;
 
 /**
- * Taps a text field and waits until the on-screen keyboard it raised is up and the page has
- * stopped moving. On a phone with no on-screen keyboard under automation (`onScreenKeyboard`
- * false: the iOS Simulator), it waits instead for the tap to reach the field as a finger's
- * (trusted touch events on it) and the field to have focus, then for the page to stop moving.
- * Up: the visible part of the page (the visual viewport) is at least a keyboard shorter than
- * before the tap. That holds whether the browser only covers the page (Chrome's default, Safari)
- * or resizes it (a page with interactive-widget=resizes-content, where the layout viewport
- * shrinks with it). On the join page the keyboard is down before the tap: Chrome raises it for a
- * focus the page gives a field itself (the nickname's autofocus) only once the page has had a
- * user gesture, and the tap is its first (joinOnPhone checks it; AndroidPhone.evaluate is not
- * one). The keyboard slides in after the tap and the browser then scrolls (Chrome also zooms) the field into view, and a tap computed while that moves lands off
- * target (it missed Watch once), so this also waits for two readings in a row alike. While
- * waiting, the polled value says what the page and the system show.
+ * Taps a text field and waits until the field can be typed in: the tap reached it as a finger's
+ * (trusted touch events on it) and it has focus; where a tap raises the on-screen keyboard
+ * (`onScreenKeyboard`), the system reports the keyboard shown and it covers the page, the visible
+ * part (the visual viewport, on screen) at least KEYBOARD_MIN_PX shorter than the page (the layout
+ * viewport); and the page has stopped moving, two readings in a row alike. The keyboard slides in
+ * after the tap and the browser then scrolls (Chrome also zooms) the field into view, and a tap
+ * computed while that moves lands off target (it missed Watch once).
+ *
+ * The state is what counts, not a change across the tap: the keyboard may already be up when the
+ * tap comes. Chrome raises it for a focus the page gives a field itself (the join page's
+ * autofocus) once the page has had a user gesture, and on Android the join page has one before
+ * any tap: Chrome gives it as the page finishes loading, and Playwright's page.evaluate is one
+ * too. An autofocus that comes after it raises the keyboard by itself (Devices run 42307812551;
+ * docs/TESTING.md "Real devices"). The viewer pages keep Chrome's default for the keyboard (no
+ * interactive-widget in their viewport meta): it covers the page and shrinks the visual viewport
+ * only. While waiting, the polled value says what the page and the system show.
  */
 export async function tapToType(phone: Phone, selector: string): Promise<void> {
-  const before = await viewport(phone);
   await recordInput(phone);
   await phone.tap(selector);
+  await expect
+    .poll(async () => ((await touchedAndFocused(phone, selector)) ? 'touched' : `not yet: focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}`), {
+      message: `a finger's tap reached ${selector} and focused it`,
+    })
+    .toBe('touched');
   if (!phone.onScreenKeyboard) {
-    await expect
-      .poll(async () => ((await touchedAndFocused(phone, selector)) ? 'touched' : `not yet: focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}`), {
-        message: `a finger's tap reached ${selector} and focused it`,
-      })
-      .toBe('touched');
     await still(phone);
     return;
   }
@@ -259,10 +262,13 @@ export async function tapToType(phone: Phone, selector: string): Promise<void> {
       async () => {
         const v = await viewport(phone);
         const now = JSON.stringify(v);
-        const settled = before.height - v.height > KEYBOARD_MIN_PX && now === previous;
+        const covered = v.innerHeight - v.height * v.scale;
+        const shown = await phone.keyboardShown();
+        const hasFocus = await phone.evaluate((s) => document.activeElement === document.querySelector(s), selector);
+        const up = shown && hasFocus && covered > KEYBOARD_MIN_PX && now === previous;
         previous = now;
-        if (settled) return 'up';
-        return `not yet: visible height ${Math.round(before.height)} -> ${Math.round(v.height)}, page height ${before.innerHeight} -> ${v.innerHeight}; focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}; keyboard: ${await phone.keyboardState()}`;
+        if (up) return 'up';
+        return `not yet: keyboard ${shown ? 'shown' : 'not shown'} (${await phone.keyboardState()}); visible ${Math.round(v.height * v.scale)} of the page's ${v.innerHeight} px (zoom ${v.scale}); focus: ${await focused(phone)}; the tap reached the page as: ${await inputEvents(phone)}`;
       },
       { message: `the on-screen keyboard is up for ${selector} and the page has stopped moving` },
     )
