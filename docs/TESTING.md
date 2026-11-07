@@ -231,6 +231,15 @@ sideways layout; iOS: the sideways layout).
   "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
   41566408164); the server now sends the page with the line already shown to a browser it will check
   (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
+- **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
+  over the first page, a few seconds after it has loaded, and it stays up until the next tap. A
+  tap while the tip was still coming up went to its popover, which closed, and the page got no
+  touch and no click at all (release-rehearsal pipeline 42399897758). `setup.sh` and the suite set
+  TipKit's own switch in Safari's defaults (`com.apple.TipKit.HideAllTips`, `ios.ts`
+  `SAFARI_TIPS_OFF`): side by side, the tip came up in both simulators without it and in none with
+  it (Devices run 42403184245). After each test the `phone` fixture checks the simulator's log for
+  any tip Safari showed (`IosDevice.tipsShown`): without the switch that check failed the first
+  test, with it the three simulators of Devices run 42404125923 showed none.
 - **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
   outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
 - **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a
