@@ -17,7 +17,7 @@ How SwarmCast's GitHub Actions are put together. The release steps for the maint
 | `rendering.yml` | the `rendering` label on a pull request, by hand once on `main`, monthly, a pipeline run with `release-flavour` | the chat corpus and viewer chat UI (`apps/viewer/test/chat`, mock hub) in Chrome, Edge, Firefox and WebKit on Windows, macOS and Ubuntu, plus iPhone and Pixel emulation; a screenshot per engine |
 | `devices.yml` | the `devices` label on a pull request, by hand, a pipeline run with `release-flavour` | the viewer in real mobile browsers (`apps/server/test/devices`): Mobile Safari on an iOS Simulator (macOS 26), Chrome on an Android emulator (Ubuntu, KVM); joins `ci-ok` once proven |
 | `linux-docker.yml` | weekly, by hand | the Docker suites (`_docker.yml`); pull requests and `main` run them as the pipeline's `docker` stage |
-| `real-services.yml` | daily, by hand | the real third-party services the gate never reaches (it uses a local stand-in for Cloudflare, `scripts/test/lib/cloudflare.mjs`): the staged Linux server's preflight through the real Cloudflare quick tunnel, with the real speed test, blocklists and STUN; never a gate, reads no secret, a failure is a summary and a warning, not a red run |
+| `real-services.yml` | daily, by hand | the real third-party services the gate never reaches (it uses local stand-ins for Cloudflare, `scripts/test/lib/cloudflare.mjs`, and for ffmpeg's publisher, `scripts/test/lib/ffmpeg-stand-in.mjs`): the staged Linux server's preflight through the real Cloudflare quick tunnel, with the real speed test, blocklists and STUN, and the app's ffmpeg install from its publisher; never a gate, reads no secret, a failure is a summary and a warning, not a red run |
 | `stats.yml` | daily, after a release | the public download counters, on the `stats` branch |
 | `cache-hygiene.yml` | a pull request closing, after each Pipeline and CodeQL run on `main`, daily, by hand (dry run by default) | deletes Actions caches nobody will restore again, so the repository stays under GitHub's 10 GB cache limit (see "Caches" below) |
 
@@ -221,7 +221,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the app's pinned ffmpeg archive (`app-ffmpeg`) and the portable OBS zip (`obs-studio`) into the download cache, the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
@@ -437,7 +437,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |

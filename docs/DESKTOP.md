@@ -74,6 +74,7 @@ with environment:
 | `SWARMCAST_NO_FFMPEG_INSTALL` | `1` skips the automatic ffmpeg download of the first start (tests/CI only). |
 | `SWARMCAST_TEST_LOGIN_FILE` | Tests/CI only: the server also writes the panel login URL (`ready.adminUrl`) to this file, owner-only, so `scripts/test/desktop/verify.mjs` can call the admin API of an app it did not start itself. |
 | `SWARMCAST_SPEEDTEST_URL` | Speed test server instead of Cloudflare's (`<url>/__down?bytes=n`, `POST <url>/__up`; tests only). |
+| `SWARMCAST_TEST_FFMPEG_URL` | Tests/CI only: `http://127.0.0.1:<port>/<file>`, a local stand-in that serves the pinned ffmpeg archive (`scripts/test/lib/ffmpeg-stand-in.mjs`); the ffmpeg install downloads it from there instead of the publisher, with the same SHA-256 check (`apps/server/src/quality/ffmpeg.ts`). Anything but 127.0.0.1 is refused. |
 | `SWARMCAST_TEST_CLOUDFLARE` | Tests/CI only: JSON naming a local stand-in for Cloudflare's quick tunnels (`scripts/test/lib/cloudflare.mjs`: `service`, `edge` and `checks` on 127.0.0.1, and its CA file `ca`, which only cloudflared reads). cloudflared then opens the tunnel there and the live's reachability checks ask it over plain HTTP on 127.0.0.1 (`apps/server/src/tunnel/stand-in.ts`); anything but 127.0.0.1 is refused. |
 
 `--desktop` implies `--no-open`, keeps the parent watch, and also exits cleanly when
@@ -343,8 +344,10 @@ scripts, which ran them before installing:
   tests are off in `config.json`). The tutorial shows "Checking your computer…" meanwhile and reloads
   when it is done.
 - **ffmpeg**: automatic `installFfmpeg()` (existing, pinned + SHA-256), first try plus 3 retries after
-  2 s, 5 s and 10 s (phase `retrying` in between); progress in the panel (quality card and tutorial);
-  failures are not fatal (original quality only) and the panel offers "Try again".
+  2 s, 5 s and 10 s (phase `retrying` in between); a try that receives nothing for 60 s
+  (`FFMPEG_STALL_MS`) fails with "The download stopped" (`quality.install.stalled`); progress in the
+  panel (quality card and tutorial); failures are not fatal (original quality only) and the panel
+  offers "Try again".
 
 ## Installers
 

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Installing the video converter no longer sits at "Downloading… 0 MB".** When the download of ffmpeg stopped halfway (a dropped connection, or its publisher's site not answering), the panel could show "Downloading…" for up to 30 minutes without saying anything. Now, when nothing arrives for a minute, it stops and says so: check your internet connection and click **Try again**. A slow connection that keeps downloading is never stopped. On the desktop app's first start, SwarmCast tries again by itself as before.
 - **Your picture shows when the stream ends.** When you ended the live, viewers saw "The stream has ended" with a broken image where your picture from **Your page** should be: their browser asked for it only then, when SwarmCast and its link were already going away. Viewers' pages now load your picture while the live is on and show it at the end; if it could not load, they see the SwarmCast bee instead. The same goes for "You were removed", and your picture on **Audio only (saves data)** never shows as a broken image either.
 
 ## [0.5.2] - 2026-11-08
