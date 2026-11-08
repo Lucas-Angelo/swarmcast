@@ -128,14 +128,18 @@ export async function resolveViaDoh(hostname: string): Promise<CloudflareAnswer>
         await res.body?.cancel();
         continue;
       }
-      const body = (await res.json()) as { Answer?: Array<{ type: number; data: string }> };
-      const ip = body.Answer?.find((a) => a.type === 1)?.data;
-      return ip ? { ip } : 'unknown';
+      return dohAnswer(await res.json());
     } catch {
       /* this server did not answer: the next one */
     }
   }
   return 'unreachable';
+}
+
+/** A DNS-over-HTTPS answer (application/dns-json) as a CloudflareAnswer: its first A record, else `unknown`. */
+export function dohAnswer(body: unknown): CloudflareAnswer {
+  const ip = (body as { Answer?: Array<{ type: number; data: string }> } | null)?.Answer?.find((a) => a.type === 1)?.data;
+  return ip ? { ip } : 'unknown';
 }
 
 /** True for a URL host that is an IP address (`203.0.113.7`, `[2001:db8::5]`), not a name. */
@@ -163,7 +167,8 @@ export interface HealthAnswer {
   marker: string | null;
 }
 
-const realIo: ReachabilityIo = {
+/** The real network: Cloudflare's DNS-over-HTTPS, this machine's resolver, HTTPS to the address. */
+export const realIo: ReachabilityIo = {
   cloudflare: resolveViaDoh,
   system: (hostname) => dns.promises.lookup(hostname).then(
     () => true,

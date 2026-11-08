@@ -1,0 +1,76 @@
+name: Real services
+
+# The real third-party services the app uses, once a day: Cloudflare's free quick tunnel (the
+# quick-tunnel API, its edge, DNS-over-HTTPS and the new name's DNS), its speed test, the public
+# IP blocklists and the STUN server. The gate (pipeline.yml) never reaches them: its tunnel
+# sessions go to a local stand-in for Cloudflare (scripts/test/lib/cloudflare.mjs), so a
+# Cloudflare outage or rate limit cannot fail a pull request, main or a release. This run keeps
+# the real path covered: the preflight of the staged Linux server with --real-cloudflare and no
+# stand-in at all, as a fresh install runs it.
+#
+# Never a gate: nothing waits on it, it reads no secret and no environment, and a failure of a
+# real service is reported in the job summary (and as a warning), not as a red run, so it never
+# marks main's commit red. It records what happened; a failure here is looked at, not re-run.
+on:
+  schedule:
+    - cron: '41 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: real-services-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: preflight with the real Cloudflare (linux-x64)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        timeout-minutes: 8
+        with:
+          ffmpeg: 'true'
+      - run: npm run build
+      - name: Build the package
+        run: node scripts/build/package.mjs --target linux-x64
+      # verify.mjs --chrome drives the Google Chrome of the runner image. Its time limit is the
+      # gate's preflight step's (_desktop.yml): the app's own tunnel step may take 4 minutes.
+      - name: Preflight through the real Cloudflare quick tunnel
+        id: preflight
+        continue-on-error: true
+        timeout-minutes: 11
+        run: node scripts/test/preflight/verify.mjs --staging release/staging/linux-x64 --tunnel --real-cloudflare --chrome --junit "$RUNNER_TEMP/real-services.junit.xml" 2>&1 | tee "$RUNNER_TEMP/real-services.log"
+      - name: Summary
+        if: always()
+        env:
+          OUTCOME: ${{ steps.preflight.outcome }}
+        run: |
+          {
+            echo "### Real services: preflight through the real Cloudflare quick tunnel: ${OUTCOME}"
+            echo
+            echo 'Not a gate (the gate uses a local stand-in for Cloudflare). Checks:'
+            echo
+            echo '```'
+            grep -E '^(✓|✗|infra recovery:|\[tunnel\] the app tried|PREFLIGHT FAILED|Preflight )' "$RUNNER_TEMP/real-services.log" || echo '(no output)'
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$OUTCOME" != success ]; then
+            echo "::warning title=Real services::the preflight through the real Cloudflare quick tunnel did not pass (${OUTCOME}); see the summary and the log artifact"
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          name: real-services-${{ github.run_id }}
+          path: ${{ runner.temp }}/real-services*
+          retention-days: 14

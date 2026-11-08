@@ -27,6 +27,7 @@ import type { GuardOptions } from './chat/guard.js';
 import type { LoadGuard, LoadGuardOptions } from './quality/load-guard.js';
 import { ExternalTunnel, NoTunnel, type TunnelProvider } from './tunnel/provider.js';
 import { QuickTunnel } from './tunnel/quick.js';
+import { cloudflareStandIn, standInArgs, standInIo } from './tunnel/stand-in.js';
 import { PublicBlocklists, blocklistSources } from './security/blocklists.js';
 import type { DesktopBridge } from './desktop/bridge.js';
 import { desktopPreflight } from './desktop/preflight.js';
@@ -54,6 +55,8 @@ export interface AppOptions {
   loadGuard?: LoadGuard | Partial<LoadGuardOptions>;
   /** The chat's event-loop guard (tests): where its load samples come from, and how often. */
   chatGuard?: GuardOptions;
+  /** How often the live's tunnel watch checks the public address (tests: a quick tunnel's watch, tunnel/watch.ts). */
+  tunnelWatch?: { everyMs?: number; recheckMs?: number };
   /**
    * The panel's port probe (tests: a start that finds every port busy, without holding real
    * ports, which other programs on the machine take and free at any moment).
@@ -177,6 +180,9 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
     log,
   );
 
+  // System tests only: a local stand-in for Cloudflare's quick tunnels (tunnel/stand-in.ts).
+  const standIn = cloudflareStandIn();
+  if (standIn) log.info({ standIn }, 'tunnels go to a local stand-in for Cloudflare (SWARMCAST_TEST_CLOUDFLARE)');
   let tunnel: TunnelProvider;
   switch (config.tunnel.provider) {
     case 'none':
@@ -187,7 +193,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
       tunnel = new ExternalTunnel(config.tunnel.externalUrl);
       break;
     default:
-      tunnel = new QuickTunnel(path.join(paths.binDir, exe('cloudflared')), paths.runDir, reaper, log);
+      tunnel = new QuickTunnel(path.join(paths.binDir, exe('cloudflared')), paths.runDir, reaper, log, standIn ? { extraArgs: standInArgs(standIn) } : {});
   }
 
   // Free public IP blocklists: cached in the data folder, refreshed every 24 h while running.
@@ -236,6 +242,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
     quality: { binDir: paths.binDir, dataDir: paths.dataDir, runDir: paths.runDir, reaper, ...(opts.loadGuard ? { loadGuard: opts.loadGuard } : {}) },
     brandingDir: path.join(paths.dataDir, 'branding'),
     ...(opts.chatGuard ? { chatGuard: opts.chatGuard } : {}),
+    ...(standIn || opts.tunnelWatch ? { tunnelCheck: { ...(standIn ? { io: standInIo(standIn) } : {}), ...(opts.tunnelWatch ? { watch: opts.tunnelWatch } : {}) } } : {}),
   });
   started.add(() => live.shutdown());
   // Probe the video encoders shortly after launch (a few 1-second test encodes), not during a live.
