@@ -870,6 +870,30 @@ export function ui(lang, key) {
   return m ? m[1].replace(/\\'/g, "'") : null;
 }
 
+/**
+ * Waits until the panel's OBS pill says OBS is sending: the pill marked ok and its text the
+ * "sending" one of either language, with or without the rate (App.tsx). Not a match of /sending/:
+ * that also matches the waiting text, "OBS: not sending yet", so it could never fail. Returns
+ * whether it did and the pill's text.
+ */
+export async function obsPillSending(page, timeoutMs = 30_000) {
+  const sending = ['en', 'pt-BR'].map((lang) => ui(lang, 'admin.obs.pillSendingNoRate'));
+  const ok = await page
+    .waitForFunction(
+      (prefixes) => {
+        const pill = document.querySelector('[data-testid=obs-status]');
+        return !!pill && pill.classList.contains('pill-ok') && prefixes.some((p) => (pill.textContent ?? '').trim().startsWith(p));
+      },
+      sending,
+      { timeout: timeoutMs },
+    )
+    .then(
+      () => true,
+      () => false,
+    );
+  return { ok, text: (await page.textContent('[data-testid=obs-status]').catch(() => null)) ?? '(no pill)' };
+}
+
 // ---------------------------------------------------------------------------
 // Environment facts (recorded as info rows)
 // ---------------------------------------------------------------------------

@@ -138,15 +138,30 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
   v.page.on('console', (m) => {
     if (/stall recovery|reload/i.test(m.text())) log(`[ladder-viewer] ${m.text().slice(0, 300)}`);
   });
-  const menu = await v.page.$('select.quality-menu, #player-controls select, select[aria-label*="quality" i]');
-  if (menu) {
-    const opts = await menu.$$eval('option', (os) => os.map((o) => [o.value, o.textContent]));
+  // The player's quality menu (viewer quality-menu.ts: a button and a WAI-ARIA menu of
+  // menuitemradio entries; the <select> it replaced, PR #90, left this block looking for nothing).
+  // Its entries are there once the stream's levels are parsed; waited for, not looked up once.
+  const menuEntries = (page) =>
+    page.evaluate(() => [...document.querySelectorAll('[data-testid="quality-menu"] [role="menuitemradio"]')].map((e) => [e.dataset.value, e.textContent?.trim() ?? '']));
+  const opts = await until(async () => {
+    const entries = await menuEntries(v.page);
+    return entries.some(([, t]) => t === '480p') ? entries : null;
+  }, 30_000, 'a 480p entry in the quality menu').catch(() => null);
+  // By its value: the Auto entry's name changes with the level it plays ("Auto (480p)").
+  const pickQuality = async (value) => {
+    await v.page.getByTestId('quality').click();
+    await v.page.locator(`[data-testid="quality-menu"] [role="menuitemradio"][data-value="${value}"]`).click();
+    await v.page.getByTestId('quality-menu').waitFor({ state: 'hidden', timeout: 10_000 });
+  };
+  const checkedEntry = (page) => page.evaluate(() => document.querySelector('[data-testid="quality-menu"] [role="menuitemradio"][aria-checked="true"]')?.textContent?.trim() ?? null);
+  check('viewer quality menu offers 480p', !!opts, opts ? opts.map(([, t]) => t).join(' / ') : `entries after 30 s: ${(await menuEntries(v.page)).map(([, t]) => t).join(' / ') || '(none)'}`);
+  if (opts) {
     // The manual 480p entry, never "Auto (480p)": the Auto entry names the level it plays now,
     // and picking it changes nothing (value -1 keeps hls.js ABR in charge).
-    const low = opts.find(([val, t]) => val !== '-1' && /^\s*480p\s*$/.test(t ?? ''));
+    const low = opts.find(([val, t]) => val !== '-1' && t === '480p');
     const fragsBefore = (await hlsProbe(v.page)).frag480;
     const t0 = Date.now();
-    if (low) await menu.selectOption(low[0]);
+    if (low) await pickQuality(low[0]);
     // The player's own state, not only its requests: ABR is off, the level hls.js plays and
     // loads is 480p, and a 480p video fragment arrived after the pick.
     const state = low
@@ -186,20 +201,19 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
       const kept =
         fragsAtReload !== null &&
         (await v.page
-          .waitForFunction(({ before, el }) => {
+          .waitForFunction((before) => {
             const h = window.__hls;
             const lv = h.levels;
-            return !h.autoLevelEnabled && lv[h.currentLevel]?.height === 480 && lv[h.loadLevel]?.height === 480 && window.__scHls.frag480 > before && el.selectedOptions[0]?.textContent?.trim() === '480p';
-          }, { before: fragsAtReload, el: menu }, { timeout: 30_000, polling: 250 })
+            const shownEntry = document.querySelector('[data-testid="quality-menu"] [role="menuitemradio"][aria-checked="true"]')?.textContent?.trim();
+            return !h.autoLevelEnabled && lv[h.currentLevel]?.height === 480 && lv[h.loadLevel]?.height === 480 && window.__scHls.frag480 > before && shownEntry === '480p';
+          }, fragsAtReload, { timeout: 30_000, polling: 250 })
           .then(() => true, () => false));
       const after = await hlsProbe(v.page);
-      const shown = await menu.evaluate((el) => el.selectedOptions[0]?.textContent?.trim());
+      const shown = await checkedEntry(v.page);
       const why = fragsAtReload === null ? 'the playlists were not parsed again within 30 s of the reload' : `30 s after the reload: currentLevel ${after.cur ?? '?'}p, loadLevel ${after.load ?? '?'}p, auto ${after.auto}, 480p fragments since ${after.frag480 - fragsAtReload}, menu "${shown}"`;
       check('manual 480p kept across a source reload', kept, kept ? 'ABR off, 480p played and loaded, a 480p fragment after the reload, menu on 480p' : why);
     }
-    if (low) await menu.selectOption(opts[0][0]);
-  } else {
-    info('viewer quality menu', 'not in this viewer build (watch.ts integration pending): testing hls.js automatic switching instead');
+    if (low) await pickQuality('-1');
   }
   const cdp = await v.context.newCDPSession(v.page);
   await cdp.send('Network.enable');
@@ -240,7 +254,9 @@ await section('4. manual rendition: multivariant playlist, viewers get >= 2 leve
 
 await section('5. taskkill /F during conversion: the reaper removes ffmpeg', async () => {
   onCleanup(() => {
-    killTree(app.inst.child.pid);
+    // Only while it runs: this section kills it and waits for its exit, and Windows reuses a
+    // freed PID at once (taskkill /T would end whatever holds the number then, and its tree).
+    if (app.inst.child.exitCode === null && app.inst.child.signalCode === null) killTree(app.inst.child.pid);
     killUnder(home);
   });
   await app.api('/api/live/start', {});

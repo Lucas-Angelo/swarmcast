@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   addSweepPath, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installServer, isLoopback, join, joinAndPlay,
-  killUnder, launchBrowser, listening, must, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, probe, processesUnder,
+  killUnder, launchBrowser, listening, must, obsPillSending, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, probe, processesUnder,
   pushStream, quitAndVerify, record, renderedTwice, uploadCapCheck, repoRoot, section, serverExe, socketsOf, startApp, stats, ui, until,
   waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners, setP2P,
 } from './lib.mjs';
@@ -94,8 +94,8 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
       check('setup tutorial can be walked to the end and is remembered', closed && done, `${n} steps`);
     }
   }
-  await panel.page.waitForFunction(() => /Mbps|sending|enviando/i.test(document.querySelector('[data-testid=obs-status]')?.textContent ?? ''), null, { timeout: 30_000 });
-  check('panel shows OBS sending', true, await panel.page.textContent('[data-testid=obs-status]'));
+  const pill = await obsPillSending(panel.page);
+  check('panel shows OBS sending', pill.ok, pill.text);
 
   // Loopback only: nothing SwarmCast runs should trigger a Windows Firewall prompt in secure mode.
   const pids = processesUnder(home).map((p) => p.pid);
@@ -169,8 +169,13 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   const sess = st.viewers.find((v) => v.nickname === victimName);
   await app.api(`/api/viewers/${sess.sessionId}/kick`, {});
   await victim.page.waitForSelector('#ended:not([hidden])', { timeout: 20_000 });
-  await victim.page.goto(s0.liveLink);
-  check(`kick stops playback (${victimName}) and the same link is refused for that browser`, /no longer valid|não vale mais|inválid/i.test(await victim.page.textContent('body')));
+  // Committed, then the page's own text: Firefox (Juggler) can lose a navigation's load events
+  // (the e2e fixtures wait the same way).
+  await victim.page.goto(s0.liveLink, { waitUntil: 'commit' });
+  const refusedAgain = await victim.page
+    .waitForFunction(() => /no longer valid|não vale mais|inválid/i.test(document.body?.textContent ?? ''), null, { timeout: 30_000 })
+    .then(() => true, () => false);
+  check(`kick stops playback (${victimName}) and the same link is refused for that browser`, refusedAgain, refusedAgain ? '' : ((await victim.page.textContent('body').catch(() => null)) ?? '(no page)').slice(0, 200));
   await victim.context.close();
 
   // New link.
@@ -183,7 +188,17 @@ await section('1. local mode: Chrome, Edge, Firefox, P2P, Go-live, kick, new lin
   const nv = await joinAndPlay(chrome, rot.liveLink, 'new-link');
   check('"Generate new link": old link refused, new link plays', oldRefused && rot.liveLink !== s0.liveLink);
   await nv.context.close();
-  check('early viewer kept playing through link rotation', await early.page.evaluate(() => !document.querySelector('video').paused));
+  // Kept playing = the video still advances. Not a snapshot of video.paused: after a stall the
+  // viewer's adaptive delay pauses on purpose for a few seconds (a hold) and then plays on, as in
+  // quality.mjs.
+  const earlyFrom = await early.page.evaluate(() => document.querySelector('video').currentTime);
+  const earlyPlays = await early.page
+    .waitForFunction((from) => {
+      const el = document.querySelector('video');
+      return !el.paused && el.currentTime > from + 1;
+    }, earlyFrom, { timeout: 30_000, polling: 250 })
+    .then(() => true, () => false);
+  check('early viewer kept playing through link rotation', earlyPlays, earlyPlays ? '' : `not advancing for 30 s from ${earlyFrom.toFixed(1)} s`);
 
   // Stop everything through the API (returns the verification).
   const stop = await app.api('/api/live/stop', {});
