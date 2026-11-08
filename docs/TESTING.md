@@ -246,7 +246,19 @@ sideways layout; iOS: the sideways layout).
   no click followed. `setup.sh` and the suite turn those daemons off (`launchctl disable` in the
   simulator; `ios.ts` `UNUSED_JOBS`), and the harness's touch listeners are passive, so WebKit does
   not hold a tap for the page. Every tap's timing goes to `taps.log`, the Mac's load to
-  `host-load.log`.
+  `host-load.log`. A simulator's first long boot also has one burst of its own: a few seconds in,
+  siriactionsd (Shortcuts) schedules an index of every app's actions, and about a minute later its
+  XPC service BackgroundShortcutRunner runs it for some 80 s at up to 120 % CPU (26 s of CPU,
+  Devices run 42519281087), which on CI is when the first test begins. With the Mac 0 % idle, the
+  first tap's finger stayed down 1.3 s and iOS took it for a long press (a text-selection drag, no
+  click; run 42515339177). siriactionsd is in `UNUSED_JOBS` too. The time between finger down and
+  up is not the harness's to choose: both are steps of one WebDriver `POST /actions`, which
+  Safari's automation plays one after the other inside the simulator, so a busy Mac lengthens it
+  (there, Safari got finger down at once and finger up 1.26 s later). Keep the simulator calm.
+- **Screenshots on iOS:** `simctl io <udid> screenshot -` does not write to stdout on Xcode 26,
+  though its help says so: it writes a file named `-` in the current folder, exits 0 and leaves
+  stdout empty, so failed tests kept an empty "screen". `IosDevice.screenshot` writes a file and
+  reads it back, and fails ("screen (failed)") with simctl's words when there is no image.
 - **iOS taps and content that appears:** WebKit on iOS watches the page from touchstart to the
   synthetic mouse move and takes a tap for a hover, with no click, when clickable content appears
   meanwhile (its content-change observer). The join page's "Checking your browser…" line (with its

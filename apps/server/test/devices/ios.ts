@@ -68,7 +68,13 @@ const SIMULATOR_KEYS = [...AUTOMATION_KEYS, SAFARI_TIPS_OFF] as const;
  * diagnosticd took 78 % of the Mac's 300 %. identityservicesd and StatusKitAgent are apsd's
  * clients; the rest are the Health, Fitness, Reminders, Siri and photo-analysis daemons and
  * chronod, which keeps relaunching the home screen's widget extensions (100 to 360 MB each).
- * scripts/test/devices/setup.sh turns the same jobs off.
+ * siriactionsd, the Shortcuts daemon, schedules a ToolKit index of every app's actions a few
+ * seconds after a simulator's first long boot (the dasd activity
+ * "com.apple.siriactionsd.toolkit.high-prio-deferred-delta-index"); about a minute later it runs
+ * in siriactionsd's XPC service BackgroundShortcutRunner for 80 s, 26 s of CPU (Devices run
+ * 42519281087), the most of any process but the log relay. In CI that was the first test's time:
+ * at 76 to 118 % CPU with the Mac 0 % idle, the first tap's finger stayed down 1.3 s and iOS took
+ * it for a long press (run 42515339177). scripts/test/devices/setup.sh turns the same jobs off.
  */
 const UNUSED_JOBS = [
   'com.apple.apsd',
@@ -82,6 +88,7 @@ const UNUSED_JOBS = [
   'com.apple.assistantd',
   'com.apple.mediaanalysisd',
   'com.apple.chronod',
+  'com.apple.siriactionsd',
 ] as const;
 
 async function simctl(args: readonly string[]): Promise<string> {
@@ -425,9 +432,21 @@ export class IosDevice {
     );
   }
 
+  /**
+   * The simulator's screen as a PNG, through a file in the log folder. Not `-` for stdout, which
+   * `simctl io screenshot`'s help offers: Xcode 26's simctl writes a file named `-` in the current
+   * folder instead, exits 0 and leaves stdout empty (stderr: "Wrote screenshot to: <cwd>/-"), so
+   * every failed test kept an empty "screen" (Devices runs 42508591582, 42515339177; 42519281087
+   * tried both ways). Throws with what simctl said when it leaves no image, so the test's
+   * "screen (failed)" says why.
+   */
   async screenshot(): Promise<Buffer> {
-    const { stdout } = await run('xcrun', ['simctl', 'io', this.udid, 'screenshot', '--type=png', '-'], { encoding: 'buffer', maxBuffer: 64 * 1024 * 1024 });
-    return stdout;
+    const file = path.join(this.logDir, `screen-${new Date().toISOString().replace(/[:.]/g, '-')}.png`);
+    const { stdout, stderr } = await run('xcrun', ['simctl', 'io', this.udid, 'screenshot', '--type=png', file]);
+    const png = fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0);
+    fs.rmSync(file, { force: true });
+    if (png.length === 0) throw new Error(`simctl io screenshot left no image (${`${stdout}${stderr}`.trim() || 'it said nothing'})`);
+    return png;
   }
 
   /** Records the screen until the returned stop(); kept by the caller only for a failed test. */
