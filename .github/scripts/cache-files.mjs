@@ -87,6 +87,9 @@ function main([cmd, ...args]) {
   if (cmd === 'list' && args.length === 2) {
     const [dir, listFile] = args;
     const files = snapshot(dir);
+    // On a cold cache nothing was restored, not even the folder the list goes next to (run
+    // 42472780332: ENOENT for sc-cache/downloads.restored).
+    fs.mkdirSync(path.dirname(listFile), { recursive: true });
     fs.writeFileSync(listFile, files.map((f) => `${f}\n`).join(''));
     console.log(`${dir}: ${files.length} file(s) restored`);
     return 0;

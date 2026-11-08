@@ -166,6 +166,26 @@ describe('the command line (as setup and setup/save run it)', () => {
     expect(fs.readFileSync(output, 'utf8')).toMatch(/^tauri-tools-key=sc-tauri-tools-Windows-X64-1a2b3c4d-8-[0-9a-f]{12}\n$/);
   });
 
+  it('a cold cache (nothing restored, not even its parent folder): lists nothing, then writes the key for what the job downloaded', () => {
+    // Arrange: run 42472780332, desktop macos-x64 build: no entry for its key, so no sc-cache folder.
+    const cache = path.join(dir, 'sc-cache', 'downloads');
+    const list = path.join(dir, 'sc-cache', 'downloads.restored');
+    const output = path.join(dir, 'output');
+    fs.writeFileSync(output, '');
+
+    // Act
+    const listed = run(['list', cache, list]);
+    put(cache, [MEDIAMTX]);
+    const planned = run(['plan', 'dl', cache, list, BASE], { GITHUB_RUN_ID: '9', GITHUB_OUTPUT: output });
+
+    // Assert
+    expect(listed.stderr).toBe('');
+    expect(listed.status).toBe(0);
+    expect(fs.readFileSync(list, 'utf8')).toBe('');
+    expect(planned.status).toBe(0);
+    expect(fs.readFileSync(output, 'utf8')).toMatch(new RegExp(`^dl-key=${BASE}9-[0-9a-f]{12}\\n$`));
+  });
+
   it('takes a missing list as an empty restore, and refuses bad usage', () => {
     // Arrange
     const cache = path.join(dir, 'downloads');

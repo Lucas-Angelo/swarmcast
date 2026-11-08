@@ -5,7 +5,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { describe, expect, vi } from 'vitest';
+import { describe, expect, onTestFinished, vi } from 'vitest';
 import { ensurePkgBase, loadPkgFetch, pkgBasePlace } from '../pkg-base.mjs';
 import { it } from './fixtures.js';
 
@@ -104,17 +104,21 @@ describe('ensurePkgBase', () => {
     expect(fs.readFileSync(placed(pkgCache))).toEqual(BYTES);
   });
 
-  it('without a download cache (a local build) it downloads straight to where pkg looks', async ({ tmp }) => {
-    // Arrange
+  it('without a download cache (a local build) it downloads straight to where pkg looks, also where SC_DOWNLOAD_CACHE is set', async ({ tmp }) => {
+    // Arrange: CI's setup sets SC_DOWNLOAD_CACHE for the unit tests too (run 42472780332); null
+    // means no cache, whatever the environment says.
     const { pkgCache } = dirs(tmp);
     const download = fakeDownload();
+    vi.stubEnv('SC_DOWNLOAD_CACHE', path.join(tmp, 'the-job-download-cache'));
+    onTestFinished(() => void vi.unstubAllEnvs());
 
     // Act
-    await ensurePkgBase('node24-linux-x64', { cacheDir: undefined, pkgCache, fetcher: fakePkgFetch(pkgCache), download, log: () => {} });
+    await ensurePkgBase('node24-linux-x64', { cacheDir: null, pkgCache, fetcher: fakePkgFetch(pkgCache), download, log: () => {} });
 
     // Assert
     expect(download).toHaveBeenCalledWith([URL], placed(pkgCache), SHA);
     expect(fs.readFileSync(placed(pkgCache))).toEqual(BYTES);
+    expect(fs.existsSync(path.join(tmp, 'the-job-download-cache'))).toBe(false);
   });
 
   it('stops the build with the reason when the download fails, instead of letting pkg compile Node.js', async ({ tmp }) => {

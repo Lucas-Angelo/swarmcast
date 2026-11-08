@@ -83,7 +83,8 @@ function pruneCache(cacheDir, expected) {
 /**
  * Makes sure pkg finds the base binary of `pkgTarget` in its cache (see the top of this file).
  * Returns where it came from: `pkg cache`, `download cache` or the URL it was downloaded from.
- * `fetcher` (loadPkgFetch), `download` (downloadFirst) and `log` are for tests.
+ * `cacheDir` defaults to SC_DOWNLOAD_CACHE; null means no download cache. `fetcher`
+ * (loadPkgFetch), `download` (downloadFirst) and `log` are for tests.
  */
 export async function ensurePkgBase(
   pkgTarget,
