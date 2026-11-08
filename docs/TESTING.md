@@ -54,7 +54,10 @@ These hold for every test on every OS (macOS arm64 and x64, Windows, Linux x64 a
 - Timers: Windows rounds short timers to its clock tick (about 15.6 ms), and CI VMs (above all the
   macOS ones, 3 vCPUs) stop processes for tens of milliseconds at random. Timing checks compare with
   a baseline of the same run and measure the process's own work (the [chat bench](#chat-bench)), never
-  an absolute duration where it can be avoided.
+  an absolute duration where it can be avoided. A cost that grows with the input (linear, a binary
+  search) is shown by counting the work the code does (`chatTextWork()`, `cidrSearchSteps()`), not by
+  timing it; a time limit the code under test enforces runs on an injected timer when the test needs
+  a try to pass it or not (`restore({ timer })` of the cache action).
 - Locale and time zone are set by the test when they matter (`SWARMCAST_LOCALE`, `TZ`), or the code
   under test takes them as an argument.
 - Shells: bash scripts also run on macOS's bash 3.2; the Windows scripts target Windows PowerShell 5.1.
@@ -122,6 +125,16 @@ provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hang
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
 `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `SWARMCAST_TEST_CLOUDFLARE`, `NODE_EXTRA_CA_CERTS`.
 
+`acme-pebble.test.ts` runs the ACME client against Pebble, Let's Encrypt's test CA, as a process on
+127.0.0.1 (every OS; no Docker): the binary `npm run fetch-bins` puts in `vendor/<target>/`
+(`pebble` in `scripts/build/versions.json`, a `testTool`: never packaged). It is not Pebble's
+release: v2.10.1 can leave the poll of an order that follows its finalize unanswered for good
+(letsencrypt/pebble#554), and our client polls right after finalizing (run 42428110733: "AbortError:
+The operation was aborted" after the 30 s request timeout; the journal of that poll and Pebble's log
+in soak run 42429289741). The binaries are commit 1fcb30c of Pebble's main branch, which has the fix,
+built reproducibly and kept in the `ci-deps` pre-release ([RELEASING.md §8](RELEASING.md#8-mirrored-ci-dependencies-ci-deps)).
+Go back to the publisher's release files once a release has it.
+
 ### End-to-end tests
 
 E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each test, and
@@ -146,7 +159,11 @@ there, and while it or its TIME_WAIT holds `127.0.0.1:<port>` nobody can listen 
 port used to be 38082 and once failed at start with EADDRINUSE for that reason (run 41192273509).
 `assertFixedPorts()` checks a harness's ports at start against this machine's real range, and
 `scripts/test/test/ports-zone.test.ts` checks every fixed port, and every port written out in the
-workflows and harness scripts, against the defaults and `RESERVED`.
+workflows and harness scripts, against the defaults and `RESERVED`. A test never relies on a port
+another program may hold or free: a port it lets go and checks again comes from `allocPorts()`, and
+a test that needs every port busy injects the probe (`createApp({ isPortFree })`) instead of
+holding real ports, since one an outgoing connection held while the test took the others can be
+free a moment later.
 
 ### Real devices
 

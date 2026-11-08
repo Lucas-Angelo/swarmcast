@@ -57,6 +57,11 @@ export interface AppOptions {
   chatGuard?: GuardOptions;
   /** How often the live's tunnel watch checks the public address (tests: a quick tunnel's watch, tunnel/watch.ts). */
   tunnelWatch?: { everyMs?: number; recheckMs?: number };
+  /**
+   * The panel's port probe (tests: a start that finds every port busy, without holding real
+   * ports, which other programs on the machine take and free at any moment).
+   */
+  isPortFree?: (port: number, host: string) => Promise<boolean>;
 }
 
 export interface App {
@@ -250,7 +255,7 @@ async function assembleApp(opts: AppOptions, started: StartupSteps): Promise<App
   // The panel and the local public server can live on any free port (the tunnel and the
   // browser follow them); only RTMP must stay fixed because OBS is configured with it.
   // Port 0 (tests): the OS picks a free port at listen time, never probe-then-bind.
-  const adminPort = config.ports.admin === 0 ? 0 : await firstFreePort(config.ports.admin);
+  const adminPort = config.ports.admin === 0 ? 0 : await firstFreePort(config.ports.admin, 20, '127.0.0.1', opts.isPortFree);
   if (adminPort === null) {
     throw new StartupError('ports-busy', `Ports ${config.ports.admin}-${Math.min(config.ports.admin + 19, 65535)} are busy. Is SwarmCast already running? Close it (tray icon → Quit) and try again.`);
   }

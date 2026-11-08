@@ -502,3 +502,18 @@ describe('versions.json mirrors', () => {
     for (const [m, set] of pins) expect(set.size, m).toBe(1);
   });
 });
+
+describe('versions.json test tools', () => {
+  type Spec = { version: string; url: string; bundle?: boolean; testTool?: boolean; assets: Record<string, { asset: string; sha256: string }> };
+  const tools = Object.entries(versions as unknown as Record<string, Spec>).filter(([, spec]) => spec.testTool);
+
+  it('are never bundled, have a build for every target and come from this repo\'s ci-deps pre-release', () => {
+    // Assert
+    expect(tools.map(([tool]) => tool)).toContain('pebble');
+    for (const [tool, spec] of tools) {
+      expect(spec.bundle, tool).toBe(false);
+      expect(Object.keys(spec.assets).sort(), tool).toEqual(['linux-arm64', 'linux-x64', 'macos-arm64', 'macos-x64', 'windows-x64']);
+      for (const a of Object.values(spec.assets)) expect(assetUrls(spec, a)).toEqual([`https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/${a.asset}`]);
+    }
+  });
+});

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Your picture shows when the stream ends.** When you ended the live, viewers saw "The stream has ended" with a broken image where your picture from **Your page** should be: their browser asked for it only then, when SwarmCast and its link were already going away. Viewers' pages now load your picture while the live is on and show it at the end; if it could not load, they see the SwarmCast bee instead. The same goes for "You were removed", and your picture on **Audio only (saves data)** never shows as a broken image either.
+
 ## [0.5.2] - 2026-11-08
 
 ### Changed

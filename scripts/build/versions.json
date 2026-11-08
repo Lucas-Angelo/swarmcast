@@ -236,5 +236,40 @@
         "binary": "runtime-aarch64"
       }
     }
+  },
+  "pebble": {
+    "version": "1fcb30c",
+    "bundle": false,
+    "testTool": true,
+    "license": "MPL-2.0",
+    "notes": "Tests only, never shipped: Let's Encrypt's ACME test CA, which acme-pebble.test.ts runs as a process; `npm run fetch-bins` puts it in vendor/<target>/ (package.mjs never takes a testTool). Not a publisher's file: Pebble's newest release, v2.10.1, can leave the poll of an order that follows its finalize unanswered for good (letsencrypt/pebble#554; the fix, #555, is only on main), so this is commit 1fcb30cabf594e047cb92432b9392bc3dfa469f7 of github.com/letsencrypt/pebble (2026-09-28) built with Go 1.25.14 (CGO_ENABLED=0 go build -mod=vendor -trimpath -buildvcs=false -ldflags=\"-s -w -buildid= -X 'main.version=1fcb30c (<commit>)'\" ./cmd/pebble, reproducible) and kept in this repo's ci-deps pre-release with its source and build script (pebble-1fcb30c-build.sh). Move to the publisher's release files once a release has the fix (docs/RELEASING.md, section 8).",
+    "url": "https://github.com/Lucas-Angelo/swarmcast/releases/download/ci-deps/{asset}",
+    "assets": {
+      "windows-x64": {
+        "asset": "pebble-1fcb30c-windows-x64.exe",
+        "sha256": "a133bc1812751c9dbfd6a3d2ad9c24e4ea43933fd807e04088c25a15b3582e93",
+        "binary": "pebble.exe"
+      },
+      "macos-arm64": {
+        "asset": "pebble-1fcb30c-macos-arm64",
+        "sha256": "1cf889af046eac2190c4144f17ff654be69e67d0921bc4fb7df046202a875fc8",
+        "binary": "pebble"
+      },
+      "macos-x64": {
+        "asset": "pebble-1fcb30c-macos-x64",
+        "sha256": "11c0da8f74c03549607eb2c15372b49dce93019a001d2dcb1c347d3868f08cac",
+        "binary": "pebble"
+      },
+      "linux-x64": {
+        "asset": "pebble-1fcb30c-linux-x64",
+        "sha256": "b0c3ae18dd73063ba57ebbe226845d3a7d8d33e2b6e9f84c5719aa6af9dae9c1",
+        "binary": "pebble"
+      },
+      "linux-arm64": {
+        "asset": "pebble-1fcb30c-linux-arm64",
+        "sha256": "8c4a4dfbb199cbbd4b6537a750a69387b2cef8e77050481e414ea9f72a209da6",
+        "binary": "pebble"
+      }
+    }
   }
 }
