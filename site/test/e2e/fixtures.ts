@@ -20,6 +20,18 @@ export const UA = {
   iphone: { userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1', platform: 'iPhone' },
 } as const;
 
+/**
+ * Stops the page's clock from before it loads (page.clock): its timers move only when the test
+ * runs them. For what a page shows for a moment on its own clock ("Link copied" goes back after
+ * 2.5 s, DownloadButton.astro), which a check on real time can miss on a slow runner. Call it
+ * before the page opens.
+ */
+export async function freezePageClock(page: Page): Promise<void> {
+  const t0 = new Date('2026-01-01T12:00:00Z');
+  await page.clock.install({ time: t0 });
+  await page.clock.pauseAt(new Date(t0.getTime() + 1000));
+}
+
 /** The usage summary the stats workflow publishes (scripts/stats), as the site reads it. */
 export const STATS = {
   version: 1,
@@ -97,11 +109,14 @@ export async function fontsLoaded(page: Page): Promise<void> {
 }
 
 /**
- * Waits until the page is done with its own work after load: every component that reads
- * stats.json has read it (they are aria-busy until then; their scripts run before the load event
- * page.goto waits for) and the web fonts are in. The layout is final then.
+ * Waits until the page is done with its own work after load: the load event (a page reached by a
+ * click is only committed when toHaveURL passes), every component that reads stats.json has read
+ * it (they are aria-busy until then; their scripts run before the load event) and the web fonts
+ * are in. The layout is final then: the next click cannot meet a font swap's reflow between its
+ * press and its release (Inter swaps in, and serve.mjs sends no-store, so every page loads it).
  */
 export async function pageSettled(page: Page): Promise<void> {
+  await page.waitForLoadState('load');
   await expect(page.locator('[aria-busy="true"]')).toHaveCount(0);
   await fontsLoaded(page);
 }

@@ -33,6 +33,30 @@ function nickContrast(page: Page, text: string): Promise<number> {
     });
 }
 
+/**
+ * Records from now on each state of Send (disabled or not) with the status line beside it; the
+ * returned function reads the record. Slow mode holds Send for 2 s from the server's ack on the
+ * page's real clock, so a look after the send can come after the hold on a slow runner; the
+ * record cannot miss it.
+ */
+async function recordSend(page: Page): Promise<() => Promise<Array<{ disabled: boolean; status: string }>>> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __send: Array<{ disabled: boolean; status: string }> };
+    const send = document.querySelector<HTMLButtonElement>('[data-testid="chat-send"]')!;
+    const status = document.querySelector('[data-testid="chat-status"]')!;
+    w.__send = [];
+    const note = (): void => {
+      const st = { disabled: send.disabled, status: status.textContent ?? '' };
+      const last = w.__send.at(-1);
+      if (!last || last.disabled !== st.disabled || last.status !== st.status) w.__send.push(st);
+    };
+    const watch = new MutationObserver(note);
+    watch.observe(send, { attributes: true, attributeFilter: ['disabled'] });
+    watch.observe(status, { childList: true, characterData: true, subtree: true });
+  });
+  return () => page.evaluate(() => (window as unknown as { __send: Array<{ disabled: boolean; status: string }> }).__send);
+}
+
 test('two viewers chat both ways; "sending…" then the server copy', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
   const a = await viewers.join(uid('chatA'));
@@ -64,15 +88,16 @@ test('slow mode waits on the client; a server reject is translated and keeps the
     await page.goto(`/watch?lang=${lang}`);
     await chatReady(page);
     const text = `de novo ${uid('dup')}`;
+    const sendStates = await recordSend(page);
     await say(page, text);
 
     // Act
     await page.getByTestId('chat-input').fill(text);
 
     // Assert
-    await expect(page.getByTestId('chat-send')).toBeDisabled();
-    await expect(page.getByTestId('chat-status')).toHaveText(lang === 'en' ? /send again/i : /enviar de novo/i);
     await expect(page.getByTestId('chat-send')).toBeEnabled({ timeout: 5_000 });
+    const waited = (await sendStates()).find((st) => st.disabled && (lang === 'en' ? /send again/i : /enviar de novo/i).test(st.status));
+    expect(waited, 'Send held while the status says when to send again').toBeDefined();
 
     // Act
     await page.getByTestId('chat-input').press('Enter');

@@ -10,7 +10,7 @@
 // clipboard took the link. Whether a page has learned what the server allows (hello) is read from
 // the chat column, which shows with the same hello.
 import type { BrowserContext, Page } from '@playwright/test';
-import { admin, adminState, chatReady, expect, liveLink, openPanel, test, uid } from './fixtures.js';
+import { admin, adminState, chatReady, expect, liveLink, openPanel, panelShows, test, uid } from './fixtures.js';
 
 /** The page without a share sheet (as Firefox and Chrome on Linux), its clipboard writes recorded in `__copied`. */
 async function clipboardOnly(context: BrowserContext): Promise<void> {
@@ -119,7 +119,8 @@ test('"Viewers can share the link" off in the panel removes the button for viewe
   expect((await askShare(watching)).status).toBe(404);
 
   // Act
-  const late = (await viewers.join(uid('swlate'))).page;
+  const lateNick = uid('swlate');
+  const late = (await viewers.join(lateNick)).page;
   await chatReady(late);
 
   // Assert
@@ -127,6 +128,7 @@ test('"Viewers can share the link" off in the panel removes the button for viewe
   expect((await askShare(late)).status).toBe(404);
 
   // Act
+  await panelShows(panel, lateNick);
   await form.getByTestId('allow-viewer-share').check();
   await form.getByRole('button', { name: 'Save' }).click();
 

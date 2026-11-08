@@ -25,7 +25,7 @@
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState } from './phone.js';
+import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, type Phone } from './phone.js';
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
 const WATCHING_S = 1.5;
@@ -53,6 +53,16 @@ const AWAY_SEGMENTS = 4;
 /** Go live lands within this many seconds of the live point (as in the e2e viewer spec). */
 const AT_LIVE_S = 4;
 
+/**
+ * The status line under the player. It follows the video's events (watch.ts): "Live" on
+ * `playing`, "Buffering…" on `waiting` until the next `playing`, so a live that plays on can
+ * read "Buffering…" for the moment of a short stall (a loaded emulator has them), and a check
+ * reads it until the video plays, never once.
+ */
+function statusLine(phone: Phone): Promise<string | null> {
+  return phone.evaluate(() => document.getElementById('status')!.textContent);
+}
+
 test('a phone viewer joins with the link, Watch in sight while typing: the video starts muted by itself, Unmute turns the sound on, playback goes on', async ({ phone }) => {
   // Arrange
   const nick = uid('join');
@@ -72,7 +82,7 @@ test('a phone viewer joins with the link, Watch in sight while typing: the video
   const unmuted = await videoState(phone);
   await expect.poll(() => playedSince(phone, unmuted)).toBeGreaterThan(PLAYS_ON_S);
   expect(await isShown(phone, '#unmute')).toBe(false);
-  expect(await phone.evaluate(() => document.getElementById('status')!.textContent)).toBe('Live');
+  await expect.poll(() => statusLine(phone), { message: 'the status line once the video plays' }).toBe('Live');
 });
 
 test('the chat sits under the player; a message goes from the phone to another viewer and back; the keyboard leaves the input in sight', async ({ phone, bots }) => {
