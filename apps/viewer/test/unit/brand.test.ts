@@ -1,11 +1,13 @@
 // @vitest-environment happy-dom
 // The streamer's page on the viewer side (branding/brand.ts) and the Pix support sheet
 // (branding/pix-sheet.ts). /api/brand is a fake fetch that answers with an ETag and a 304 for a
-// matching If-None-Match, like the server. Streamer text is untrusted: it must stay text.
+// matching If-None-Match, like the server. Streamer text is untrusted: it must stay text. The
+// brand images come from image-server.ts, up while the stream is and gone at its end.
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { buildPixPayload, type PublicBranding } from '@swarmcast/shared/branding';
 import { sanitizeBranding, startBrand, type BrandPage } from '../../src/branding/brand.js';
 import { openPixSheet } from '../../src/branding/pix-sheet.js';
+import { imageServer } from './image-server.js';
 
 // The pages link the theme stylesheet; happy-dom loads no files and would log every such link
 // as a failed load: here a link counts as loaded, as in a browser.
@@ -68,6 +70,8 @@ async function branded(page: BrandPage, body: unknown = brand(), o: { canChangeL
 }
 
 const byId = (id: string): HTMLElement => document.getElementById(id)!;
+const mascot = (): HTMLElement => document.querySelector<HTMLElement>('#ended .sc-mascot')!;
+const endedAvatar = (): HTMLImageElement | null => document.querySelector<HTMLImageElement>('#ended img.sc-brand-ended-avatar');
 
 describe('sanitizeBranding', () => {
   it('drops images that are not our own content-hash files', () => {
@@ -210,16 +214,74 @@ describe('watch page branding', () => {
 
   it('the ended screen shows the streamer message, picture and support button', async () => {
     // Arrange
+    imageServer();
     const { c } = await branded('watch');
+    c.firstFrame();
 
     // Act
     c.ended();
 
     // Assert
     expect(byId('ended-text').textContent).toBe('Thanks! Back on Friday');
-    expect(document.querySelector<HTMLElement>('#ended .sc-mascot')!.hidden).toBe(true);
-    expect(document.querySelector('#ended img.sc-brand-ended-avatar')).not.toBeNull();
+    await vi.waitFor(() => expect(endedAvatar()?.naturalWidth).toBeGreaterThan(0), { interval: 5 });
+    expect(endedAvatar()!.getAttribute('src')).toBe(IMG('a'));
+    expect(mascot().hidden).toBe(true);
     expect(document.querySelector('#ended .sc-brand-support')).not.toBeNull();
+  });
+
+  it('the ended picture is loaded while the stream is up: shown even when the server is gone at the end', async () => {
+    // Arrange
+    const server = imageServer();
+    const { c } = await branded('watch');
+    c.firstFrame();
+    await vi.waitFor(() => expect(server.answered).toContainEqual({ path: IMG('a'), status: 200 }), { interval: 5 });
+    server.up = false;
+
+    // Act
+    c.ended();
+
+    // Assert
+    await vi.waitFor(() => expect(endedAvatar()?.naturalWidth).toBeGreaterThan(0), { interval: 5 });
+    expect(mascot().hidden).toBe(true);
+    expect(server.answered.filter((a) => a.path === IMG('a'))).toEqual([{ path: IMG('a'), status: 200 }]);
+  });
+
+  it('a picture that could not load leaves the mascot on the ended screen, never a broken image', async () => {
+    // Arrange
+    const server = imageServer();
+    server.up = false;
+    const { c } = await branded('watch');
+    c.firstFrame();
+    await vi.waitFor(() => expect(server.answered).toContainEqual({ path: IMG('a'), status: 502 }), { interval: 5 });
+
+    // Act
+    c.ended();
+
+    // Assert
+    expect(mascot().hidden).toBe(false);
+    expect(endedAvatar()).toBeNull();
+  });
+
+  it('a page saved after the end shows its picture once, in place of the old one', async () => {
+    // Arrange
+    imageServer();
+    watchDom();
+    let body = brand();
+    const f = vi.fn(async () => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } }));
+    const c = startBrand('watch', { fetch: f as unknown as typeof fetch });
+    await c.refresh();
+    c.firstFrame();
+    c.ended();
+    await vi.waitFor(() => expect(endedAvatar()?.naturalWidth).toBeGreaterThan(0), { interval: 5 });
+    body = brand({ rev: 4, avatar: { s256: IMG('9') } });
+
+    // Act
+    await c.refresh(4);
+
+    // Assert
+    await vi.waitFor(() => expect(endedAvatar()?.getAttribute('src')).toBe(IMG('9')), { interval: 5 });
+    expect(document.querySelectorAll('#ended img.sc-brand-ended-avatar')).toHaveLength(1);
+    expect(mascot().hidden).toBe(true);
   });
 
   it('branding off: the stock page stays', async () => {

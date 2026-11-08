@@ -22,8 +22,10 @@
 //    the server is ready, while the window is still on the splash or opening the panel (that
 //    crashed the macOS shell: wry panicked in WebviewWindow::url()).
 //
-// The panel login URL comes from SWARMCAST_TEST_LOGIN_FILE (written by the server). --junit FILE
-// also writes the steps as JUnit XML.
+// The panel login URL comes from SWARMCAST_TEST_LOGIN_FILE (written by the server). Every start
+// turns the live on, and its quick tunnel goes to a local stand-in for Cloudflare
+// (scripts/test/lib/cloudflare.mjs, SWARMCAST_TEST_CLOUDFLARE), not to Cloudflare's free service.
+// --junit FILE also writes the steps as JUnit XML.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -31,6 +33,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { debianVersion, isPrerelease } from '../../releases/semver.mjs';
+import { startLocalCloudflare } from '../lib/cloudflare.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { assertFixedPorts, FIXED_PORTS } from '../lib/ports.mjs';
 import { poll } from '../lib/wait.mjs';
@@ -149,8 +152,10 @@ let child = null;
 /** Where this start of the app begins in app-output.log (the file collects every start). */
 let childLogStart = 0;
 let debPackage = '';
+/** Where the app's quick tunnels go: a local stand-in for Cloudflare, for the whole test. */
+const cloudflare = await startLocalCloudflare({ dir: path.join(work, 'local-cloudflare') });
 /** The variables every app start in this test gets (and the updated app inherits). */
-const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1' });
+const testEnv = () => ({ SWARMCAST_TEST_LOGIN_FILE: loginFile, SWARMCAST_NO_FFMPEG_INSTALL: '1', SWARMCAST_NO_OPEN: '1', APPIMAGE_EXTRACT_AND_RUN: '1', ...cloudflare.appEnv });
 
 /** Starts the installed app (without waiting for it). */
 function spawnApp(exe, env = {}, argv = []) {
@@ -724,6 +729,7 @@ try {
 } finally {
   if (child && child.exitCode === null) child.kill();
   runKeyJournal?.kill();
+  await cloudflare.close();
   if (process.env.SC_DESKTOP_ARTIFACTS) {
     fs.mkdirSync(process.env.SC_DESKTOP_ARTIFACTS, { recursive: true });
     for (const f of [path.join(work, 'app-output.log'), path.join(dataDir, 'logs', 'desktop.log'), runKeyLog]) {
