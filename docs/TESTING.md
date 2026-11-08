@@ -124,6 +124,16 @@ provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hang
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
 `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `NODE_EXTRA_CA_CERTS`.
 
+`acme-pebble.test.ts` runs the ACME client against Pebble, Let's Encrypt's test CA, as a process on
+127.0.0.1 (every OS; no Docker): the binary `npm run fetch-bins` puts in `vendor/<target>/`
+(`pebble` in `scripts/build/versions.json`, a `testTool`: never packaged). It is not Pebble's
+release: v2.10.1 can leave the poll of an order that follows its finalize unanswered for good
+(letsencrypt/pebble#554), and our client polls right after finalizing (run 42428110733: "AbortError:
+The operation was aborted" after the 30 s request timeout; the journal of that poll and Pebble's log
+in soak run 42429289741). The binaries are commit 1fcb30c of Pebble's main branch, which has the fix,
+built reproducibly and kept in the `ci-deps` pre-release ([RELEASING.md §8](RELEASING.md#8-mirrored-ci-dependencies-ci-deps)).
+Go back to the publisher's release files once a release has it.
+
 ### End-to-end tests
 
 E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each test, and
