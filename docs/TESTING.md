@@ -145,7 +145,11 @@ there, and while it or its TIME_WAIT holds `127.0.0.1:<port>` nobody can listen 
 port used to be 38082 and once failed at start with EADDRINUSE for that reason (run 41192273509).
 `assertFixedPorts()` checks a harness's ports at start against this machine's real range, and
 `scripts/test/test/ports-zone.test.ts` checks every fixed port, and every port written out in the
-workflows and harness scripts, against the defaults and `RESERVED`.
+workflows and harness scripts, against the defaults and `RESERVED`. A test never relies on a port
+another program may hold or free: a port it lets go and checks again comes from `allocPorts()`, and
+a test that needs every port busy injects the probe (`createApp({ isPortFree })`) instead of
+holding real ports, since one an outgoing connection held while the test took the others can be
+free a moment later.
 
 ### Real devices
 

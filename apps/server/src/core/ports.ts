@@ -40,10 +40,10 @@ export async function isPortFree(port: number, host = '127.0.0.1'): Promise<bool
   return true;
 }
 
-/** The preferred port if free, otherwise the next free one within `span`. */
-export async function firstFreePort(preferred: number, span = 20, host = '127.0.0.1'): Promise<number | null> {
+/** The preferred port if free, otherwise the next free one within `span` (`isFree`: the probe, tests). */
+export async function firstFreePort(preferred: number, span = 20, host = '127.0.0.1', isFree: (port: number, host: string) => Promise<boolean> = isPortFree): Promise<number | null> {
   for (let p = preferred; p < preferred + span && p <= 65535; p++) {
-    if (await isPortFree(p, host)) return p;
+    if (await isFree(p, host)) return p;
   }
   return null;
 }

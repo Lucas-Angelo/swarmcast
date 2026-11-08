@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import http from 'node:http';
-import net, { type AddressInfo } from 'node:net';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createApp, ENCODER_PROBE_DELAY_MS, type App, type AppOptions } from '../../src/app.js';
@@ -40,22 +40,6 @@ async function app(security: Partial<AppConfig['security']> = {}): Promise<App> 
   const a = await createApp(appOptions(tempDir('sc-app-'), { security }));
   onTestFinished(() => a.close());
   return a;
-}
-
-/**
- * Makes every port from `first` to 65535 busy on 127.0.0.1, until the test finishes. A port some
- * other program already holds (or one Windows reserves) is just as busy: only the free ones are
- * taken here.
- */
-async function takePortsFrom(first: number): Promise<void> {
-  for (let port = first; port <= 65535; port++) {
-    const server = net.createServer();
-    const held = await new Promise<boolean>((resolve) => {
-      server.once('error', () => resolve(false));
-      server.listen(port, '127.0.0.1', () => resolve(true));
-    });
-    if (held) onTestFinished(() => new Promise<void>((r) => server.close(() => r())));
-  }
 }
 
 /** File descriptors this process has open (POSIX; Vitest runs each test file in a process of its own). */
@@ -167,17 +151,21 @@ describe('App.close()', () => {
 });
 
 describe('a start that fails part-way', () => {
-  /** A start whose panel finds no free port (ports-busy), with the blocklists on (no list: no download). */
+  /**
+   * A start whose panel finds no free port (ports-busy), with the blocklists on (no list: no
+   * download). The port probe says "busy" for every port: holding real ports cannot make that
+   * certain, since a port another program held while the test took the others (an outgoing
+   * connection's local port, 49152-65535 on macOS and Windows) can be free again a moment later,
+   * and the start then succeeded (four unit runs on one Mac).
+   */
   const failingStart = (dataDir: string): Promise<App> =>
-    createApp(appOptions(dataDir, { ports: { admin: 65530 }, security: { blockKnownBadIps: true, blocklists: [], extraBlocklistUrls: [] } }));
+    createApp({ ...appOptions(dataDir, { ports: { admin: 65530 }, security: { blockKnownBadIps: true, blocklists: [], extraBlocklistUrls: [] } }), isPortFree: async () => false });
 
-  // The panel's port search stops at 65535: with its port set to 65530 and 65530-65535 busy, none
-  // is left (ports-busy). That comes after the log file, the live's channels, the blocklists'
-  // refresh timer and the encoder probe were set up. Every timer is fake, so what the failed start
-  // left running shows in the timer count.
+  // The panel's port search finds none of its 20 ports free (ports-busy). That comes after the log
+  // file, the live's channels, the blocklists' refresh timer and the encoder probe were set up.
+  // Every timer is fake, so what the failed start left running shows in the timer count.
   it('stops everything it started before the error comes out: no timer left, the folder deletable at once', async () => {
     // Arrange
-    await takePortsFrom(65530);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     onTestFinished(() => void vi.useRealTimers());
     const dataDir = tempDir('sc-app-');
@@ -193,7 +181,6 @@ describe('a start that fails part-way', () => {
 
   it.skipIf(process.platform === 'win32')('leaves no file open (POSIX: the log file is closed)', async () => {
     // Arrange
-    await takePortsFrom(65530);
     const dataDir = tempDir('sc-app-');
     const before = openFds();
     // Act
