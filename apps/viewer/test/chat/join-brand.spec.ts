@@ -16,7 +16,7 @@
 // animations stand still (openJoin), so each step happens exactly when the test says.
 import { expect, test, type Page } from './fixtures.js';
 import { JOIN_BRAND_WAIT_MS } from '../../src/branding/loader.js';
-import { openJoin, requireBuild } from './watch-page.js';
+import { freezePageClock, openJoin, requireBuild } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
@@ -41,13 +41,6 @@ function held<T>() {
   let release: (value: T) => void = () => {};
   const answer = new Promise<T>((resolve) => (release = resolve));
   return { answer, release };
-}
-
-/** The page's clock stands still from before it loads: its timers fire only when the test runs them. */
-async function freezePageClock(page: Page): Promise<void> {
-  const t0 = new Date('2026-01-01T12:00:00Z');
-  await page.clock.install({ time: t0 });
-  await page.clock.pauseAt(new Date(t0.getTime() + 1000));
 }
 
 /** Runs style.css's fallback: sets the page's paused CSS animations to the time it shows the page by itself. */

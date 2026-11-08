@@ -188,6 +188,16 @@ export class MockHub {
     this.broadcast({ t: 'chat.batch', items: [{ k: 'rx', c }] });
   }
 
+  /**
+   * `windows` windows of reaction taps arriving at once: one batch of that many `rx` items, which
+   * the page handles in one task, as it would frames that queued up. Not one frame each: every
+   * frame the mock sends is a call into the page of its own, and hundreds of them can take
+   * longer than a check's wait to reach a slow browser.
+   */
+  reactionStorm(c: number[], windows: number): void {
+    this.broadcast({ t: 'chat.batch', items: Array.from({ length: windows }, () => ({ k: 'rx' as const, c })) });
+  }
+
   /** New counts for the poll (an ephemeral `pt` item). */
   tally(c: number[]): void {
     if (!this.poll) return;
