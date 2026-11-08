@@ -338,7 +338,8 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     console.error(`✗ ${err.message}`);
     // The cause on the run's summary page, not only "exit code 1" (CI stops the job here: no test
     // runs without its binaries, .github/workflows/README.md, "Release downloads").
-    if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error title=fetch-binaries::${err.message.replace(/\r?\n/g, ' ')}`);
+    // A workflow command's message escapes %, CR and LF (URLs in the message carry %-escapes).
+    if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error title=fetch-binaries::${err.message.replace(/%/g, '%25').replace(/\r/g, '%0D').replace(/\n/g, '%0A')}`);
     process.exit(1);
   });
 }
