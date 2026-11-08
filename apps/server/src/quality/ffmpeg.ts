@@ -25,7 +25,7 @@ interface FfmpegSpec {
 
 export const FFMPEG_SPEC = (versions as unknown as { ffmpeg: FfmpegSpec }).ffmpeg;
 
-/** The whole download may take this long (30-80 MB on a slow link). */
+/** The whole download may take this long (28-170 MB, depending on the system, on a slow link). */
 export const FFMPEG_DOWNLOAD_MAX_MS = 30 * 60_000;
 /**
  * A try that receives nothing for this long (no answer, or no new bytes) fails with a message

@@ -35,7 +35,9 @@ passes sometimes is a failing test. Main is protected: nothing lands unless ever
    on the internet (a Cloudflare tunnel, a GIF or speed-test provider, a blocklist, an update
    feed): its outage would fail the run. Use a local stand-in that keeps the real code and binaries
    (the local Cloudflare of `scripts/test/lib/cloudflare.mjs` with the real cloudflared; the
-   ffmpeg publisher's stand-in `scripts/test/lib/ffmpeg-stand-in.mjs`; `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`; `security.blocklists: []`) and cover the real
+   ffmpeg publisher's stand-in `scripts/test/lib/ffmpeg-stand-in.mjs`; a third-party file the test
+   needs is pinned in `versions.json` and read from the download cache, `pinned-archive.mjs`, as the
+   OBS suite's portable OBS; `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`; `security.blocklists: []`) and cover the real
    service in the scheduled, non-gating `real-services.yml`. The background calls that remain, and
    why, are in docs/TESTING.md ("No third-party service in the gate").
 8. **Cross-OS by design.** `path.join`, no CRLF assumptions, case-insensitive file systems, Windows file

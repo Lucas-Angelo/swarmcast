@@ -8,27 +8,20 @@
 // The archive comes from CI's download cache: the setup action's `app-ffmpeg` input fetches it
 // there before the tests (fetch-binaries.mjs --only ffmpeg, with its own recoveries), so the
 // test step itself reaches no service on the internet.
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import { cachedArchive } from '../../build/fetch-binaries.mjs';
+import { pinnedArchive } from './pinned-archive.mjs';
 
 /**
  * The verified archive of the app's ffmpeg pin `a` (versions.json `ffmpeg.assets[<target>]`) in
- * SC_DOWNLOAD_CACHE. Throws, saying how to get it, when it is missing or does not match the pin.
+ * SC_DOWNLOAD_CACHE (pinned-archive.mjs). Throws, saying how to get it, when it is missing or wrong.
  * @param {{ asset: string, sha256: string }} a
  * @param {NodeJS.ProcessEnv} [env]
  * @returns {string}
  */
 export function pinnedFfmpegArchive(a, env = process.env) {
-  const how = 'the setup action with app-ffmpeg: true, or SC_DOWNLOAD_CACHE=<dir> node scripts/build/fetch-binaries.mjs --only ffmpeg --out <dir2>';
-  if (!env.SC_DOWNLOAD_CACHE) throw new Error(`SC_DOWNLOAD_CACHE is not set: no pinned ffmpeg archive to serve (${how})`);
-  const file = cachedArchive(path.resolve(env.SC_DOWNLOAD_CACHE), a);
-  if (!fs.existsSync(file)) throw new Error(`${file} is missing (${how})`);
-  const actual = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-  if (actual !== a.sha256) throw new Error(`${file} does not match the pin: expected ${a.sha256}, got ${actual}`);
-  return file;
+  return pinnedArchive(a, { tool: 'ffmpeg', setupInput: 'app-ffmpeg', env });
 }
 
 /**

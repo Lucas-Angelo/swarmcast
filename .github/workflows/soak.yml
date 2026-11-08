@@ -304,6 +304,7 @@ jobs:
         with:
           ffmpeg: 'true'
           app-ffmpeg: ${{ matrix.suite == 'windows-quality' }}
+          obs-studio: ${{ matrix.suite == 'windows-obs' }}
       - name: Playwright Firefox (app)
         if: matrix.suite == 'windows-app'
         run: npx playwright install firefox

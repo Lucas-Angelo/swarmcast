@@ -304,7 +304,8 @@ Shared pieces, one place each:
 [scripts/test/lib](../scripts/test/lib) (no side effects when imported): `wait.mjs` (`until`, `poll`,
 `orTimeout`, `waitForLine`), `proc.mjs` (tracked child processes, tree kills, `ownerOf`),
 `ports.mjs` (`isListening`, test port blocks), `ffmpeg.mjs` (the test ffmpeg and the OBS-like feed),
-`ffmpeg-stand-in.mjs` (the app's pinned ffmpeg archive served on 127.0.0.1),
+`ffmpeg-stand-in.mjs` (the app's pinned ffmpeg archive served on 127.0.0.1), `pinned-archive.mjs`
+(a pinned archive from CI's download cache, SHA-256 checked),
 `app.mjs` (the bare-OS environment the staged server runs with, the panel login from its output, the
 live link), `viewer.mjs` (join, play,
 the player's state, the page state dumped when a check fails), `junit.mjs`, `cookie-jar.mjs` (one
@@ -362,6 +363,18 @@ only, no redirects). The SHA-256 check, extraction and `ffmpeg -version` are the
 wrong file still fails; the suite checks that the app asked the stand-in, once. The stand-in's
 unit test (`scripts/test/test/ffmpeg-stand-in.test.ts`) also sends the headers and then nothing,
 and the install fails with its stall message. `real-services.yml` installs from the real URL daily.
+
+The Windows OBS suite (`scripts/test/windows/obs.mjs`, section 1) also downloaded its portable OBS
+Studio zip from GitHub (obsproject's release) at test time. The zip is now pinned in
+`versions.json` (`obs-studio`: `testOnly`, `archive`, kept whole and never extracted by
+fetch-binaries), the setup action's `obs-studio` input puts it in the download cache before the
+tests, and the suite reads it from there
+([scripts/test/lib/pinned-archive.mjs](../scripts/test/lib/pinned-archive.mjs), SHA-256 checked),
+so its test step downloads nothing. OBS is test scaffolding, not a service the app uses, so
+`real-services.yml` does not cover it; a pin change downloads it again in set-up, with
+fetch-binaries' recoveries. The Docker OBS suite installs Ubuntu's `obs-studio` package when its
+image is built (`Dockerfile.obs`, with `build.sh`'s infra recovery): a set-up download, like
+the other images' apt packages.
 
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
