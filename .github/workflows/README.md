@@ -221,8 +221,8 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the app's pinned ffmpeg archive (`app-ffmpeg`) and the portable OBS zip (`obs-studio`) into the download cache, the download caches and a `.deb` cache (`apt-debs`); apt settings that retry |
-| `.github/actions/setup/save` | last step of a job: saves the caches it filled, on `main` only |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the app's pinned ffmpeg archive (`app-ffmpeg`) and the portable OBS zip (`obs-studio`) into the download cache, the download cache, the Tauri tools on Windows (`tauri-tools`) and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup/save` | last step of a job: saves the caches it added or changed files in (`.github/scripts/cache-files.mjs`), on `main` only (the download cache also from pull requests; see "Release downloads" below) |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
@@ -230,6 +230,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
+| `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
@@ -292,7 +293,7 @@ download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact
 ### Remote actions
 
 The remote actions our own actions run (setup-node, actions/cache, download-artifact,
-Swatinem/rust-cache), and taiki-e/install-action in `_node.yml`, are not downloaded by the runner:
+Swatinem/rust-cache) are not downloaded by the runner:
 `./.github/actions/fetch-remote` fetches each with git, at its pin, into
 `.git/remote-actions/<owner>/<repo>` of the workspace, and the step runs it from there
 (`uses: ./.git/remote-actions/Swatinem/rust-cache`, `./.git/remote-actions/actions/cache/save`).
@@ -328,8 +329,8 @@ The commit exists (v2.9.3) and codeload served it again straight after. What the
 - The one download it skips is from the runner image's action archive cache
   (`ACTIONS_RUNNER_ACTION_ARCHIVE_CACHE`, line 1232, a setting of the runner's own environment that
   a workflow cannot set): a few first-party actions at their release commits (actions/action-versions:
-  checkout, cache, setup-node, upload-artifact, ...). Swatinem/rust-cache,
-  download-artifact and install-action at our pins are not in it, and an action bumped to a release
+  checkout, cache, setup-node, upload-artifact, ...). Swatinem/rust-cache and
+  download-artifact at our pins are not in it, and an action bumped to a release
   newer than the image is not either.
 
 A git fetch goes to github.com (like actions/checkout), not codeload, and git checks every object
@@ -397,8 +398,8 @@ then takes each archive from the cache after checking its SHA-256 against
 `scripts/build/versions.json` (`✓ mediamtx v1.21.3: mediamtx_v1.21.3_linux_amd64.tar.gz from the
 download cache`), and only on a miss downloads it, from the asset's `mirrors` first when
 `versions.json` lists any (MediaMTX and cloudflared have none today), with its tries and back-off.
-The job never saves the cache: an entry saved by it would hold only these two archives, and the
-builds, which restore the same key, would then miss their AppImage tools. `e2e.sh` prints
+The job never saves the cache: the builds fetch the same two archives and save them
+("Release downloads"). `e2e.sh` prints
 `Download cache:` with the folder and its file count (or `none`) before the container starts.
 
 The other Docker suites download nothing pinned at run time: `obs.sh` runs the staged server
@@ -427,6 +428,88 @@ binaries the job fetches (`-for-<target>-`: `setup`'s `downloads-for` input, or 
 OS and architecture), and the Windows package job passes `downloads-for: windows-x64`. The entries
 under the old keys are no longer restored and expire after GitHub's 7 days without use.
 
+### Release downloads
+
+Files downloaded from `github.com/<owner>/<repo>/releases/download/...` while a job runs come from
+the Actions cache, are checked against a SHA-256 pin, and are downloaded with tries only on a
+cache miss; a job whose download still failed stops at that step with the cause, and no test runs
+without what it needs. GitHub's release downloads are a service of their own: on 2026-11-08 they
+answered `HTTP 504` for most of an hour, on and off, while githubstatus.com showed every service
+as operational, and two pipeline runs of PR #141 (42465017555, 42466842103) went red in many jobs
+for that alone. The `ci-deps` mirror (docs/RELEASING.md) is a release of this repository, so the
+same outage reaches it. What did work during it: the Actions cache (another service), and the
+same files through GitHub's REST API (`/repos/<owner>/<repo>/releases/assets/<id>`, a redirect to
+release-assets.githubusercontent.com) while `releases/download/` answered 504 to every try.
+
+**Last source: the GitHub API.** After a file's sources (its mirrors, then the publisher) failed,
+`downloadFirst` in `fetch-binaries.mjs` tries each GitHub release URL among them once more
+through the API: one lookup of the release by tag, then the asset as `application/octet-stream`,
+with the usual tries and the SHA-256 check (`githubApiUrl`). No token, so at most 60 such requests
+an hour per address; a refusal only fails that last source. Checked during the outage: the
+macOS arm64 cargo-llvm-cov and pkg's macOS arm64 base binary, six 504s from `releases/download/`,
+then the API on its first try (63 and 78 s in all), each logged `infra recovery: <url>
+downloaded through the GitHub API (...)`.
+
+| What | Where it came from in PR #141 | Now |
+|---|---|---|
+| MediaMTX, cloudflared, Pebble, the test ffmpeg, the AppImage tools | `fetch-binaries.mjs` from github.com: the `sc-downloads-*` entry restored for macOS arm64 held only the test ffmpeg (below) | the download cache holds what the jobs of its key fetched |
+| cargo-llvm-cov | `taiki-e/install-action`, a download from github.com at every run (`curl: (56) ... 504` eleven times, exit 56) | pinned in `scripts/build/versions.json` (`testOnly`, SHA-256 values from install-action's own manifest), `fetch-binaries.mjs --only cargo-llvm-cov`, from the download cache |
+| pkg's Node.js base binary | pkg-fetch, one GET to its GitHub release; on the 504 it compiled Node.js from source, which failed after 7 minutes (`make: *** [Makefile:143: node] Error 2`) | `scripts/build/pkg-base.mjs` before pkg runs: from the download cache, else `fetch-binaries.mjs`'s download (6 tries), checked against pkg-fetch's own SHA-256; a failure stops `package.mjs` with the reason, and pkg-fetch's dry run must say it will use that file, so it never downloads nor compiles |
+| NSIS and its Tauri plugin (Windows desktop build) | `tauri build`, one GET each to `tauri-apps/binary-releases` and `tauri-apps/nsis-tauri-utils`, at every run | the Tauri CLI's tools folder (`%LOCALAPPDATA%\tauri`) restored from `sc-tauri-tools-*` (setup's `tauri-tools`), saved from `main` |
+
+**The download cache saved what the first job had.** The key was
+`sc-downloads-<OS>-<arch>-ffmpeg-<true|false>-for-<target>-<pins>`. An entry is saved once and a
+job that restores its exact key never saves it again, so the first job to save a key decided what
+every later job got. In run 42439987029 on `main` (the `versions.json` change for Pebble),
+`desktop macos-arm64 / clean-machine` (ffmpeg for its preflight, nothing else) saved the macOS arm64
+entry first, 28 MB with the test ffmpeg only; 70 s later `node / unit, integration, rust
+(macos-latest)` could not save its fuller copy ("Unable to reserve cache ..., another job may be
+creating this cache"). From then on the node and e2e jobs restored that exact key and downloaded
+MediaMTX, cloudflared and Pebble from github.com at every run, until github.com answered 504. The
+pkg cache (`sc-pkg-<OS>-<arch>-<lockfile>`) had the same flaw across targets: the `linux-x64`
+desktop build restored its exact key and still had to download `node-v24.22.1-linux-x64` (the
+Windows package job, which packages windows-x64 on Linux x64, shares that key).
+
+Now `setup` records the files the restore brought, with their SHA-256 (`.github/scripts/cache-files.mjs
+list`), and `setup/save` saves a new entry only when the job added files to them or changed one,
+under `<prefix><pins>-<run id>-<hash of that list>` (`cache-files.mjs plan`). Content counts, not
+only names: the download cache names its files by SHA-256, but the Tauri tools folder does not,
+and a Tauri CLI update that pins another `nsis_tauri_utils.dll` makes `tauri build` download it
+again over the old one. The restore takes the
+newest entry for the current pins (`<prefix><pins>-`), else the newest of older pins (after a pin
+change `fetch-binaries.mjs` deletes what is no longer pinned and downloads only the changed
+files). The Windows quality and OBS suites have families of their own (`-app-ffmpeg-`,
+`-obs-studio-`, setup's `app-ffmpeg` and `obs-studio`): they restore their own newest entry the
+same way, else the plain entry's, for the current pins first. An entry holds what its job restored plus what it added, so a job that needs less (the
+preflight's ffmpeg) adds nothing and saves nothing, and never replaces a fuller entry; a job that
+failed before its downloads saves nothing either. Two jobs that add files at the same time each
+save their own entry, and the next job that needs more adds the rest. pkg's base binary lives in
+the same folder (`pkg-<sha256>-node-<version>-<platform>-<arch>`, pruned by `pkg-base.mjs`), so
+the `sc-pkg-*` cache is gone, and the desktop builds and the soak's DMG job pass
+`downloads-for: <target>` (macos-x64 is built on Apple silicon). `cache-hygiene.yml` deletes
+the older entries of a key once a newer one is restored instead ("Caches").
+
+**Jobs stop at the failed download.** `fetch-binaries.mjs` adds an `::error title=fetch-binaries::`
+annotation with the cause, and the steps that run after a failed step on purpose (`!cancelled()`,
+so one suite's failure does not hide another's results) now also need the steps they depend on:
+the integration tests need `fetch-bins` (they failed with "cloudflared was not found at
+.../vendor/macos-arm64/cloudflared" and "spawn .../pebble ENOENT"), the Rust steps need
+`setup-rust` and `cargo test` needs cargo-llvm-cov (`_node.yml`), the viewer chat UI needs the e2e
+step to have run (`_e2e.yml`), and the clean-machine checks need the job's setup and their
+artifacts (`_desktop.yml`). A source that works only after failed tries logs
+`infra recovery: <url> downloaded on try <n>` (docs/TESTING.md, "Infra recoveries").
+
+Still downloaded from github.com at job time: on a cold cache (the first job after a pin, Tauri CLI
+or pkg change, once per key), the `ci-deps` mirror and publisher URLs behind `fetch-binaries.mjs`
+(with the API as their last source), and NSIS (one try each, by `tauri build`; a cold
+`sc-tauri-tools-*` entry, then the build fails on a 504 as before).
+Outside our control: github/codeql-action downloads its CodeQL bundle when the runner image's
+copy is not the version it is linked to ("Unable to download and extract CodeQL CLI: Unexpected
+HTTP response: 504" in the same outage, `codeql.yml`, not a required check). Not GitHub: the
+WebView2 bootstrapper `tauri build` takes from go.microsoft.com, Playwright's browsers (their CDN,
+cached on Linux), Rust toolchains (static.rust-lang.org), npm packages (the registry, `npm ci`'s
+retry).
+
 ## Caches
 
 GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
@@ -437,11 +520,11 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more), which start from the plain entry until they exist; a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
-| `sc-pkg-*` | `setup/save`: pkg's Node.js binaries | 3 | 0.13 GB |
+| `sc-tauri-tools-*` | `setup/save` in the Windows desktop build: NSIS and its Tauri plugin ("Release downloads") | 1 | about 0.005 GB |
 | `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
 
 That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
@@ -459,7 +542,9 @@ nobody restores again, and prints each deletion with its reason and the size bef
   (`node-cache-Linux-x64-npm-*`, `v0-rust-checks-node-Linux-x64-*-*`, `codeql-trap-1-*-javascript-*`).
   It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
   the workflows compute: the npm cache's three files, `package-lock.json`,
-  `scripts/build/versions.json`, and `main`'s commit for CodeQL), the newest
+  `scripts/build/versions.json`, and `main`'s commit for CodeQL) and is the newest of its family
+  with that hash (the download and Tauri tools caches save one entry per run that added or changed files,
+  and the restore takes the newest), the newest
   or the most recently used entry of a family, nor an older entry still used after the newest was
   saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
   image version still being rolled out). An older entry last used before the newest was saved is
@@ -563,7 +648,7 @@ reports (lcov, json-summary, HTML) as `coverage-*` artifacts, kept 14 days.
 | unit | quick (Ubuntu), node (macOS, Windows) | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
 | integration | node ×3 | `npm run coverage:integration`: Vitest, V8 (the code the tests run in-process) | Vitest, in the test step (this OS's floors) |
 | e2e server | e2e ×4 | `NODE_V8_COVERAGE` on the Playwright step; `scripts/coverage/e2e-server.mjs` keeps the e2e server's files, c8 maps them onto the sources | `report.mjs --check`, after a passing run (this group's floors, lines) |
-| desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (installed by `taiki-e/install-action`, version pinned; `llvm-tools` from `setup-rust`) | `report.mjs --check` |
+| desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (pinned in `scripts/build/versions.json`, from the download cache: "Release downloads"; `llvm-tools` from `setup-rust`) | `report.mjs --check` |
 
 The floors are in `scripts/coverage/floors.json`, per suite and, where the tests differ, per OS or
 e2e group. They only go up: when coverage rises, the job summary lists the floors the run allows;
@@ -638,11 +723,17 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
-  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared, the AppImage tools) is saved by pull requests too, because
+  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared, Pebble, cargo-llvm-cov, the AppImage tools, pkg's Node.js
+  base binary) is saved by pull requests too, because
   some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
   request pays one slow download, its later runs restore it. A pull request cannot poison it:
-  each entry is a pinned file, and `fetch-binaries.mjs` and `appimage-tools.mjs` use it only when
-  its SHA-256 matches `scripts/build/versions.json`.
+  an entry saved by a pull request is restored only by that pull request's runs (GitHub scopes a
+  cache to the ref that saved it; other refs see only their own and the default branch's), and
+  each entry is a pinned file that `fetch-binaries.mjs`, `appimage-tools.mjs` and `pkg-base.mjs`
+  use only when its SHA-256 matches its pin (`scripts/build/versions.json`, pkg-fetch's own
+  list). The caches that are not checked when used (Rust's, and the Tauri tools with the NSIS
+  that builds the Windows installer) are saved from `main` only: a release build (a `v*` tag)
+  restores `main`'s entries, which only workflows running `main`'s own code write.
 - **Runner images:** pinned where an image switch must not land in the middle of a change
   (`ubuntu-24.04`; `ubuntu-22.04` for the Linux builds' glibc baseline, retired by GitHub in April
   2027; `macos-15-intel`, the last Intel image, until August 2027); `macos-latest` (macOS 26 on

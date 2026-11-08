@@ -16,6 +16,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { fetchBinaries, hostTarget } from './fetch-binaries.mjs';
+import { ensurePkgBase } from './pkg-base.mjs';
 import { writeThirdPartyLicenses } from './licenses.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -60,6 +61,9 @@ execFileSync(process.execPath, [path.join(root, 'apps/server/build.mjs')], {
 });
 
 // 2. Single executable. --no-bytecode keeps cross-builds possible (bytecode needs the target CPU).
+// Its base Node.js binary first, with tries and the download cache, so pkg never downloads it
+// with its single try nor compiles Node.js from source when that fails (pkg-base.mjs).
+await ensurePkgBase(PKG_TARGETS[target]);
 execFileSync(
   process.execPath,
   [

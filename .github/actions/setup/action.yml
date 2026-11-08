@@ -29,7 +29,7 @@ inputs:
     default: 'true'
   downloads:
     description: >-
-      Restore the download cache (pinned tools, pkg's Node.js binaries) for a job that runs
+      Restore the download cache (pinned tools, pkg's Node.js base binary) for a job that runs
       fetch-binaries.mjs or package.mjs. Implied by ffmpeg.
     default: 'false'
   downloads-for:
@@ -38,6 +38,11 @@ inputs:
       the runner's own OS and architecture (for example `windows-x64` on Linux). Part of the
       download cache's key, so each entry holds one target's files.
     default: ''
+  tauri-tools:
+    description: >-
+      Windows: restore the Tauri CLI's tools folder (NSIS and its plugin) for a job that runs
+      `tauri build`; save it with ./.github/actions/setup/save.
+    default: 'false'
   apt-debs:
     description: >-
       Linux: a name for a .deb cache (for example `playwright-<hash>`). Sets APT_DEBS, which
@@ -172,17 +177,20 @@ runs:
         key: ${{ steps.npm-cache.outputs.key }}
         restore-keys: ${{ github.ref != 'refs/heads/main' && steps.npm-cache.outputs.prefix || '' }}
 
-    # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared:
-    # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs) and pkg's Node.js base binaries
-    # (PKG_CACHE_PATH, only in jobs that run package.mjs: its own entry), so a job does not
-    # depend on github.com for them. One release run was lost to a github.com connect timeout.
-    # restore-keys: after a pin changes, the old entry still serves the rest (fetch-binaries.mjs
-    # deletes what is no longer pinned). Saved on main only (./.github/actions/setup/save).
+    # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared,
+    # Pebble, cargo-llvm-cov, the AppImage tools, the app's ffmpeg and OBS Studio archives:
+    # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs)
+    # and pkg's Node.js base binary (scripts/build/pkg-base.mjs, same folder), so a job does not
+    # depend on github.com for them: github.com's release downloads answered 504 for most of an
+    # hour while githubstatus.com showed nothing (PR #141), and one release run was lost to a
+    # connect timeout. Each file is named by its SHA-256 and checked against its pin before use.
     # The key names the target whose binaries the job fetches (`for-<target>`; downloads-for, or
-    # the runner's own): an entry is saved once and an exact hit is never saved again, so when
-    # the Windows package job (windows-x64 on Linux) saved the Linux x64 entry first, every
-    # Linux x64 job found it, without its own MediaMTX and cloudflared, and downloaded them
-    # each run (.github/workflows/README.md, "Pinned downloads in Docker").
+    # the runner's own), so an entry holds one target's files (.github/workflows/README.md,
+    # "Pinned downloads in Docker"). The restore takes the newest entry for these pins
+    # (`<prefix><pins>-`), else the newest of any pins (fetch-binaries.mjs deletes what is no
+    # longer pinned, so after a pin change only the changed files are downloaded). setup/save
+    # saves a new entry only when the job added or changed files (.github/scripts/cache-files.mjs),
+    # from main and pull requests.
     - name: Download cache keys
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
       id: dl
@@ -193,10 +201,10 @@ runs:
         OBS_STUDIO: ${{ inputs.obs-studio }}
         FOR: ${{ inputs.downloads-for }}
         PINS: ${{ hashFiles('scripts/build/versions.json') }}
-        LOCK: ${{ hashFiles('package-lock.json') }}
       run: |
         echo "SC_DOWNLOAD_CACHE=$RUNNER_TEMP/sc-cache/downloads" >> "$GITHUB_ENV"
-        echo "PKG_CACHE_PATH=$RUNNER_TEMP/sc-cache/pkg" >> "$GITHUB_ENV"
+        # pkg reads its base binary from here; pkg-base.mjs puts it there from the download cache.
+        echo "PKG_CACHE_PATH=$RUNNER_TEMP/pkg-cache" >> "$GITHUB_ENV"
         # The runner's own target, as fetch-binaries.mjs names it (hostTarget).
         if [ -z "$FOR" ]; then
           case "$RUNNER_OS" in Linux) FOR=linux ;; macOS) FOR=macos ;; Windows) FOR=windows ;; *) echo "::error::unknown RUNNER_OS $RUNNER_OS"; exit 1 ;; esac
@@ -215,11 +223,16 @@ runs:
           fallback="$dl"
           dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG$extra-for-$FOR-"
         fi
-        pkg="sc-pkg-$RUNNER_OS-$RUNNER_ARCH-"
-        { echo "dl-prefix=$dl"; echo "dl-fallback=$fallback"; echo "dl-key=$dl$PINS"; echo "pkg-prefix=$pkg"; echo "pkg-key=$pkg$LOCK"; } >> "$GITHUB_OUTPUT"
+        # Restore order: this family's newest entry for these pins, then for any pins; then the
+        # plain entry's, likewise (empty lines are skipped).
+        {
+          echo "dl-key=$dl$PINS-"
+          echo "dl-prefix=$dl"
+          echo "dl-fallback-key=${fallback:+$fallback$PINS-}"
+          echo "dl-fallback=$fallback"
+        } >> "$GITHUB_OUTPUT"
     - name: Restore the download cache
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
-      id: dl-cache
       continue-on-error: true
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
@@ -228,34 +241,56 @@ runs:
         path: ${{ runner.temp }}/sc-cache/downloads
         key: ${{ steps.dl.outputs.dl-key }}
         restore-keys: |
+          ${{ steps.dl.outputs.dl-key }}
           ${{ steps.dl.outputs.dl-prefix }}
+          ${{ steps.dl.outputs.dl-fallback-key }}
           ${{ steps.dl.outputs.dl-fallback }}
-    - name: Restore the pkg cache
+    - name: Remember the download cache for the save step
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
-      id: pkg-cache
+      shell: bash
+      env:
+        KEY: ${{ steps.dl.outputs.dl-key }}
+      run: |
+        node "$GITHUB_WORKSPACE/.github/scripts/cache-files.mjs" list "$RUNNER_TEMP/sc-cache/downloads" "$RUNNER_TEMP/sc-cache/downloads.restored"
+        echo "SC_DL_CACHE_KEY=$KEY" >> "$GITHUB_ENV"
+
+    # Windows: tauri build downloads NSIS and its Tauri plugin from github.com
+    # (tauri-apps/binary-releases, tauri-apps/nsis-tauri-utils) with one try each, into its tools
+    # folder (%LOCALAPPDATA%\tauri), unless they are there already. That folder is cached per
+    # package-lock.json (the Tauri CLI's version), saved from main only, and only when the build
+    # added or changed files (setup/save; a Tauri CLI update can replace the plugin under the same
+    # name). Not checked against a pin when used, unlike the download cache: main-only, like the
+    # Rust cache (README.md, "Rules", Caches).
+    - name: Tauri tools cache key (Windows)
+      if: inputs.tauri-tools == 'true' && runner.os == 'Windows'
+      id: tauri-tools
+      shell: bash
+      env:
+        LOCK: ${{ hashFiles('package-lock.json') }}
+      run: |
+        prefix="sc-tauri-tools-$RUNNER_OS-$RUNNER_ARCH-"
+        { echo "prefix=$prefix"; echo "key=$prefix$LOCK-"; echo "dir=$(cygpath -w "$LOCALAPPDATA/tauri")"; } >> "$GITHUB_OUTPUT"
+    - name: Restore the Tauri tools (Windows)
+      if: inputs.tauri-tools == 'true' && runner.os == 'Windows'
       continue-on-error: true
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
       uses: ./.github/actions/cache-restore
       with:
-        path: ${{ runner.temp }}/sc-cache/pkg
-        key: ${{ steps.dl.outputs.pkg-key }}
-        restore-keys: ${{ steps.dl.outputs.pkg-prefix }}
-    - name: Remember the download caches for the save step
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
+        path: ${{ steps.tauri-tools.outputs.dir }}
+        key: ${{ steps.tauri-tools.outputs.key }}
+        restore-keys: |
+          ${{ steps.tauri-tools.outputs.key }}
+          ${{ steps.tauri-tools.outputs.prefix }}
+    - name: Remember the Tauri tools for the save step (Windows)
+      if: inputs.tauri-tools == 'true' && runner.os == 'Windows'
       shell: bash
       env:
-        DL_KEY: ${{ steps.dl.outputs.dl-key }}
-        DL_HIT: ${{ steps.dl-cache.outputs.cache-hit }}
-        PKG_KEY: ${{ steps.dl.outputs.pkg-key }}
-        PKG_HIT: ${{ steps.pkg-cache.outputs.cache-hit }}
+        KEY: ${{ steps.tauri-tools.outputs.key }}
+        DIR: ${{ steps.tauri-tools.outputs.dir }}
       run: |
-        {
-          echo "SC_DL_CACHE_KEY=$DL_KEY"
-          echo "SC_DL_CACHE_HIT=${DL_HIT:-false}"
-          echo "SC_PKG_CACHE_KEY=$PKG_KEY"
-          echo "SC_PKG_CACHE_HIT=${PKG_HIT:-false}"
-        } >> "$GITHUB_ENV"
+        node "$GITHUB_WORKSPACE/.github/scripts/cache-files.mjs" list "$DIR" "$RUNNER_TEMP/tauri-tools.restored"
+        { echo "SC_TAURI_TOOLS_KEY=$KEY"; echo "SC_TAURI_TOOLS_DIR=$DIR"; } >> "$GITHUB_ENV"
 
     # The same pinned GPL ffmpeg on every OS (scripts/build/versions.json "ffmpeg-test": BtbN on
     # Linux and Windows, Martin Riedl on macOS, the publishers of the app's own ffmpeg pins),

@@ -265,7 +265,7 @@ flowchart TB
 
 ## Packaging
 
-`@yao-pkg/pkg` embeds the Node 24 runtime. It was chosen over Node SEA because official SEA is still in active development and untested upstream on macOS x64. `scripts/build/package.mjs` stages `release/staging/<target>/`: `swarmcast[.exe]`, `bin/{mediamtx,cloudflared}`, `web/{viewer,admin}`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` and `VERSION`. It is not published on its own: `scripts/build/desktop.mjs` turns it into the desktop app's sidecar and resources ([DESKTOP.md](DESKTOP.md)). MediaMTX and cloudflared are downloaded by `scripts/build/fetch-binaries.mjs` and pinned by SHA-256 in `scripts/build/versions.json`.
+`@yao-pkg/pkg` embeds the Node 24 runtime. It was chosen over Node SEA because official SEA is still in active development and untested upstream on macOS x64. `scripts/build/package.mjs` stages `release/staging/<target>/`: `swarmcast[.exe]`, `bin/{mediamtx,cloudflared}`, `web/{viewer,admin}`, `LICENSE`, `THIRD_PARTY_LICENSES.txt` and `VERSION`. It is not published on its own: `scripts/build/desktop.mjs` turns it into the desktop app's sidecar and resources ([DESKTOP.md](DESKTOP.md)). MediaMTX and cloudflared are downloaded by `scripts/build/fetch-binaries.mjs` and pinned by SHA-256 in `scripts/build/versions.json`. pkg's base Node.js binary is put in pkg's cache first by `scripts/build/pkg-base.mjs` (with tries, checked against pkg-fetch's own SHA-256), so pkg never compiles Node.js from source.
 
 ## Verified facts (2026-10-25)
 

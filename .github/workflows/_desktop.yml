@@ -131,10 +131,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The download cache holds this target's files (macos-x64 is built on Apple silicon); on
+      # Windows, the Tauri tools (NSIS) that tauri build would download from github.com.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
           downloads: ${{ runner.os != 'Windows' }}
+          downloads-for: ${{ matrix.target }}
+          tauri-tools: ${{ runner.os == 'Windows' }}
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       # Before setup-rust: rust-cache puts every CARGO_* variable into its key, so test builds and
       # release builds never share a cache entry.
@@ -302,7 +306,11 @@ jobs:
       # and the desktop step run the local Cloudflare stand-in (scripts/test/lib/cloudflare.mjs),
       # whose certificates come from an npm package, so every image gets npm ci. The desktop
       # step's apt downloads go into the .deb cache.
+      # The checks below run even after one of them failed, but only once this job's setup and
+      # their own downloads worked: a failed setup or artifact download is the job's one error,
+      # not followed by checks that fail for want of it.
       - uses: ./.github/actions/setup
+        id: setup
         timeout-minutes: 8
         with:
           npm-ci: true
@@ -313,8 +321,9 @@ jobs:
 
       # ---------------------------------------------------------------- preflight
       - uses: ./.github/actions/get-build
+        id: pkg
         timeout-minutes: 10
-        if: ${{ !cancelled() && matrix.preflight }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.preflight }}
         with:
           names: pkg-${{ matrix.target }}
       # No Playwright browser download: verify.mjs --chrome drives the Google Chrome that the x64
@@ -325,20 +334,22 @@ jobs:
       # (apps/server/src/tunnel/start-budget.ts, 4 min, plus 1 min): 11 minutes leaves the rest of
       # the run (about 3 minutes) its margin even when the app needs all of it.
       - name: Preflight (install, stream, watch, P2P, kick, stop, tunnel)
-        if: ${{ !cancelled() && matrix.preflight }}
+        if: ${{ !cancelled() && steps.pkg.outcome == 'success' }}
         timeout-minutes: 11
         run: node scripts/test/preflight/verify.mjs --staging "release/staging/$TARGET" --tunnel --chrome 2>&1 | tee "$RUNNER_TEMP/preflight.log"
 
       # ---------------------------------------------------------------- desktop app
       - uses: ./.github/actions/fetch-artifact
+        id: installers
         timeout-minutes: 10
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
       - uses: ./.github/actions/fetch-artifact
+        id: update-test
         timeout-minutes: 10
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.installers.outcome == 'success' }}
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
@@ -347,7 +358,8 @@ jobs:
       # another mirror after a slow try) into the .deb cache ($APT_DEBS), from which the test's
       # `apt-get install ./*.deb` installs them. Xvfb and D-Bus come with the image.
       - name: Linux display, the AppImage's host libraries and the .deb's dependencies
-        if: ${{ !cancelled() && runner.os == 'Linux' }}
+        id: host
+        if: ${{ !cancelled() && steps.update-test.outcome == 'success' && runner.os == 'Linux' }}
         run: |
           command -v xvfb-run dbus-run-session
           .github/scripts/apt-retry.sh update
@@ -368,7 +380,7 @@ jobs:
       # Linux: a virtual display and a session bus (WebKitGTK and the tray talk D-Bus), without
       # the accessibility bridge and the DMA-BUF renderer (no GPU under Xvfb).
       - name: Desktop (install, launch, panel, autostart, kill, quit, uninstall, update A -> real)
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.update-test.outcome == 'success' && steps.host.outcome != 'failure' }}
         timeout-minutes: 10
         run: |
           node scripts/build/updater-manifest.mjs --version "$VERSION" --base-url http://127.0.0.1:17811 \
@@ -383,7 +395,7 @@ jobs:
 
       # ---------------------------------------------------------------- AppImage, minimal host
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
-        if: ${{ !cancelled() && matrix.appimage }}
+        if: ${{ !cancelled() && steps.installers.outcome == 'success' && matrix.appimage }}
         timeout-minutes: 5
         run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04 2>&1 | tee "$RUNNER_TEMP/appimage.log"
 
