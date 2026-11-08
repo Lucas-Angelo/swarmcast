@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Quality ladder on a GPU-less Windows runner, with the staged server (the desktop app's
 // sidecar) run outside the desktop app: ffmpeg download + SHA-256 through the panel's "Install
-// the video converter" (what the desktop app's first start runs too), encoder probe (no hardware
+// the video converter" (what the desktop app's first start runs too; the pinned archive comes
+// from a local stand-in for its publisher, lib/ffmpeg-stand-in.mjs, never from github.com at
+// test time: docs/TESTING.md, "No third-party service in the gate"), encoder probe (no hardware
 // encoder), the CPU fallback decision, a manual rendition with a multivariant playlist (>= 2
 // levels, ABR switch under throttling), and no ffmpeg left behind after stop, quit or taskkill /F.
 //
@@ -13,6 +15,7 @@ import {
   addSweepPath, appProcess, check, killTree, copyAppLogs, describeProcs, environmentFacts, finish, hlsProbe, info, installHlsProbe, joinAndPlay, killUnder, launchBrowser, listening, log, must, onCleanup,
   orTimeout, processesUnder, pushStream, quitAndVerify, readText, repoRoot, section, setP2P, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
+import { pinnedFfmpegArchive, startFfmpegStandIn } from '../lib/ffmpeg-stand-in.mjs';
 
 const home = 'C:\\SC quality\\SwarmCast';
 addSweepPath(home);
@@ -44,7 +47,9 @@ await section('0. environment', async () => {
 
 await section('1. ffmpeg download + SHA-256 verification (panel "Install the video converter")', async () => {
   fs.rmSync(path.dirname(home), { recursive: true, force: true });
-  app = await start('quality', { persist: true }); // stays up for sections 2-5
+  const publisher = await startFfmpegStandIn(pinnedFfmpegArchive(pinWin));
+  onCleanup(() => publisher.close());
+  app = await start('quality', { persist: true, extraEnv: publisher.appEnv }); // stays up for sections 2-5
   let q = await quality(app);
   check('a fresh data folder has no video converter yet', !q.ffmpeg.available, q.ffmpeg.path ?? 'none');
   const r2 = await app.api('/api/quality/ffmpeg/install', {});
@@ -54,6 +59,7 @@ await section('1. ffmpeg download + SHA-256 verification (panel "Install the vid
     if (x.install?.phase === 'error') throw new Error(x.install.message);
     return x.install?.phase === 'done' && x.ffmpeg.available ? x : null;
   }, 900_000, 'ffmpeg install', 3000);
+  check('the app downloaded the pinned archive from the local stand-in (not from github.com)', publisher.requests() === 1, `${publisher.requests()} request(s) to ${publisher.url}`);
   check('ffmpeg downloaded into tools\\ffmpeg', fs.existsSync(ffmpegExe(home)), ffmpegExe(home));
   check('the pin is recorded (version + SHA-256)', readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim() === `${pin.version} ${pinWin.sha256}`, readText(path.join(path.dirname(ffmpegExe(home)), 'PIN')).trim());
   check('ffmpeg available to the app', q.ffmpeg.available, q.ffmpeg.path);

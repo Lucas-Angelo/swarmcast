@@ -5,6 +5,7 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { effectiveUpdateChannel, isPrereleaseVersion, type DesktopUpdate, type UpdateChannel } from '@swarmcast/shared';
 import { configSchema, defaultConfig } from '../../src/core/config.js';
+import { CodedError } from '../../src/core/messages.js';
 import { resolvePaths } from '../../src/core/paths.js';
 import { abortable, QuitAbortError, sleep, withRetries } from '../../src/core/retry.js';
 import { Autostart } from '../../src/desktop/autostart.js';
@@ -531,8 +532,8 @@ describe('ffmpeg install with retries', () => {
     expect(await abortable(Promise.resolve(7), new AbortController().signal)).toBe(7);
   });
 
-  /** A QualityManager whose ffmpeg install fails until try `okFrom`; counts the tries. */
-  function qualityManager(okFrom: { value: number }) {
+  /** A QualityManager whose ffmpeg install fails (with `failure`) until try `okFrom`; counts the tries. */
+  function qualityManager(okFrom: { value: number }, failure: () => Error = () => new Error('network down')) {
     const dataDir = tempDir('sc-ff-');
     const tracker = new TrackerService(new AccessControl(), silentLog);
     onTestFinished(() => tracker.close());
@@ -558,7 +559,7 @@ describe('ffmpeg install with retries', () => {
       installFfmpeg: async (_dir, _log, onProgress) => {
         tries.n++;
         onProgress?.({ phase: 'downloading', receivedBytes: 10 });
-        if (tries.n < okFrom.value) throw new Error('network down');
+        if (tries.n < okFrom.value) throw failure();
         return path.join(dataDir, 'ffmpeg');
       },
     });
@@ -595,6 +596,21 @@ describe('ffmpeg install with retries', () => {
     // Assert
     await expect(result).rejects.toThrow('network down');
     expect(q.install).toMatchObject({ phase: 'error', message: 'network down', attempt: 2, attempts: 2 });
+  });
+
+  it('QualityManager passes a stalled download\'s message key to the panel, while retrying and after the last try', async () => {
+    // Arrange
+    const stalled = { code: 'quality.install.stalled', params: { s: 60 } } as const;
+    const { q } = qualityManager({ value: Number.POSITIVE_INFINITY }, () => new CodedError(stalled.code, stalled.params));
+    const retrying: unknown[] = [];
+    // Act
+    const result = q.installFfmpegWithRetries([1], async () => {
+      retrying.push({ ...q.install });
+    });
+    // Assert
+    await expect(result).rejects.toBeInstanceOf(CodedError);
+    expect(retrying).toEqual([expect.objectContaining({ phase: 'retrying', ...stalled })]);
+    expect(q.install).toMatchObject({ phase: 'error', message: expect.stringMatching(/nothing arrived for 60 seconds/), ...stalled });
   });
 });
 

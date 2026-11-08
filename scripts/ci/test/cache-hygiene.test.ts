@@ -42,6 +42,9 @@ describe('familyOf', () => {
       [`apt-debs-playwright-${LOCK}-ubuntu24-20261026.354.1-X64`]: 'apt-debs-playwright-*-ubuntu24-*-X64',
       'ms-playwright-Linux-X64-1.64.1': 'ms-playwright-Linux-X64-*',
       [`sc-downloads-macOS-ARM64-ffmpeg-true-${LOCK}`]: 'sc-downloads-macOS-ARM64-ffmpeg-true-*',
+      [`sc-downloads-Windows-X64-ffmpeg-true-for-windows-x64-${LOCK}-42472780332-1a2b3c4d5e6f`]: 'sc-downloads-Windows-X64-ffmpeg-true-for-windows-x64-*-*-*',
+      [`sc-downloads-Windows-X64-ffmpeg-true-app-ffmpeg-for-windows-x64-${LOCK}-42472780332-2b3c4d5e6f70`]: 'sc-downloads-Windows-X64-ffmpeg-true-app-ffmpeg-for-windows-x64-*-*-*',
+      [`sc-downloads-Windows-X64-ffmpeg-true-obs-studio-for-windows-x64-${LOCK}-42472780332-3c4d5e6f7081`]: 'sc-downloads-Windows-X64-ffmpeg-true-obs-studio-for-windows-x64-*-*-*',
     };
 
     // Act

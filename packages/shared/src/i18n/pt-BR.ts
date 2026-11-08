@@ -555,6 +555,7 @@ export const ptBR: Messages = {
   'quality.install.progress': 'Baixando… {mb} MB',
   'quality.install.progressOf': 'Baixando… {mb} de {total} MB',
   'quality.install.failed': 'A instalação falhou: {error}',
+  'quality.install.stalled': 'O download parou: nada chegou em {s} segundos. Confira a sua internet e clique em Tentar de novo.',
   'quality.install.retrying': 'Não deu certo; tentando de novo em instantes (tentativa {attempt} de {attempts})…',
   'quality.install.retry': 'Tentar de novo',
   'quality.install.retry.tip': 'Baixa o conversor de vídeo (ffmpeg) de novo. Se continuar falhando, confira a sua internet; sem ele, os espectadores recebem a sua qualidade original, o que funciona bem.',

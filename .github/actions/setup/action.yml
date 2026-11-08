@@ -11,6 +11,19 @@ inputs:
   ffmpeg:
     description: Also install ffmpeg for the tests (the app never ships it). Sets FFMPEG_BIN.
     default: 'false'
+  app-ffmpeg:
+    description: >-
+      Also the pinned ffmpeg archive the app itself installs for streamers (versions.json
+      "ffmpeg", this runner's target), verified, into the download cache, for a suite that serves
+      it to the app from a local stand-in (scripts/test/lib/ffmpeg-stand-in.mjs): the app's
+      install then never reaches the publisher at test time. Implies downloads.
+    default: 'false'
+  obs-studio:
+    description: >-
+      Also the pinned OBS Studio portable zip (versions.json "obs-studio", Windows x64 only),
+      verified, into the download cache, for the Windows OBS suite, which reads it from there
+      and never downloads it at test time. Implies downloads.
+    default: 'false'
   npm-ci:
     description: Run `npm ci`.
     default: 'true'
@@ -165,7 +178,8 @@ runs:
         restore-keys: ${{ github.ref != 'refs/heads/main' && steps.npm-cache.outputs.prefix || '' }}
 
     # Downloads verified against scripts/build/versions.json (ffmpeg-test, MediaMTX, cloudflared,
-    # Pebble, cargo-llvm-cov, the AppImage tools: SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs)
+    # Pebble, cargo-llvm-cov, the AppImage tools, the app's ffmpeg and OBS Studio archives:
+    # SC_DOWNLOAD_CACHE, read by fetch-binaries.mjs)
     # and pkg's Node.js base binary (scripts/build/pkg-base.mjs, same folder), so a job does not
     # depend on github.com for them: github.com's release downloads answered 504 for most of an
     # hour while githubstatus.com showed nothing (PR #141), and one release run was lost to a
@@ -178,11 +192,13 @@ runs:
     # saves a new entry only when the job added or changed files (.github/scripts/cache-files.mjs),
     # from main and pull requests.
     - name: Download cache keys
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
       id: dl
       shell: bash
       env:
         WITH_FFMPEG: ${{ inputs.ffmpeg }}
+        APP_FFMPEG: ${{ inputs.app-ffmpeg }}
+        OBS_STUDIO: ${{ inputs.obs-studio }}
         FOR: ${{ inputs.downloads-for }}
         PINS: ${{ hashFiles('scripts/build/versions.json') }}
       run: |
@@ -194,11 +210,29 @@ runs:
           case "$RUNNER_OS" in Linux) FOR=linux ;; macOS) FOR=macos ;; Windows) FOR=windows ;; *) echo "::error::unknown RUNNER_OS $RUNNER_OS"; exit 1 ;; esac
           case "$RUNNER_ARCH" in X64) FOR="$FOR-x64" ;; ARM64) FOR="$FOR-arm64" ;; *) echo "::error::unknown RUNNER_ARCH $RUNNER_ARCH"; exit 1 ;; esac
         fi
-        # A job without ffmpeg must not save the entry that jobs with ffmpeg restore.
+        # A job without ffmpeg must not save the entry that jobs with ffmpeg restore. The same for
+        # the archives only some suites use (app-ffmpeg, obs-studio): their jobs have their own
+        # entry, and until it exists they start from the plain entry (dl-fallback) and add only
+        # those archives.
+        extra=""
+        if [ "$APP_FFMPEG" = true ]; then extra="$extra-app-ffmpeg"; fi
+        if [ "$OBS_STUDIO" = true ]; then extra="$extra-obs-studio"; fi
         dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-for-$FOR-"
-        { echo "dl-prefix=$dl"; echo "dl-key=$dl$PINS-"; } >> "$GITHUB_OUTPUT"
+        fallback=""
+        if [ -n "$extra" ]; then
+          fallback="$dl"
+          dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG$extra-for-$FOR-"
+        fi
+        # Restore order: this family's newest entry for these pins, then for any pins; then the
+        # plain entry's, likewise (empty lines are skipped).
+        {
+          echo "dl-key=$dl$PINS-"
+          echo "dl-prefix=$dl"
+          echo "dl-fallback-key=${fallback:+$fallback$PINS-}"
+          echo "dl-fallback=$fallback"
+        } >> "$GITHUB_OUTPUT"
     - name: Restore the download cache
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
       continue-on-error: true
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
@@ -209,8 +243,10 @@ runs:
         restore-keys: |
           ${{ steps.dl.outputs.dl-key }}
           ${{ steps.dl.outputs.dl-prefix }}
+          ${{ steps.dl.outputs.dl-fallback-key }}
+          ${{ steps.dl.outputs.dl-fallback }}
     - name: Remember the download cache for the save step
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true' || inputs.obs-studio == 'true'
       shell: bash
       env:
         KEY: ${{ steps.dl.outputs.dl-key }}
@@ -278,6 +314,24 @@ runs:
         fi
         echo "FFMPEG_BIN=$bin" >> "$GITHUB_ENV"
         echo "$dir" >> "$GITHUB_PATH"
+    # The ffmpeg build the app installs for streamers (versions.json "ffmpeg": BtbN LGPL on Windows
+    # and Linux), for the Windows quality suite, which serves this file to the app from a local
+    # stand-in (scripts/test/lib/ffmpeg-stand-in.mjs) so the panel's install never reaches
+    # github.com at test time (docs/TESTING.md, "No third-party service in the gate"). From the
+    # download cache, or downloaded here with fetch-binaries.mjs's recoveries; SHA-256 verified
+    # either way. The suite reads it from SC_DOWNLOAD_CACHE.
+    - name: The app's ffmpeg archive (pinned, verified)
+      if: inputs.app-ffmpeg == 'true'
+      shell: bash
+      run: node "$GITHUB_WORKSPACE/scripts/build/fetch-binaries.mjs" --only ffmpeg --out "$RUNNER_TEMP/ffmpeg-app"
+    # The portable OBS Studio the Windows OBS suite streams with (versions.json "obs-studio"),
+    # kept as its zip: the suite reads it from SC_DOWNLOAD_CACHE and never downloads it at test
+    # time (docs/TESTING.md, "No third-party service in the gate"). From the download cache, or
+    # downloaded here with fetch-binaries.mjs's recoveries; SHA-256 verified either way.
+    - name: OBS Studio for the tests (pinned, verified)
+      if: inputs.obs-studio == 'true'
+      shell: bash
+      run: node "$GITHUB_WORKSPACE/scripts/build/fetch-binaries.mjs" --only obs-studio --out "$RUNNER_TEMP/obs-studio"
     - name: ffmpeg version (and the libx264 encoder the test feeds need)
       if: inputs.ffmpeg == 'true'
       shell: bash

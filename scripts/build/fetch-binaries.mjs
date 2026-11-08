@@ -7,6 +7,9 @@
 // Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
 //        node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>   (one tool only)
 //
+// A tool marked "archive" in versions.json (obs-studio, a test tool) is kept as its verified
+// archive (in --out, and in SC_DOWNLOAD_CACHE when it is set), never extracted here.
+//
 // An asset with "mirrors" (versions.json) is downloaded from them first and from its publisher
 // only when they fail: from GitHub's runners the macOS ffmpeg host is very slow, so CI uses a
 // byte-identical copy in this repo's `ci-deps` pre-release (docs/RELEASING.md). When every
@@ -227,6 +230,11 @@ export function assetUrls(spec, a) {
   return [...(a.mirrors ?? []), original];
 }
 
+/** Where SC_DOWNLOAD_CACHE (`cacheDir`) keeps the verified archive of asset `a` (versions.json). */
+export function cachedArchive(cacheDir, a) {
+  return path.join(cacheDir, `${a.sha256}-${a.asset}`);
+}
+
 /** The pinned archives, by SHA-256: what SC_DOWNLOAD_CACHE may keep. */
 function pinnedHashes() {
   return new Set(Object.values(versions).flatMap((spec) => Object.values(spec.assets ?? {}).map((a) => a.sha256)));
@@ -272,8 +280,9 @@ export async function fetchBinaries(target, outDir, { withOptional = false, with
       // Pebble (the integration tests' ACME CA) comes with `npm run fetch-bins`, never with a package.
       if (!withTestTools) continue;
     } else if (spec.testOnly || spec.appimageTool) {
-      // ffmpeg-test (the GPL build CI's test feeds use) and cargo-llvm-cov (CI's Rust coverage)
-      // are fetched only by name (--only); the AppImage build tools only by appimage-tools.mjs.
+      // ffmpeg-test (the GPL build CI's test feeds use), obs-studio (the Windows OBS suite's) and
+      // cargo-llvm-cov (CI's Rust coverage) are fetched only by name (--only); the AppImage build
+      // tools only by appimage-tools.mjs.
       continue;
     } else if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) {
       // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
@@ -282,14 +291,14 @@ export async function fetchBinaries(target, outDir, { withOptional = false, with
     }
     const a = spec.assets[target];
     if (!a) throw new Error(`No ${tool} build for ${target}`);
-    const finalPath = path.join(outDir, path.basename(a.binary));
+    const finalPath = path.join(outDir, spec.archive ? a.asset : path.basename(a.binary));
     const stamp = path.join(outDir, `${tool}.version`);
     if (fs.existsSync(finalPath) && fs.existsSync(stamp) && fs.readFileSync(stamp, 'utf8') === `${spec.version} ${a.sha256}`) {
       console.log(`✓ ${tool} ${spec.version} already present`);
       continue;
     }
     const work = fs.mkdtempSync(path.join(os.tmpdir(), `sc-${tool}-`));
-    const cached = cacheDir && path.join(cacheDir, `${a.sha256}-${a.asset}`);
+    const cached = cacheDir && cachedArchive(cacheDir, a);
     let archive = path.join(work, a.asset);
     if (cached && fs.existsSync(cached) && sha256(cached) === a.sha256) {
       console.log(`✓ ${tool} ${spec.version}: ${a.asset} from the download cache`);
@@ -306,6 +315,13 @@ export async function fetchBinaries(target, outDir, { withOptional = false, with
         fs.copyFileSync(archive, `${cached}.part`);
         fs.renameSync(`${cached}.part`, cached);
       }
+    }
+    if (spec.archive) {
+      fs.copyFileSync(archive, finalPath);
+      fs.writeFileSync(stamp, `${spec.version} ${a.sha256}`);
+      fs.rmSync(work, { recursive: true, force: true });
+      console.log(`✓ ${tool} ${spec.version} verified (${a.sha256.slice(0, 12)}…), kept as ${a.asset}`);
+      continue;
     }
     let binary;
     if (/\.(zip|tar\.gz|tgz|tar\.xz)$/.test(a.asset)) {

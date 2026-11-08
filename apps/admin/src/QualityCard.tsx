@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
 import type { QualitySettingsUpdate, QualityState, TranscodeHeight } from '@swarmcast/shared';
 import { ENCODER_IDS, TRANSCODE_HEIGHTS, encoderLabelKey } from '@swarmcast/shared';
-import { formatNumber, t, tc, type MessageKey } from '@swarmcast/shared/i18n';
+import { formatNumber, t, tc, type MessageKey, type MessageParams } from '@swarmcast/shared/i18n';
 import { api, errorText, post } from './api.js';
 import { Info } from './Info.js';
 
-type Install = { phase: string; receivedBytes: number; totalBytes?: number; message?: string; attempt?: number; attempts?: number } | null;
+type Install = { phase: string; receivedBytes: number; totalBytes?: number; message?: string; code?: string; params?: MessageParams; attempt?: number; attempts?: number } | null;
 type State = QualityState & { install: Install };
 
 const PHASE_KEY: Record<QualityState['upload']['phase'], MessageKey> = {
@@ -174,7 +174,7 @@ export function QualityCard({ live = false }: { live?: boolean }) {
                     </button>
                     <Info text={failed ? t('quality.install.retry.tip') : t('quality.install.tip')} />
                   </div>
-                  {failed && <div class="err small">{t('quality.install.failed', { error: q.install!.message ?? '?' })}</div>}
+                  {failed && <div class="err small">{t('quality.install.failed', { error: tc(q.install, q.install!.message ?? '?') })}</div>}
                 </div>
               )}
             </li>
