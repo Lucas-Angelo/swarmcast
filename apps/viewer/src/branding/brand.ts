@@ -222,6 +222,46 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
     slot.replaceChildren(img);
   };
 
+  // The ended card's picture is loaded while the stream is up, once the first fragment is in (like
+  // the banner, it never delays the first frame): when the stream ends the server is shutting down
+  // and a quick tunnel answers 502, then 530, so a picture first asked for then never loads (a
+  // broken image in the card). The loaded element is kept and shown at the end (brand images are
+  // content-hash names, so it stays right until the avatar changes); the mascot stays until then.
+  let endedAvatar: { src: string; img: HTMLImageElement; loaded: boolean } | null = null;
+
+  const endedPicture = (): void => {
+    const card = document.querySelector('#ended .card');
+    const mascot = card?.querySelector<HTMLElement>('.sc-mascot');
+    if (!isEnded || !card || !mascot) return;
+    const shown = card.querySelector('.sc-brand-ended-avatar');
+    const img = endedAvatar?.loaded && endedAvatar.src === data?.avatar?.s256 ? endedAvatar.img : null;
+    if (shown && shown !== img) shown.remove();
+    if (img && shown !== img) mascot.after(img);
+    mascot.hidden = !!img;
+  };
+
+  const loadEndedAvatar = (): void => {
+    const src = data?.avatar?.s256;
+    if (!src) endedAvatar = null;
+    if (!src || !(framed || isEnded) || endedAvatar?.src === src) return;
+    const img = document.createElement('img');
+    img.className = 'sc-brand-avatar sc-brand-ended-avatar';
+    img.alt = '';
+    img.width = 96;
+    img.height = 96;
+    img.decoding = 'async';
+    const entry = { src, img, loaded: false };
+    endedAvatar = entry;
+    img.addEventListener('load', () => {
+      entry.loaded = true;
+      endedPicture();
+    });
+    img.addEventListener('error', () => {
+      if (endedAvatar === entry) endedAvatar = null;
+    });
+    img.src = src;
+  };
+
   const endedScreen = (): void => {
     if (!isEnded) return;
     const card = document.querySelector('#ended .card');
@@ -235,17 +275,7 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
       m.textContent = data.endedMessage;
       text.append(m);
     }
-    const mascot = card.querySelector<HTMLElement>('.sc-mascot');
-    if (data?.avatar && mascot) {
-      mascot.hidden = true;
-      const img = document.createElement('img');
-      img.className = 'sc-brand-avatar sc-brand-ended-avatar';
-      img.alt = '';
-      img.src = data.avatar.s256;
-      img.width = 96;
-      img.height = 96;
-      mascot.after(img);
-    }
+    endedPicture();
     const extra = document.createElement('div');
     extra.className = 'sc-brand-ended-extra';
     if (data) {
@@ -319,6 +349,7 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
     applyIcons(data);
     if (page === 'watch') {
       applyWatch();
+      loadEndedAvatar();
       endedScreen();
     } else applyJoin();
     o.onData?.(data);
@@ -341,9 +372,11 @@ export function startBrand(page: BrandPage, o: BrandOptions = {}): BrandControll
       if (framed) return;
       framed = true;
       banner();
+      loadEndedAvatar();
     },
     ended() {
       isEnded = true;
+      loadEndedAvatar();
       endedScreen();
     },
   };

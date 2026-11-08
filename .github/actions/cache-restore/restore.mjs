@@ -49,8 +49,14 @@ function killTree(child) {
   }
 }
 
+/** The real clock of a try's time limit: calls `onTimeout` after `ms`; returns what cancels it. */
+const realTimer = (ms, onTimeout) => {
+  const t = setTimeout(onTimeout, ms);
+  return () => clearTimeout(t);
+};
+
 /** One try: { outputs, timedOut, failed, output, seconds }. */
-function attempt({ node, script, env, timeoutMs, log }) {
+function attempt({ node, script, env, timeoutMs, timer, log }) {
   return new Promise((resolve) => {
     const outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'cache-restore-')), 'output');
     fs.writeFileSync(outFile, '');
@@ -65,12 +71,12 @@ function attempt({ node, script, env, timeoutMs, log }) {
     child.stdout.on('data', onData);
     child.stderr.on('data', onData);
     let timedOut = false;
-    const timer = setTimeout(() => {
+    const cancel = timer(timeoutMs, () => {
       timedOut = true;
       killTree(child);
-    }, timeoutMs);
+    });
     child.on('close', (code) => {
-      clearTimeout(timer);
+      cancel();
       const outputs = parseOutputs(fs.readFileSync(outFile, 'utf8'));
       // "Failed to restore: ..." is actions/cache's warning for a lookup or download that failed
       // (it then reports a miss); a non-zero exit is a failure too.
@@ -91,8 +97,10 @@ export function clearPaths(paths) {
 /**
  * Restores `key` (else a `restoreKeys` prefix) into `paths` with actions/cache's restore code,
  * each try limited to `timeoutMs`, at most `tries` tries. Returns { hit, matchedKey, tries: [...] }.
+ * `timer(ms, onTimeout)` arms a try's time limit and returns what cancels it (default: the real
+ * clock); the tests cut a try off when they choose, so no try races the limit.
  */
-export async function restore({ script, node = process.execPath, paths, key, restoreKeys = [], timeoutMs, tries = 2, env = process.env, log = console.log }) {
+export async function restore({ script, node = process.execPath, paths, key, restoreKeys = [], timeoutMs, tries = 2, env = process.env, log = console.log, timer = realTimer }) {
   const childEnv = {
     ...env,
     INPUT_PATH: paths.join('\n'),
@@ -104,7 +112,7 @@ export async function restore({ script, node = process.execPath, paths, key, res
   };
   const results = [];
   for (let n = 1; n <= tries; n++) {
-    const r = await attempt({ node, script, env: childEnv, timeoutMs, log });
+    const r = await attempt({ node, script, env: childEnv, timeoutMs, timer, log });
     results.push({ timedOut: r.timedOut, failed: r.failed, seconds: r.seconds });
     const matchedKey = r.outputs['cache-matched-key'] || '';
     if (matchedKey && !r.timedOut && !r.failed) {

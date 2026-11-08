@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { CidrSet, formatCidr, ipPrefixLabel, isNonPublicIp, parseCidr, parseIp, prefixLength } from '../../src/security/cidr.js';
+import { CidrSet, cidrSearchSteps, formatCidr, ipPrefixLabel, isNonPublicIp, parseCidr, parseIp, prefixLength } from '../../src/security/cidr.js';
 import { scrubActivity } from '../../src/core/activity.js';
 
 // IP and CIDR parsing for the public blocklists, the set they are matched against, and the
 // addresses that are never public.
+
+/** The most ranges a binary search over 5,000 compares: ceil(log2(5,001)). */
+const BINARY_SEARCH_STEPS = 13;
 
 describe('IP parsing', () => {
   it.each([
@@ -141,25 +144,19 @@ describe('CidrSet', () => {
     expect(has).toBe(false);
   });
 
-  /**
-   * The best of `rounds` runs of `fn` (ms): noise (GC, scheduling) only ever adds time, so the
-   * minimum is the measurement.
-   */
-  function bestOf(rounds: number, fn: () => void): number {
-    let best = Infinity;
-    for (let r = 0; r < rounds; r++) {
-      const t = performance.now();
-      fn();
-      best = Math.min(best, performance.now() - t);
-    }
-    return best;
+  /** Ranges compared while `fn` runs (cidrSearchSteps). */
+  function stepsOf(fn: () => void): number {
+    const before = cidrSearchSteps();
+    fn();
+    return cidrSearchSteps() - before;
   }
 
-  // Lookups must stay fast with the thousands of networks public lists hold: a binary search.
-  // Measured against a baseline from the same run, never an absolute time (CI machines differ
-  // tenfold): the same 100,000 lookups in a set of one network. A binary search over 5,000 ranges
-  // costs about 1.2 times that; a linear scan, about 100 times.
-  it('looking up an address among 5,000 networks costs about the same as among one', () => {
+  // Lookups must stay fast with the thousands of networks public lists hold: a binary search. The
+  // ranges each lookup compares are counted, not timed (a timed comparison with a one-network set
+  // read 6.4 times slower instead of about 1.2 once four test runs shared the machine): a binary
+  // search over 5,000 ranges compares at most BINARY_SEARCH_STEPS of them per lookup, a scan up
+  // to 5,000.
+  it(`looking up an address among 5,000 networks compares at most ${BINARY_SEARCH_STEPS} of them (a binary search, not a scan)`, () => {
     // Arrange
     const disjoint = Array.from({ length: 5000 }, (_, i) => `${(i % 200) + 20}.${Math.floor(i / 200) * 2}.${i % 7}.0/24`);
     const big = new CidrSet(disjoint);
@@ -168,14 +165,14 @@ describe('CidrSet', () => {
     const lookups = (s: CidrSet) => () => {
       for (const ip of ips) s.has(ip);
     };
-    lookups(big)();
-    lookups(one)();
     // Act
-    const tBig = bestOf(5, lookups(big));
-    const tOne = bestOf(5, lookups(one));
+    const stepsBig = stepsOf(lookups(big));
+    const stepsOne = stepsOf(lookups(one));
     // Assert
     expect(big.rangeCount).toBe(5000);
-    expect(tBig / tOne).toBeLessThan(5);
+    expect(stepsOne).toBe(ips.length);
+    expect(stepsBig).toBeGreaterThan(ips.length);
+    expect(stepsBig).toBeLessThanOrEqual(BINARY_SEARCH_STEPS * ips.length);
   });
 });
 

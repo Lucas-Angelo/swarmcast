@@ -100,11 +100,22 @@ export function formatCidr(r: CidrRange): string {
   return `${groups.join(':')}/${bits}`;
 }
 
+/**
+ * Work counter: one unit per range a lookup compares against. The lookup-cost test compares it
+ * across set sizes, which shows the search is logarithmic without measuring wall-clock time.
+ */
+let searchSteps = 0;
+/** Ranges compared by every lookup so far (tests). */
+export function cidrSearchSteps(): number {
+  return searchSteps;
+}
+
 /** Binary search: is `x` inside one of the sorted, non-overlapping [starts[i], ends[i]] ranges? */
 function contains<T extends number | bigint>(starts: ArrayLike<T>, ends: ArrayLike<T>, x: T): boolean {
   let lo = 0;
   let hi = starts.length - 1;
   while (lo <= hi) {
+    searchSteps += 1;
     const mid = (lo + hi) >>> 1;
     if (starts[mid]! <= x) lo = mid + 1;
     else hi = mid - 1;
