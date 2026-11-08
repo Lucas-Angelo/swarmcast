@@ -113,13 +113,23 @@ contain only `// Arrange`, `// Act` and `// Assert`.
 ### Integration tests
 
 Integration tests use real MediaMTX, ffmpeg, server processes and 127.0.0.1 sockets, and local
-stand-ins for everything off the machine: no test downloads blocklists or reaches GitHub, Cloudflare
-or a router. `helpers.ts` has no Vitest imports (the e2e server and the scripts use it too) and
+stand-ins for everything the app reaches off the machine: no test downloads blocklists or reaches
+GitHub's API, Cloudflare or a router. `helpers.ts` has no Vitest imports (the e2e server and the scripts use it too) and
 provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hangingServer` and
 `startFeed`. `viewers.ts` (Vitest suites only) runs a live's public server in-process with
 `ControlClient`, whose waits are on the arriving messages. `tmpDir()` folders are deleted after the
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
 `SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `NODE_EXTRA_CA_CERTS`.
+
+`acme-pebble.test.ts` (where Docker runs Linux containers: the Linux runners, Docker Desktop) runs
+the ACME client against Pebble, Let's Encrypt's test CA, built from a pinned commit by
+[pebble.Dockerfile](../apps/server/test/integration/pebble.Dockerfile): the Go image from Docker Hub
+and Pebble's source from GitHub, the only downloads of the integration tests (tooling, cached by
+Docker). Not the release image: Pebble v2.10.1 can leave the poll of an order that follows its
+finalize unanswered for good (letsencrypt/pebble#554), and our client polls right after finalizing
+(run 42428110733: "AbortError: The operation was aborted" after the 30 s request timeout, the
+journal of that poll and Pebble's log in soak run 42429289741). Go back to a release image once
+one has the fix.
 
 ### End-to-end tests
 

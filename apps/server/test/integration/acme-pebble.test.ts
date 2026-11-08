@@ -2,6 +2,11 @@
  * End-to-end test of the in-house ACME client against Pebble, Let's Encrypt's ACME test CA,
  * running in Docker. Real Let's Encrypt (production or staging) is never contacted.
  *
+ * Pebble is built from a pinned commit (pebble.Dockerfile), not taken from its release image:
+ * v2.10.1 can leave the poll of an order that follows its finalize unanswered for good, and a
+ * test then failed with the client's 30 s request timeout (Linux CI, about once in 200 runs of
+ * this file; the reasons are in that file). Docker caches the build after the first run.
+ *
  * How validation reaches us (Docker Desktop on macOS, also works on Linux Docker >= 20.10):
  * - Pebble runs with `--add-host host.docker.internal:host-gateway`. Inside the container that
  *   name resolves to the host gateway IP (192.168.65.254 on Docker Desktop); we read it from
@@ -40,8 +45,9 @@ import { LetsEncryptIpIssuer, type IssuedCert } from '../../src/direct/certs.js'
 import type { PortMapper } from '../../src/direct/mapper.js';
 import { allocPorts, tmpDir, until } from './helpers.js';
 
-/** ghcr.io/letsencrypt/pebble 2.10.1 (multi-arch index, revision b1e1ca4), pinned by digest. */
-const PEBBLE_IMAGE = 'ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199';
+/** The image built from pebble.Dockerfile (a pinned Pebble commit with its order deadlock fixed). */
+const PEBBLE_IMAGE = 'swarmcast-test-pebble';
+const PEBBLE_DOCKERFILE = path.join(import.meta.dirname, 'pebble.Dockerfile');
 const SHORTLIVED_SECONDS = 518_400; // Pebble's "shortlived" profile validity (6 days)
 
 const hasDocker = (() => {
@@ -159,6 +165,8 @@ describe.skipIf(!hasDocker || process.platform === 'win32')('ACME client against
       },
     };
     fs.writeFileSync(path.join(tmp, 'pebble-config.json'), JSON.stringify(config));
+    // No build context: the Dockerfile fetches Pebble's source itself.
+    execFileSync('docker', ['build', '--progress=plain', '-t', PEBBLE_IMAGE, '-'], { input: fs.readFileSync(PEBBLE_DOCKERFILE), stdio: ['pipe', 'ignore', 'pipe'], timeout: 120_000 });
 
     // create + cp + start avoids bind mounts (and Docker Desktop file-sharing settings).
     container = docker(
