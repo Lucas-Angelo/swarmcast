@@ -25,7 +25,7 @@ import { chromium, type Browser, type CDPSession, type Page } from '@playwright/
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
-import { joinPageReady, touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
+import { joinPageReady, shownTouchPoint, touchPoint, type Orientation, type Phone } from './phone.js';
 
 const run = promisify(execFile);
 
@@ -513,12 +513,9 @@ export class AndroidPhone implements Phone {
   async tap(selector: string): Promise<void> {
     const target = this.current.locator(selector);
     await target.scrollIntoViewIfNeeded();
-    let point: TouchPoint | null = null;
-    await expect
-      .poll(async () => (point = await target.evaluate(touchPoint)) !== null, { message: `${selector} can be touched (enabled, partly in sight, not covered)` })
-      .toBe(true);
+    const point = await shownTouchPoint(this, selector, () => target.evaluate(touchPoint));
     const cdp = this.cdp!;
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point!.x, y: point!.y }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   }
 

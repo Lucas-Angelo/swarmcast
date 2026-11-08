@@ -21,7 +21,10 @@ export interface Phone {
   url(): Promise<string>;
   /** `fn(arg)` in the page; returns its JSON result. `fn` must not use anything from outside its body. */
   evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R>;
-  /** A finger tap in the middle of the element, scrolled into view first. Taps raise the on-screen keyboard. */
+  /**
+   * A finger tap in the middle of the element, scrolled into view first, once the browser shows it
+   * where the page has it (shownTouchPoint). Taps raise the on-screen keyboard.
+   */
   tap(selector: string): Promise<void>;
   /**
    * Types into the element (tap it first), as the on-screen keyboard does. iOS: the text is put
@@ -488,4 +491,53 @@ export function touchPoint(el: Element): TouchPoint | null {
   const inViewX = (Math.max(r.left, 0) + Math.min(r.right, innerWidth)) / 2;
   const inViewY = (Math.max(r.top, 0) + Math.min(r.bottom, innerHeight)) / 2;
   return { x: (cx - vv.offsetLeft) * vv.scale, y: (cy - vv.offsetTop) * vv.scale, dx: cx - inViewX, dy: cy - inViewY, clientX: cx, clientY: cy };
+}
+
+/** Resolves in the page once it has run two animation frames (runs in the page; self-contained). */
+function twoFrames(): Promise<null> {
+  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))));
+}
+
+function samePoint(a: TouchPoint, b: TouchPoint): boolean {
+  return a.x === b.x && a.y === b.y && a.clientX === b.clientX && a.clientY === b.clientY;
+}
+
+/**
+ * Where to tap the element (touchPoint(), read by `measure`), once the browser shows the page as
+ * the page reports it: the same point read before and after two animation frames (Playwright's
+ * "stable": the same box in two frames in a row). A finger lands where the screen shows the page,
+ * and the browser follows the page a frame later. On iOS Safari is the one that takes the touch:
+ * - WebKit's automation refuses a touch outside the visible area Safari keeps for the page
+ *   ("move target out of bounds", WebAutomationSession::simulateTouchInteraction checks the
+ *   point against WebPageProxy::unobscuredContentRect). When a navigation moves the page to a
+ *   new web process, as the live link does (the viewer pages send Cross-Origin-Opener-Policy),
+ *   Safari forgets that area (WebPageProxy::resetState) and learns it again only from the new
+ *   page's first frame (WKWebView defers it until the first layer tree after the load commit):
+ *   until then every point is out of bounds, while the page itself already reports its visual
+ *   viewport with the element in it. Release-rehearsal run 42508591582: the tap on the join
+ *   page's nickname, 147 ms after its load event, at (201, 275) of a 402 px wide page.
+ * - Safari hit-tests a touch in its own copy of the page's layers and scroll position: after a
+ *   scrollIntoView the tap reached what the screen still showed there (IosPhone.tap).
+ * WebKit runs a page's next frame only once Safari has taken the previous one (on iOS one layer
+ * tree commit at a time: RemoteLayerTreeDrawingArea waits for DisplayDidRefresh), so when the
+ * second frame runs Safari has taken the first, which the page drew after the first reading.
+ * While waiting, the polled value says why the element cannot be touched yet.
+ */
+export async function shownTouchPoint(phone: Phone, selector: string, measure: () => Promise<TouchPoint | null>): Promise<TouchPoint> {
+  let point = null as TouchPoint | null;
+  const untouchable = 'disabled, out of sight or covered';
+  await expect
+    .poll(
+      async () => {
+        const before = await measure();
+        if (!before) return `not yet: ${untouchable}`;
+        await phone.evaluate(twoFrames);
+        point = await measure();
+        if (!point) return `not yet: ${untouchable} after two frames`;
+        return samePoint(before, point) ? 'shown' : `not yet: moved from (${before.clientX}, ${before.clientY}) to (${point.clientX}, ${point.clientY}) in two frames`;
+      },
+      { message: `${selector} can be touched (enabled, partly in sight, not covered) at the same point before and after two frames` },
+    )
+    .toBe('shown');
+  return point!;
 }
