@@ -9,8 +9,8 @@ const MEDIA = ['apps/server/test/integration/ladder.test.ts'];
 
 /**
  * Coverage floors of this OS (scripts/coverage/floors.json): the files that run differ per OS
- * (the ACME test needs Docker, which only the Linux runners have; Windows skips the POSIX-signal
- * lifecycle and desktop-mode files). An OS without floors only reports.
+ * (Windows skips the POSIX-signal lifecycle and desktop-mode files). An OS without floors only
+ * reports.
  */
 const coverageFloors = (floors.integration as Record<string, { total?: Record<string, number> }>)[process.platform]?.total;
 
