@@ -13,7 +13,7 @@ const LOCK_OLD = '9473d0b666ed258e3a5d5f23dd31dede3d0e8d4e3521b1488d586644905366
 const SHA = '6400aa2403182a423673b5dcaaef4355363cce09';
 const TOKENS = [
   { what: 'npm cache (setup-node)', token: NPM },
-  { what: 'package-lock.json (sc-pkg, apt-debs-playwright)', token: LOCK },
+  { what: 'package-lock.json (sc-tauri-tools, apt-debs-playwright)', token: LOCK },
   { what: 'main commit (codeql-trap)', token: SHA },
 ];
 
@@ -79,7 +79,7 @@ describe('currentTokens', () => {
     // Assert
     expect(tokens).toEqual([
       { what: 'npm cache (setup-node)', token: hashFiles([Buffer.from('lock'), Buffer.from('site'), Buffer.from('setup')]) },
-      { what: 'package-lock.json (sc-pkg, apt-debs-playwright)', token: hashFiles([Buffer.from('lock')]) },
+      { what: 'package-lock.json (sc-tauri-tools, apt-debs-playwright)', token: hashFiles([Buffer.from('lock')]) },
       { what: 'main commit (codeql-trap)', token: SHA },
     ]);
   });
@@ -151,6 +151,24 @@ describe('plan: superseded entries on main', () => {
 
     // Assert
     expect(r.removed).toEqual([]);
+  });
+
+  it('keeps only the newest of the per-run entries for the current inputs, unless an older one is still used', () => {
+    // Arrange: entries saved by runs that added files (.github/scripts/cache-files.mjs).
+    const base = `sc-tauri-tools-Windows-X64-${LOCK}`;
+    const first = cache(`${base}-42439987029-1a2b3c4d5e6f`, { created: 30, used: 29 });
+    const stillUsed = cache(`${base}-42440000000-2b3c4d5e6f70`, { created: 20, used: 3 });
+    const newest = cache(`${base}-42465017555-3c4d5e6f7081`, { created: 10, used: 1 });
+
+    // Act
+    const r = run([first, stillUsed, newest]);
+
+    // Assert
+    expect(familyOf(newest.key)).toBe('sc-tauri-tools-Windows-X64-*-*-*');
+    expect(r.reason(newest)).toBe('current inputs: package-lock.json (sc-tauri-tools, apt-debs-playwright)');
+    expect(r.reason(stillUsed)).toBe('still used (after the newest was saved, within 24 h)');
+    expect(r.removed).toEqual([first]);
+    expect(r.reason(first)).toBe(`superseded by ${newest.key}`);
   });
 
   it('rolls a Rust cache over: the entry for the old environment hash goes once the new one is saved', () => {

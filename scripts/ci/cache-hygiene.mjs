@@ -14,12 +14,15 @@
 // Everything else stays (open pull requests, existing branches, tags).
 //
 // Never deleted on main: an entry whose key holds a hash of main's current inputs (the same
-// hashFiles() the workflows and setup-node compute, from main's files: `--main-ref`), the newest
-// entry of each family, the most recently used one, and an older entry that was still used after
-// the newest one was saved, within the last `--grace-hours` (a run of an older commit, a pull
-// request on an older base, a runner image version still being rolled out). An older entry last
-// restored before the newest was saved is superseded: that is how a Rust or CodeQL cache rolls
-// over (the run that saves the new entry restored the old one by prefix, then nothing does).
+// hashFiles() the workflows and setup-node compute, from main's files: `--main-ref`) and is the
+// newest of its family with that hash, the newest entry of each family, the most recently used
+// one, and an older entry that was still used after the newest one was saved, within the last
+// `--grace-hours` (a run of an older commit, a pull request on an older base, a runner image
+// version still being rolled out). An older entry last restored before the newest was saved is
+// superseded: that is how a Rust or CodeQL cache rolls over (the run that saves the new entry
+// restored the old one by prefix, then nothing does), and how the download and Tauri tools
+// caches do with one hash (a new entry per run that added files, the restore takes the newest:
+// .github/scripts/cache-files.mjs).
 // --dry-run prints the plan and deletes nothing. --caches reads the listing from a file
 // (`gh cache list --json id,key,ref,sizeInBytes,createdAt,lastAccessedAt`) instead of the API.
 // Needs `gh` with GH_TOKEN (actions: write to delete; actions: read for a dry run).
@@ -54,7 +57,7 @@ export function hashFiles(contents) {
 // The inputs main's cache keys are built from, as the workflows hash them.
 export const KEY_INPUTS = [
   { what: 'npm cache (setup-node)', files: ['package-lock.json', 'site/package-lock.json', '.github/actions/setup/action.yml'] },
-  { what: 'package-lock.json (sc-pkg, apt-debs-playwright)', files: ['package-lock.json'] },
+  { what: 'package-lock.json (sc-tauri-tools, apt-debs-playwright)', files: ['package-lock.json'] },
   { what: 'versions.json (sc-downloads)', files: ['scripts/build/versions.json'] },
 ];
 
@@ -114,7 +117,8 @@ export function plan({ caches, branches, openPrs, tokens, now, graceHours = 24 }
     const lastUsed = [...entries].sort(newestFirst('lastAccessedAt'))[0];
     for (const cache of entries) {
       const current = tokens.find((t) => cache.key.includes(t.token));
-      if (current) keep.push({ cache, reason: `current inputs: ${current.what}` });
+      const newerCurrent = current && entries.some((o) => o !== cache && o.key.includes(current.token) && newestFirst('createdAt')(o, cache) < 0);
+      if (current && !newerCurrent) keep.push({ cache, reason: `current inputs: ${current.what}` });
       else if (cache === newest) keep.push({ cache, reason: 'newest of its family' });
       else if (cache === lastUsed) keep.push({ cache, reason: 'most recently used of its family' });
       else if (time(cache.lastAccessedAt) > time(newest.createdAt) && time(cache.lastAccessedAt) >= graceStart) {

@@ -145,6 +145,7 @@ jobs:
       # runners. A step that runs out fails, so the report and the logs are still uploaded (a job
       # that runs out is cancelled and uploads nothing).
       - name: Playwright, ${{ matrix.group }} group
+        id: e2e
         timeout-minutes: 20
         env:
           GROUP: ${{ matrix.group }}
@@ -183,8 +184,10 @@ jobs:
       # apps/server/test/e2e/chat.spec.ts. With the 0.5.0 player and chat specs (177 tests) it takes
       # 2-3 minutes on Ubuntu and 3-5.2 minutes on macOS (5.2 in run 41543720366, where the old
       # 5-minute limit stopped it after its last test passed), so the limit is twice the slowest.
+      # Also after a failed e2e run, but not when a setup step failed (the binaries, the
+      # browsers): then the e2e step never ran, and the failed step is the job's one error.
       - name: Playwright, viewer chat UI (mock hub)
-        if: ${{ !cancelled() && matrix.group == 'chat' }}
+        if: ${{ !cancelled() && matrix.group == 'chat' && (steps.e2e.outcome == 'success' || steps.e2e.outcome == 'failure') }}
         timeout-minutes: 10
         run: npx playwright test -c apps/viewer/test/chat/playwright.config.ts --fail-on-flaky-tests
       - name: Results in the job summary

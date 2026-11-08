@@ -2,7 +2,7 @@ name: Pins of the remote actions we fetch with git (never run)
 description: >-
   Never used as a step. ./.github/actions/fetch-remote reads the `uses:` lines below and fetches
   each action with git, at that commit, into .git/remote-actions/<owner>/<repo> of the workspace;
-  our actions (and _node.yml) then run it from there, `uses:
+  our actions then run it from there, `uses:
   ./.git/remote-actions/<owner>/<repo>[/<path>]`. The runner's own download of a remote action
   from codeload.github.com is not tried again after a 404, in "Set up job" and inside a
   composite action alike, and pipeline run 41636784175 lost a job to a 404 for
@@ -22,5 +22,3 @@ runs:
       uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
     - if: ${{ false }}
       uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
-    - if: ${{ false }}
-      uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29

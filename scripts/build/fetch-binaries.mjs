@@ -9,8 +9,9 @@
 //
 // An asset with "mirrors" (versions.json) is downloaded from them first and from its publisher
 // only when they fail: from GitHub's runners the macOS ffmpeg host is very slow, so CI uses a
-// byte-identical copy in this repo's `ci-deps` pre-release (docs/RELEASING.md). The pinned
-// SHA-256 is checked whatever the source.
+// byte-identical copy in this repo's `ci-deps` pre-release (docs/RELEASING.md). When every
+// source failed, the GitHub release files among them are tried once more through GitHub's REST
+// API (githubApiUrl). The pinned SHA-256 is checked whatever the source.
 //
 // SC_DOWNLOAD_CACHE=<dir> keeps the verified archives there (named by SHA-256) and uses them
 // instead of downloading again; CI's setup action caches that folder. Entries no longer pinned
@@ -63,8 +64,9 @@ const why = (err) => [err.message, err.cause?.code ?? err.cause?.message].filter
  * (the server ignores ranges) starts over, a 416 means the earlier try already had the whole file
  * when its Content-Range says so, else it starts over. The try is aborted when no bytes arrive for
  * `stallMs`; what arrived until then stays in `got` for the next try. Nothing is written here.
+ * `headers` go with every request.
  */
-async function fetchInto(url, got, stallMs, fetchImpl) {
+async function fetchInto(url, got, stallMs, fetchImpl, headers) {
   const ac = new AbortController();
   let timer;
   const arm = () => {
@@ -78,7 +80,7 @@ async function fetchInto(url, got, stallMs, fetchImpl) {
   arm();
   try {
     const from = got.bytes;
-    const res = await fetchImpl(url, { redirect: 'follow', signal: ac.signal, ...(from > 0 ? { headers: { range: `bytes=${from}-` } } : {}) });
+    const res = await fetchImpl(url, { redirect: 'follow', signal: ac.signal, headers: { ...headers, ...(from > 0 ? { range: `bytes=${from}-` } : {}) } });
     if (from > 0 && res.status === 416) {
       await res.body?.cancel();
       const total = /^bytes \*\/(\d+)$/.exec(res.headers.get('content-range') ?? '')?.[1];
@@ -120,9 +122,10 @@ async function fetchInto(url, got, stallMs, fetchImpl) {
  * where it stopped (see fetchInto). The bytes are checked in memory and only bytes that match
  * reach the disk (written to `dest.part`, then renamed). A mismatch is final: the pin or the
  * upstream file is wrong (or, after a resume, the server sent a different file), and downloading
- * again would not change that. `waitMs`, `stallMs`, `maxMs` and `fetch` (the network) are for tests.
+ * again would not change that. `headers` go with every request. `waitMs`, `stallMs`, `maxMs` and
+ * `fetch` (the network) are for tests. Returns the number of tries it took.
  */
-export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS, fetch: fetchImpl = fetch } = {}) {
+export async function download(url, dest, sha256, { headers = {}, waitMs = (attempt) => 2 ** attempt * 1000, stallMs = STALL_MS, maxMs = MAX_MS, fetch: fetchImpl = fetch } = {}) {
   if (!/^[0-9a-f]{64}$/.test(sha256 ?? '')) throw new Error(`no pinned SHA-256 for ${url}`);
   const got = { chunks: [], bytes: 0, resumedAt: [] };
   const deadline = Date.now() + maxMs;
@@ -130,7 +133,7 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
   for (let attempt = 1, failed = 0; ; attempt++) {
     const before = got.bytes;
     try {
-      await fetchInto(url, got, stallMs, fetchImpl);
+      await fetchInto(url, got, stallMs, fetchImpl, headers);
     } catch (err) {
       failed = got.bytes > before ? 0 : failed + 1;
       const where = `${url}, try ${attempt}, ${failed} of ${TRIES} in a row without progress`;
@@ -154,27 +157,60 @@ export async function download(url, dest, sha256, { waitMs = (attempt) => 2 ** a
     // bytes reviewed when the pin was set, not data chosen by the server.
     fs.writeFileSync(`${dest}.part`, bytes);
     fs.renameSync(`${dest}.part`, dest);
-    return;
+    return attempt;
   }
+}
+
+const GITHUB_RELEASE = /^https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/releases\/download\/([^/]+)\/([^/?#]+)$/;
+
+/**
+ * The URL of a `github.com/<owner>/<repo>/releases/download/<tag>/<name>` file on GitHub's REST
+ * API (`/repos/<owner>/<repo>/releases/assets/<id>`, which redirects to the same bytes on
+ * release-assets.githubusercontent.com when asked for `application/octet-stream`). On 2026-11-08
+ * github.com's release downloads answered 504 for most of an hour while that endpoint served the
+ * same files (PR #141; .github/workflows/README.md, "Release downloads"). One lookup of the
+ * release by tag, without a token: GitHub allows 60 such requests an hour per address, and a
+ * refusal only fails this last source.
+ */
+export async function githubApiUrl(url, { fetch: fetchImpl = fetch, apiBase = 'https://api.github.com' } = {}) {
+  const [, owner, repo, tag, name] = GITHUB_RELEASE.exec(url) ?? [];
+  if (!owner) throw new Error(`not a GitHub release download: ${url}`);
+  const res = await fetchImpl(`${apiBase}/repos/${owner}/${repo}/releases/tags/${tag}`, { headers: { accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status} from the GitHub API for release ${decodeURIComponent(tag)} of ${owner}/${repo}`);
+  const asset = (await res.json()).assets?.find((a) => a.name === decodeURIComponent(name));
+  if (!asset) throw new Error(`release ${decodeURIComponent(tag)} of ${owner}/${repo} has no ${decodeURIComponent(name)} (GitHub API)`);
+  return `${apiBase}/repos/${owner}/${repo}/releases/assets/${asset.id}`;
 }
 
 /**
  * `download` from the first of `urls` that works: our mirror first (`mirrors` in versions.json,
- * the `ci-deps` pre-release of this repo), the publisher's own URL last. Each source gets the
- * whole `download` treatment (resume, retries, time cap). A source that fails (missing file,
- * stalls, too slow) passes the turn to the next one; a checksum mismatch stops at once: a
- * mirror serving other bytes than the pin is a problem to look at, not to route around. The
- * pinned SHA-256 is the only thing trusted, whichever source the bytes came from.
+ * the `ci-deps` pre-release of this repo), the publisher's own URL last, then the GitHub release
+ * files among them once more through GitHub's API (githubApiUrl). Each source gets the whole
+ * `download` treatment (resume, retries, time cap). A source that fails (missing file, stalls,
+ * too slow) passes the turn to the next one; a checksum mismatch stops at once: a mirror serving
+ * other bytes than the pin is a problem to look at, not to route around. The pinned SHA-256 is
+ * the only thing trusted, whichever source the bytes came from. A source that worked only after
+ * failed tries, or through the API, logs it as an `infra recovery:` (docs/TESTING.md, counted by
+ * the soak). `apiBase` and `fetch` are for tests.
  */
-export async function downloadFirst(urls, dest, sha256, opts) {
+export async function downloadFirst(urls, dest, sha256, opts = {}) {
   const errors = [];
-  for (const [i, url] of urls.entries()) {
-    console.log(`↓ ${url}`);
+  const sources = [...urls.map((url) => ({ url })), ...urls.filter((url) => GITHUB_RELEASE.test(url)).map((url) => ({ url, api: true }))];
+  for (const [i, { url, api }] of sources.entries()) {
     try {
-      await download(url, dest, sha256, opts);
-      return url;
+      let from = url;
+      if (api) {
+        console.log(`↓ ${url} through the GitHub API`);
+        from = await githubApiUrl(url, opts);
+      } else {
+        console.log(`↓ ${url}`);
+      }
+      const tries = await download(from, dest, sha256, api ? { ...opts, headers: { accept: 'application/octet-stream' } } : opts);
+      if (api) console.warn(`  infra recovery: ${url} downloaded through the GitHub API (${from}), try ${tries}`);
+      else if (tries > 1) console.warn(`  infra recovery: ${url} downloaded on try ${tries} (the ${tries - 1} before it failed)`);
+      return from;
     } catch (err) {
-      if (err.checksum || i === urls.length - 1) {
+      if (err.checksum || i === sources.length - 1) {
         if (errors.length === 0) throw err;
         throw new Error([...errors, err.message].join('; then '), { cause: err });
       }
@@ -236,8 +272,8 @@ export async function fetchBinaries(target, outDir, { withOptional = false, with
       // Pebble (the integration tests' ACME CA) comes with `npm run fetch-bins`, never with a package.
       if (!withTestTools) continue;
     } else if (spec.testOnly || spec.appimageTool) {
-      // ffmpeg-test (the GPL build CI's test feeds use) is fetched only by name (--only); the
-      // AppImage build tools only by appimage-tools.mjs.
+      // ffmpeg-test (the GPL build CI's test feeds use) and cargo-llvm-cov (CI's Rust coverage)
+      // are fetched only by name (--only); the AppImage build tools only by appimage-tools.mjs.
       continue;
     } else if (spec.bundle === false && !(withOptional || process.argv.includes(`--with-${tool}`))) {
       // ffmpeg (quality ladder) is installed by the streamer from the panel, not shipped,
@@ -300,6 +336,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const out = path.resolve(arg('out', path.join(root, 'vendor', target)));
   fetchBinaries(target, out, { only: arg('only'), withTestTools: true }).catch((err) => {
     console.error(`✗ ${err.message}`);
+    // The cause on the run's summary page, not only "exit code 1" (CI stops the job here: no test
+    // runs without its binaries, .github/workflows/README.md, "Release downloads").
+    if (process.env.GITHUB_ACTIONS === 'true') console.log(`::error title=fetch-binaries::${err.message.replace(/\r?\n/g, ' ')}`);
     process.exit(1);
   });
 }

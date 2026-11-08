@@ -483,6 +483,7 @@ jobs:
         timeout-minutes: 8
         with:
           downloads: 'true'
+          downloads-for: ${{ matrix.target }}
       # The test-build profile of _desktop.yml (no LTO, 16 codegen units): what pull requests build.
       - name: Build profile (as the pipeline's test builds)
         run: |

@@ -13,7 +13,7 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, onTestFinished, vi } from 'vitest';
-import { assetUrls, download, downloadFirst } from '../fetch-binaries.mjs';
+import { assetUrls, download, downloadFirst, githubApiUrl } from '../fetch-binaries.mjs';
 import versions from '../versions.json' with { type: 'json' };
 import { it } from './fixtures.js';
 
@@ -404,6 +404,19 @@ describe('downloadFirst (mirror first, publisher as fallback)', () => {
     expect(origin.seen).toHaveLength(0);
   });
 
+  it('logs a source that worked only after failed tries as an infra recovery (the soak counts them)', async ({ tmp }) => {
+    // Arrange
+    const origin = await serve((n, _req, res) => (n === 0 ? void res.writeHead(504).end() : send(res, FILE)));
+    const dest = path.join(tmp, 'a.zip');
+
+    // Act
+    await downloadFirst([origin.url], dest, SHA, NO_WAIT);
+
+    // Assert
+    expect(sha256Of(dest)).toBe(SHA);
+    expect(vi.mocked(console.warn).mock.calls.flat()).toContain(`  infra recovery: ${origin.url} downloaded on try 2 (the 1 before it failed)`);
+  });
+
   it('falls back to the publisher when the mirror file is missing (404)', async ({ tmp }) => {
     // Arrange
     const mirror = await serve((_n, _req, res) => void res.writeHead(404).end());
@@ -459,6 +472,69 @@ describe('downloadFirst (mirror first, publisher as fallback)', () => {
     // Assert
     await expect(run).rejects.toThrow(/HTTP 404 .*; then HTTP 410 /);
     expect(fs.readdirSync(tmp)).toEqual([]);
+  });
+});
+
+describe('downloadFirst: GitHub release files through the GitHub API (github.com answering 504)', () => {
+  const RELEASE_URL = 'https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/a.zip';
+  /** The network: github.com answers 504 to everything, the rest goes to the local servers. */
+  const github504: typeof globalThis.fetch = async (url, init) => (String(url).startsWith('https://github.com/') ? new Response('Gateway Time-out', { status: 504 }) : fetch(url, init));
+
+  /** A local stand-in for api.github.com: the release by tag, and its asset as octet-stream (or `assetStatus`). */
+  async function api({ tagStatus = 200, assets = [{ id: 7, name: 'a.zip' }] } = {}) {
+    const seen: Array<{ url?: string; accept?: string }> = [];
+    const server = await serve((_n, req, res) => {
+      seen.push({ url: req.url, accept: req.headers.accept });
+      if (req.url === '/repos/bluenviron/mediamtx/releases/tags/v1.21.3') {
+        res.writeHead(tagStatus, { 'content-type': 'application/json' }).end(JSON.stringify({ assets }));
+      } else if (req.url === '/repos/bluenviron/mediamtx/releases/assets/7' && req.headers.accept === 'application/octet-stream') {
+        send(res, FILE);
+      } else {
+        res.writeHead(404).end();
+      }
+    });
+    return { apiBase: server.url.replace(/\/ffmpeg\.zip$/, ''), seen };
+  }
+
+  it('gets the file from the API after github.com failed its tries, and logs it as an infra recovery', async ({ tmp }) => {
+    // Arrange
+    const { apiBase, seen } = await api();
+    const dest = path.join(tmp, 'a.zip');
+
+    // Act
+    const used = await downloadFirst([RELEASE_URL], dest, SHA, { ...NO_WAIT, fetch: github504, apiBase });
+
+    // Assert
+    expect(used).toBe(`${apiBase}/repos/bluenviron/mediamtx/releases/assets/7`);
+    expect(sha256Of(dest)).toBe(SHA);
+    expect(seen.map((r) => r.url)).toEqual(['/repos/bluenviron/mediamtx/releases/tags/v1.21.3', '/repos/bluenviron/mediamtx/releases/assets/7']);
+    expect(vi.mocked(console.warn).mock.calls.flat().some((l) => String(l).startsWith(`  infra recovery: ${RELEASE_URL} downloaded through the GitHub API`))).toBe(true);
+  });
+
+  it('reports every source when the API refuses too (its limit of 60 requests an hour)', async ({ tmp }) => {
+    // Arrange
+    const { apiBase } = await api({ tagStatus: 403 });
+
+    // Act
+    const run = downloadFirst([RELEASE_URL], path.join(tmp, 'a.zip'), SHA, { ...NO_WAIT, fetch: github504, apiBase });
+
+    // Assert
+    await expect(run).rejects.toThrow(/^HTTP 504 \(https:\/\/github\.com\/.*try 6, 6 of 6 in a row without progress\); then HTTP 403 from the GitHub API for release v1\.21\.3 of bluenviron\/mediamtx$/);
+    expect(fs.readdirSync(tmp)).toEqual([]);
+  });
+
+  it('asks the API only for GitHub release files, and names a missing asset', async ({ tmp }) => {
+    // Arrange
+    const other = await serve((_n, _req, res) => void res.writeHead(404).end());
+    const { apiBase } = await api({ assets: [] });
+
+    // Act
+    const notGithub = downloadFirst([other.url], path.join(tmp, 'a.zip'), SHA, { ...NO_WAIT, apiBase });
+    const missing = githubApiUrl(RELEASE_URL, { apiBase });
+
+    // Assert
+    await expect(notGithub).rejects.toThrow(/^HTTP 404 \(http:\/\/127\.0\.0\.1:\d+\/ffmpeg\.zip, try 1, 1 of 6 in a row without progress\)$/);
+    await expect(missing).rejects.toThrow('release v1.21.3 of bluenviron/mediamtx has no a.zip (GitHub API)');
   });
 });
 
