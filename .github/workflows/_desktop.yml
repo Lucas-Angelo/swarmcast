@@ -298,12 +298,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Preflight drives Google Chrome through Playwright (npm ci) and streams an ffmpeg feed. The
-      # desktop step's apt downloads go into the .deb cache.
+      # Preflight drives Google Chrome through Playwright and streams an ffmpeg feed; both preflight
+      # and the desktop step run the local Cloudflare stand-in (scripts/test/lib/cloudflare.mjs),
+      # whose certificates come from an npm package, so every image gets npm ci. The desktop
+      # step's apt downloads go into the .deb cache.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
-          npm-ci: ${{ matrix.preflight == true }}
+          npm-ci: true
           ffmpeg: ${{ matrix.preflight == true }}
           apt-debs: ${{ runner.os == 'Linux' && format('desktop-test-{0}', matrix.target) || '' }}
       - name: Version
