@@ -28,6 +28,7 @@ import {
 } from '@swarmcast/shared';
 import type { AppConfig } from '../core/config.js';
 import type { Logger } from '../core/logger.js';
+import { codeOf } from '../core/messages.js';
 import { DirectorySource, MediaMtxSource, type HlsOrigin } from '../hls/origin.js';
 import type { BandwidthLimiter } from '../hls/throttle.js';
 import type { Reaper } from '../process/children.js';
@@ -196,7 +197,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
       this.transcoder.setBinary(this.ffmpegPath);
       await this.probe(true);
     } catch (err) {
-      this.install = { phase: 'error', receivedBytes: 0, message: (err as Error).message, ...retry };
+      this.install = { phase: 'error', receivedBytes: 0, message: (err as Error).message, ...codeOf(err), ...retry };
       this.changed();
       throw err;
     }
@@ -213,7 +214,7 @@ export class QualityManager extends EventEmitter<{ changed: [] }> {
       signal: this.d.quitSignal,
       onRetry: (err, next) => {
         this.d.log.warn({ err: err.message, next }, 'video converter install failed; trying again');
-        this.install = { phase: 'retrying', receivedBytes: 0, message: err.message, attempt: next, attempts };
+        this.install = { phase: 'retrying', receivedBytes: 0, message: err.message, ...codeOf(err), attempt: next, attempts };
         this.changed();
       },
     });

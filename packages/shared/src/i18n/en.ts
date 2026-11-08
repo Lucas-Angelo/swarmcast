@@ -559,6 +559,7 @@ export const en = {
   'quality.install.progress': 'Downloading… {mb} MB',
   'quality.install.progressOf': 'Downloading… {mb} of {total} MB',
   'quality.install.failed': 'Install failed: {error}',
+  'quality.install.stalled': 'The download stopped: nothing arrived for {s} seconds. Check your internet connection, then click Try again.',
   'quality.install.retrying': 'That did not work; trying again shortly (try {attempt} of {attempts})…',
   'quality.install.retry': 'Try again',
   'quality.install.retry.tip': 'Downloads the video converter (ffmpeg) again. If it keeps failing, check your internet connection; without it viewers get your original quality, which is fine.',

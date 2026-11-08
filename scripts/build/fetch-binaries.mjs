@@ -191,6 +191,11 @@ export function assetUrls(spec, a) {
   return [...(a.mirrors ?? []), original];
 }
 
+/** Where SC_DOWNLOAD_CACHE (`cacheDir`) keeps the verified archive of asset `a` (versions.json). */
+export function cachedArchive(cacheDir, a) {
+  return path.join(cacheDir, `${a.sha256}-${a.asset}`);
+}
+
 /** The pinned archives, by SHA-256: what SC_DOWNLOAD_CACHE may keep. */
 function pinnedHashes() {
   return new Set(Object.values(versions).flatMap((spec) => Object.values(spec.assets ?? {}).map((a) => a.sha256)));
@@ -253,7 +258,7 @@ export async function fetchBinaries(target, outDir, { withOptional = false, with
       continue;
     }
     const work = fs.mkdtempSync(path.join(os.tmpdir(), `sc-${tool}-`));
-    const cached = cacheDir && path.join(cacheDir, `${a.sha256}-${a.asset}`);
+    const cached = cacheDir && cachedArchive(cacheDir, a);
     let archive = path.join(work, a.asset);
     if (cached && fs.existsSync(cached) && sha256(cached) === a.sha256) {
       console.log(`✓ ${tool} ${spec.version}: ${a.asset} from the download cache`);

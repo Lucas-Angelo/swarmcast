@@ -11,6 +11,13 @@ inputs:
   ffmpeg:
     description: Also install ffmpeg for the tests (the app never ships it). Sets FFMPEG_BIN.
     default: 'false'
+  app-ffmpeg:
+    description: >-
+      Also the pinned ffmpeg archive the app itself installs for streamers (versions.json
+      "ffmpeg", this runner's target), verified, into the download cache, for a suite that serves
+      it to the app from a local stand-in (scripts/test/lib/ffmpeg-stand-in.mjs): the app's
+      install then never reaches the publisher at test time. Implies downloads.
+    default: 'false'
   npm-ci:
     description: Run `npm ci`.
     default: 'true'
@@ -171,11 +178,12 @@ runs:
     # Linux x64 job found it, without its own MediaMTX and cloudflared, and downloaded them
     # each run (.github/workflows/README.md, "Pinned downloads in Docker").
     - name: Download cache keys
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true'
       id: dl
       shell: bash
       env:
         WITH_FFMPEG: ${{ inputs.ffmpeg }}
+        APP_FFMPEG: ${{ inputs.app-ffmpeg }}
         FOR: ${{ inputs.downloads-for }}
         PINS: ${{ hashFiles('scripts/build/versions.json') }}
         LOCK: ${{ hashFiles('package-lock.json') }}
@@ -187,12 +195,19 @@ runs:
           case "$RUNNER_OS" in Linux) FOR=linux ;; macOS) FOR=macos ;; Windows) FOR=windows ;; *) echo "::error::unknown RUNNER_OS $RUNNER_OS"; exit 1 ;; esac
           case "$RUNNER_ARCH" in X64) FOR="$FOR-x64" ;; ARM64) FOR="$FOR-arm64" ;; *) echo "::error::unknown RUNNER_ARCH $RUNNER_ARCH"; exit 1 ;; esac
         fi
-        # A job without ffmpeg must not save the entry that jobs with ffmpeg restore.
+        # A job without ffmpeg must not save the entry that jobs with ffmpeg restore. The same for
+        # the app's ffmpeg archive (app-ffmpeg): its jobs have their own entry, and until it
+        # exists they start from the plain entry (dl-fallback) and add only that archive.
         dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-for-$FOR-"
+        fallback=""
+        if [ "$APP_FFMPEG" = true ]; then
+          fallback="$dl"
+          dl="sc-downloads-$RUNNER_OS-$RUNNER_ARCH-ffmpeg-$WITH_FFMPEG-app-ffmpeg-for-$FOR-"
+        fi
         pkg="sc-pkg-$RUNNER_OS-$RUNNER_ARCH-"
-        { echo "dl-prefix=$dl"; echo "dl-key=$dl$PINS"; echo "pkg-prefix=$pkg"; echo "pkg-key=$pkg$LOCK"; } >> "$GITHUB_OUTPUT"
+        { echo "dl-prefix=$dl"; echo "dl-fallback=$fallback"; echo "dl-key=$dl$PINS"; echo "pkg-prefix=$pkg"; echo "pkg-key=$pkg$LOCK"; } >> "$GITHUB_OUTPUT"
     - name: Restore the download cache
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true'
       id: dl-cache
       continue-on-error: true
       env:
@@ -201,9 +216,11 @@ runs:
       with:
         path: ${{ runner.temp }}/sc-cache/downloads
         key: ${{ steps.dl.outputs.dl-key }}
-        restore-keys: ${{ steps.dl.outputs.dl-prefix }}
+        restore-keys: |
+          ${{ steps.dl.outputs.dl-prefix }}
+          ${{ steps.dl.outputs.dl-fallback }}
     - name: Restore the pkg cache
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true'
       id: pkg-cache
       continue-on-error: true
       env:
@@ -214,7 +231,7 @@ runs:
         key: ${{ steps.dl.outputs.pkg-key }}
         restore-keys: ${{ steps.dl.outputs.pkg-prefix }}
     - name: Remember the download caches for the save step
-      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
+      if: inputs.ffmpeg == 'true' || inputs.downloads == 'true' || inputs.app-ffmpeg == 'true'
       shell: bash
       env:
         DL_KEY: ${{ steps.dl.outputs.dl-key }}
@@ -251,6 +268,16 @@ runs:
         fi
         echo "FFMPEG_BIN=$bin" >> "$GITHUB_ENV"
         echo "$dir" >> "$GITHUB_PATH"
+    # The ffmpeg build the app installs for streamers (versions.json "ffmpeg": BtbN LGPL on Windows
+    # and Linux), for the Windows quality suite, which serves this file to the app from a local
+    # stand-in (scripts/test/lib/ffmpeg-stand-in.mjs) so the panel's install never reaches
+    # github.com at test time (docs/TESTING.md, "No third-party service in the gate"). From the
+    # download cache, or downloaded here with fetch-binaries.mjs's recoveries; SHA-256 verified
+    # either way. The suite reads it from SC_DOWNLOAD_CACHE.
+    - name: The app's ffmpeg archive (pinned, verified)
+      if: inputs.app-ffmpeg == 'true'
+      shell: bash
+      run: node "$GITHUB_WORKSPACE/scripts/build/fetch-binaries.mjs" --only ffmpeg --out "$RUNNER_TEMP/ffmpeg-app"
     - name: ffmpeg version (and the libx264 encoder the test feeds need)
       if: inputs.ffmpeg == 'true'
       shell: bash

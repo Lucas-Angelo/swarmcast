@@ -303,6 +303,7 @@ jobs:
         timeout-minutes: 8
         with:
           ffmpeg: 'true'
+          app-ffmpeg: ${{ matrix.suite == 'windows-quality' }}
       - name: Playwright Firefox (app)
         if: matrix.suite == 'windows-app'
         run: npx playwright install firefox

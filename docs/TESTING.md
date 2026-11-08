@@ -123,7 +123,8 @@ provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hang
 `startFeed`. `viewers.ts` (Vitest suites only) runs a live's public server in-process with
 `ControlClient`, whose waits are on the arriving messages. `tmpDir()` folders are deleted after the
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
-`SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `SWARMCAST_TEST_CLOUDFLARE`, `NODE_EXTRA_CA_CERTS`.
+`SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `SWARMCAST_TEST_CLOUDFLARE`, `SWARMCAST_TEST_FFMPEG_URL`,
+`NODE_EXTRA_CA_CERTS`.
 
 `acme-pebble.test.ts` runs the ACME client against Pebble, Let's Encrypt's test CA, as a process on
 127.0.0.1 (every OS; no Docker): the binary `npm run fetch-bins` puts in `vendor/<target>/`
@@ -303,6 +304,7 @@ Shared pieces, one place each:
 [scripts/test/lib](../scripts/test/lib) (no side effects when imported): `wait.mjs` (`until`, `poll`,
 `orTimeout`, `waitForLine`), `proc.mjs` (tracked child processes, tree kills, `ownerOf`),
 `ports.mjs` (`isListening`, test port blocks), `ffmpeg.mjs` (the test ffmpeg and the OBS-like feed),
+`ffmpeg-stand-in.mjs` (the app's pinned ffmpeg archive served on 127.0.0.1),
 `app.mjs` (the bare-OS environment the staged server runs with, the panel login from its output, the
 live link), `viewer.mjs` (join, play,
 the player's state, the page state dumped when a check fails), `junit.mjs`, `cookie-jar.mjs` (one
@@ -347,6 +349,20 @@ tests open their tunnels against a local stand-in for Cloudflare,
   variable adds no power over the app: whoever can set the app's environment already runs code as
   its user (`SWARMCAST_BIN_DIR` picks the cloudflared it starts).
 
+The Windows quality suite's ffmpeg install (the panel's "Install the video converter", section 1)
+downloaded the pinned archive from BtbN's GitHub releases at test time, and github.com's 504s on
+2026-11-08 stalled it until the step's limit (pull request #141's gate run 42474266127). It now
+downloads it from a local stand-in for the publisher,
+[scripts/test/lib/ffmpeg-stand-in.mjs](../scripts/test/lib/ffmpeg-stand-in.mjs), on 127.0.0.1: the
+setup action (`app-ffmpeg: true`) puts the pinned archive in the download cache before the tests
+(`fetch-binaries.mjs --only ffmpeg`, a set-up download with its own recoveries), the stand-in
+serves that file, and the app takes its address from `SWARMCAST_TEST_FFMPEG_URL`
+(`ffmpegDownloadUrl` in `apps/server/src/quality/ffmpeg.ts`, `http://127.0.0.1:<port>/<file>`
+only, no redirects). The SHA-256 check, extraction and `ffmpeg -version` are the app's own, so a
+wrong file still fails; the suite checks that the app asked the stand-in, once. The stand-in's
+unit test (`scripts/test/test/ffmpeg-stand-in.test.ts`) also sends the headers and then nothing,
+and the install fails with its stall message. `real-services.yml` installs from the real URL daily.
+
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
 (the edge answers an interface or method it does not know with an RPC exception, which
@@ -360,7 +376,8 @@ its answer with Cloudflare's headers, a WebSocket, 530 once the connector is gon
 of the real app through it: the live link, the tunnel watch replacing a tunnel the edge answers
 with 530, and "Stop everything". The real service stays covered by `real-services.yml`: daily, the
 preflight of the staged Linux server through the real Cloudflare (`--real-cloudflare`), with the
-real speed test, blocklists and STUN; never a gate, no secrets, a failure is reported in its
+real speed test, blocklists and STUN, and the app's ffmpeg install from its publisher
+(`scripts/test/quality/install-ffmpeg.ts`); never a gate, no secrets, a failure is reported in its
 summary and as a warning.
 
 Still reached by gating jobs, with no failure in that history, and why they stay: the staged
