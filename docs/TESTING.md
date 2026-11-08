@@ -184,7 +184,8 @@ sideways layout; iOS: the sideways layout).
   secure context, so the browser check could not run); the suite starts Chrome itself (Playwright's
   launchBrowser disables renderer backgrounding) and detaches before backgrounding (focus emulation
   keeps an attached page visible); taps wait for the keyboard and for two identical layout readings
-  and aim at the visible part of an enabled, uncovered element; a mouse click does not raise the
+  and aim at the visible part of an enabled, uncovered element, at a point read the same before and
+  after two animation frames (`shownTouchPoint`); a mouse click does not raise the
   keyboard, a touch does. The join page is touched only once Watch is enabled (`joinPageReady`):
   its address says `/join` as soon as the browser commits it, while the head's stylesheet still
   holds the parser (the startup guard's inline script waits for it), so `document.body` can be
@@ -252,6 +253,21 @@ sideways layout; iOS: the sideways layout).
   "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
   41566408164); the server now sends the page with the line already shown to a browser it will check
   (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
+- **iOS taps on a page Safari has not shown yet:** WebKit's automation refuses a touch outside the
+  visible area Safari keeps for the page ("move target out of bounds",
+  `WebAutomationSession::simulateTouchInteraction` checks it against
+  `WebPageProxy::unobscuredContentRect`). The live link moves the page to a new web process (the
+  viewer pages send Cross-Origin-Opener-Policy); Safari then forgets that area
+  (`WebPageProxy::resetState`) and learns it again only from the new page's first frame, while the
+  page itself already reports its visual viewport. The tap on the join page's nickname came 147 ms
+  after its load event and was refused at (201, 275) of a 402 × 714 page (release-rehearsal run
+  42508591582). The join page's first paint comes after its load event: by 7 ms to 1.35 s in 53
+  loads of 53 on CI, more than 147 ms in 19 (Devices run 42512440502). So a tap reads its point,
+  lets the page run two animation frames and reads it again (`shownTouchPoint`, both phones): WebKit
+  starts a page's next frame only once Safari has taken the previous one, so Safari then shows the
+  page where it reports itself, and the element has not moved meanwhile. The same holds for a
+  scroll: after a `scrollIntoView` Safari still showed the old place for a moment, and a tap there
+  reached another element (Devices runs 41181641808, 41183257695).
 - **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
   over the first page, a few seconds after it has loaded, and it stays up until the next tap. A
   tap while the tip was still coming up went to its popover, which closed, and the page got no

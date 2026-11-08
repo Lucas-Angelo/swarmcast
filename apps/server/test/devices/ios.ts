@@ -19,7 +19,7 @@ import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
-import { touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
+import { shownTouchPoint, touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
 import { ready, Session, tapActions } from './webdriver.js';
 
 const run = promisify(execFile);
@@ -489,17 +489,14 @@ export class IosPhone implements Phone {
     // reported the chat input at its new place while the screen (recording) still showed the old
     // one, and the tap there reached #unmute in the player, with the element origin and with
     // viewport coordinates alike (Devices runs 41181641808, 41183257695); unscrolled, every tap landed.
+    // Safari shows the page a frame after the page has moved: the point is read once Safari shows it
+    // (shownTouchPoint).
     await this.session.execute(
       `const el = arguments[0], r = el.getBoundingClientRect(), vv = window.visualViewport;
        if (r.top < vv.offsetTop || r.bottom > vv.offsetTop + vv.height || r.left < vv.offsetLeft || r.right > vv.offsetLeft + vv.width) el.scrollIntoView({ block: "center" });`,
       [element],
     );
-    let point: TouchPoint | null = null;
-    await expect
-      .poll(async () => (point = await this.session.execute<TouchPoint | null>(`return (${touchPoint.toString()})(arguments[0]);`, [element])) !== null, {
-        message: `${selector} can be touched (enabled, partly in sight, not covered)`,
-      })
-      .toBe(true);
+    const point = await shownTouchPoint(this, selector, () => this.session.execute<TouchPoint | null>(`return (${touchPoint.toString()})(arguments[0]);`, [element]));
     // What the tap delivers to the element, kept in sessionStorage (a tap on Watch may navigate):
     // each event's type, its time stamp (the platform event's) and when the page handled it, as
     // epoch milliseconds, so that a tap that ends in no click says how long the finger was down.
@@ -518,7 +515,7 @@ export class IosPhone implements Phone {
       [element],
     );
     const started = Date.now();
-    await this.session.perform(tapActions(point!.clientX, point!.clientY));
+    await this.session.perform(tapActions(point.clientX, point.clientY));
     const performed = Date.now();
     let events: TapEvent[] = [];
     // A finger's tap ends in a click. When it does not (the touch reached the element and no click
