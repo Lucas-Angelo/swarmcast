@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
 import {
-  addSweepPath, ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, onCleanup, openPanel, ps,
+  addSweepPath, ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, obsPillSending, onCleanup, openPanel, ps,
   quitAndVerify, readText, repoRoot, uploadCapCheck, section, sha256File, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
 import { pinnedArchive } from '../lib/pinned-archive.mjs';
@@ -45,15 +45,35 @@ function screenshot(tag) {
   ps(`Add-Type -AssemblyName System.Windows.Forms,System.Drawing; $b = [System.Windows.Forms.SystemInformation]::VirtualScreen; $bmp = New-Object System.Drawing.Bitmap $b.Width, $b.Height; $g = [System.Drawing.Graphics]::FromImage($bmp); $g.CopyFromScreen($b.Left, $b.Top, 0, 0, $bmp.Size); $bmp.Save('${file}'); "$($b.Width)x$($b.Height)"`, { allowFail: true });
 }
 
+/**
+ * How long one connection may take to be identified (Hello, Identify, Identified). OBS can accept
+ * the socket before obs-websocket answers on it; an attempt that waited for ever would hold the
+ * caller's `until` (it runs one attempt at a time) past its own deadline.
+ */
+const OBS_HANDSHAKE_MS = 5_000;
+
 /** Minimal obs-websocket 5 client. */
 async function obsConnect() {
   const ws = new WebSocket(`ws://127.0.0.1:${WS_PORT}`);
   const pending = new Map();
   let identified;
   const ready = new Promise((resolve, reject) => {
-    identified = resolve;
-    ws.once('error', reject);
-    ws.once('close', () => reject(new Error('obs-websocket closed')));
+    const late = setTimeout(() => {
+      ws.terminate();
+      reject(new Error(`obs-websocket did not identify within ${OBS_HANDSHAKE_MS} ms`));
+    }, OBS_HANDSHAKE_MS);
+    identified = (d) => {
+      clearTimeout(late);
+      resolve(d);
+    };
+    ws.once('error', (e) => {
+      clearTimeout(late);
+      reject(e);
+    });
+    ws.once('close', () => {
+      clearTimeout(late);
+      reject(new Error('obs-websocket closed'));
+    });
   });
   ws.on('message', (raw) => {
     const msg = JSON.parse(String(raw));
@@ -146,7 +166,9 @@ await section('2. OBS streams into SwarmCast, a viewer plays', async () => {
 
   onCleanup(() => obsLogTail());
   obsProc = spawn(obsExe, ['--portable', '--disable-updater', '--disable-missing-files-check', '--profile', PROFILE, '--collection', SCENE, '--scene', SCENE], { cwd: path.dirname(obsExe), stdio: 'ignore', windowsHide: false });
-  onCleanup(() => obsProc && killTree(obsProc.pid));
+  // Only while it runs: Windows reuses a freed PID at once, and taskkill /T would end whatever
+  // process holds the number by then (and its tree).
+  onCleanup(() => obsProc && obsProc.exitCode === null && obsProc.signalCode === null && killTree(obsProc.pid));
   let exitCode = null;
   obsProc.on('exit', (c) => (exitCode = c));
   obs = await until(async () => {
@@ -192,7 +214,8 @@ await section('2. OBS streams into SwarmCast, a viewer plays', async () => {
   check('panel shows OBS sending (phase live, bitrate > 0)', true, `${st.obsBitrateKbps} kbps`);
   const browser = await launchBrowser('chrome');
   const panel = await openPanel(browser, app.loginUrl);
-  check('panel pill says OBS is sending', /Mbps|sending/i.test((await panel.page.textContent('[data-testid=obs-status]')) ?? ''), await panel.page.textContent('[data-testid=obs-status]'));
+  const pill = await obsPillSending(panel.page);
+  check('panel pill says OBS is sending', pill.ok, pill.text);
   const v = await joinAndPlay(browser, s0.liveLink, 'obs-viewer').catch(async (e) => {
     const stats = await obs.call('GetStats').catch(() => ({}));
     const ss = await obs.call('GetStreamStatus').catch(() => ({}));
