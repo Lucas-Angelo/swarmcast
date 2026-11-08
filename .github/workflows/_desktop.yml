@@ -23,9 +23,11 @@ name: desktop
 # separate steps, whatever applies to it:
 # - preflight: the staged server (the same executable the installers carry as their sidecar)
 #   started on an empty data folder, a synthetic OBS feed, Google Chrome watching, P2P, kick,
-#   link rotation, "Stop everything", quit, nothing left behind, and playback through a real
-#   Cloudflare quick tunnel (scripts/test/preflight/verify.mjs). Not on the arm64 image (no
-#   Google Chrome there);
+#   link rotation, "Stop everything", quit, nothing left behind, and playback through a quick
+#   tunnel: the package's cloudflared against a local stand-in for Cloudflare
+#   (scripts/test/lib/cloudflare.mjs), so no gate depends on Cloudflare's free service; the real
+#   one is covered by real-services.yml (scheduled, never gating) (scripts/test/preflight/verify.mjs).
+#   Not on the arm64 image (no Google Chrome there);
 # - desktop: the real installers: install, launch, panel login, autostart, kill, quit, the
 #   uninstallers, and an update from build A to them with the settings kept
 #   (scripts/test/desktop/verify.mjs);
@@ -296,12 +298,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Preflight drives Google Chrome through Playwright (npm ci) and streams an ffmpeg feed. The
-      # desktop step's apt downloads go into the .deb cache.
+      # Preflight drives Google Chrome through Playwright and streams an ffmpeg feed; both preflight
+      # and the desktop step run the local Cloudflare stand-in (scripts/test/lib/cloudflare.mjs),
+      # whose certificates come from an npm package, so every image gets npm ci. The desktop
+      # step's apt downloads go into the .deb cache.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
-          npm-ci: ${{ matrix.preflight == true }}
+          npm-ci: true
           ffmpeg: ${{ matrix.preflight == true }}
           apt-debs: ${{ runner.os == 'Linux' && format('desktop-test-{0}', matrix.target) || '' }}
       - name: Version

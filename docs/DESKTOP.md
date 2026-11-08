@@ -74,6 +74,7 @@ with environment:
 | `SWARMCAST_NO_FFMPEG_INSTALL` | `1` skips the automatic ffmpeg download of the first start (tests/CI only). |
 | `SWARMCAST_TEST_LOGIN_FILE` | Tests/CI only: the server also writes the panel login URL (`ready.adminUrl`) to this file, owner-only, so `scripts/test/desktop/verify.mjs` can call the admin API of an app it did not start itself. |
 | `SWARMCAST_SPEEDTEST_URL` | Speed test server instead of Cloudflare's (`<url>/__down?bytes=n`, `POST <url>/__up`; tests only). |
+| `SWARMCAST_TEST_CLOUDFLARE` | Tests/CI only: JSON naming a local stand-in for Cloudflare's quick tunnels (`scripts/test/lib/cloudflare.mjs`: `service`, `edge` and `checks` on 127.0.0.1, and its CA file `ca`, which only cloudflared reads). cloudflared then opens the tunnel there and the live's reachability checks ask it over plain HTTP on 127.0.0.1 (`apps/server/src/tunnel/stand-in.ts`); anything but 127.0.0.1 is refused. |
 
 `--desktop` implies `--no-open`, keeps the parent watch, and also exits cleanly when
 stdin closes. Messages are JSON, one per line. As in a run from a terminal, the server turns the live on at

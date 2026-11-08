@@ -875,7 +875,7 @@ export class LiveController extends EventEmitter<{ state: []; 'link-changed': [l
       }
       if (publicUrl) {
         // Resolve via DoH like the readiness check, so a cached NXDOMAIN cannot fake "gone".
-        const marker = await probeHealth(publicUrl).catch(() => null);
+        const marker = await probeHealth(publicUrl, undefined, this.d.tunnelCheck?.io).catch(() => null);
         if (marker) problems.push('the public address still answers');
       }
       if (problems.length === 0 || this.now() > deadline) return problems;

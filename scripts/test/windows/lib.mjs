@@ -782,8 +782,9 @@ export async function newPage(browser, label, ctxOpts = {}) {
 
 /**
  * Opens the join link in a new page, picks a nickname and clicks Join (no wait for the watch
- * page; lib/viewer.mjs joinIn). A quick tunnel's brand-new name is awaited first (the one infra
- * recovery, logged); a local link is opened once.
+ * page; lib/viewer.mjs joinIn). With the real Cloudflare a quick tunnel's brand-new name is
+ * awaited first (the one infra recovery, logged); a local link, or a tunnel of the local stand-in
+ * for Cloudflare (lib/cloudflare.mjs), is opened once.
  */
 export async function join(browser, link, nickname, ctxOpts = {}) {
   const v = await newPage(browser, `${browser.__kind}-${nickname}`, ctxOpts);
@@ -854,7 +855,7 @@ export async function openPanel(browser, loginUrl, label = 'panel', ctxOpts = {}
   return v;
 }
 
-/** Health probe of a live link's base (lib/viewer.mjs probeHealth: quick tunnels through DNS-over-HTTPS). */
+/** Health probe of a live link's base (lib/viewer.mjs probeHealth: quick tunnels through DNS-over-HTTPS, or the local stand-in). */
 export const probe = probeHealth;
 
 // ---------------------------------------------------------------------------

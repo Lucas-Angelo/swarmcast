@@ -25,7 +25,7 @@ Principles:
 | Item | Where viewers see it | Default |
 |---|---|---|
 | Channel name | Join page ("Join {name}'s stream" / "Entrar na live de {name}"), watch header, tab title, link preview | empty: the stock SwarmCast header |
-| Picture or logo | Join page, watch header, favicon (32 px, 180 px for iOS home screens) | the SwarmCast symbol |
+| Picture or logo | Join page, watch header, ended screen, favicon (32 px, 180 px for iOS home screens) | the SwarmCast symbol (the mascot on the ended screen) |
 | Banner | Under the video and its info row, at the top of the About (1280 × 320, 640 × 160 on phones), loaded after the first video segment | none |
 | One-line description (tagline) | Under the name; link preview description | empty |
 | About | An "About" card under the video, after the banner (plain text, line breaks kept) | empty: no card |
@@ -273,6 +273,9 @@ without a preflight the panel never answers.
   185 KB on a desktop, 85 KB on a phone.
 - The banner loads lazily, at low priority, only after the player has its first segment, so it
   never delays the first frame.
+- The ended screen's picture (256 px) is loaded after the first segment too and kept in the page:
+  when the stream ends the server is going away (a quick tunnel answers 502, then 530), so a
+  picture first asked for then would never load. The mascot stays until the picture has loaded.
 - **Lite mode:** while the attack shield is not calm, or the limiter has been saturated within the
   last 10 s, `/api/brand` says `lite: true` and the page skips the banner. Names, colours and links
   still show.

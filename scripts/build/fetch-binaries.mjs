@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Download MediaMTX and cloudflared for one platform and verify them against the
 // SHA-256 values pinned in versions.json (copied from the upstream release checksums).
+// Run as a script (`npm run fetch-bins`) it also fetches the test tools (`testTool` in
+// versions.json: Pebble, the ACME test's CA), which packaging (package.mjs) never takes.
 //
 // Usage: node scripts/build/fetch-binaries.mjs [--target macos-arm64] [--out vendor/macos-arm64] [--with-ffmpeg]
 //        node scripts/build/fetch-binaries.mjs --only ffmpeg-test --out <dir>   (one tool only)
@@ -219,7 +221,7 @@ function findFile(dir, name) {
   return null;
 }
 
-export async function fetchBinaries(target, outDir, { withOptional = false, only } = {}) {
+export async function fetchBinaries(target, outDir, { withOptional = false, withTestTools = false, only } = {}) {
   if (only && !versions[only]) throw new Error(`Unknown tool ${only} (versions.json has ${Object.keys(versions).join(', ')})`);
   fs.mkdirSync(outDir, { recursive: true });
   const cacheDir = process.env.SC_DOWNLOAD_CACHE ? path.resolve(process.env.SC_DOWNLOAD_CACHE) : null;
@@ -230,6 +232,9 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
   for (const [tool, spec] of Object.entries(versions)) {
     if (only) {
       if (tool !== only) continue;
+    } else if (spec.testTool) {
+      // Pebble (the integration tests' ACME CA) comes with `npm run fetch-bins`, never with a package.
+      if (!withTestTools) continue;
     } else if (spec.testOnly || spec.appimageTool) {
       // ffmpeg-test (the GPL build CI's test feeds use) is fetched only by name (--only); the
       // AppImage build tools only by appimage-tools.mjs.
@@ -293,7 +298,7 @@ export async function fetchBinaries(target, outDir, { withOptional = false, only
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const target = arg('target', hostTarget());
   const out = path.resolve(arg('out', path.join(root, 'vendor', target)));
-  fetchBinaries(target, out, { only: arg('only') }).catch((err) => {
+  fetchBinaries(target, out, { only: arg('only'), withTestTools: true }).catch((err) => {
     console.error(`✗ ${err.message}`);
     process.exit(1);
   });

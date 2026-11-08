@@ -3,21 +3,26 @@
 // server package of this OS (scripts/build/package.mjs: the executable the desktop installers
 // carry as their sidecar, with MediaMTX, cloudflared and the web apps):
 //
-//   node scripts/test/preflight/verify.mjs --staging release/staging/<target> [--tunnel] [--chrome] [--junit FILE]
+//   node scripts/test/preflight/verify.mjs --staging release/staging/<target> [--tunnel [--real-cloudflare]] [--chrome] [--junit FILE]
 //
 // It copies the package into a temp folder, starts it outside the desktop app (browser panel)
 // on an empty data folder with a bare-OS PATH, streams a synthetic OBS-like feed with ffmpeg,
 // watches with real browsers (Playwright), checks P2P, kick, link rotation, "Stop everything",
 // quitting, and that no process or port is left behind. With --tunnel it repeats playback
-// through a real Cloudflare quick tunnel.
+// through a quick tunnel opened by the package's own cloudflared: by default against a local
+// stand-in for Cloudflare (scripts/test/lib/cloudflare.mjs: its quick-tunnel service, edge,
+// public names and DNS-over-HTTPS on 127.0.0.1, given to the app as SWARMCAST_TEST_CLOUDFLARE),
+// so the gate never depends on Cloudflare's free service; with --real-cloudflare through the real
+// one (the scheduled real-service smoke, .github/workflows/real-services.yml).
 //
 // Every step runs once and stops the check at its first failure (no retry): waits are for their
-// condition, with a deadline. The infra recoveries: the brand-new quick-tunnel name that the
-// runner's resolver may not know yet (scripts/test/lib/viewer.mjs), and a link that Cloudflare's
-// edge answers with its own 530 page (no connection for the tunnel) although cloudflared runs on
-// (gate run 42164021587): the app's tunnel watch must then replace the tunnel and show a new link
-// in time, and the viewer opens that one (joinAndPlay). The helpers are shared with
-// the Windows suites (scripts/test/lib). --junit also writes the steps as JUnit XML.
+// condition, with a deadline. The infra recoveries, with the real Cloudflare only: the brand-new
+// quick-tunnel name that the runner's resolver may not know yet (scripts/test/lib/viewer.mjs),
+// and a link that Cloudflare's edge answers with its own 530 page (no connection for the tunnel)
+// although cloudflared runs on (gate run 42164021587): the app's tunnel watch must then replace
+// the tunnel and show a new link in time, and the viewer opens that one (joinAndPlay). With the
+// stand-in a 530 fails the step. The helpers are shared with the Windows suites
+// (scripts/test/lib). --junit also writes the steps as JUnit XML.
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -25,11 +30,12 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { WATCH_REPLACE_WITHIN_MS } from '../../../apps/server/src/tunnel/watch.ts';
 import { LIVE_LINK_WAIT_MS, bareEnv, barePath, loginFromOutput, waitLiveLink } from '../lib/app.mjs';
+import { startLocalCloudflare } from '../lib/cloudflare.mjs';
 import { ffmpegBin, liveFeedArgs } from '../lib/ffmpeg.mjs';
 import { writeJunit } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { ownerOf, spawnTracked } from '../lib/proc.mjs';
-import { CLOUDFLARE_NO_TUNNEL, joinOpened, openLink, pageState, playerStats, probeHealth, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
+import { CLOUDFLARE_NO_TUNNEL, joinOpened, openLink, pageState, playerStats, probeHealth, setLocalCloudflare, setP2P, waitPlaying, waitPlaylistForLateJoiners } from '../lib/viewer.mjs';
 import { orTimeout, poll } from '../lib/wait.mjs';
 
 const args = process.argv.slice(2);
@@ -39,6 +45,7 @@ const opt = (n) => {
 };
 const staging = path.resolve(opt('staging') ?? path.join('release', 'staging', `${{ win32: 'windows', darwin: 'macos' }[process.platform] ?? 'linux'}-${process.arch}`));
 const useTunnel = args.includes('--tunnel');
+const realCloudflare = args.includes('--real-cloudflare');
 const channel = args.includes('--chrome') ? 'chrome' : undefined;
 const isWin = process.platform === 'win32';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'sc-preflight-'));
@@ -49,6 +56,8 @@ const serverDir = path.join(home, 'server');
 const dataDir = path.join(home, 'data');
 /** Pages still open, for the page states printed when a step fails. */
 const pages = new Set();
+/** The local stand-in for Cloudflare of the tunnel session (null with --real-cloudflare or without --tunnel). */
+let localCloudflare = null;
 
 function step(name, ok, detail = '') {
   results.push({ name, ok, detail });
@@ -73,9 +82,9 @@ function processesUnder(dir) {
 // ---- the server ----
 // Simulate a bare OS: the server only gets the PATH a fresh install has (no Git, Node,
 // Homebrew, Chocolatey or other CI tooling).
-function startServer(extra) {
+function startServer(extra, env = {}) {
   const exe = path.join(serverDir, isWin ? 'swarmcast.exe' : 'swarmcast');
-  const child = spawn(exe, ['--data-dir', dataDir, ...extra], { env: bareEnv(), stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(exe, ['--data-dir', dataDir, ...extra], { env: bareEnv({ extra: env }), stdio: ['ignore', 'pipe', 'pipe'] });
   let out = '';
   const onData = (d) => {
     out += d;
@@ -108,16 +117,20 @@ function pushStream(rtmpUrl, key) {
 const RELINK_WAIT_MS = WATCH_REPLACE_WITHIN_MS + LIVE_LINK_WAIT_MS;
 
 /**
- * Opens `link`, joins and waits for playback. With `app` (the tunnel session): when Cloudflare
- * answers the link with its own 530 page, the app must notice, replace the tunnel and show a new
- * link within RELINK_WAIT_MS (what the streamer then sends); the viewer opens that one. Returns the
- * link that played.
+ * Opens `link`, joins and waits for playback. With `app` (the tunnel session) the page goes through
+ * the local stand-in when there is one. With the real Cloudflare, when it answers the link with
+ * its own 530 page, the app must notice, replace the tunnel and show a new link within
+ * RELINK_WAIT_MS (what the streamer then sends); the viewer opens that one. Returns the link that
+ * played.
  */
 async function joinAndPlay(browser, link, nickname, app) {
-  const context = await browser.newContext();
+  const context = await browser.newContext(app && localCloudflare ? localCloudflare.contextOptions : {});
   const page = await context.newPage();
   pages.add({ page, label: nickname });
   const res = await openLink(page, link);
+  if (app && localCloudflare && res?.status() === CLOUDFLARE_NO_TUNNEL) {
+    throw new Error(`the local stand-in for Cloudflare answered the live link with ${CLOUDFLARE_NO_TUNNEL}: no registered cloudflared connection for it (${JSON.stringify(localCloudflare.tunnels())})`);
+  }
   if (app && res?.status() === CLOUDFLARE_NO_TUNNEL) {
     const t0 = Date.now();
     const s = await poll(
@@ -140,7 +153,7 @@ async function joinAndPlay(browser, link, nickname, app) {
 async function runSession({ tunnel, browser }) {
   const label = tunnel ? 'tunnel' : 'local';
   const t0 = Date.now();
-  const inst = startServer(tunnel ? [] : ['--no-tunnel']);
+  const inst = startServer(tunnel ? [] : ['--no-tunnel'], tunnel && localCloudflare ? localCloudflare.appEnv : {});
   const exited = new Promise((r) => inst.child.on('exit', (c) => r(c)));
   let ffmpeg;
   try {
@@ -154,7 +167,7 @@ async function runSession({ tunnel, browser }) {
     const tunnelNotes = inst.output().split(/\r?\n/).filter((l) => l.includes('"level":"warn"') && /quick tunnel|quick Tunnel/.test(l));
     if (tunnelNotes.length) console.log(`[${label}] the app tried the tunnel again:\n  ${tunnelNotes.join('\n  ')}`);
     const pattern = tunnel ? /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\// : /^http:\/\/127\.0\.0\.1:\d+\/join\//;
-    step(`[${label}] live link`, pattern.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, '/join/…'));
+    step(`[${label}] live link${tunnel ? (localCloudflare ? ' (local stand-in for Cloudflare)' : ' (real Cloudflare)') : ''}`, pattern.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, '/join/…'));
 
     ffmpeg = pushStream(s0.rtmpUrl, s0.streamKey);
     await poll(async () => (await app.state()).phase === 'live', { timeoutMs: 90_000, what: 'phase live', abortOn: [ffmpeg, inst.owner] });
@@ -162,6 +175,10 @@ async function runSession({ tunnel, browser }) {
 
     const a = await joinAndPlay(browser, s0.liveLink, `alice-${label}`, tunnel ? app : undefined);
     step(`[${label}] viewer plays the stream in ${browser.browserType().name()}${channel ? ` (${channel})` : ''}`, true);
+    if (tunnel && localCloudflare) {
+      const t = localCloudflare.tunnels().find((x) => a.link.startsWith(`https://${x.hostname}/`));
+      step('[tunnel] the viewer\'s requests went through cloudflared and the stand-in\'s edge', (t?.requests ?? 0) > 0, `${t?.requests ?? 0} requests over ${t?.connections ?? 0} registered connection(s)`);
+    }
 
     if (!tunnel) {
       // Bob must start on segments Alice already played, so peers can share them.
@@ -217,6 +234,10 @@ if (!fs.existsSync(path.join(staging, isWin ? 'swarmcast.exe' : 'swarmcast'))) {
   process.exit(2);
 }
 fs.cpSync(staging, serverDir, { recursive: true });
+if (useTunnel && !realCloudflare) {
+  localCloudflare = await startLocalCloudflare({ dir: path.join(home, 'local-cloudflare'), log: (l) => console.log(l) });
+  setLocalCloudflare(localCloudflare);
+}
 const browser = await chromium.launch({ channel, args: ['--autoplay-policy=no-user-gesture-required', '--disable-features=WebRtcHideLocalIpsWithMdns'] });
 try {
   await runSession({ tunnel: false, browser });
@@ -227,6 +248,7 @@ try {
   for (const { page, label } of pages) if (!page.isClosed()) console.error(`--- page ${label}\n${await pageState(page)}`);
 } finally {
   await browser.close();
+  await localCloudflare?.close();
 }
 if (opt('junit')) {
   const cases = results.map((r) => ({ group: 'preflight', name: r.name, status: r.ok ? 'pass' : 'fail', detail: r.detail }));
