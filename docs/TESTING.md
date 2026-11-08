@@ -54,7 +54,10 @@ These hold for every test on every OS (macOS arm64 and x64, Windows, Linux x64 a
 - Timers: Windows rounds short timers to its clock tick (about 15.6 ms), and CI VMs (above all the
   macOS ones, 3 vCPUs) stop processes for tens of milliseconds at random. Timing checks compare with
   a baseline of the same run and measure the process's own work (the [chat bench](#chat-bench)), never
-  an absolute duration where it can be avoided.
+  an absolute duration where it can be avoided. A cost that grows with the input (linear, a binary
+  search) is shown by counting the work the code does (`chatTextWork()`, `cidrSearchSteps()`), not by
+  timing it; a time limit the code under test enforces runs on an injected timer when the test needs
+  a try to pass it or not (`restore({ timer })` of the cache action).
 - Locale and time zone are set by the test when they matter (`SWARMCAST_LOCALE`, `TZ`), or the code
   under test takes them as an argument.
 - Shells: bash scripts also run on macOS's bash 3.2; the Windows scripts target Windows PowerShell 5.1.
