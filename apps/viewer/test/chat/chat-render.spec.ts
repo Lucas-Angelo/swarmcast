@@ -24,7 +24,7 @@ const FRAME_WORK_BUDGET_MS = 50;
  * every sample.
  */
 const FRAME_SAMPLES = 7;
-/** Measured window: typing into the box with everything on screen must show in the counter within it. */
+/** Measured window: typing into the box with everything on screen must show in the counter within it (timed in the page). */
 const INPUT_RESPONSE_BUDGET_MS = 1000;
 
 /**
@@ -98,6 +98,30 @@ function mainThreadFrameWork(page: Page, samples: number): Promise<number[]> {
   }, samples);
 }
 
+/**
+ * Times, in the page, how long the box's next input event takes to show in the counter (its text
+ * `counter`, then the frame that paints it); the returned function reads it (Infinity until then).
+ * Timed by the page's own clock, from the event the page handles: a wall clock in the test process
+ * also counts Playwright's round trips and the moments a shared CI machine does not run the test
+ * process, which are not the page's responsiveness.
+ */
+async function timeInputResponse(page: Page, counter: string): Promise<() => Promise<number>> {
+  await page.evaluate((want) => {
+    const w = window as unknown as { __inputMs: number };
+    w.__inputMs = Infinity;
+    const box = document.querySelector('[data-testid="chat-counter"]')!;
+    let t0 = 0;
+    // Capture on window: before the page's own listener updates the counter.
+    window.addEventListener('input', () => (t0 ||= performance.now()), { capture: true });
+    new MutationObserver((_, obs) => {
+      if (!t0 || box.textContent !== want) return;
+      obs.disconnect();
+      requestAnimationFrame(() => (w.__inputMs = performance.now() - t0));
+    }).observe(box, { childList: true, characterData: true, subtree: true });
+  }, counter);
+  return () => page.evaluate(() => (window as unknown as { __inputMs: number }).__inputMs);
+}
+
 test('every corpus string renders as text, clipped to its box, nothing hidden, no errors @render', async ({ page, browserName }, testInfo) => {
   // Arrange
   const hub = new MockHub('Bia');
@@ -132,13 +156,12 @@ test('every corpus string renders as text, clipped to its box, nothing hidden, n
   expect(busy[Math.floor(FRAME_SAMPLES / 2)], `main-thread frame work (ms): ${busy.map((f) => f.toFixed(0)).join(', ')}`).toBeLessThan(FRAME_WORK_BUDGET_MS);
 
   // Act
-  const t0 = Date.now();
+  const inputMs = await timeInputResponse(page, '15/200');
   await page.getByTestId('chat-input').fill('ainda responde?');
   await expect(page.getByTestId('chat-counter')).toHaveText('15/200');
-  const inputMs = Date.now() - t0;
 
   // Assert
-  expect(inputMs).toBeLessThan(INPUT_RESPONSE_BUDGET_MS);
+  await expect.poll(inputMs, { message: 'ms from the input event to the counter painted' }).toBeLessThan(INPUT_RESPONSE_BUDGET_MS);
   expect(errors).toEqual([]);
   expect(pageConsoleErrors).toEqual([]);
   await testInfo.attach(`corpus-${testInfo.project.name}-${browserName}.png`, { body: await reviewScreenshot(page, { fullPage: true }), contentType: 'image/png' });

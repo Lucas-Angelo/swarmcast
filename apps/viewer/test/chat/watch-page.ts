@@ -71,6 +71,64 @@ export async function reviewScreenshot(page: Page, options: { path?: string; ful
   return page.screenshot({ ...options, animations: 'disabled', caret: 'hide' });
 }
 
+/**
+ * Waits until the watch page's layout has caught up with what it shows: its fonts are in (Inter
+ * swaps in once loaded) and the chat's height takes the info row's current height. On a phone the
+ * chat ends at the bottom of the screen, `calc(... - var(--info-row-h))`, and a ResizeObserver in
+ * watch.ts sets --info-row-h one rendering update after the row changes (the hello shows the
+ * viewer count in it as the chat appears): boxes read before that are one layout behind (run
+ * 41602653032, the chat one line too tall). Read the boxes a check compares after this, in one
+ * evaluate, so that they come from one layout.
+ */
+export async function layoutSettled(page: Page): Promise<void> {
+  await page.evaluate(async () => {
+    await document.fonts.ready;
+  });
+  await expect
+    .poll(
+      () =>
+        page.evaluate(() => {
+          const row = document.querySelector<HTMLElement>('.info');
+          return !!row && document.body.style.getPropertyValue('--info-row-h') === `${Math.ceil(row.getBoundingClientRect().height)}px`;
+        }),
+      { message: 'the chat sized to the info row (--info-row-h)' },
+    )
+    .toBe(true);
+}
+
+/**
+ * Stops the page's clock from before it loads (page.clock): its timers and Date.now move only
+ * when the test runs them (page.clock.runFor). For checks of what the page shows for a while (a
+ * countdown, a counter that goes after a few seconds, a frame window), which a check on real time
+ * can miss on a slow runner. Call it before the page opens.
+ */
+export async function freezePageClock(page: Page): Promise<void> {
+  const t0 = new Date('2026-01-01T12:00:00Z');
+  await page.clock.install({ time: t0 });
+  await page.clock.pauseAt(new Date(t0.getTime() + 1000));
+}
+
+/** Where elements are on screen (CSS pixels of the viewport), by name. */
+export type Boxes<K extends string> = Record<K, { x: number; y: number; width: number; height: number; top: number; bottom: number }>;
+
+/**
+ * The boxes of `selectors` read in one evaluate, so from one layout: separate boundingBox calls
+ * can straddle a relayout (a ResizeObserver, a font swap) and compare two layouts. Fails when an
+ * element is missing.
+ */
+export async function layoutBoxes<K extends string>(page: Page, selectors: Record<K, string>): Promise<Boxes<K>> {
+  return page.evaluate((sel) => {
+    const out: Record<string, { x: number; y: number; width: number; height: number; top: number; bottom: number }> = {};
+    for (const [k, s] of Object.entries(sel)) {
+      const el = document.querySelector(s);
+      if (!el) throw new Error(`${s} is not in the page`);
+      const r = el.getBoundingClientRect();
+      out[k] = { x: r.x, y: r.y, width: r.width, height: r.height, top: r.top, bottom: r.bottom };
+    }
+    return out;
+  }, selectors as Record<string, string>) as Promise<Boxes<K>>;
+}
+
 /** Answers one request of the page to the server (an API route), or says it is not one (false). */
 type ApiRoutes = (route: Route, url: URL) => Promise<void> | false;
 

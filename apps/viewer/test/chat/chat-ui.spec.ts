@@ -3,10 +3,11 @@
 // Each test opens its own page on a hub of its own. The hub holds the echo of the page's own
 // message when a test wants to see "sending…": nothing here waits on a timer.
 import path from 'node:path';
+import type { Locator } from '@playwright/test';
 import { expect, test, type Page } from './fixtures.js';
 import { emojiData } from '../../scripts/emoji-data.mjs';
 import { MockHub } from './mock-hub.js';
-import { openWatch, requireBuild, reviewScreenshot } from './watch-page.js';
+import { freezePageClock, layoutBoxes, layoutSettled, openWatch, requireBuild, reviewScreenshot } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
@@ -176,6 +177,7 @@ test.describe('viewer chat (mock hub)', () => {
   test('slow mode: Send waits and says for how long', async ({ page }) => {
     // Arrange
     const hub = new MockHub('Bia', { settings: { slowS: 5 } });
+    await freezePageClock(page);
     await openWatch(page, hub);
     const input = page.getByTestId('chat-input');
 
@@ -187,7 +189,20 @@ test.describe('viewer chat (mock hub)', () => {
     // Assert
     await expect(page.getByTestId('chat-mode')).toContainText('5 s');
     await expect(page.getByTestId('chat-send')).toBeDisabled();
-    await expect(page.getByTestId('chat-status')).toContainText(/send again in [45] s/);
+    await expect(page.getByTestId('chat-status')).toContainText('send again in 5 s');
+
+    // Act
+    await page.clock.runFor(2000);
+
+    // Assert
+    await expect(page.getByTestId('chat-status')).toContainText('send again in 3 s');
+    await expect(page.getByTestId('chat-send')).toBeDisabled();
+
+    // Act
+    await page.clock.runFor(3000);
+
+    // Assert
+    await expect(page.getByTestId('chat-send')).toBeEnabled();
   });
 
   test('over the limit: the counter turns red and Send is disabled', async ({ page }) => {
@@ -487,12 +502,10 @@ test.describe('viewer chat (mock hub)', () => {
 
 test.describe('highlight and pin (mock hub)', () => {
   /** Top and bottom (px) of the pinned bar, the list and the input on screen. */
+  /** The chat, the pinned bar, the list and the input, from one layout once it has caught up (layoutSettled). */
   async function boxes(page: Page) {
-    const of = async (id: string) => {
-      const b = (await page.getByTestId(id).boundingBox())!;
-      return { top: b.y, bottom: b.y + b.height, height: b.height };
-    };
-    return { pinned: await of('chat-pinned'), list: await of('chat-list'), input: await of('chat-input') };
+    await layoutSettled(page);
+    return layoutBoxes(page, { chat: '[data-testid="chat"]', pinned: '[data-testid="chat-pinned"]', list: '[data-testid="chat-list"]', input: '[data-testid="chat-input"]' });
   }
 
   for (const scheme of ['light', 'dark'] as const) {
@@ -690,8 +703,8 @@ test.describe('highlight and pin (mock hub)', () => {
     await expect(bar).toBeVisible();
 
     // Assert
-    const chat = (await page.getByTestId('chat').boundingBox())!;
     const b = await boxes(page);
+    const chat = b.chat;
     expect(b.pinned.top).toBeGreaterThanOrEqual(chat.y);
     expect(b.pinned.bottom).toBeLessThanOrEqual(b.list.top + 1);
     expect(b.list.bottom).toBeLessThanOrEqual(b.input.top + 1);
@@ -707,6 +720,20 @@ test.describe('replies and mentions (mock hub)', () => {
   const rafa = { a: 'k5', n: 'Rafa', c: '#46a758', r: 'viewer' as const, tag: 'r4fa' };
   /** The row of message `s` in the list. */
   const row = (page: Page, s: number) => page.getByTestId('chat-list').locator(`li.msg[data-seq="${s}"]`);
+
+  /**
+   * Records whether the row ever gets the `flash` class from now on (a MutationObserver), and
+   * returns how to ask. The flash lasts JUMP_FLASH_MS (render.ts) on the page's real clock, so a
+   * look at the class can come after it on a slow runner; the record cannot miss it.
+   */
+  async function recordFlash(row: Locator): Promise<() => Promise<boolean>> {
+    await row.evaluate((el) => {
+      const w = window as unknown as { __flashed: boolean };
+      w.__flashed = el.classList.contains('flash');
+      new MutationObserver(() => (w.__flashed ||= el.classList.contains('flash'))).observe(el, { attributes: true, attributeFilter: ['class'] });
+    });
+    return () => row.page().evaluate(() => (window as unknown as { __flashed: boolean }).__flashed);
+  }
 
   test('Reply on hover: the bar above the box, the frame names the message, the reply shows the quote; a click on the quote goes back to it', async ({ page }) => {
     // Arrange
@@ -743,11 +770,12 @@ test.describe('replies and mentions (mock hub)', () => {
     await expect(row(page, asked)).not.toBeInViewport();
 
     // Act
+    const flashed = await recordFlash(row(page, asked));
     await mine.getByTestId('chat-reply-quote').click();
 
     // Assert
     await expect(row(page, asked)).toBeInViewport();
-    await expect(row(page, asked)).toHaveClass(/flash/);
+    await expect.poll(flashed, { message: 'the original flashed' }).toBe(true);
     await expect(row(page, asked).getByTestId('chat-reply')).toBeFocused();
     await expect(row(page, asked)).not.toHaveClass(/flash/);
   });
