@@ -4,7 +4,7 @@ Build, release, CI and test scripts. SwarmCast ships only as the desktop app ([d
 the start and uninstall scripts of the old script mode were removed in 0.5.1 ([docs/DECISIONS.md](../docs/DECISIONS.md)).
 
 **Build scripts** (`build/`):
-- `fetch-binaries.mjs` (`npm run fetch-bins`): downloads MediaMTX and cloudflared for one target into `vendor/<target>/`, checked against the SHA-256 pinned in `versions.json` (`--with-ffmpeg` also bundles ffmpeg, for a packager who accepts the redistribution obligations).
+- `fetch-binaries.mjs` (`npm run fetch-bins`): downloads MediaMTX and cloudflared for one target into `vendor/<target>/` (and Pebble, the ACME integration test's CA, which is never packaged), checked against the SHA-256 pinned in `versions.json` (`--with-ffmpeg` also bundles ffmpeg, for a packager who accepts the redistribution obligations).
 - `package.mjs` (`npm run package`): stages the server of one target in `release/staging/<target>/` (the `@yao-pkg/pkg` executable, MediaMTX, cloudflared, the web pages, licences), which `desktop.mjs` turns into the app's sidecar and resources.
 - `checksums.mjs`: writes `SHA256SUMS.txt`.
 - `desktop.mjs` (`npm run desktop:build`): the desktop installers of one target from the staged server ([apps/desktop/README.md](../apps/desktop/README.md)); `updater-manifest.mjs` (`npm run desktop:manifest`): the updater's `latest.json`; `deb-version.mjs`: the `X.Y.Z~beta.N` Version field of a pre-release `.deb`.
