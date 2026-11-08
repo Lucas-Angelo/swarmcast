@@ -70,6 +70,23 @@ export function videoState(phone: Phone): Promise<VideoState> {
   });
 }
 
+/** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
+export const WATCHING_S = 1.5;
+
+/**
+ * Waits until the viewer is watching the live: the video has played WATCHING_S seconds, and the
+ * page shows how far behind live it plays ("~14 s behind live" with its "i" button, watch.ts
+ * showDelay), the last thing the watch page reveals by itself as the live starts: it comes with
+ * the next second's update once the video plays, after "Live", Unmute and Go live. Until then a
+ * tap can land while the page reveals a button, and iOS takes such a tap for a hover, with no
+ * click (WebKit's content-change observer; Devices run 42524374628: the delay came up 15 ms after
+ * the page took the touchstart of a tap on the chat input). The specs tap anything on the watch page only after this.
+ */
+export async function watching(phone: Phone): Promise<void> {
+  await expect.poll(async () => (await videoState(phone)).played, { message: 'the video plays' }).toBeGreaterThan(WATCHING_S);
+  await expect.poll(() => isShown(phone, '#delay-wrap'), { message: 'the page shows the delay behind live' }).toBe(true);
+}
+
 /** Seconds played since `from` (a videoState read earlier), once the video is not paused; 0 while paused. */
 export async function playedSince(phone: Phone, from: VideoState): Promise<number> {
   const now = await videoState(phone);

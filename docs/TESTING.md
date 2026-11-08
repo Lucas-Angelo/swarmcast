@@ -265,6 +265,15 @@ sideways layout; iOS: the sideways layout).
   "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
   41566408164); the server now sends the page with the line already shown to a browser it will check
   (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
+  The watch page does, by design, as the live starts: Unmute, Go live and, with the next second's
+  update once the video plays, the delay behind live with its "i" button (`watch.ts` `showDelay`).
+  The chat test tapped the chat input half a second after the page loaded, and once in about 15
+  runs the delay came up 15 ms after the touchstart: Safari sent mouseover and mousemove, no
+  mousedown, no click (Devices runs 42521418840, 42524374628). So every spec taps the watch page
+  only once the viewer is watching (`watching`, phone.ts: the video has played 1.5 s and the delay
+  shows), and a tap's record (`IosPhone.tap`) has the synthetic mouseover and mousedown and every
+  element the page revealed meanwhile (`shown>element`): a tap with mouseover and no mousedown
+  says "taken for a hover" and what was revealed.
 - **iOS taps on a page Safari has not shown yet:** WebKit's automation refuses a touch outside the
   visible area Safari keeps for the page ("move target out of bounds",
   `WebAutomationSession::simulateTouchInteraction` checks it against

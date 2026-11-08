@@ -25,10 +25,8 @@
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, type Phone } from './phone.js';
+import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, watching, type Phone } from './phone.js';
 
-/** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
-const WATCHING_S = 1.5;
 /** Seconds the video must play on (not paused) after a step for playback to count as going on. */
 const PLAYS_ON_S = 3;
 /**
@@ -71,7 +69,7 @@ test('a phone viewer joins with the link, Watch in sight while typing: the video
   const joined = await joinOnPhone(phone, nick, link);
   // Assert
   expect(joined).toEqual({ nicknameInSight: true, watchInSight: true });
-  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  await watching(phone);
   expect(await videoState(phone)).toMatchObject({ muted: true, paused: false });
   await expect.poll(() => isShown(phone, '#unmute')).toBe(true);
   await expect.poll(async () => (await viewerByNick(nick))?.connected).toBe(true);
@@ -89,6 +87,7 @@ test('the chat sits under the player; a message goes from the phone to another v
   // Arrange
   const link = await liveLink();
   await joinOnPhone(phone, uid('chatP'), link);
+  await watching(phone);
   const other = await bots.join(uid('chatD'), link);
   await expect.poll(() => isShown(phone, '[data-testid="chat"]')).toBe(true);
   const fromPhone = `oi do celular ${uid('m')}`;
@@ -124,7 +123,7 @@ test('the chat sits under the player; a message goes from the phone to another v
 test('back from the background the video plays again, behind the live; Go live returns to the live point', { tag: '@android' }, async ({ phone }) => {
   // Arrange
   await joinOnPhone(phone, uid('away'), await liveLink());
-  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  await watching(phone);
   await recordLifecycle(phone);
   // Act
   await phone.background();
@@ -148,7 +147,7 @@ test('back from the background the video plays again, behind the live; Go live r
 test("the player's own controls: full screen is the player with them where the browser lets an element go full screen, else iOS's own player (then they are back); no volume slider on a phone", async ({ phone }) => {
   // Arrange
   await joinOnPhone(phone, uid('controls'), await liveLink());
-  await expect.poll(async () => (await videoState(phone)).played).toBeGreaterThan(WATCHING_S);
+  await watching(phone);
   const ui = await playerUi(phone);
   // Assert
   expect(ui).toMatchObject({ nativeControls: false, bar: true, play: 'Pause' });

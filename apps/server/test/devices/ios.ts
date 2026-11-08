@@ -216,12 +216,19 @@ async function hideSimulatorApp(): Promise<void> {
   await run('osascript', ['-e', 'tell application "System Events" to set visible of process "Simulator" to false']);
 }
 
-/** The events a tap is recorded by (IosPhone.tap). */
-const TAP_TYPES = ['touchstart', 'touchend', 'click'] as const;
+/**
+ * What a tap is recorded by (IosPhone.tap): its events, the synthetic mouse events WebKit sends
+ * before the click (mouseover, mousedown), and `shown`, an element the page revealed meanwhile
+ * (its `hidden` attribute removed). A tap that brought mouseover and no mousedown was taken for a
+ * hover: WebKit's content-change observer drops the click when clickable content becomes visible
+ * between touchstart and the synthetic mouse move (WebPage::handleSyntheticClick,
+ * ContentChangeObserver; docs/TESTING.md "iOS taps and content that appears").
+ */
+const TAP_TYPES = ['touchstart', 'touchend', 'mouseover', 'mousedown', 'click', 'shown'] as const;
 
 /**
- * One event the tap delivered: its type, the element it reached when that was not the tapped one,
- * its time stamp and when the page handled it (epoch ms).
+ * One entry of a tap's record: its type, the element it reached when that was not the tapped one
+ * (for `shown`, the element revealed), its time stamp and when the page handled it (epoch ms).
  */
 interface TapEvent {
   type: (typeof TAP_TYPES)[number] | '?';
@@ -258,11 +265,16 @@ export function describeTap(events: readonly TapEvent[], started: number, perfor
   const down = own('touchstart');
   const up = own('touchend');
   const click = own('click');
-  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : 'elsewhere'}`);
+  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : e.type === 'shown' ? 'element' : 'elsewhere'}`);
   const parts = [`events: ${events.map(label).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
   if (down) parts.push(`touchstart ${down.handled - started} ms after the actions began`);
   if (down && up) parts.push(`finger down ${up.stamp - down.stamp} ms by time stamps, ${up.handled - down.handled} ms as handled`);
   if (up && click) parts.push(`then the click ${click.handled - up.handled} ms after touchend`);
+  const over = own('mouseover');
+  if (over && !own('mousedown') && !click) {
+    const shown = events.filter((e) => e.type === 'shown' && down && e.handled >= down.handled && e.handled <= over.handled).map((e) => (names ? e.elsewhere : 'an element'));
+    parts.push(`taken for a hover (mouse moved, no press)${shown.length ? `: the page revealed ${shown.join(', ')} during the tap` : ''}`);
+  }
   return parts.join('; ');
 }
 
@@ -519,7 +531,8 @@ export class IosPhone implements Phone {
     // What the tap delivers to the element, kept in sessionStorage (a tap on Watch may navigate):
     // each event's type, its time stamp (the platform event's) and when the page handled it, as
     // epoch milliseconds, so that a tap that ends in no click says how long the finger was down.
-    // An event on another element is kept as `type>element`, so a tap that missed says what it hit.
+    // An event on another element is kept as `type>element`, so a tap that missed says what it hit,
+    // and an element the page reveals meanwhile as `shown>element` (TAP_TYPES).
     // Passive listeners: a touchend listener that may call preventDefault makes the browser wait
     // for the page before it decides the tap (phone.ts recordInput).
     await this.session.execute(
@@ -527,10 +540,14 @@ export class IosPhone implements Phone {
        window.__tapStop?.();
        sessionStorage.setItem('__tap', '');
        const name = (t) => t instanceof Element ? (t.id || t.getAttribute('data-testid') || t.tagName.toLowerCase()).replace(/[\\s@>:]/g, '_') : '?';
-       const note = (e) => { if (e.isTrusted) sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + e.type + (e.target === el || el.contains(e.target) ? '' : '>' + name(e.target)) + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + Math.round(performance.timeOrigin + performance.now()) + ' '); };
-       const types = ['touchstart', 'touchend', 'click'];
+       const now = () => Math.round(performance.timeOrigin + performance.now());
+       const add = (entry) => sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + entry + ' ');
+       const note = (e) => { if (e.isTrusted) add(e.type + (e.target === el || el.contains(e.target) ? '' : '>' + name(e.target)) + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + now()); };
+       const types = ['touchstart', 'touchend', 'mouseover', 'mousedown', 'click'];
        for (const type of types) window.addEventListener(type, note, { capture: true, passive: true });
-       window.__tapStop = () => { for (const type of types) window.removeEventListener(type, note, true); };`,
+       const shown = new MutationObserver((list) => { for (const m of list) if (m.target instanceof HTMLElement && !m.target.hidden) add('shown>' + name(m.target) + '@' + now() + ':' + now()); });
+       shown.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
+       window.__tapStop = () => { shown.disconnect(); for (const type of types) window.removeEventListener(type, note, true); };`,
       [element],
     );
     const started = Date.now();
