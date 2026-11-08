@@ -28,6 +28,7 @@ import type { StreamSwarmIdBuilderContext } from 'p2p-media-loader-core';
 import { AUDIO_ONLY_BROKEN_WINDOW_MS, AUDIO_ONLY_GONE_AFTER, AUDIO_ONLY_URL, AudioOnlyState, createAudioOnlySwitch, createWindowStart, fetchPosterBrand, mountAudioOnlyPoster, reloadAudioOnlyInPlace, showPlayerNotice, usesGStreamer, WINDOW_START_PLAY_S, type ParsedManifest } from '../../src/audio-only.js';
 import { createManifestReloader, hlsConfigFor, loadAudioOnly, loadPreferredHeight, playOnLoad, saveAudioOnly, savePreferredHeight, swarmIdBuilderFor } from '../../src/player-config.js';
 import { AUDIO_ONLY_OPTION, createQualityMenu, DEFAULT_QUALITY_LABELS } from '../../src/quality-menu.js';
+import { imageServer } from './image-server.js';
 
 const EVENTS = { MANIFEST_PARSED: 'hlsManifestParsed', LEVEL_SWITCHED: 'hlsLevelSwitched' } as const;
 
@@ -863,6 +864,7 @@ describe('the audio-only poster', () => {
 
   it('shows while audio only plays, under the status overlay, with the streamer name and picture', async () => {
     // Arrange
+    imageServer();
     const p = player();
     const state = new AudioOnlyState();
     const brand = vi.fn(async () => ({ name: '<b>Ana</b>', avatar: `/brand/${'a'.repeat(64)}.webp` }));
@@ -870,7 +872,7 @@ describe('the audio-only poster', () => {
     const hiddenAtFirst = el.hidden;
     // Act
     state.set(true);
-    await vi.waitFor(() => expect(el.querySelector('img')).not.toBeNull());
+    await vi.waitFor(() => expect(el.querySelector('img')?.naturalWidth).toBeGreaterThan(0));
     // Assert
     expect(hiddenAtFirst).toBe(true);
     expect(el.hidden).toBe(false);
@@ -880,6 +882,23 @@ describe('the audio-only poster', () => {
     expect(el.querySelector('b')).toBeNull();
     expect(el.querySelector('img')?.getAttribute('src')).toBe(`/brand/${'a'.repeat(64)}.webp`);
     expect(el.querySelector('.audio-only-title')?.textContent).toBe('Audio only');
+  });
+
+  it('a picture that cannot load leaves the speaker icon, never a broken image', async () => {
+    // Arrange
+    const server = imageServer();
+    server.up = false;
+    const p = player();
+    const state = new AudioOnlyState();
+    const brand = vi.fn(async () => ({ name: 'Ana', avatar: `/brand/${'a'.repeat(64)}.webp` }));
+    const el = mountAudioOnlyPoster(p, { state, labels: { title: 'Audio only', hint: 'hint' }, brand });
+    // Act
+    state.set(true);
+    await vi.waitFor(() => expect(server.answered).toContainEqual({ path: `/brand/${'a'.repeat(64)}.webp`, status: 502 }));
+    await vi.waitFor(() => expect(el.querySelector('.audio-only-name')?.textContent).toBe('Ana'));
+    // Assert
+    expect(el.querySelector('.sc-ico-volume')).not.toBeNull();
+    expect(el.querySelector('img')).toBeNull();
   });
 
   it('without "Your page": "Audio only" and a speaker icon, no name', async () => {
