@@ -34,6 +34,22 @@ async function onTheBar(page: Page): Promise<void> {
   await expect.poll(() => faded(page)).toBe(false);
 }
 
+/**
+ * The viewer asks the system for less motion, and the page has heard it: the bar's reduced-motion
+ * hold is set from the media query's `change` event (player-controls.ts), which the browser fires
+ * at its next rendering update, not inside emulateMedia. The mouse leaving the player before that
+ * hides the bar for a frame; the check would read that frame. The page's own listener was added
+ * first, so it has run when this one has.
+ */
+async function reduceMotion(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = window as unknown as { __reducedMotion: Promise<void> };
+    w.__reducedMotion = new Promise((resolve) => matchMedia('(prefers-reduced-motion: reduce)').addEventListener('change', () => resolve(), { once: true }));
+  });
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.evaluate(() => (window as unknown as { __reducedMotion: Promise<void> }).__reducedMotion);
+}
+
 test('the bar replaces the browser controls: play / pause, the big Play button, sound, volume, LIVE and theater mode work; no CSP refusal', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
   const { page } = await viewers.join(uid('bar'), { setup: async (c) => void (await c.addInitScript(recordCsp)) });
@@ -174,7 +190,7 @@ test('the bar fades while the live plays and comes back with the mouse; under re
   await expect(page.getByTestId('controls')).toHaveCSS('opacity', '1');
 
   // Act
-  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await reduceMotion(page);
   await awayFromPlayer(page);
 
   // Assert: nothing fades by itself for a viewer who asked for less motion

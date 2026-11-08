@@ -185,6 +185,7 @@ test('chat prediction: guesses from people already watching, the right answer pi
   await form.getByTestId('chat-poll-start').click();
   await expect(card.locator('.poll-label')).toHaveText('Prediction');
   await card.getByTestId('chat-poll-option').nth(1).click();
+  await expect.poll(async () => (await pollState())?.c, { message: "the page's guess counted" }).toEqual([0, 1]);
   const id = (await pollState())!.id;
   await b.voteAnswer(b.vote(id, 0));
   const late = await bots.join(uid('predL'));
@@ -202,7 +203,7 @@ test('chat prediction: guesses from people already watching, the right answer pi
   await expect(card.getByTestId('chat-poll-option').nth(1)).toHaveClass(/win/);
   await expect(panelCard.getByTestId('chat-poll-state')).toHaveText('Answered');
   await expect(panelCard.getByTestId('chat-poll-voters')).toContainText('1 person got it right');
-  expect(b.messages.some((m) => m.t === 'chat.batch' && m.items.some((i) => i.k === 'poll' && i.p?.st === 'resolved' && i.p.win === 1))).toBe(true);
+  await expect.poll(() => b.messages.some((m) => m.t === 'chat.batch' && m.items.some((i) => i.k === 'poll' && i.p?.st === 'resolved' && i.p.win === 1))).toBe(true);
 });
 
 test('chat slash commands in the panel, in Portuguese and English: suggestions, poll shortcuts, the ? list, /limpar asks first', { tag: '@ui' }, async ({ page }) => {
