@@ -496,24 +496,31 @@ export function mountAudioOnlyPoster(player: HTMLElement, o: { state?: AudioOnly
   if (overlay) overlay.before(root);
   else player.append(root);
 
-  const showBrand = (b: PosterBrand | null): void => {
+  let ask = 0;
+  const showBrand = (b: PosterBrand | null, mine: number): void => {
     name.textContent = b?.name ?? '';
     name.hidden = !b?.name;
     if (b?.avatar) {
+      // In the poster once it has loaded: a picture that cannot load (the connection gone) leaves
+      // the speaker icon, never a broken image.
       const img = doc.createElement('img');
       img.className = 'audio-only-avatar';
       img.alt = '';
       img.width = 128;
       img.height = 128;
       img.decoding = 'async';
-      img.src = b.avatar;
       img.dataset.testid = 'audio-only-avatar';
-      picture.replaceChildren(img);
+      img.addEventListener('load', () => {
+        if (mine === ask) picture.replaceChildren(img);
+      });
+      img.addEventListener('error', () => {
+        if (mine === ask) picture.replaceChildren(icon);
+      });
+      img.src = b.avatar;
     } else {
       picture.replaceChildren(icon);
     }
   };
-  let ask = 0;
   state.subscribe((on) => {
     root.hidden = !on;
     player.classList.toggle('audio-only-on', on);
@@ -521,7 +528,7 @@ export function mountAudioOnlyPoster(player: HTMLElement, o: { state?: AudioOnly
     // Asked again each time it shows: the streamer may have changed "Your page" meanwhile.
     const mine = ++ask;
     void o.brand().then((b) => {
-      if (mine === ask) showBrand(b);
+      if (mine === ask) showBrand(b, mine);
     });
   });
   return root;
