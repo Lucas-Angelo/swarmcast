@@ -222,7 +222,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | Path | What |
 |---|---|
 | `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the download cache, the Tauri tools on Windows (`tauri-tools`) and a `.deb` cache (`apt-debs`); apt settings that retry |
-| `.github/actions/setup/save` | last step of a job: saves the caches it added files to (`.github/scripts/cache-files.mjs`), on `main` only (the download cache also from pull requests; see "Release downloads" below) |
+| `.github/actions/setup/save` | last step of a job: saves the caches it added or changed files in (`.github/scripts/cache-files.mjs`), on `main` only (the download cache also from pull requests; see "Release downloads" below) |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
@@ -230,7 +230,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
-| `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored (tested in `scripts/ci/test`) |
+| `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
@@ -470,9 +470,12 @@ pkg cache (`sc-pkg-<OS>-<arch>-<lockfile>`) had the same flaw across targets: th
 desktop build restored its exact key and still had to download `node-v24.22.1-linux-x64` (the
 Windows package job, which packages windows-x64 on Linux x64, shares that key).
 
-Now `setup` records the files the restore brought (`.github/scripts/cache-files.mjs list`), and
-`setup/save` saves a new entry only when the job added files to them, under
-`<prefix><pins>-<run id>-<hash of the file list>` (`cache-files.mjs plan`). The restore takes the
+Now `setup` records the files the restore brought, with their SHA-256 (`.github/scripts/cache-files.mjs
+list`), and `setup/save` saves a new entry only when the job added files to them or changed one,
+under `<prefix><pins>-<run id>-<hash of that list>` (`cache-files.mjs plan`). Content counts, not
+only names: the download cache names its files by SHA-256, but the Tauri tools folder does not,
+and a Tauri CLI update that pins another `nsis_tauri_utils.dll` makes `tauri build` download it
+again over the old one. The restore takes the
 newest entry for the current pins (`<prefix><pins>-`), else the newest of older pins (after a pin
 change `fetch-binaries.mjs` deletes what is no longer pinned and downloads only the changed
 files). An entry holds what its job restored plus what it added, so a job that needs less (the
@@ -515,7 +518,7 @@ again (a cold run). What is saved, all from `main` unless noted:
 |---|---|---|---|
 | `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
-| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); a new entry per run that added files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
+| `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 7 | 0.65 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
 | `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
@@ -538,7 +541,7 @@ nobody restores again, and prints each deletion with its reason and the size bef
   It never deletes an entry whose key holds a hash of current `main`'s inputs (the same `hashFiles()`
   the workflows compute: the npm cache's three files, `package-lock.json`,
   `scripts/build/versions.json`, and `main`'s commit for CodeQL) and is the newest of its family
-  with that hash (the download and Tauri tools caches save one entry per run that added files,
+  with that hash (the download and Tauri tools caches save one entry per run that added or changed files,
   and the restore takes the newest), the newest
   or the most recently used entry of a family, nor an older entry still used after the newest was
   saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
@@ -718,11 +721,17 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   a release job (the other jobs use `github.token`).
 - **Caches** are saved on `main` only and restored everywhere, so pull requests reuse `main`'s
   instead of filling the 10 GB repository limit (budget and clean-up: "Caches" above). One exception: the pinned-downloads cache
-  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared, the AppImage tools) is saved by pull requests too, because
+  (`sc-downloads-*`: the test ffmpeg, MediaMTX, cloudflared, Pebble, cargo-llvm-cov, the AppImage tools, pkg's Node.js
+  base binary) is saved by pull requests too, because
   some publishers are very slow from GitHub's runners (the macOS ffmpeg at 10-30 kB/s): a pull
   request pays one slow download, its later runs restore it. A pull request cannot poison it:
-  each entry is a pinned file, and `fetch-binaries.mjs` and `appimage-tools.mjs` use it only when
-  its SHA-256 matches `scripts/build/versions.json`.
+  an entry saved by a pull request is restored only by that pull request's runs (GitHub scopes a
+  cache to the ref that saved it; other refs see only their own and the default branch's), and
+  each entry is a pinned file that `fetch-binaries.mjs`, `appimage-tools.mjs` and `pkg-base.mjs`
+  use only when its SHA-256 matches its pin (`scripts/build/versions.json`, pkg-fetch's own
+  list). The caches that are not checked when used (Rust's, and the Tauri tools with the NSIS
+  that builds the Windows installer) are saved from `main` only: a release build (a `v*` tag)
+  restores `main`'s entries, which only workflows running `main`'s own code write.
 - **Runner images:** pinned where an image switch must not land in the middle of a change
   (`ubuntu-24.04`; `ubuntu-22.04` for the Linux builds' glibc baseline, retired by GitHub in April
   2027; `macos-15-intel`, the last Intel image, until August 2027); `macos-latest` (macOS 26 on

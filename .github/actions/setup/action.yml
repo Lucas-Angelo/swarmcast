@@ -175,8 +175,8 @@ runs:
     # "Pinned downloads in Docker"). The restore takes the newest entry for these pins
     # (`<prefix><pins>-`), else the newest of any pins (fetch-binaries.mjs deletes what is no
     # longer pinned, so after a pin change only the changed files are downloaded). setup/save
-    # saves a new entry only when the job added files (.github/scripts/cache-files.mjs), from
-    # main and pull requests.
+    # saves a new entry only when the job added or changed files (.github/scripts/cache-files.mjs),
+    # from main and pull requests.
     - name: Download cache keys
       if: inputs.ffmpeg == 'true' || inputs.downloads == 'true'
       id: dl
@@ -222,7 +222,9 @@ runs:
     # (tauri-apps/binary-releases, tauri-apps/nsis-tauri-utils) with one try each, into its tools
     # folder (%LOCALAPPDATA%\tauri), unless they are there already. That folder is cached per
     # package-lock.json (the Tauri CLI's version), saved from main only, and only when the build
-    # added files (setup/save).
+    # added or changed files (setup/save; a Tauri CLI update can replace the plugin under the same
+    # name). Not checked against a pin when used, unlike the download cache: main-only, like the
+    # Rust cache (README.md, "Rules", Caches).
     - name: Tauri tools cache key (Windows)
       if: inputs.tauri-tools == 'true' && runner.os == 'Windows'
       id: tauri-tools

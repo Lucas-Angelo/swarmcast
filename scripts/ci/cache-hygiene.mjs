@@ -21,7 +21,7 @@
 // version still being rolled out). An older entry last restored before the newest was saved is
 // superseded: that is how a Rust or CodeQL cache rolls over (the run that saves the new entry
 // restored the old one by prefix, then nothing does), and how the download and Tauri tools
-// caches do with one hash (a new entry per run that added files, the restore takes the newest:
+// caches do with one hash (a new entry per run that added or changed files, the restore takes the newest:
 // .github/scripts/cache-files.mjs).
 // --dry-run prints the plan and deletes nothing. --caches reads the listing from a file
 // (`gh cache list --json id,key,ref,sizeInBytes,createdAt,lastAccessedAt`) instead of the API.

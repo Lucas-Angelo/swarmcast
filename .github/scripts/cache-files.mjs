@@ -5,12 +5,18 @@
 //   node .github/scripts/cache-files.mjs list <dir> <list file>
 //   node .github/scripts/cache-files.mjs plan <name> <dir> <list file> <key base>
 //
-// `list`, right after the restore: writes the files the restore brought (paths under <dir>, one
-// per line, sorted) to <list file>, which lives outside <dir>.
-// `plan`, at the end of the job: when <dir> now holds a file that the list does not have, prints
-// `<name>-key=<key base><GITHUB_RUN_ID>-<12 hex of the file list>` to GITHUB_OUTPUT (and says which
-// files are new), so the save step saves a new entry; otherwise prints nothing and the save is
-// skipped.
+// `list`, right after the restore: writes the files the restore brought (`<sha256>  <path under
+// <dir>>`, one per line, sorted by path) to <list file>, which lives outside <dir>.
+// `plan`, at the end of the job: when <dir> now holds a file that the list does not have, or one
+// whose content changed, prints `<name>-key=<key base><GITHUB_RUN_ID>-<12 hex of the list>` to
+// GITHUB_OUTPUT (and says which files are new or changed), so the save step saves a new entry;
+// otherwise prints nothing and the save is skipped.
+//
+// Content, not only names: the download cache names each file by its SHA-256, but the Tauri tools
+// folder does not. After a Tauri CLI update that pins another nsis_tauri_utils.dll, `tauri build`
+// downloads it again over the old one, under the same name (tauri-bundler's NSIS_REQUIRED_FILES_HASH
+// check); a list of names alone would never save that, and every Windows build would download the
+// plugin from github.com again, with one try.
 //
 // Why not one entry per key, saved when the key missed: an entry is saved once and an exact hit is
 // never saved again, so the first job to save a key decided what every later job got. On main,
@@ -48,14 +54,25 @@ export function listFiles(dir) {
 }
 
 /**
- * What to save: the files of `now` that `restored` does not have, and the key of the new entry
- * (`keyBase`, the run, a hash of the whole list), or null when nothing is new.
+ * The files under `dir` with their content: `<sha256>  <path>` lines (sha256sum's format), in
+ * listFiles' order.
+ * @param {string} dir
+ * @returns {string[]}
+ */
+export function snapshot(dir) {
+  return listFiles(dir).map((f) => `${crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, f))).digest('hex')}  ${f}`);
+}
+
+/**
+ * What to save: the files of `now` (snapshot lines) that `restored` does not have, new or with
+ * other content, and the key of the new entry (`keyBase`, the run, a hash of the whole snapshot),
+ * or null when nothing is new.
  * @param {{ now: string[], restored: string[], keyBase: string, runId: string }} o
- * @returns {{ added: string[], key: string | null }}
+ * @returns {{ added: string[], key: string | null }} `added`: the paths
  */
 export function planSave({ now, restored, keyBase, runId }) {
   const before = new Set(restored);
-  const added = now.filter((f) => !before.has(f));
+  const added = now.filter((line) => !before.has(line)).map((line) => line.slice(line.indexOf('  ') + 2));
   if (added.length === 0) return { added, key: null };
   const hash = crypto.createHash('sha256').update(now.join('\n')).digest('hex').slice(0, 12);
   return { added, key: `${keyBase}${runId}-${hash}` };
@@ -69,7 +86,7 @@ function readList(file) {
 function main([cmd, ...args]) {
   if (cmd === 'list' && args.length === 2) {
     const [dir, listFile] = args;
-    const files = listFiles(dir);
+    const files = snapshot(dir);
     fs.writeFileSync(listFile, files.map((f) => `${f}\n`).join(''));
     console.log(`${dir}: ${files.length} file(s) restored`);
     return 0;
@@ -78,12 +95,12 @@ function main([cmd, ...args]) {
     const [name, dir, listFile, keyBase] = args;
     const runId = process.env.GITHUB_RUN_ID;
     if (!runId) throw new Error('GITHUB_RUN_ID is not set');
-    const { added, key } = planSave({ now: listFiles(dir), restored: readList(listFile), keyBase, runId });
+    const { added, key } = planSave({ now: snapshot(dir), restored: readList(listFile), keyBase, runId });
     if (!key) {
-      console.log(`${name}: nothing new in ${dir}, no save`);
+      console.log(`${name}: nothing new or changed in ${dir}, no save`);
       return 0;
     }
-    console.log(`${name}: ${added.length} new file(s) (${added.join(', ')}): save as ${key}`);
+    console.log(`${name}: ${added.length} new or changed file(s) (${added.join(', ')}): save as ${key}`);
     if (process.env.GITHUB_OUTPUT) fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}-key=${key}\n`);
     return 0;
   }

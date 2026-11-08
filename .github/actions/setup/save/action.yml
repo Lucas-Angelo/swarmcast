@@ -1,7 +1,7 @@
 name: Save the SwarmCast setup caches
 description: >-
-  Last step of a job that used ./.github/actions/setup: saves the caches the job added files to
-  (pinned downloads with pkg's Node.js base binary, the Tauri tools on Windows, downloaded .debs).
+  Last step of a job that used ./.github/actions/setup: saves the caches the job added or changed
+  files in (pinned downloads with pkg's Node.js base binary, the Tauri tools on Windows, downloaded .debs).
   On main only, so pull requests restore main's caches instead of each storing its own copy (the
   repository's 10 GB cache limit), except the pinned-downloads cache, which pull requests save
   too (see below). Never fatal: a save that fails is a warning. Call it with
@@ -12,8 +12,8 @@ description: >-
 runs:
   using: composite
   steps:
-    # A new entry only when the job added files to what it restored (.github/scripts/cache-files.mjs):
-    # a job that added nothing (an exact hit, or a job that failed before its downloads) saves
+    # A new entry only when the job added files to what it restored or changed one of them
+    # (.github/scripts/cache-files.mjs): a job that added nothing (an exact hit, or a job that failed before its downloads) saves
     # nothing, and the newest entry, which the next restore takes, always holds what it restored.
     - name: What the job added to the caches
       id: added
