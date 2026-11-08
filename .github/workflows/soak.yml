@@ -358,9 +358,9 @@ jobs:
         with:
           ffmpeg: 'true'
       # What _desktop.yml's clean-machine preflight step does (with the package built here), without the Playwright browser download: verify.mjs --chrome
-      # drives the Google Chrome of the runner image. No --tunnel by default: Cloudflare
-      # rate-limits quick tunnels, so the soak would measure Cloudflare. To soak the tunnel
-      # too, put "--tunnel" in the plan entry's args.
+      # drives the Google Chrome of the runner image. Its tunnel session goes to the local
+      # stand-in for Cloudflare (scripts/test/lib/cloudflare.mjs), as in the gate, so the soak
+      # never measures Cloudflare's free service.
       - run: npm run build
       - name: Build the package
         run: node scripts/build/package.mjs --target "${{ matrix.target }}"

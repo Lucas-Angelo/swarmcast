@@ -3,8 +3,9 @@ name: windows
 # The Windows end-to-end suites (pipeline.yml test stage) on fresh GitHub-hosted VMs: each takes
 # the staged windows-x64 server (pkg-windows-x64 from _build.yml: the desktop app's sidecar),
 # runs it outside the desktop app with a bare-OS PATH, and drives it with Google Chrome,
-# Microsoft Edge and Firefox (Playwright), the real Cloudflare quick tunnel, direct mode, the
-# quality ladder and real OBS Studio (scripts/test/windows). Each job writes its suite's results
+# Microsoft Edge and Firefox (Playwright), a quick tunnel (the package's cloudflared against a
+# local stand-in for Cloudflare, scripts/test/lib/cloudflare.mjs), direct mode, the quality
+# ladder and real OBS Studio (scripts/test/windows). Each job writes its suite's results
 # to its summary (.github/scripts/test-summary.mjs); `node scripts/test/windows/summarize.mjs` makes
 # one table of all of them from the downloaded win-* artifacts.
 on:

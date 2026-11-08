@@ -14,6 +14,19 @@ const NAME_LOOKUP_TIMEOUT_MS = 90_000;
 const CLOUDFLARE_RESOLVERS = ['1.1.1.1', '1.0.0.1'];
 
 /**
+ * The local stand-in for Cloudflare (cloudflare.mjs) whose quick tunnels the harness watches, or
+ * null for the real service. With it, quick-tunnel names exist only there: openLink waits for no
+ * DNS and probeHealth asks the stand-in; the browser contexts take its contextOptions.
+ * @type {{ healthz: (base: string) => Promise<string | null> } | null}
+ */
+let localCloudflare = null;
+
+/** Quick tunnels go to `cf` (a started local stand-in) from now on, or to the real Cloudflare with null. */
+export function setLocalCloudflare(cf) {
+  localCloudflare = cf;
+}
+
+/**
  * Infra recovery, not a retry of SwarmCast: a quick tunnel's name is brand new for a little
  * while after cloudflared prints it. A resolver asked about it too early remembers it as unknown,
  * in some of its caches, for the zone's negative TTL (60 s), and keeps answering "no such name"
@@ -55,9 +68,9 @@ export async function waitForTunnelName(url, log = console.log, dns = {}) {
   if (misses) log(`infra recovery: DNS: ${host} known to ${CLOUDFLARE_RESOLVERS[0]} after ${Math.round((Date.now() - t0) / 1000)} s (${misses} lookups there said unknown: a brand-new name)`);
 }
 
-/** Opens `url` (a live link) in `page` once its name resolves (waitForTunnelName): until the response commits. Returns the response. */
+/** Opens `url` (a live link) in `page` once its name resolves (waitForTunnelName; at once with a local stand-in): until the response commits. Returns the response. */
 export async function openLink(page, url, log) {
-  await waitForTunnelName(url, log);
+  if (!localCloudflare) await waitForTunnelName(url, log);
   return page.goto(url, { timeout: 60_000, waitUntil: 'commit' });
 }
 
@@ -204,10 +217,11 @@ export async function pageState(page) {
  * The public health check (/healthz) of a live link's base: its x-swarmcast header (or "ok"),
  * null when it does not answer. A quick tunnel's name is resolved through DNS-over-HTTPS
  * (1.1.1.1), past the negative cache of the runner's resolver, so "no answer" means the tunnel
- * is down, not that the runner forgot the name.
+ * is down, not that the runner forgot the name; with a local stand-in, the stand-in answers.
  */
 export async function probeHealth(base) {
   const u = new URL('/healthz', base);
+  if (localCloudflare && QUICK_TUNNEL_HOST.test(u.hostname)) return localCloudflare.healthz(base);
   let resolveHost;
   if (u.protocol === 'https:') {
     const r = await fetch(`https://1.1.1.1/dns-query?name=${u.hostname}&type=A`, { headers: { accept: 'application/dns-json' } }).then(

@@ -66,8 +66,8 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 
 | What | Where | Why |
 |---|---|---|
-| A brand-new quick-tunnel name that the runner's resolver does not know yet | `waitForTunnelName` in [scripts/test/lib/viewer.mjs](../scripts/test/lib/viewer.mjs) (Windows suites, preflight) | the zone caches NXDOMAIN for its 60 s negative TTL: the wait is a lookup on Cloudflare's resolvers until they know the name, then one lookup on the runner's resolver (never asked before, by the app either), then the check runs once |
-| A live link that Cloudflare's edge answers with its own 530 page (no connection for the tunnel) while cloudflared runs on | `joinAndPlay` in [scripts/test/preflight/verify.mjs](../scripts/test/preflight/verify.mjs) | Cloudflare's free quick-tunnel edge, not SwarmCast (gate run 42164021587). It is the app's job to notice and replace the tunnel (`tunnel/watch.ts`), so it is checked: the app must show a new link within its watch time plus the tunnel step's limit, and the viewer then plays that one |
+| A brand-new quick-tunnel name that the runner's resolver does not know yet | `waitForTunnelName` in [scripts/test/lib/viewer.mjs](../scripts/test/lib/viewer.mjs), only with the real Cloudflare (`real-services.yml`, never a gate; the gate's tunnels go to the [local stand-in](#no-third-party-service-in-the-gate)) | the zone caches NXDOMAIN for its 60 s negative TTL: the wait is a lookup on Cloudflare's resolvers until they know the name, then one lookup on the runner's resolver (never asked before, by the app either), then the check runs once |
+| A live link that Cloudflare's edge answers with its own 530 page (no connection for the tunnel) while cloudflared runs on | `joinAndPlay` in [scripts/test/preflight/verify.mjs](../scripts/test/preflight/verify.mjs), only with `--real-cloudflare` (`real-services.yml`); with the stand-in a 530 fails the step | Cloudflare's free quick-tunnel edge, not SwarmCast (gate run 42164021587). It is the app's job to notice and replace the tunnel (`tunnel/watch.ts`), so it is checked: the app must show a new link within its watch time plus the tunnel step's limit, and the viewer then plays that one. The gate checks the same replacement deterministically: `local-cloudflare.test.ts` makes the stand-in answer 530 |
 | `hdiutil detach` while macOS services still scan a new volume ("Resource busy") | `detach` in [scripts/test/desktop/verify.mjs](../scripts/test/desktop/verify.mjs) | only "Resource busy" is waited out, then the detach is forced; any other error fails |
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
 | A registry hiccup on `docker pull` | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test |
@@ -114,12 +114,13 @@ contain only `// Arrange`, `// Act` and `// Assert`.
 
 Integration tests use real MediaMTX, ffmpeg, server processes and 127.0.0.1 sockets, and local
 stand-ins for everything off the machine: no test downloads blocklists or reaches GitHub, Cloudflare
-or a router. `helpers.ts` has no Vitest imports (the e2e server and the scripts use it too) and
+or a router (Cloudflare's quick tunnels go to the [local stand-in](#no-third-party-service-in-the-gate):
+`quick-tunnel.test.ts`, `local-cloudflare.test.ts`). `helpers.ts` has no Vitest imports (the e2e server and the scripts use it too) and
 provides `testConfig`/`writeConfig`, `bootApp`, `ServerProcess`, `signIn`, `hangingServer` and
 `startFeed`. `viewers.ts` (Vitest suites only) runs a live's public server in-process with
 `ControlClient`, whose waits are on the arriving messages. `tmpDir()` folders are deleted after the
 run. Waits use `until()`/`waitForLine()` on the real event, never sleeps. Test-only seams:
-`SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `NODE_EXTRA_CA_CERTS`.
+`SWARMCAST_SPEEDTEST_URL`, `SWARMCAST_GITHUB_URL`, `SWARMCAST_TEST_CLOUDFLARE`, `NODE_EXTRA_CA_CERTS`.
 
 ### End-to-end tests
 
@@ -270,12 +271,14 @@ current directory. CI runs `cargo fmt --check`, `cargo clippy --all-targets -D w
 
 The system harnesses test the real thing on clean CI machines: the desktop installers, and the staged
 server (`release/staging/<target>`, the executable the app runs as its sidecar) started by itself, with
-real browsers, a synthetic OBS feed from ffmpeg, real OBS Studio and the real Cloudflare quick tunnel.
+real browsers, a synthetic OBS feed from ffmpeg, real OBS Studio, and quick tunnels opened by the
+package's own cloudflared against a [local stand-in for Cloudflare](#no-third-party-service-in-the-gate).
 
 | Harness | Runs on | Entry point (CI) |
 |---|---|---|
 | Windows suites: app, direct, quality, obs | Windows runners (`_windows.yml`) | `node scripts/test/windows/<suite>.mjs --staging release/staging/windows-x64 --out <file>.json` |
-| Preflight: start, stream, watch, P2P, kick, stop, tunnel | macOS, Linux, Windows (`_desktop.yml`) | `node scripts/test/preflight/verify.mjs --staging release/staging/<target> --tunnel --chrome` |
+| Preflight: start, stream, watch, P2P, kick, stop, tunnel (local stand-in for Cloudflare) | macOS, Linux, Windows (`_desktop.yml`) | `node scripts/test/preflight/verify.mjs --staging release/staging/<target> --tunnel --chrome` |
+| Real services (not a gate): the preflight through the real Cloudflare quick tunnel | Linux, daily (`real-services.yml`) | `node scripts/test/preflight/verify.mjs --staging release/staging/linux-x64 --tunnel --real-cloudflare --chrome` |
 | Desktop app: installers, autostart, kill, quit, update A → B | macOS, Linux, Windows (`_desktop.yml`) | `node scripts/test/desktop/verify.mjs --installers … --update-from … --update-to …` |
 | Linux in Docker: AppImage, OBS, Playwright | x64 and arm64 Linux (`_docker.yml`) | `scripts/test/docker/{appimage,obs,e2e}.sh` |
 
@@ -296,6 +299,54 @@ Each JavaScript harness keeps its own report (the Windows suites' `<out>.json` a
 given with `--junit FILE` for preflight and the desktop test. A Windows check that fails dumps every
 open page's state (address, readyState, navigation timings, scripts fetched or not, resources) and the
 process tree, ports and reserved port ranges, whether or not it aborted its section.
+
+### No third-party service in the gate
+
+A gating test never reaches a service on the internet at test time: a test that depends on one
+fails when that service does. In the CI history from 2026-10-25 to 2026-11-07, every failure in
+which the product under test reached an external service came from Cloudflare's free quick tunnel
+(9 jobs, 3 more plausible): new names that did not resolve yet (`getaddrinfo ENOTFOUND
+<name>.trycloudflare.com`, a 45-minute burst in 6 of 72 windows-app soak jobs and one macOS Intel
+preflight), an edge that answered a working tunnel with its 530 page (gate run 42164021587), and a
+quick-tunnel API that timed out (run 41283791976). So the tunnel sessions of the preflight, the
+Windows app suite (sections 3-5) and the desktop test, the soak's preflight and the integration
+tests open their tunnels against a local stand-in for Cloudflare,
+[scripts/test/lib/cloudflare.mjs](../scripts/test/lib/cloudflare.mjs), on 127.0.0.1:
+
+- the real cloudflared of the package (or `vendor/`) asks its quick-tunnel service for a tunnel
+  (`--quick-service`) and registers with its edge (`--edge`, `--cacert`) over Cloudflare's tunnel
+  protocol: TLS, HTTP/2 with the edge as the client, the control stream and its Cap'n Proto
+  registration RPC ([capnp.mjs](../scripts/test/lib/capnp.mjs), the few encoding pieces it needs);
+- viewers' requests and WebSockets go to `https://<name>.trycloudflare.com` on the stand-in's public
+  side, which forwards them through cloudflared with the headers Cloudflare adds (CF-Connecting-IP,
+  CF-Ray, X-Forwarded-Proto) and answers Cloudflare's 530 page when the tunnel has no connection;
+  browsers reach it through its CONNECT proxy, which refuses every other host (`contextOptions`:
+  the proxy and its certificate);
+- the app takes it from `SWARMCAST_TEST_CLOUDFLARE` (`appEnv`; `apps/server/src/tunnel/stand-in.ts`,
+  127.0.0.1 only): its cloudflared gets the stand-in's arguments, and its reachability checks
+  (`waitForReachable`, the tunnel watch, "Stop everything") ask the stand-in's DNS-over-HTTPS and
+  public side instead of 1.1.1.1 and the internet. Everything else is the real code.
+
+What differs from the real service: HTTP/2 instead of QUIC between cloudflared and the edge (so the
+UDP-blocked fallback is not exercised here; `quick-tunnel.test.ts` covers it with an edge that
+drops UDP), one edge address, a name that resolves as soon as its connection registers, and no
+rate limit. `local-cloudflare.test.ts` proves the stand-in with the real cloudflared (a request and
+its answer with Cloudflare's headers, a WebSocket, 530 once the connector is gone) and runs a live
+of the real app through it: the live link, the tunnel watch replacing a tunnel the edge answers
+with 530, and "Stop everything". The real service stays covered by `real-services.yml`: daily, the
+preflight of the staged Linux server through the real Cloudflare (`--real-cloudflare`), with the
+real speed test, blocklists and STUN; never a gate, no secrets, a failure is reported in its
+summary and as a warning.
+
+Still reached by gating jobs, with no failure in that history, and why they stay: the staged
+server's start-up speed test (speed.cloudflare.com) and public blocklist downloads in the system
+harnesses (both in the background, failures only logged; the Windows suites judge the "upload too
+low" warning only on a measured fast uplink, else record it), STUN (stun.cloudflare.com) for the
+browsers' P2P candidates (the viewers find each other on loopback without it), Direct mode's public
+IP lookup in the Windows direct suite (1.1.1.1/cdn-cgi/trace), and cloudflared's own lookup of its
+feature flags in DNS (`cfd-features.argotunnel.com`, 10 s limit, defaults on failure). CI set-up
+downloads (npm, apt, Docker images, pinned binaries, actions) are infrastructure with their own
+recoveries ([above](#infra-recoveries)), not services under test.
 
 ### Chat bench
 

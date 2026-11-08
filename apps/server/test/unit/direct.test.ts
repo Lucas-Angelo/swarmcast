@@ -365,7 +365,7 @@ describe('controller: switching modes', () => {
     expect(live.phase).toBe('off');
     expect(live.steps.find((x) => x.id === 'tunnel')?.status).toBe('ok');
     expect(live.steps.find((x) => x.id === 'verify')?.status).toBe('ok');
-    expect(vi.mocked(probeHealth)).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/203\.0\.113\.7:\d+$/));
+    expect(vi.mocked(probeHealth)).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/203\.0\.113\.7:\d+$/), undefined, undefined);
   });
 });
 

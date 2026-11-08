@@ -23,9 +23,11 @@ name: desktop
 # separate steps, whatever applies to it:
 # - preflight: the staged server (the same executable the installers carry as their sidecar)
 #   started on an empty data folder, a synthetic OBS feed, Google Chrome watching, P2P, kick,
-#   link rotation, "Stop everything", quit, nothing left behind, and playback through a real
-#   Cloudflare quick tunnel (scripts/test/preflight/verify.mjs). Not on the arm64 image (no
-#   Google Chrome there);
+#   link rotation, "Stop everything", quit, nothing left behind, and playback through a quick
+#   tunnel: the package's cloudflared against a local stand-in for Cloudflare
+#   (scripts/test/lib/cloudflare.mjs), so no gate depends on Cloudflare's free service; the real
+#   one is covered by real-services.yml (scheduled, never gating) (scripts/test/preflight/verify.mjs).
+#   Not on the arm64 image (no Google Chrome there);
 # - desktop: the real installers: install, launch, panel login, autostart, kill, quit, the
 #   uninstallers, and an update from build A to them with the settings kept
 #   (scripts/test/desktop/verify.mjs);
