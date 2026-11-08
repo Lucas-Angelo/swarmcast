@@ -2,11 +2,13 @@ name: Real services
 
 # The real third-party services the app uses, once a day: Cloudflare's free quick tunnel (the
 # quick-tunnel API, its edge, DNS-over-HTTPS and the new name's DNS), its speed test, the public
-# IP blocklists and the STUN server. The gate (pipeline.yml) never reaches them: its tunnel
-# sessions go to a local stand-in for Cloudflare (scripts/test/lib/cloudflare.mjs), so a
-# Cloudflare outage or rate limit cannot fail a pull request, main or a release. This run keeps
-# the real path covered: the preflight of the staged Linux server with --real-cloudflare and no
-# stand-in at all, as a fresh install runs it.
+# IP blocklists, the STUN server, and the ffmpeg download from its publisher (BtbN's GitHub
+# releases). The gate (pipeline.yml) never reaches them: its tunnel sessions go to a local
+# stand-in for Cloudflare (scripts/test/lib/cloudflare.mjs) and its ffmpeg install to a local
+# stand-in for the publisher (scripts/test/lib/ffmpeg-stand-in.mjs), so an outage or rate limit
+# cannot fail a pull request, main or a release. This run keeps the real paths covered: the
+# preflight of the staged Linux server with --real-cloudflare and no stand-in at all, as a fresh
+# install runs it, and the app's ffmpeg install from the publisher's real URL.
 #
 # Never a gate: nothing waits on it, it reads no secret and no environment, and a failure of a
 # real service is reported in the job summary (and as a warning), not as a red run, so it never
@@ -49,10 +51,21 @@ jobs:
         continue-on-error: true
         timeout-minutes: 11
         run: node scripts/test/preflight/verify.mjs --staging release/staging/linux-x64 --tunnel --real-cloudflare --chrome --junit "$RUNNER_TEMP/real-services.junit.xml" 2>&1 | tee "$RUNNER_TEMP/real-services.log"
+      # The app's own install (quality/ffmpeg.ts: the panel's "Install the video converter" and
+      # the desktop app's first start) from the pinned URL, as a streamer's computer runs it:
+      # download (with its stall limit), SHA-256, extraction, `ffmpeg -version`, encoder probe.
+      - name: ffmpeg install from its real publisher
+        id: ffmpeg
+        continue-on-error: true
+        timeout-minutes: 10
+        run: |
+          data="$(mktemp -d)"
+          node --import tsx scripts/test/quality/install-ffmpeg.ts "$data" 2>&1 | tee "$RUNNER_TEMP/real-services-ffmpeg.log"
       - name: Summary
         if: always()
         env:
           OUTCOME: ${{ steps.preflight.outcome }}
+          FFMPEG_OUTCOME: ${{ steps.ffmpeg.outcome }}
         run: |
           {
             echo "### Real services: preflight through the real Cloudflare quick tunnel: ${OUTCOME}"
@@ -62,9 +75,18 @@ jobs:
             echo '```'
             grep -E '^(✓|✗|infra recovery:|\[tunnel\] the app tried|PREFLIGHT FAILED|Preflight )' "$RUNNER_TEMP/real-services.log" || echo '(no output)'
             echo '```'
+            echo
+            echo "### Real services: ffmpeg install from its real publisher: ${FFMPEG_OUTCOME}"
+            echo
+            echo '```'
+            grep -vE '^downloading ' "$RUNNER_TEMP/real-services-ffmpeg.log" | head -n 20 || echo '(no output)'
+            echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$OUTCOME" != success ]; then
             echo "::warning title=Real services::the preflight through the real Cloudflare quick tunnel did not pass (${OUTCOME}); see the summary and the log artifact"
+          fi
+          if [ "$FFMPEG_OUTCOME" != success ]; then
+            echo "::warning title=Real services::the ffmpeg install from its real publisher did not pass (${FFMPEG_OUTCOME}); see the summary and the log artifact"
           fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()

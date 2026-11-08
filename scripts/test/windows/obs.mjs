@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Real OBS Studio on a Windows runner (no GPU: D3D11 falls back to WARP).
-// OBS 33.0.0 portable zip (pinned SHA-256), configured through files + obs-websocket exactly
+// OBS 33.0.0 portable zip (pinned in scripts/build/versions.json "obs-studio"; the setup action's
+// obs-studio input puts it in the download cache, so the suite never downloads it: docs/TESTING.md,
+// "No third-party service in the gate"), configured through files + obs-websocket exactly
 // like scripts/test/obs-e2e/setup-obs.mjs (Advanced output, x264 CBR 2500, keyframe 2 s,
 // Custom service rtmp://127.0.0.1:1935/live + key), a looping Media Source, streaming into the
 // staged SwarmCast server (the desktop app's sidecar, run outside the app); the panel must show
@@ -13,13 +15,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import WebSocket from 'ws';
-import { download } from '../../build/fetch-binaries.mjs';
 import {
   addSweepPath, ART, check, copyAppLogs, environmentFacts, ffmpegBin, finish, info, joinAndPlay, killTree, killUnder, launchBrowser, log, must, obsPillSending, onCleanup, openPanel, ps,
-  quitAndVerify, readText, uploadCapCheck, section, sha256File, startApp, until, waitLiveLink, waitPhase,
+  quitAndVerify, readText, repoRoot, uploadCapCheck, section, sha256File, startApp, until, waitLiveLink, waitPhase,
 } from './lib.mjs';
+import { pinnedArchive } from '../lib/pinned-archive.mjs';
 
-const OBS = { version: '33.0.0', url: 'https://github.com/obsproject/obs-studio/releases/download/33.0.0/OBS-Studio-33.0.0-Windows-x64.zip', sha256: '3369a3ecd67b5669a8a08d77357f87cc786d1fba42fbbd1054d841a69f6271a7' };
+const obsSpec = JSON.parse(readText(path.join(repoRoot, 'scripts', 'build', 'versions.json')))['obs-studio'];
+const OBS = { version: obsSpec.version, ...obsSpec.assets['windows-x64'] };
 const obsRoot = 'C:\\obs-portable';
 const obsCfg = path.join(obsRoot, 'config', 'obs-studio');
 const obsExe = path.join(obsRoot, 'bin', '64bit', 'obs64.exe');
@@ -117,24 +120,15 @@ await section('0. environment', async () => {
   for (const [k, v] of Object.entries(environmentFacts())) info(k, v);
 });
 
-await section('1. OBS 33.0.0 portable: download (pinned SHA-256), configure, generate media', async () => {
-  const zip = path.join(process.env.RUNNER_TEMP ?? 'C:\\Temp', 'obs.zip');
-  // A zip kept from an earlier run is used only when it still matches the pin; otherwise it is
-  // downloaded again, checked in memory, and only then written (download() in fetch-binaries).
-  let cached = '';
+await section(`1. OBS ${OBS.version} portable: from the download cache (pinned SHA-256), configure, generate media`, async () => {
+  let zip = '';
+  let missing = '';
   try {
-    cached = sha256File(zip);
-  } catch {
-    /* not there yet */
+    zip = pinnedArchive(OBS, { tool: 'obs-studio', setupInput: 'obs-studio' });
+  } catch (err) {
+    missing = err.message;
   }
-  if (cached !== OBS.sha256) {
-    try {
-      await download(OBS.url, zip, OBS.sha256);
-    } catch (err) {
-      must('downloaded OBS (pinned SHA-256)', false, err.message);
-    }
-  }
-  must('OBS zip SHA-256 matches the pin', sha256File(zip) === OBS.sha256, sha256File(zip));
+  must('OBS zip from the download cache, SHA-256 matches the pin', !missing, missing || zip);
   fs.rmSync(obsRoot, { recursive: true, force: true });
   fs.mkdirSync(obsRoot, { recursive: true });
   execFileSync(path.join(process.env.SystemRoot, 'System32', 'tar.exe'), ['-xf', zip, '-C', obsRoot]);

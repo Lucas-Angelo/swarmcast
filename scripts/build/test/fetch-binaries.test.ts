@@ -517,3 +517,21 @@ describe('versions.json test tools', () => {
     }
   });
 });
+
+describe('versions.json archives kept whole', () => {
+  type Spec = { version: string; url: string; bundle?: boolean; testOnly?: boolean; archive?: boolean; assets: Record<string, { asset: string; sha256: string }> };
+  const archives = Object.entries(versions as unknown as Record<string, Spec>).filter(([, spec]) => spec.archive);
+
+  it('are test tools fetched only by name, never bundled (the OBS suite\'s portable OBS)', () => {
+    // Assert
+    expect(archives.map(([tool]) => tool)).toEqual(['obs-studio']);
+    for (const [tool, spec] of archives) {
+      expect(spec.bundle, tool).toBe(false);
+      expect(spec.testOnly, tool).toBe(true);
+      for (const a of Object.values(spec.assets)) expect(a.sha256, tool).toMatch(/^[0-9a-f]{64}$/);
+    }
+    const obs = archives[0]![1];
+    expect(Object.keys(obs.assets)).toEqual(['windows-x64']);
+    expect(assetUrls(obs, obs.assets['windows-x64']!)).toEqual(['https://github.com/obsproject/obs-studio/releases/download/33.0.0/OBS-Studio-33.0.0-Windows-x64.zip']);
+  });
+});

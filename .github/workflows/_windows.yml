@@ -5,9 +5,11 @@ name: windows
 # runs it outside the desktop app with a bare-OS PATH, and drives it with Google Chrome,
 # Microsoft Edge and Firefox (Playwright), a quick tunnel (the package's cloudflared against a
 # local stand-in for Cloudflare, scripts/test/lib/cloudflare.mjs), direct mode, the quality
-# ladder and real OBS Studio (scripts/test/windows). Each job writes its suite's results
-# to its summary (.github/scripts/test-summary.mjs); `node scripts/test/windows/summarize.mjs` makes
-# one table of all of them from the downloaded win-* artifacts.
+# ladder (its ffmpeg install from a local stand-in for the publisher,
+# scripts/test/lib/ffmpeg-stand-in.mjs) and real OBS Studio (its pinned portable zip from the
+# download cache) (scripts/test/windows). Each job writes its suite's results to its summary
+# (.github/scripts/test-summary.mjs); `node scripts/test/windows/summarize.mjs` makes one table
+# of all of them from the downloaded win-* artifacts.
 on:
   workflow_call:
     inputs:
@@ -62,11 +64,15 @@ jobs:
         with:
           persist-credentials: false
       # ffmpeg is only for the test harness (OBS-like feed, FFMPEG_BIN); the app runs with a
-      # bare-OS PATH and never sees it.
+      # bare-OS PATH and never sees it. app-ffmpeg: the archive the quality suite's panel install
+      # downloads, which the suite serves to the app from a local stand-in; obs-studio: the OBS
+      # suite's portable OBS. Both come from the download cache, never from github.com at test time.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
           ffmpeg: 'true'
+          app-ffmpeg: ${{ matrix.suite == 'quality' }}
+          obs-studio: ${{ matrix.suite == 'obs' }}
       - uses: ./.github/actions/get-build
         timeout-minutes: 10
         with:
