@@ -17,16 +17,22 @@
 //   Cloudflare's 530 page ("error 1033") when the tunnel has no connection; DNS-over-HTTPS at
 //   https://127.0.0.1:<port>/dns-query (application/dns-json), which knows a name once its
 //   tunnel has registered a connection, as Cloudflare's resolvers do a few seconds after
-//   cloudflared prints it;
+//   cloudflared prints it; the same over plain HTTP on a second port for the app's own checks
+//   (`checks`), which then read no certificate;
 // - an HTTP CONNECT proxy for browsers (contextOptions): *.trycloudflare.com:443 goes to the
 //   public side, anything else is refused, so a page cannot reach the internet either.
 //
 // SwarmCast takes the stand-in from SWARMCAST_TEST_CLOUDFLARE (appEnv; apps/server/src/tunnel/
 // stand-in.ts): its cloudflared gets --quick-service, --edge, --cacert and --protocol http2 (no
-// QUIC here), and its reachability checks ask this DNS-over-HTTPS and public side. What differs
-// from the real service: HTTP/2 instead of QUIC between cloudflared and the edge, one edge
-// address, and no delay before a name resolves. The scheduled real-service smoke
+// QUIC here), and its reachability checks ask this DNS-over-HTTPS and public side (`checks`).
+// What differs from the real service: HTTP/2 instead of QUIC between cloudflared and the edge,
+// one edge address, and no delay before a name resolves. The scheduled real-service smoke
 // (.github/workflows/real-services.yml) keeps the real Cloudflare covered.
+//
+// The edge side follows the cloudflared pinned in scripts/build/versions.json. A bump of that pin
+// changes vendor/ and so runs local-cloudflare.test.ts (integration, every app change): a
+// cloudflared that speaks the tunnel protocol differently fails there first, with the method or
+// interface it asked for in its log (this edge answers anything else with an RPC exception).
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
@@ -42,6 +48,13 @@ import { Msg, exceptionMessage, readFrames, readRpc, returnMessage } from './cap
 const REGISTRATION_SERVER = 0xf71695ec7fe85497n;
 const UPGRADE = 'cf-cloudflared-proxy-connection-upgrade';
 const RESPONSE_HEADERS = 'cf-cloudflared-response-headers';
+/**
+ * The edge's HTTP/2 receive windows (it receives the responses): the 64 KiB defaults would make
+ * every 2 s video segment wait for dozens of WINDOW_UPDATE round trips through this process's
+ * event loop, which the harness shares with Playwright; Cloudflare's edge does not throttle so.
+ */
+const EDGE_STREAM_WINDOW = 4 * 1024 * 1024;
+const EDGE_SESSION_WINDOW = 32 * 1024 * 1024;
 /** Request headers HTTP/2 refuses (connection-specific) or that the edge sets itself. */
 const NOT_FORWARDED = new Set(['connection', 'upgrade', 'keep-alive', 'proxy-connection', 'transfer-encoding', 'te', 'host', 'http2-settings']);
 const QUICK_TUNNEL_HOST = /^([a-z0-9]+(?:-[a-z0-9]+)*)\.trycloudflare\.com$/;
@@ -89,7 +102,7 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
   });
 
   // ---- the public side: viewers and DNS-over-HTTPS ----
-  const web = https.createServer({ key: pki.keyPem, cert: pki.certPem }, (req, res) => {
+  const publicSide = (req, res) => {
     const host = hostOf(req);
     if (net.isIP(host)) {
       dnsQuery(req, res, tunnels);
@@ -101,7 +114,8 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
       return;
     }
     forward(conn, req, res, host);
-  });
+  };
+  const web = https.createServer({ key: pki.keyPem, cert: pki.certPem }, publicSide);
   web.on('upgrade', (req, socket, head) => {
     socket.on('error', () => {});
     const host = hostOf(req);
@@ -116,6 +130,13 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
   web.on('connection', (s) => {
     webSockets.add(s);
     s.on('close', () => webSockets.delete(s));
+  });
+  // The same public side over plain HTTP: the app's reachability checks (stand-in.ts).
+  const checks = http.createServer(publicSide);
+  const checkSockets = new Set();
+  checks.on('connection', (s) => {
+    checkSockets.add(s);
+    s.on('close', () => checkSockets.delete(s));
   });
 
   // ---- the proxy browsers use for *.trycloudflare.com ----
@@ -148,8 +169,10 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
   const edgePort = await listen(edge);
   const webPort = await listen(web);
   const proxyPort = await listen(proxy);
+  const checksPort = await listen(checks);
   closers.push(
     () => close(proxy, proxySockets),
+    () => close(checks, checkSockets),
     () => close(web, webSockets),
     () => close(edge, edgeSockets),
     () => close(service, new Set()),
@@ -158,8 +181,8 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
   const standIn = {
     service: `http://127.0.0.1:${servicePort}`,
     edge: `127.0.0.1:${edgePort}`,
-    web: `127.0.0.1:${webPort}`,
     ca: caFile,
+    checks: `127.0.0.1:${checksPort}`,
   };
   return {
     caFile,
@@ -180,7 +203,7 @@ export async function startLocalCloudflare({ dir, log = () => {} }) {
       t.routed = false;
     },
     /** Where the public side listens (127.0.0.1:<port>): HTTPS for every tunnel's name, with the CA's certificate. */
-    web: standIn.web,
+    web: `127.0.0.1:${webPort}`,
     /**
      * A request to `url` (https://<name>.trycloudflare.com/...) through the public side, as a viewer
      * sends it: `{ status, headers, body }`, or null when the connection failed.
@@ -247,8 +270,9 @@ function routeFor(t) {
  * and answers cloudflared's registration RPCs on it.
  */
 function serveConnection(socket, tunnels, log) {
-  const session = http2.connect('https://h2.cftunnel.com', { createConnection: () => socket });
+  const session = http2.connect('https://h2.cftunnel.com', { createConnection: () => socket, settings: { initialWindowSize: EDGE_STREAM_WINDOW } });
   session.on('error', () => {});
+  session.once('connect', () => session.setLocalWindowSize(EDGE_SESSION_WINDOW));
   /** @type {Connection} */
   const conn = { session, tunnel: null, index: -1, registered: false };
   const control = session.request({ ':method': 'GET', ':scheme': 'https', ':authority': 'h2.cftunnel.com', ':path': '/', [UPGRADE]: 'control-stream' }, { endStream: false });
@@ -288,13 +312,7 @@ function answer(rpc, conn, tunnels, log) {
     t.connections.add(conn);
     t.known = true;
     log(`local cloudflare: ${t.hostname} connection ${conn.index} registered`);
-    // registerConnection -> (result :ConnectionResponse): result.connectionDetails (union member 1)
-    // = { uuid @0 :Data, locationName @1 :Text, tunnelIsRemotelyManaged @2 :Bool (false) }.
-    return returnMessage(rpc.id, {
-      dataWords: 0,
-      ptrCount: 1,
-      fill: (results) => results.struct(0, 1, 1).u16(0, 1).struct(0, 1, 2).data(0, crypto.randomBytes(16)).text(1, LOCATION),
-    });
+    return connectionDetailsReturn(rpc.id, crypto.randomBytes(16));
   }
   if (rpc.methodId === 1) {
     conn.registered = false;
@@ -302,6 +320,21 @@ function answer(rpc, conn, tunnels, log) {
   }
   if (rpc.methodId === 2) return returnMessage(rpc.id);
   return exceptionMessage(rpc.id, `local cloudflare: method ${rpc.methodId} is not implemented`);
+}
+
+/**
+ * The Return of a registerConnection that succeeded: (result :ConnectionResponse) with
+ * result.connectionDetails (union member 1) = { uuid @0 :Data, locationName @1 :Text,
+ * tunnelIsRemotelyManaged @2 :Bool (false) } (tunnelrpc.capnp).
+ * @param {number} answerId
+ * @param {Buffer} uuid
+ */
+export function connectionDetailsReturn(answerId, uuid) {
+  return returnMessage(answerId, {
+    dataWords: 0,
+    ptrCount: 1,
+    fill: (results) => results.struct(0, 1, 1).u16(0, 1).struct(0, 1, 2).data(0, uuid).text(1, LOCATION),
+  });
 }
 
 function formatUuid(b) {

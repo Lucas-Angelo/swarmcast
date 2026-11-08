@@ -325,7 +325,15 @@ tests open their tunnels against a local stand-in for Cloudflare,
 - the app takes it from `SWARMCAST_TEST_CLOUDFLARE` (`appEnv`; `apps/server/src/tunnel/stand-in.ts`,
   127.0.0.1 only): its cloudflared gets the stand-in's arguments, and its reachability checks
   (`waitForReachable`, the tunnel watch, "Stop everything") ask the stand-in's DNS-over-HTTPS and
-  public side instead of 1.1.1.1 and the internet. Everything else is the real code.
+  public side instead of 1.1.1.1 and the internet, over plain HTTP on 127.0.0.1 (the app reads no
+  certificate for them; only cloudflared gets the CA). Everything else is the real code. The
+  variable adds no power over the app: whoever can set the app's environment already runs code as
+  its user (`SWARMCAST_BIN_DIR` picks the cloudflared it starts).
+
+A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
+with the new binary in its own pull request, so a change in the tunnel protocol fails there first
+(the edge answers an interface or method it does not know with an RPC exception, which
+cloudflared logs); `capnp.mjs` has its own unit test (`scripts/test/test/capnp.test.ts`).
 
 What differs from the real service: HTTP/2 instead of QUIC between cloudflared and the edge (so the
 UDP-blocked fallback is not exercised here; `quick-tunnel.test.ts` covers it with an edge that

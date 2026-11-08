@@ -27,15 +27,15 @@ describe('cloudflareStandIn', () => {
     // Arrange
     const ca = caFile();
     // Act
-    const s = cloudflareStandIn(env({ service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', web: '127.0.0.1:20003', ca }));
+    const s = cloudflareStandIn(env({ service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', checks: '127.0.0.1:20003', ca }));
     // Assert
     expect(standInArgs(s!)).toEqual(['--quick-service', 'http://127.0.0.1:20001', '--edge', '127.0.0.1:20002', '--cacert', ca, '--protocol', 'http2', '--no-prechecks']);
   });
 
   it.each([
-    ['a remote quick-tunnel service', { service: 'https://api.example.com', edge: '127.0.0.1:20002', web: '127.0.0.1:20003' }],
-    ['a remote edge', { service: 'http://127.0.0.1:20001', edge: '203.0.113.7:7844', web: '127.0.0.1:20003' }],
-    ['a remote public side', { service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', web: 'localhost.example.com:443' }],
+    ['a remote quick-tunnel service', { service: 'https://api.example.com', edge: '127.0.0.1:20002', checks: '127.0.0.1:20003' }],
+    ['a remote edge', { service: 'http://127.0.0.1:20001', edge: '203.0.113.7:7844', checks: '127.0.0.1:20003' }],
+    ['a remote public side', { service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', checks: 'localhost.example.com:443' }],
   ])('refuses %s', (_what, s) => {
     // Arrange
     const ca = caFile();
@@ -45,9 +45,16 @@ describe('cloudflareStandIn', () => {
     expect(read).toThrow(/127\.0\.0\.1/);
   });
 
+  it('refuses a value that is not JSON, with the same explanation', () => {
+    // Act
+    const read = () => cloudflareStandIn({ SWARMCAST_TEST_CLOUDFLARE: '127.0.0.1:20001' });
+    // Assert
+    expect(read).toThrow(/127\.0\.0\.1/);
+  });
+
   it('refuses a CA file that does not exist', () => {
     // Act
-    const read = () => cloudflareStandIn(env({ service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', web: '127.0.0.1:20003', ca: path.join(tempDir(), 'missing.pem') }));
+    const read = () => cloudflareStandIn(env({ service: 'http://127.0.0.1:20001', edge: '127.0.0.1:20002', checks: '127.0.0.1:20003', ca: path.join(tempDir(), 'missing.pem') }));
     // Assert
     expect(read).toThrow(/CA file/);
   });

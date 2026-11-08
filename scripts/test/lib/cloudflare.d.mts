@@ -21,7 +21,7 @@ export interface LocalCloudflare {
   appEnv: { SWARMCAST_TEST_CLOUDFLARE: string };
   /** Playwright context options: *.trycloudflare.com through the stand-in, its certificate accepted. */
   contextOptions: { proxy: { server: string }; ignoreHTTPSErrors: true };
-  /** 127.0.0.1:<port> of the public side. */
+  /** 127.0.0.1:<port> of the public side (HTTPS, the CA's certificate). */
   web: string;
   tunnels(): LocalTunnel[];
   /** From now on the tunnel's address answers 530 (Cloudflare's edge stopped routing to its connections). */
@@ -33,3 +33,6 @@ export interface LocalCloudflare {
 
 /** A local stand-in for Cloudflare's quick-tunnel service, edge, public names and DNS-over-HTTPS (cloudflare.mjs). */
 export function startLocalCloudflare(opts: { dir: string; log?: (line: string) => void }): Promise<LocalCloudflare>;
+
+/** The Return of a registerConnection that succeeded (tunnelrpc.capnp ConnectionResponse.connectionDetails), framed. */
+export function connectionDetailsReturn(answerId: number, uuid: Buffer): Buffer;

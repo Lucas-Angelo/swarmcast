@@ -21,6 +21,8 @@ import { ROOT, bootApp, tmpDir, until } from './helpers.js';
 const CLOUDFLARED = path.join(ROOT, 'vendor', platformTag(), exe('cloudflared'));
 const QUICK_TUNNEL_URL = /^https:\/\/[a-z0-9-]+\.trycloudflare\.com$/;
 const log = pino({ level: 'silent' });
+/** Bigger than a 2 s 1080p segment, and than HTTP/2's default 64 KiB windows many times over. */
+const BIG_BODY = 'segment-'.repeat(768 * 1024);
 
 async function localCloudflare(): Promise<LocalCloudflare> {
   const cf = await startLocalCloudflare({ dir: tmpDir('sc-cf-') });
@@ -28,11 +30,15 @@ async function localCloudflare(): Promise<LocalCloudflare> {
   return cf;
 }
 
-/** An origin that echoes what it got: the request line and headers, a POST body, WebSocket messages. */
+/** An origin that echoes what it got: the request line and headers, a POST body, WebSocket messages; /big answers BIG_BODY. */
 async function echoOrigin(): Promise<{ port: number }> {
   const server = http.createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
+    if (req.url === '/big') {
+      res.end(BIG_BODY);
+      return;
+    }
     res.setHeader('set-cookie', ['first=1; Path=/', 'second=2; Path=/']);
     res.setHeader('content-type', 'application/json');
     res.end(JSON.stringify({ method: req.method, url: req.url, headers: req.headers, bodyLength: body.length }));
@@ -72,6 +78,19 @@ describe('the local Cloudflare with the real cloudflared', () => {
     expect(seen).toMatchObject({ method: 'POST', url: '/path?q=1', bodyLength: 50_000 });
     expect(seen.headers).toMatchObject({ host: new URL(url).host, 'cf-connecting-ip': '127.0.0.1', 'x-forwarded-proto': 'https' });
     expect(seen.headers['cf-ray']).toMatch(/^[0-9a-f]{16}-LCL$/);
+  });
+
+  it('carries a big answer whole (a video segment)', async () => {
+    // Arrange
+    const cf = await localCloudflare();
+    const origin = await echoOrigin();
+    const url = await tunnelTo(cf, origin.port);
+    // Act
+    const res = await cf.request(`${url}/big`);
+    // Assert
+    expect(res?.status).toBe(200);
+    expect(res?.body.length).toBe(BIG_BODY.length);
+    expect(res?.body === BIG_BODY).toBe(true);
   });
 
   it('carries a WebSocket both ways', async () => {
