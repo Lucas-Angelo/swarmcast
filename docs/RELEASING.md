@@ -469,3 +469,15 @@ every pipeline) reports a new upstream build. To move to it: download `runtime-x
 `runtime-aarch64` from the `continuous` release, upload them as `type2-runtime-<short commit of the
 release>-linux-x64` and `-linux-arm64` (steps 2-4), then set `build`, each `sha256` and `mirrors` of
 the entry. The Linux desktop builds check that each AppImage starts with the pinned runtime.
+
+**Pebble** (`pebble` in `versions.json`, a `testTool`: `npm run fetch-bins` puts it in `vendor/` for
+the ACME integration test, packaging never takes it) is not a copy: Pebble's newest release, v2.10.1,
+can leave the poll of an order that follows its finalize unanswered for good (letsencrypt/pebble#554),
+and the fix (#555) is only on its main branch. So `ci-deps` holds builds of commit 1fcb30c for the five
+targets (`pebble-1fcb30c-<target>[.exe]`), with the source (`git archive` of that commit, vendored
+modules included), the MPL-2.0 license and `pebble-1fcb30c-build.sh`, whose header has the exact
+commands (Go 1.25.14 in `golang:1.25.14-alpine` pinned by digest, `CGO_ENABLED=0 go build -mod=vendor
+-trimpath -buildvcs=false -ldflags="-s -w -buildid= -X 'main.version=…'"`). The build is
+reproducible: run it again and `shasum -a 256` must print the pins. Once a Pebble release has the fix,
+point the entry at the publisher's release files (with these as `mirrors` or without) and drop the
+`testTool` builds from `ci-deps` when no supported branch pins them.

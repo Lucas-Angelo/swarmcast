@@ -2,7 +2,7 @@
 // download button and page per system (with and without stats.json), the usage numbers, phone
 // widths, the illustrated guides and keyboard focus. Each test is a visitor of its own (fixtures.ts);
 // it waits for the page's own work (the stats read, the fonts), never for the network to go idle.
-import { expect, fontsLoaded, noHorizontalScroll, pageSettled, RELEASES, shot, STATS, statsRead, test } from './fixtures.js';
+import { expect, fontsLoaded, freezePageClock, noHorizontalScroll, pageSettled, RELEASES, shot, STATS, statsRead, test } from './fixtures.js';
 
 /** The illustrated usage guides: [page, minimum screenshots, an English alt text, its Portuguese twin]. The alt texts name the app's buttons in the page language, like the screenshots. */
 const GUIDES: Array<[string, number, RegExp, RegExp]> = [
@@ -174,6 +174,7 @@ test.describe('language', () => {
     await expect(page).toHaveURL(/\/swarmcast\/pt-br\/$/);
 
     // Act
+    await pageSettled(page);
     await page.getByTestId('lang-switch').click();
 
     // Assert
@@ -270,6 +271,7 @@ test.describe('download button', () => {
     // Arrange
     const { context, page } = await visit({ ...PHONE, viewport: { width: 390, height: 844 } });
     await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    await freezePageClock(page);
 
     // Act
     await page.goto('/swarmcast/');
@@ -286,6 +288,7 @@ test.describe('download button', () => {
 
     // Assert
     await expect(page.getByTestId('download-copy')).toHaveText(/Link copied/);
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(page.url().split('#')[0]);
   });
 
   test('desktop: the download button is visible without scrolling', async ({ visit }) => {
@@ -358,6 +361,7 @@ test.describe('download page', () => {
     await expect(page).toHaveURL(/\/swarmcast\/download\/#macos$/);
 
     // Act
+    await pageSettled(page);
     await page.getByTestId('os-macos').getByRole('link', { name: /Step-by-step guide/ }).click();
 
     // Assert
@@ -460,6 +464,7 @@ test('the guide has an overview page; the logo goes home and Guide comes back', 
   await expect(page).toHaveURL(/\/swarmcast\/$/);
 
   // Act
+  await pageSettled(page);
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Guide' }).click();
 
   // Assert

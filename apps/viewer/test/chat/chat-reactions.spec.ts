@@ -5,10 +5,14 @@
 // motion" (a calm counter instead), the viewer's own "Show reactions" (remembered), the streamer
 // turning them off, mutes, Portuguese, both themes, a storm, and phones. Floaters are recorded as
 // they are added (a MutationObserver in the page), so no check races their animation, and nothing
-// here waits on a fixed time.
+// here waits on a fixed time. Where a check depends on the page's timers (the sender's next frame
+// window, CHAT_REACT_FRAME_MS: three Playwright clicks, each waiting for two stable animation
+// frames, can outlast it on a slow runner; the calm counter going after CALM_COUNTER_MS), the
+// page's clock stands still and the test runs it (freezePageClock).
+import { CHAT_REACT_FRAME_MS } from '@swarmcast/shared';
 import { expect, test, type Page } from './fixtures.js';
 import { MockHub } from './mock-hub.js';
-import { openWatch, requireBuild } from './watch-page.js';
+import { freezePageClock, openWatch, requireBuild } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
@@ -56,6 +60,22 @@ async function watchFloaters(page: Page): Promise<void> {
   });
 }
 const seen = (page: Page) => page.evaluate(() => (window as unknown as { __seen: Seen[] }).__seen);
+
+/**
+ * Records from now on each time the React button is shown or hidden, with the page's Date.now(). A
+ * timed mute is checked by when the button came back, not by looking while the mute lasts: a
+ * frame that reaches a slow page after the mute ended shows it at once, which is right, and a
+ * look meant for "while it lasts" would then see it.
+ */
+async function recordShown(page: Page): Promise<void> {
+  await reactButton(page).evaluate((el) => {
+    const w = window as unknown as { __shown: Array<{ shown: boolean; at: number }> };
+    w.__shown = [];
+    new MutationObserver(() => w.__shown.push({ shown: !(el as HTMLElement).hidden, at: Date.now() })).observe(el, { attributes: true, attributeFilter: ['hidden'] });
+  });
+}
+const shownLog = (page: Page) => page.evaluate(() => (window as unknown as { __shown: Array<{ shown: boolean; at: number }> }).__shown);
+
 const cspViolations = (page: Page) => page.evaluate(() => (window as unknown as { __csp: string[] }).__csp);
 const stats = (page: Page) => page.evaluate(() => (window as unknown as { __swarmcastChat: { stats: { reactions: { alive: number; spawned: number; peak: number } } } }).__swarmcastChat.stats.reactions);
 
@@ -69,6 +89,7 @@ test.describe('reactions over the video (mock hub)', () => {
   test('a named React button opens eight named reactions; a tap floats one over the video at once, inside the player under its controls, never taking a click; the taps after it go together', async ({ page }) => {
     // Arrange
     const hub = hubWithReactions();
+    await freezePageClock(page);
     await openWatch(page, hub);
     await watchFloaters(page);
 
@@ -86,6 +107,12 @@ test.describe('reactions over the video (mock hub)', () => {
     await options(page).nth(5).click();
     await options(page).nth(5).click();
     await options(page).nth(0).click();
+
+    // Assert
+    await expect.poll(() => hub.framesOf('chat.react')).toEqual([{ t: 'chat.react', c: [0, 0, 0, 0, 0, 1] }]);
+
+    // Act
+    await page.clock.runFor(CHAT_REACT_FRAME_MS);
 
     // Assert
     await expect.poll(() => seen(page).then((s) => s.length)).toBe(3);
@@ -162,6 +189,7 @@ test.describe('reactions over the video (mock hub)', () => {
     // Arrange
     await page.emulateMedia({ reducedMotion: 'reduce' });
     const hub = hubWithReactions();
+    await freezePageClock(page);
     await openWatch(page, hub);
     const chips = page.getByTestId('reactions-tally').locator('.rx-chip');
 
@@ -170,8 +198,7 @@ test.describe('reactions over the video (mock hub)', () => {
     hub.reactions([1, 0, 0, 0, 0, 1]);
 
     // Assert
-    await expect(chips).toHaveText(['1', '4']);
-    expect(await chips.evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.reaction))).toEqual(['love', 'fire']);
+    await expect.poll(() => chips.evaluateAll((els) => els.map((e) => `${(e as HTMLElement).dataset.reaction} ${e.textContent}`))).toEqual(['love 1', 'fire 4']);
     expect((await stats(page)).spawned).toBe(0);
     await expect(page.locator('.rx-float')).toHaveCount(0);
   });
@@ -262,11 +289,14 @@ test.describe('reactions over the video (mock hub)', () => {
     await expect(reactButton(page)).toBeHidden();
 
     // Act
-    hub.setYou({ mutedUntil: Date.now() + 1500 });
+    await recordShown(page);
+    const until = Date.now() + 1500;
+    hub.setYou({ mutedUntil: until });
 
-    // Assert: hidden while the mute lasts, back once it ends by itself.
-    await expect(reactButton(page)).toBeHidden();
+    // Assert: back once the mute ends by itself, never before.
     await expect(reactButton(page)).toBeVisible({ timeout: 10_000 });
+    const shownAt = (await shownLog(page)).find((e) => e.shown)?.at;
+    expect(shownAt, 'when the React button came back').toBeGreaterThanOrEqual(until);
 
     // Act
     hub.setSettings({ enabled: false });
@@ -296,10 +326,11 @@ test.describe('reactions over the video (mock hub)', () => {
       // Arrange
       await page.emulateMedia({ colorScheme: scheme, reducedMotion: 'reduce' });
       const hub = hubWithReactions();
+      await freezePageClock(page);
       await openWatch(page, hub);
 
       // Act
-      hub.reactions([2]);
+        hub.reactions([2]);
       await reactButton(page).click();
 
       // Assert
@@ -323,7 +354,7 @@ test.describe('reactions over the video (mock hub)', () => {
     const errors = await openWatch(page, hub);
 
     // Act
-    for (let i = 0; i < 300; i++) hub.reactions(MAX);
+    hub.reactionStorm(MAX, 300);
     await settle(page, hub, 'depois da tempestade');
     await page.getByTestId('chat-input').fill('ainda escrevo');
 

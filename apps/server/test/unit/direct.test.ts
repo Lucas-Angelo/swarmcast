@@ -365,7 +365,7 @@ describe('controller: switching modes', () => {
     expect(live.phase).toBe('off');
     expect(live.steps.find((x) => x.id === 'tunnel')?.status).toBe('ok');
     expect(live.steps.find((x) => x.id === 'verify')?.status).toBe('ok');
-    expect(vi.mocked(probeHealth)).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/203\.0\.113\.7:\d+$/));
+    expect(vi.mocked(probeHealth)).toHaveBeenCalledWith(expect.stringMatching(/^https:\/\/203\.0\.113\.7:\d+$/), undefined, undefined);
   });
 });
 
@@ -443,11 +443,13 @@ describe('direct mode: a port the computer can really open', () => {
     expect(d.active).toBe(false);
   });
 
+  // A port from this worker's block, outside every ephemeral range: a port the OS picked (port 0)
+  // lies in it, and once let go an outgoing connection anywhere on the machine can take it.
   it('canBindPort is false for a port another server holds, true once it let go', async () => {
     // Arrange
+    const [port] = (await allocPorts(1)) as [number];
     const srv = net.createServer();
-    await new Promise<void>((r) => srv.listen(0, '0.0.0.0', () => r()));
-    const port = (srv.address() as net.AddressInfo).port;
+    await new Promise<void>((r) => srv.listen(port, '0.0.0.0', () => r()));
     // Act
     const held = await canBindPort(port, '0.0.0.0');
     await new Promise<void>((r) => srv.close(() => r()));

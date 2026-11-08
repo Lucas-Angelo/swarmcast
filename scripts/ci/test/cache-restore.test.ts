@@ -1,6 +1,9 @@
 // .github/actions/cache-restore/restore.mjs: a cache restore that stalls is cut
 // off and tried once more, a failed one is tried once more, a plain miss is not, and every outcome
 // is a hit or a miss. Fake restore scripts stand in for actions/cache's restore-only entry point.
+// The tries' time limits run on the test's own timer (ManualTimer): a try is cut off when the test
+// says so, so no try races its limit however long node takes to start; one test keeps the real
+// clock, with a try that never ends.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -30,7 +33,55 @@ function fake(body: string) {
 }
 
 const KEY = 'node-cache-Linux-x64-npm-08e3fc1865e9c2877bfae6e5e4e5e8dabf045247662ec59b94a2edcf5f41cb4f';
-const base = () => ({ paths: [path.join(dir, 'npm')], key: KEY, restoreKeys: ['node-cache-Linux-x64-npm-'], timeoutMs: 5000, log: () => {} });
+const TIMEOUT_MS = 90_000;
+
+/**
+ * The tries' time limits on the test's clock: a limit passes only when the test calls cutOff(),
+ * never because a loaded runner was slow (a new node took over 1.5 s to start on a macOS unit
+ * soak, run 41330071767, and a real 1.5 s limit cut off the try that should have restored).
+ * `armed` holds the limit each try was given; `onArm(n)` runs as try n arms its limit, right after
+ * its process started.
+ */
+class ManualTimer {
+  readonly armed: number[] = [];
+  private pending: (() => void) | null = null;
+  constructor(private readonly onArm: (n: number) => void = () => {}) {}
+  readonly timer = (ms: number, onTimeout: () => void): (() => void) => {
+    this.armed.push(ms);
+    this.pending = onTimeout;
+    this.onArm(this.armed.length);
+    return () => {
+      if (this.pending === onTimeout) this.pending = null;
+    };
+  };
+  /** The running try's time limit passes now. */
+  cutOff(): void {
+    const onTimeout = this.pending;
+    if (!onTimeout) throw new Error('no try is running');
+    this.pending = null;
+    onTimeout();
+  }
+}
+
+const base = () => ({ paths: [path.join(dir, 'npm')], key: KEY, restoreKeys: ['node-cache-Linux-x64-npm-'], timeoutMs: TIMEOUT_MS, timer: new ManualTimer().timer, log: () => {} });
+
+/**
+ * The fake's try number comes from the parent, not from the try itself: the test's `log` sees the
+ * parent's "try 1 of 2 cut off" warning before try 2 starts and leaves a marker. A counter the try
+ * writes itself is never written when the try is cut off before its script runs. `onLine` sees
+ * every other line (the fake's output), as the restore logs it.
+ */
+function secondTryMarker(lines: string[], onLine: (l: string) => void = () => {}): { marker: string; log: (l: string) => void } {
+  const marker = path.join(dir, 'second-try');
+  return {
+    marker,
+    log: (l: string) => {
+      lines.push(l);
+      if (l.startsWith('::warning::') && l.includes('try 1 of 2')) fs.writeFileSync(marker, '');
+      else onLine(l);
+    },
+  };
+}
 
 describe('restore', () => {
   it('returns a hit for the exact key in one try, with the inputs actions/cache reads', async () => {
@@ -73,67 +124,43 @@ describe('restore', () => {
     expect(result).toEqual({ hit: false, matchedKey: '', tries: [{ timedOut: false, failed: false, seconds: expect.any(Number) }] });
   });
 
-  /**
-   * The fake's try number comes from the parent, not from the try itself: the test's `log` sees the
-   * parent's "try 1 of 2 cut off" warning before try 2 starts and leaves a marker. A counter the
-   * try writes itself is never written when the try is cut off before its script runs: on a loaded
-   * macOS runner (soak, vitest workers in parallel) a new node took over the 1.5 s limit to start,
-   * so try 2 counted itself as try 1, hung too, and the restore missed (3.2 s: two time limits).
-   */
-  function secondTryMarker(lines: string[]): { marker: string; log: (l: string) => void } {
-    const marker = path.join(dir, 'second-try');
-    return {
-      marker,
-      log: (l: string) => {
-        lines.push(l);
-        if (l.startsWith('::warning::') && l.includes('try 1 of 2')) fs.writeFileSync(marker, '');
-      },
-    };
-  }
-
   it('cuts off a try that hangs (and what it started), clears the half-restored path, and tries once more', async () => {
-    // Arrange: the path holds a half-restored file; the first try adds one and hangs, with a child of
-    // its own (like tar); the second restores.
+    // Arrange
     fs.mkdirSync(path.join(dir, 'npm'));
     fs.writeFileSync(path.join(dir, 'npm', 'before'), 'x');
     const lines: string[] = [];
-    const { marker, log } = secondTryMarker(lines);
+    const clock = new ManualTimer();
+    const { marker, log } = secondTryMarker(lines, (l) => l === 'hanging' && clock.cutOff());
     const script = fake(`if (!fs.existsSync(${JSON.stringify(marker)})) {
         fs.writeFileSync(${JSON.stringify(path.join(dir, 'npm', 'half'))}, 'x');
         require('child_process').spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
         setInterval(() => {}, 1000);
+        console.log('hanging');
       } else {
         console.log('second try: ' + fs.readdirSync(${JSON.stringify(path.join(dir))}).includes('npm'));
         out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
       }`);
-    const start = Date.now();
 
     // Act
-    const result = await restore({ ...base(), script, timeoutMs: 1500, log });
+    const result = await restore({ ...base(), script, timeoutMs: 1500, timer: clock.timer, log });
 
     // Assert
-    expect(Date.now() - start).toBeLessThan(10_000);
     expect(result.hit).toBe(true);
     expect(result.tries.map((t: { timedOut: boolean }) => t.timedOut)).toEqual([true, false]);
+    expect(clock.armed).toEqual([1500, 1500]);
     expect(lines).toContain('second try: false');
     expect(lines.some((l) => l.startsWith('::warning::') && l.includes('try 1 of 2 cut off after 2 s, trying again'))).toBe(true);
   });
 
   it('a try cut off before it did anything (a slow start) is tried once more', async () => {
-    // Arrange: the first try takes longer to start than the time limit (busy, as node on a loaded
-    // runner) and never gets to do anything; the second restores.
+    // Arrange
     const lines: string[] = [];
-    const { marker, log } = secondTryMarker(lines);
-    const script = fake(`if (!fs.existsSync(${JSON.stringify(marker)})) {
-        const t = Date.now();
-        while (Date.now() - t < 5000) {}
-        out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
-      } else {
-        out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);
-      }`);
+    const { log } = secondTryMarker(lines);
+    const clock = new ManualTimer((n) => n === 1 && clock.cutOff());
+    const script = fake(`out('cache-hit', 'true'); out('cache-matched-key', process.env.INPUT_KEY);`);
 
     // Act
-    const result = await restore({ ...base(), script, timeoutMs: 800, log });
+    const result = await restore({ ...base(), script, timer: clock.timer, log });
 
     // Assert
     expect(result.hit).toBe(true);
@@ -153,19 +180,37 @@ describe('restore', () => {
     expect(result.tries.map((t: { failed: boolean }) => t.failed)).toEqual([true, false]);
   });
 
-  it('goes on without the cache when every try hangs, within tries x the time limit', async () => {
+  it('goes on without the cache when every try hangs, each within the time limit', async () => {
+    // Arrange
+    const script = fake(`setInterval(() => {}, 1000); console.log('hanging');`);
+    const lines: string[] = [];
+    const clock = new ManualTimer();
+    const log = (l: string): void => {
+      lines.push(l);
+      if (l === 'hanging') clock.cutOff();
+    };
+
+    // Act
+    const result = await restore({ ...base(), script, timeoutMs: 800, timer: clock.timer, log });
+
+    // Assert
+    expect(result).toEqual({ hit: false, matchedKey: '', tries: [expect.objectContaining({ timedOut: true }), expect.objectContaining({ timedOut: true })] });
+    expect(clock.armed).toEqual([800, 800]);
+    expect(lines.at(-1)).toMatch(/try 2 of 2 cut off after 1 s, going on without it/);
+  });
+
+  it('with the real clock, cuts off a try that never ends once its time limit passes', async () => {
     // Arrange
     const script = fake(`setInterval(() => {}, 1000);`);
     const lines: string[] = [];
-    const start = Date.now();
+    const { timer: _manual, ...realClock } = base();
 
     // Act
-    const result = await restore({ ...base(), script, timeoutMs: 800, log: (l: string) => lines.push(l) });
+    const result = await restore({ ...realClock, script, timeoutMs: 300, tries: 1, log: (l: string) => lines.push(l) });
 
     // Assert
-    expect(Date.now() - start).toBeLessThan(6000);
-    expect(result).toEqual({ hit: false, matchedKey: '', tries: [expect.objectContaining({ timedOut: true }), expect.objectContaining({ timedOut: true })] });
-    expect(lines.at(-1)).toMatch(/try 2 of 2 cut off after 1 s, going on without it/);
+    expect(result).toEqual({ hit: false, matchedKey: '', tries: [expect.objectContaining({ timedOut: true, failed: false })] });
+    expect(lines.at(-1)).toMatch(/try 1 of 1 cut off after 0 s, going on without it/);
   });
 
   it('treats a crash (non-zero exit) as a failed try', async () => {

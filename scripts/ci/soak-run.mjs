@@ -55,7 +55,8 @@ export function commandsFor(row) {
     // The surge bench (docs/QUALITY.md "Many people at once"): every scenario once per run, one PASS/FAIL line each.
     surge: [{ name: 'bench.ts', cmd: `node --import tsx scripts/test/surge/bench.ts --out "$RUN_DIR/surge-bench" ${A}`, parse: lineChecks }],
     rust: [{ name: 'cargo test', cmd: `cd apps/desktop/src-tauri && cargo test --locked ${A}`, parse: cargoChecks }],
-    preflight: [{ name: 'verify.mjs', cmd: `node scripts/test/preflight/verify.mjs --staging "release/staging/${row.target}" --chrome ${A}`, parse: lineChecks }],
+    // As the gate runs it: the tunnel session against the local stand-in for Cloudflare.
+    preflight: [{ name: 'verify.mjs', cmd: `node scripts/test/preflight/verify.mjs --staging "release/staging/${row.target}" --tunnel --chrome ${A}`, parse: lineChecks }],
     'desktop-test': [
       {
         name: 'verify.mjs',

@@ -6,6 +6,8 @@ export function waitForTunnelName(
   log?: (line: string) => void,
   dns?: { resolve4?: (host: string) => Promise<string[]>; lookup?: (host: string) => Promise<unknown> },
 ): Promise<void>;
+/** Quick tunnels go to a local stand-in (cloudflare.mjs) from now on, or to the real Cloudflare with null. */
+export function setLocalCloudflare(cf: { healthz: (base: string) => Promise<string | null> } | null): void;
 /** Opens a live link once its name resolves, until the response commits; returns the response. */
 export function openLink(page: Page, url: string, log?: (line: string) => void): Promise<Response | null>;
 /** HTTP status of Cloudflare's own error page for a tunnel address it has no connection for. */

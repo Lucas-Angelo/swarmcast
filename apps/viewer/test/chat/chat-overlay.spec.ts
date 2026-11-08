@@ -6,7 +6,8 @@
 // back (also with C), reactions beside it, hide chat and chat off, Portuguese, reduce motion, and an
 // iPhone without element full screen, where the button fills the page instead. How long a line stays
 // is checked on a manual clock in apps/viewer/test/unit/chat-overlay.test.ts; nothing here waits on
-// a fixed time.
+// a fixed time. A line stays CHAT_OVERLAY_FADE_S on the page's real clock, so each is said right
+// before the steps that look for it, not a dozen steps earlier: a slow runner could outlast it.
 import { expect, test, type Page } from './fixtures.js';
 import { MockHub } from './mock-hub.js';
 import { openWatch, requireBuild } from './watch-page.js';
@@ -40,9 +41,6 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
     const hub = new MockHub('Bia');
     await page.setViewportSize({ width: 1280, height: 800 });
     await openWatch(page, hub);
-    // Said while the page is open: a line's time over the video starts when it comes (a snapshot's
-    // lines only show for what is left of it: the unit test checks that on a manual clock).
-    hub.say(ana, 'boa noite :hi:');
 
     // Assert: not in full screen, no button.
     await expect(button(page)).toBeHidden();
@@ -57,7 +55,8 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
     await expect(button(page)).toHaveAttribute('aria-pressed', 'false');
     await expect(overlay(page)).toBeHidden();
 
-    // Act
+    // Act: a line said while the chat on the video is off, then the button.
+    hub.say(ana, 'boa noite :hi:');
     await button(page).click();
     hub.say(cris, 'que jogada!');
 
@@ -320,7 +319,6 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
     });
     const hub = new MockHub('Bia');
     await openWatch(page, hub);
-    hub.say(ana, 'oi do iPhone');
     const native = () => page.evaluate(() => (window as unknown as { __nativeFullscreen: number }).__nativeFullscreen);
 
     // Act: off, the iPhone's own player.
@@ -334,6 +332,7 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
     await page.getByTestId('settings-open').click();
     await page.getByTestId('chat-overlay-setting').check();
     await page.getByTestId('settings-close').click();
+    hub.say(ana, 'oi do iPhone');
     await page.getByTestId('fullscreen').click();
 
     // Assert

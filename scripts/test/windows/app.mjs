@@ -6,16 +6,20 @@
 //    Chrome<->Firefox, viewer joining before the stream, viewer count, Go-live, kick, new link,
 //    "Stop everything" (API and panel button), Quit from the panel, loopback-only sockets
 //  - pt-BR UI, session cap (maxViewers=2 -> "full"), auto-stop
-//  - real Cloudflare quick tunnel with the three browsers
+//  - a quick tunnel with the three browsers: the package's own cloudflared against a local stand-in
+//    for Cloudflare (lib/cloudflare.mjs, SWARMCAST_TEST_CLOUDFLARE), never Cloudflare's free service
 //  - taskkill /F of the app (reaper), Quit from the panel during a live
 //
 // Usage: node scripts/test/windows/app.mjs [--staging release/staging/windows-x64] [--out results.json]
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { startLocalCloudflare } from '../lib/cloudflare.mjs';
+import { setLocalCloudflare } from '../lib/viewer.mjs';
 import {
   addSweepPath, appProcess, check, copyAppLogs, describeProcs, editConfig, environmentFacts, finish, info, installServer, isLoopback, join, joinAndPlay,
-  killUnder, launchBrowser, listening, must, obsPillSending, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, probe, processesUnder,
+  killUnder, launchBrowser, listening, log, must, obsPillSending, onCleanup, openPanel, opt, orTimeout, peSubsystem, pkgVersion, probe, processesUnder,
   pushStream, quitAndVerify, record, renderedTwice, uploadCapCheck, repoRoot, section, serverExe, socketsOf, startApp, stats, ui, until,
   waitLiveLink, waitPhase, waitPlaying, waitPlaylistForLateJoiners, setP2P,
 } from './lib.mjs';
@@ -24,6 +28,11 @@ const V = opt('version', pkgVersion());
 const home = path.join(process.env.LOCALAPPDATA, 'SwarmCast');
 addSweepPath(home);
 const start = (args = ['--no-tunnel'], label = 'start') => startApp({ home, defaultDataDir: true, args, label });
+/** The local stand-in for Cloudflare the tunnel sections use (it lives as long as the suite). */
+const cloudflare = await startLocalCloudflare({ dir: fs.mkdtempSync(path.join(os.tmpdir(), 'sc-cf-')), log });
+setLocalCloudflare(cloudflare);
+/** The app with its quick tunnel, which goes to the local stand-in. */
+const startTunnel = (label) => startApp({ home, defaultDataDir: true, args: [], label, extraEnv: cloudflare.appEnv });
 /**
  * How far a paused viewer falls behind hls.js' live target before the Go-live check resumes it:
  * the viewer offers "Go live" from 4 s (two segments) behind, and the two seconds more keep it
@@ -278,10 +287,10 @@ await section('2. pt-BR UI, session cap (maxViewers=2 -> "full"), auto-stop', as
   copyAppLogs(home, 'ptbr');
 });
 
-await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async () => {
+await section('3. quick tunnel (local stand-in for Cloudflare): Chrome, Edge, Firefox', async () => {
   resetConfig();
   const browsers = [await launchBrowser('chrome'), await launchBrowser('msedge'), await launchBrowser('firefox')];
-  const app = await start([], 'tunnel');
+  const app = await startTunnel('tunnel');
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
   must('live link on trycloudflare.com', /^https:\/\/[a-z0-9-]+\.trycloudflare\.com\/join\//.test(s0.liveLink), s0.liveLink.replace(/\/join\/.*/, ''));
@@ -289,11 +298,13 @@ await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async ()
   await waitPhase(app, 'live');
   // Once each, no retry: a viewer that does not play is a failure (its page state is dumped).
   for (const b of browsers) {
-    const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}`).catch((err) => err);
+    const v = await joinAndPlay(b, s0.liveLink, `tun-${b.__kind}`, cloudflare.contextOptions).catch((err) => err);
     check(`viewer plays through the tunnel in ${b.__kind}`, !(v instanceof Error), v instanceof Error ? v.message.split('\n')[0] : '');
     if (!(v instanceof Error)) await v.context.close();
   }
   const base = s0.liveLink.replace(/\/join\/.*/, '');
+  const routed = cloudflare.tunnels().find((t) => base === `https://${t.hostname}`);
+  check("[tunnel] the viewers' requests went through cloudflared and the stand-in's edge", (routed?.requests ?? 0) > 0, `${routed?.requests ?? 0} requests over ${routed?.connections ?? 0} registered connection(s)`);
   const stop = await app.api('/api/live/stop', {});
   check('[tunnel] "Stop everything" verified', stop.verified === true);
   check('[tunnel] cloudflared gone', !processesUnder(home).some((p) => /cloudflared/i.test(p.name)));
@@ -305,7 +316,7 @@ await section('3. real Cloudflare quick tunnel: Chrome, Edge, Firefox', async ()
 
 await section('4. taskkill /F on the app: the reaper removes MediaMTX and cloudflared', async () => {
   resetConfig();
-  const app = await start([], 'taskkill');
+  const app = await startTunnel('taskkill');
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app).catch(() => null);
   if (s0) {
@@ -328,13 +339,13 @@ await section('4. taskkill /F on the app: the reaper removes MediaMTX and cloudf
 await section('5. Quit from the panel during a live (tunnel, viewer watching)', async () => {
   resetConfig();
   const chrome = await launchBrowser('chrome');
-  const app = await start([], 'quit-live');
+  const app = await startTunnel('quit-live');
   onCleanup(() => killUnder(home));
   const s0 = await waitLiveLink(app);
   const feed = pushStream(s0.rtmpUrl, s0.streamKey);
   onCleanup(() => feed.stop());
   await waitPhase(app, 'live');
-  const v = await joinAndPlay(chrome, s0.liveLink, 'watching-quit').catch((e) => e);
+  const v = await joinAndPlay(chrome, s0.liveLink, 'watching-quit', cloudflare.contextOptions).catch((e) => e);
   check('viewer plays through the tunnel before the quit', !(v instanceof Error), v instanceof Error ? v.message.split('\n')[0] : '');
   info('running before the quit', describeProcs(processesUnder(home)));
   await quitAndVerify(app, home, 'quit during a live');

@@ -6,7 +6,7 @@
 // Run: npm run build -w @swarmcast/viewer && npx playwright test -c apps/viewer/test/chat/playwright.config.ts watch-layout
 import { expect, test, type Page } from './fixtures.js';
 import { MockHub } from './mock-hub.js';
-import { openWatch, requireBuild } from './watch-page.js';
+import { layoutBoxes, layoutSettled, openWatch, requireBuild } from './watch-page.js';
 
 test.beforeAll(requireBuild);
 
@@ -195,23 +195,11 @@ test('a phone: the video, the info row, then the chat down to the bottom of the 
     for (const id of ['unmute', 'share']) document.getElementById(id)!.hidden = false;
   });
   await expect(page.locator('#share')).toBeVisible();
-  // The chat's height follows the info row through a ResizeObserver (watch.ts), which reports the
-  // row's new height after the next layout, not at once: measure once --info-row-h holds it (run
-  // 41602653032 measured in between, the chat one line too tall).
-  await expect
-    .poll(() =>
-      page.evaluate(() => {
-        const row = Math.ceil(document.querySelector<HTMLElement>('.info')!.getBoundingClientRect().height);
-        return document.body.style.getPropertyValue('--info-row-h') === `${row}px`;
-      }),
-    )
-    .toBe(true);
+  await layoutSettled(page);
 
   // Assert
   const view = page.viewportSize()!;
-  const player = await box(page, '.player');
-  const info = await box(page, '[data-testid="info"]');
-  const chat = await box(page, '[data-testid="chat"]');
+  const { player, info, chat } = await layoutBoxes(page, { player: '.player', info: '[data-testid="info"]', chat: '[data-testid="chat"]' });
   expect(player.y).toBe(0);
   expect(Math.round(player.width)).toBe(view.width);
   expect(info.y).toBeGreaterThanOrEqual(player.y + player.height - 1);
