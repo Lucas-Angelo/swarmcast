@@ -251,6 +251,22 @@ leaves none of them to luck; each rule below has the failure that taught it.
    counted against it, and a failure says what the element was doing (readyState, buffered,
    status line).
 
+What the soaks measured (Devices runs 42684571191 and 42694261030: ten iOS jobs and two Android
+jobs, each test five times, every repeat on a new simulator or emulator boot):
+
+- Calm, iOS: after a boot 9.1 s at the median, 23.5 s at most (48 boots); before a test 4.6 s
+  (two windows), 11.5 s at most. Android: after a cold boot 35 s at the median, 95 s at most (the
+  guest at 3.7 to 3.96 of its 4 cores for about 70 s: system_server, Play services, Gboard, the
+  launcher, SystemUI; then Google Messages for about 30 s); before a test 4.2 s, 14.8 s at most.
+- The gate: 624 iOS taps and 170 Android taps, every one ended in a click on its element. An
+  element became actionable after 74 ms at the median on iOS (322 ms at the 95th percentile,
+  1.0 s at most), after 405 ms on Android (1.1 s, 2.0 s at most: the keyboard's slide).
+- The finger's time down, by the events' time stamps: 55 ms at the median on iOS, 172 ms at the
+  95th percentile; Android 43 and 165 ms. The tail is the tap that enters full screen: there the
+  page handled touchstart 0.4 to 5.3 s after its time stamp (its click still came), the most
+  marginal moment of the lane; the volume check that set the playing video's volume right before
+  that tap now asks an element of its own (`playerUi`).
+
 #### Why each rule
 
 - **iOS taps and content that appears:** Mobile Safari turns a tap into a click only if no control
@@ -295,7 +311,11 @@ leaves none of them to luck; each rule below has the failure that taught it.
   42519281087), which on CI was when the first test began, and the first tap's finger stayed down
   1.3 s (run 42515339177); siriactionsd is in `UNUSED_JOBS` too, and the calm wait after the boot
   holds the first test until whatever else a first boot runs is done. The Mac's load goes to
-  `host-load.log`. Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
+  `host-load.log`. Each repeat of a test file boots the simulator again (a new worker), and each
+  attach quits Simulator.app before it boots a shut-down simulator: one left running and hidden
+  from the previous simulator once never showed a window for the next boot (`open` hands a
+  running app no arguments), and since that attach left its simulator booted, every later one
+  met the same Simulator.app (Devices run 42694261030). An attach that fails shuts down what it booted. Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
   from finger down to up (Devices runs 41227486868, 41235159056): it is shown only to turn the
   phone, and the job records no simulator video.
 - **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
