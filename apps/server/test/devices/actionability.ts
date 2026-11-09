@@ -28,8 +28,8 @@
 // - Mobile Safari makes the click at once ("fast tap") only at the initial scale of a
 //   `width=device-width` page (https://webkit.org/blog/5610/more-responsive-tapping-on-ios/);
 //   zoomed, it waits to see whether a second tap follows. iOS taps need zoom 1.
-// - The page in the orientation the phone was turned to: a turn the page has not answered yet
-//   moves everything after the point was read.
+// - The page in the orientation the phone was turned to, and no full-screen change running: a turn
+//   or a change the page has not finished moves everything after the point was read.
 import { expect } from '../e2e/fixtures.js';
 import type { Phone } from './phone.js';
 
@@ -95,6 +95,11 @@ export function touchState(el: Element, wanted: TouchWanted): TouchState {
   if (wanted.initialScale && vv.scale !== 1) return { why: `zoomed to ${vv.scale}: off its initial scale Safari waits for a double tap` };
   if ((el as HTMLButtonElement).disabled || el.closest('[inert], [aria-disabled="true"], fieldset[disabled]')) return { why: 'disabled' };
   if (hidden(el)) return { why: 'not visible' };
+  // A full-screen change still running (phone.ts recordFullscreen): the page moves to another layer.
+  const settled = (window as unknown as { __fullscreenSettled?: { element: Element | null; player: boolean } }).__fullscreenSettled;
+  const fullscreen = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ?? null;
+  const ownPlayer = (document.querySelector('video') as (HTMLVideoElement & { webkitDisplayingFullscreen?: boolean }) | null)?.webkitDisplayingFullscreen === true;
+  if (settled && (settled.element !== fullscreen || settled.player !== ownPlayer)) return { why: 'full screen is still changing (no fullscreenchange yet)' };
   // Playwright's "stable" also means not animating: a box that moves or fades under the finger.
   for (const a of document.getAnimations()) {
     if (a.playState !== 'running') continue;

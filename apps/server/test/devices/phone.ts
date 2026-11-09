@@ -106,6 +106,32 @@ export async function watching(phone: Phone): Promise<void> {
   };
   await expect.poll(played, { message: `the video plays (more than ${WATCHING_S} s played)` }).toBe('watching');
   await expect.poll(() => isShown(phone, '#delay-wrap'), { message: 'the page shows the delay behind live' }).toBe(true);
+  await recordFullscreen(phone);
+}
+
+/**
+ * Keeps, in the page (`__fullscreenSettled`), what was full screen when the last full-screen
+ * change ended: the element at the last fullscreenchange (webkitfullscreenchange), and whether
+ * the video showed in iOS's own player at the last webkitbeginfullscreen or webkitendfullscreen.
+ * WebKit sets the full-screen element as its animation begins and fires the change once it is
+ * over, so while the two differ a change is still running: fullScreenState says "changing" and
+ * no tap is made (actionability.ts touchState).
+ */
+function recordFullscreen(phone: Phone): Promise<void> {
+  return phone.evaluate(() => {
+    const w = window as unknown as { __fullscreenSettled?: { element: Element | null; player: boolean } };
+    if (w.__fullscreenSettled) return;
+    const v = document.querySelector('video') as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean };
+    const current = () => document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ?? null;
+    const settled = { element: current(), player: v.webkitDisplayingFullscreen === true };
+    w.__fullscreenSettled = settled;
+    const note = () => {
+      settled.element = current();
+      settled.player = v.webkitDisplayingFullscreen === true;
+    };
+    for (const type of ['fullscreenchange', 'webkitfullscreenchange']) document.addEventListener(type, note);
+    for (const type of ['webkitbeginfullscreen', 'webkitendfullscreen']) v.addEventListener(type, note);
+  });
 }
 
 /**
@@ -544,11 +570,16 @@ export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: 
   });
 }
 
-/** What is full screen: the player container, iOS's own player (the video alone), or nothing. */
-export function fullScreenState(phone: Phone): Promise<'player' | 'ios-player' | 'other' | null> {
+/**
+ * What is full screen: the player container, iOS's own player (the video alone), or nothing; and
+ * "changing" while a change the page asked for has not ended yet (recordFullscreen).
+ */
+export function fullScreenState(phone: Phone): Promise<'player' | 'ios-player' | 'other' | 'changing' | null> {
   return phone.evaluate(() => {
     const v = document.querySelector('video') as HTMLVideoElement & { webkitDisplayingFullscreen?: boolean };
     const el = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement ?? null;
+    const settled = (window as unknown as { __fullscreenSettled?: { element: Element | null; player: boolean } }).__fullscreenSettled;
+    if (settled && (settled.element !== el || settled.player !== (v.webkitDisplayingFullscreen === true))) return 'changing';
     if (el) return el === document.querySelector('.player') ? 'player' : 'other';
     return v.webkitDisplayingFullscreen === true ? 'ios-player' : null;
   });
