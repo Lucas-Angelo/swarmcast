@@ -21,9 +21,12 @@ export interface Phone {
   url(): Promise<string>;
   /** `fn(arg)` in the page; returns its JSON result. `fn` must not use anything from outside its body. */
   evaluate<R, A = undefined>(fn: (arg: A) => R, arg?: A): Promise<R>;
+  /** The orientation the phone was last turned to (rotate()); a test starts upright. */
+  readonly orientation: Orientation;
   /**
-   * A finger tap in the middle of the element, scrolled into view first, once the browser shows it
-   * where the page has it (shownTouchPoint). Taps raise the on-screen keyboard.
+   * A finger tap in the middle of the element, scrolled into view first, once the element is
+   * actionable and the browser shows it where the page has it; it returns once the page got the
+   * click (actionability.ts). Taps raise the on-screen keyboard.
    */
   tap(selector: string): Promise<void>;
   /**
@@ -52,13 +55,20 @@ export interface Phone {
   close(): Promise<void>;
 }
 
-/** The video element's playback, as the specs check it. */
+/** The video element's playback, as the specs check it, with what a failure message needs. */
 export interface VideoState {
   paused: boolean;
   muted: boolean;
   /** Seconds really played (the `played` ranges): hls.js seeks before the first frame plays. */
   played: number;
   currentTime: number;
+  seeking: boolean;
+  /** HTMLMediaElement.readyState: 3 (HAVE_FUTURE_DATA) or more once it can play on. */
+  readyState: number;
+  /** The buffered ranges, `start-end` in seconds, for a failure message. */
+  buffered: string;
+  /** The page's status line under the player ("Live", "Buffering…"). */
+  status: string | null;
 }
 
 export function videoState(phone: Phone): Promise<VideoState> {
@@ -66,8 +76,13 @@ export function videoState(phone: Phone): Promise<VideoState> {
     const v = document.querySelector('video')!;
     let played = 0;
     for (let i = 0; i < v.played.length; i++) played += v.played.end(i) - v.played.start(i);
-    return { paused: v.paused, muted: v.muted, played, currentTime: v.currentTime };
+    const buffered = Array.from({ length: v.buffered.length }, (_, i) => `${v.buffered.start(i).toFixed(2)}-${v.buffered.end(i).toFixed(2)}`).join(' ');
+    return { paused: v.paused, muted: v.muted, played, currentTime: v.currentTime, seeking: v.seeking, readyState: v.readyState, buffered: buffered || 'nothing', status: document.getElementById('status')?.textContent ?? null };
   });
+}
+
+function describeVideo(v: VideoState): string {
+  return `${v.paused ? 'paused' : 'not paused'}${v.seeking ? ', seeking' : ''}, readyState ${v.readyState}, at ${v.currentTime.toFixed(2)} s, buffered ${v.buffered}, ${v.played.toFixed(2)} s played, status "${v.status}"`;
 }
 
 /** Seconds of video played before a viewer counts as watching (as waitPlaying() in the e2e fixtures). */
@@ -76,21 +91,78 @@ export const WATCHING_S = 1.5;
 /**
  * Waits until the viewer is watching the live: the video has played WATCHING_S seconds, and the
  * page shows how far behind live it plays ("~14 s behind live" with its "i" button, watch.ts
- * showDelay), the last thing the watch page reveals by itself as the live starts: it comes with
- * the next second's update once the video plays, after "Live", Unmute and Go live. Until then a
- * tap can land while the page reveals a button, and iOS takes such a tap for a hover, with no
- * click (WebKit's content-change observer; Devices run 42524374628: the delay came up 15 ms after
- * the page took the touchstart of a tap on the chat input). The specs tap anything on the watch page only after this.
+ * showDelay), the last of what the watch page reveals by itself as the live starts. "Live", Unmute
+ * and Go live come with the video's first `playing`; the delay comes with the next second's update
+ * after it, once hls.js has measured the latency (it reads 0 until the video's first timeupdate).
+ * Until then a tap can land while the page reveals a button, and iOS takes such a tap for a hover,
+ * with no click (WebKit's content-change observer, actionability.ts; Devices run 42524374628: the
+ * delay came up 15 ms after the page took the touchstart of a tap on the chat input). The specs
+ * tap anything on the watch page only after this.
  */
 export async function watching(phone: Phone): Promise<void> {
-  await expect.poll(async () => (await videoState(phone)).played, { message: 'the video plays' }).toBeGreaterThan(WATCHING_S);
+  const played = async () => {
+    const v = await videoState(phone);
+    return v.played > WATCHING_S ? 'watching' : `not yet: ${describeVideo(v)}`;
+  };
+  await expect.poll(played, { message: `the video plays (more than ${WATCHING_S} s played)` }).toBe('watching');
   await expect.poll(() => isShown(phone, '#delay-wrap'), { message: 'the page shows the delay behind live' }).toBe(true);
 }
 
-/** Seconds played since `from` (a videoState read earlier), once the video is not paused; 0 while paused. */
-export async function playedSince(phone: Phone, from: VideoState): Promise<number> {
-  const now = await videoState(phone);
-  return now.paused ? 0 : now.played - from.played;
+/**
+ * Waits until the video plays on for `seconds` more by the media's own clock (its `played`
+ * ranges), counted from the moment it plays after `step`: not paused, not seeking, with data to go
+ * on (readyState 3 or more). A step that changes the playback (a turn, full screen, the
+ * background, Unmute, Go live) may pause, seek or rebuffer for a moment; that moment is never
+ * counted against it, and a failure says what the element was doing.
+ */
+export async function playsOn(phone: Phone, seconds: number, step: string): Promise<void> {
+  let from: VideoState | null = null;
+  const playing = async () => {
+    const v = await videoState(phone);
+    if (v.paused || v.seeking || v.readyState < 3) return `not yet: ${describeVideo(v)}`;
+    from = v;
+    return 'playing';
+  };
+  await expect.poll(playing, { message: `after ${step}: the video plays` }).toBe('playing');
+  const playedOn = async () => {
+    const v = await videoState(phone);
+    const more = v.played - from!.played;
+    return more > seconds ? 'played on' : `not yet: ${more.toFixed(2)} s more; ${describeVideo(v)}`;
+  };
+  await expect.poll(playedOn, { message: `after ${step}: the video plays on for more than ${seconds} s` }).toBe('played on');
+}
+
+/**
+ * The player's state for a failed test's report: the element, the page's lines and hls.js's view
+ * (each playlist's first and last media sequence numbers, what its stream controllers do, the
+ * source buffers it made). hls.js's controllers are its internals: read for the report, never checked.
+ */
+export function playerReport(phone: Phone): Promise<string> {
+  return phone.evaluate(() => {
+    const ranges = (r: TimeRanges) => Array.from({ length: r.length }, (_, i) => [r.start(i), r.end(i)]);
+    const v = document.querySelector('video');
+    const el = (id: string) => document.getElementById(id);
+    type Playlist = { details?: { startSN?: number; endSN?: number } };
+    type Controller = { state?: unknown; nextLoadPosition?: unknown; startPosition?: unknown; fragCurrent?: { sn?: unknown; type?: string } | null };
+    type Hls = { latency?: number; liveSyncPosition?: number | null; levels?: Playlist[]; audioTracks?: Playlist[]; streamController?: Controller; audioStreamController?: Controller; bufferController?: { sourceBuffers?: object } };
+    const h = (window as unknown as { __hls?: Hls }).__hls;
+    const controller = (c: Controller | undefined) => c && { state: c.state, nextLoadPosition: c.nextLoadPosition, startPosition: c.startPosition, fragCurrent: c.fragCurrent ? `${c.fragCurrent.type}/${String(c.fragCurrent.sn)}` : null };
+    return JSON.stringify({
+      page: location.pathname,
+      status: el('status')?.textContent,
+      overlay: el('overlay')?.hidden === false ? el('overlay')!.textContent : null,
+      video: v && { readyState: v.readyState, networkState: v.networkState, error: v.error && { code: v.error.code, message: v.error.message }, paused: v.paused, muted: v.muted, seeking: v.seeking, currentTime: v.currentTime, buffered: ranges(v.buffered), seekable: ranges(v.seekable), played: ranges(v.played) },
+      hls: h && {
+        latency: h.latency,
+        liveSyncPosition: h.liveSyncPosition,
+        video: h.levels?.map((l) => [l.details?.startSN, l.details?.endSN]),
+        audio: h.audioTracks?.map((t) => [t.details?.startSN, t.details?.endSN]),
+        stream: controller(h.streamController),
+        audioStream: controller(h.audioStreamController),
+        sourceBuffers: h.bufferController?.sourceBuffers ? Object.keys(h.bufferController.sourceBuffers) : null,
+      },
+    });
+  });
 }
 
 /** How long the join page may take to answer with the watch page (a browser check included), as fixtures.ts join(). */
@@ -154,6 +226,21 @@ export async function joinPageReady(phone: Phone): Promise<void> {
 }
 
 /**
+ * Checks that the test's first page starts as a viewer's does: shown, in the orientation the
+ * phone holds (upright: the device fixtures turn it back before each test), at zoom 1, nothing
+ * full screen. A state an earlier test left (a turn, a zoom) fails here, not in a later check.
+ */
+export async function pageAtRest(phone: Phone): Promise<void> {
+  const wanted = JSON.stringify({ visibility: 'visible', landscape: phone.orientation === 'landscape', zoom: 1, fullscreen: false });
+  const state = () =>
+    phone.evaluate(() => {
+      const fullscreen = document.fullscreenElement ?? (document as Document & { webkitFullscreenElement?: Element | null }).webkitFullscreenElement;
+      return JSON.stringify({ visibility: document.visibilityState, landscape: matchMedia('(orientation: landscape)').matches, zoom: window.visualViewport!.scale, fullscreen: !!fullscreen });
+    });
+  await expect.poll(state, { message: 'the page starts shown, upright, at zoom 1, nothing full screen' }).toBe(wanted);
+}
+
+/**
  * Opens the live link on the phone, picks the nickname with the on-screen keyboard and taps
  * Watch, then waits for the watch page. A join page that shows an error fails at once with it.
  */
@@ -161,6 +248,7 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
   await phone.open(link);
   await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
   await joinPageReady(phone);
+  await pageAtRest(phone);
   await tapToType(phone, '#nickname');
   await phone.type('#nickname', nickname);
   await expect.poll(() => fieldValue(phone, '#nickname'), { message: 'the nickname is in the field' }).toBe(nickname);
@@ -470,91 +558,4 @@ export function goLive(phone: Phone): Promise<{ text: string; behind: number | n
     const b = document.getElementById('golive')!;
     return { text: b.hidden ? '' : (b.textContent ?? '').trim(), behind: b.dataset.behind ? Number(b.dataset.behind) : null };
   });
-}
-
-/** Where a finger touches an element, in visual-viewport CSS pixels; see touchPoint(). */
-export interface TouchPoint {
-  x: number;
-  y: number;
-  /** From the middle of the element's part inside the layout viewport (W3C's "in-view center point"). */
-  dx: number;
-  dy: number;
-  /** In layout-viewport CSS pixels (getBoundingClientRect's), W3C's "viewport" origin. */
-  clientX: number;
-  clientY: number;
-}
-
-/**
- * Where a finger would touch `el` (runs in the page; self-contained, so WebDriver can send its
- * source): the middle of the part of the element the viewer sees, inside the visual viewport,
- * which the on-screen keyboard shrinks; a finger cannot reach the part under the keyboard (the
- * join page's Watch button is half under it while the nickname is typed on a Pixel 7). Null
- * while the element is disabled, shows less than 4 px each way, or something else is on top
- * of that point (Playwright's actionability checks for a click).
- */
-export function touchPoint(el: Element): TouchPoint | null {
-  if ((el as HTMLButtonElement).disabled) return null;
-  const r = el.getBoundingClientRect();
-  const vv = window.visualViewport!;
-  const left = Math.max(r.left, vv.offsetLeft);
-  const right = Math.min(r.right, vv.offsetLeft + vv.width);
-  const top = Math.max(r.top, vv.offsetTop);
-  const bottom = Math.min(r.bottom, vv.offsetTop + vv.height);
-  if (right - left < 4 || bottom - top < 4) return null;
-  const cx = (left + right) / 2;
-  const cy = (top + bottom) / 2;
-  const hit = document.elementFromPoint(cx, cy);
-  if (!hit || !(hit === el || el.contains(hit))) return null;
-  const inViewX = (Math.max(r.left, 0) + Math.min(r.right, innerWidth)) / 2;
-  const inViewY = (Math.max(r.top, 0) + Math.min(r.bottom, innerHeight)) / 2;
-  return { x: (cx - vv.offsetLeft) * vv.scale, y: (cy - vv.offsetTop) * vv.scale, dx: cx - inViewX, dy: cy - inViewY, clientX: cx, clientY: cy };
-}
-
-/** Resolves in the page once it has run two animation frames (runs in the page; self-contained). */
-function twoFrames(): Promise<null> {
-  return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve(null))));
-}
-
-function samePoint(a: TouchPoint, b: TouchPoint): boolean {
-  return a.x === b.x && a.y === b.y && a.clientX === b.clientX && a.clientY === b.clientY;
-}
-
-/**
- * Where to tap the element (touchPoint(), read by `measure`), once the browser shows the page as
- * the page reports it: the same point read before and after two animation frames (Playwright's
- * "stable": the same box in two frames in a row). A finger lands where the screen shows the page,
- * and the browser follows the page a frame later. On iOS Safari is the one that takes the touch:
- * - WebKit's automation refuses a touch outside the visible area Safari keeps for the page
- *   ("move target out of bounds", WebAutomationSession::simulateTouchInteraction checks the
- *   point against WebPageProxy::unobscuredContentRect). When a navigation moves the page to a
- *   new web process, as the live link does (the viewer pages send Cross-Origin-Opener-Policy),
- *   Safari forgets that area (WebPageProxy::resetState) and learns it again only from the new
- *   page's first frame (WKWebView defers it until the first layer tree after the load commit):
- *   until then every point is out of bounds, while the page itself already reports its visual
- *   viewport with the element in it. Release-rehearsal run 42508591582: the tap on the join
- *   page's nickname, 147 ms after its load event, at (201, 275) of a 402 px wide page.
- * - Safari hit-tests a touch in its own copy of the page's layers and scroll position: after a
- *   scrollIntoView the tap reached what the screen still showed there (IosPhone.tap).
- * WebKit runs a page's next frame only once Safari has taken the previous one (on iOS one layer
- * tree commit at a time: RemoteLayerTreeDrawingArea waits for DisplayDidRefresh), so when the
- * second frame runs Safari has taken the first, which the page drew after the first reading.
- * While waiting, the polled value says why the element cannot be touched yet.
- */
-export async function shownTouchPoint(phone: Phone, selector: string, measure: () => Promise<TouchPoint | null>): Promise<TouchPoint> {
-  let point = null as TouchPoint | null;
-  const untouchable = 'disabled, out of sight or covered';
-  await expect
-    .poll(
-      async () => {
-        const before = await measure();
-        if (!before) return `not yet: ${untouchable}`;
-        await phone.evaluate(twoFrames);
-        point = await measure();
-        if (!point) return `not yet: ${untouchable} after two frames`;
-        return samePoint(before, point) ? 'shown' : `not yet: moved from (${before.clientX}, ${before.clientY}) to (${point.clientX}, ${point.clientY}) in two frames`;
-      },
-      { message: `${selector} can be touched (enabled, partly in sight, not covered) at the same point before and after two frames` },
-    )
-    .toBe('shown');
-  return point!;
 }

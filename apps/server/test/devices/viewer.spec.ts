@@ -25,7 +25,7 @@
 // Rotation is in rotate.spec.ts (Chrome and Safari answer it differently).
 import { liveLink, uid, viewerByNick } from '../e2e/fixtures.js';
 import { expect, liveMovesOn, test } from './fixtures.js';
-import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playedSince, playerUi, recordLifecycle, tapControl, tapToType, videoState, watching, type Phone } from './phone.js';
+import { box, chatShows, fullScreenState, goLive, inSight, isShown, joinOnPhone, lifecycle, ownMessage, playerUi, playsOn, recordLifecycle, tapControl, tapToType, videoState, watching, type Phone } from './phone.js';
 
 /** Seconds the video must play on (not paused) after a step for playback to count as going on. */
 const PLAYS_ON_S = 3;
@@ -70,15 +70,14 @@ test('a phone viewer joins with the link, Watch in sight while typing: the video
   // Assert
   expect(joined).toEqual({ nicknameInSight: true, watchInSight: true });
   await watching(phone);
-  expect(await videoState(phone)).toMatchObject({ muted: true, paused: false });
+  await expect.poll(async () => JSON.stringify(await videoState(phone).then((v) => ({ muted: v.muted, paused: v.paused }))), { message: 'the video plays muted' }).toBe(JSON.stringify({ muted: true, paused: false }));
   await expect.poll(() => isShown(phone, '#unmute')).toBe(true);
   await expect.poll(async () => (await viewerByNick(nick))?.connected).toBe(true);
   // Act
   await phone.tap('#unmute');
   // Assert
   await expect.poll(async () => (await videoState(phone)).muted).toBe(false);
-  const unmuted = await videoState(phone);
-  await expect.poll(() => playedSince(phone, unmuted)).toBeGreaterThan(PLAYS_ON_S);
+  await playsOn(phone, PLAYS_ON_S, 'Unmute');
   expect(await isShown(phone, '#unmute')).toBe(false);
   await expect.poll(() => statusLine(phone), { message: 'the status line once the video plays' }).toBe('Live');
 });
@@ -133,15 +132,14 @@ test('back from the background the video plays again, behind the live; Go live r
   const record = await lifecycle(phone);
   expect(record, 'the page went to the background').toContain('hidden');
   expect(record.lastIndexOf('visible'), 'and came back').toBeGreaterThan(record.indexOf('hidden'));
-  const back = await videoState(phone);
-  await expect.poll(() => playedSince(phone, back)).toBeGreaterThan(PLAYS_ON_S);
+  await playsOn(phone, PLAYS_ON_S, 'the background');
   await expect.poll(async () => (await goLive(phone)).text).toMatch(/^Go live/);
   // Act
   await tapControl(phone, '#golive');
   // Assert
   await expect.poll(async () => (await goLive(phone)).text).toBe('LIVE');
   expect((await goLive(phone)).behind).toBeLessThan(AT_LIVE_S);
-  expect((await videoState(phone)).paused).toBe(false);
+  await playsOn(phone, PLAYS_ON_S, 'Go live');
 });
 
 test("the player's own controls: full screen is the player with them where the browser lets an element go full screen, else iOS's own player (then they are back); no volume slider on a phone", async ({ phone }) => {
@@ -167,8 +165,7 @@ test("the player's own controls: full screen is the player with them where the b
     expect(await isShown(phone, '[data-testid="controls"]')).toBe(true);
     expect(await inSight(phone, '[data-testid="controls"]')).toBe(true);
   }
-  const inFull = await videoState(phone);
-  await expect.poll(() => playedSince(phone, inFull)).toBeGreaterThan(PLAYS_ON_S);
+  await playsOn(phone, PLAYS_ON_S, 'full screen');
   // Act: out again: Android's system Back; on iOS, which has no Back, the page's own button (the
   // container) or the page leaving iOS's player (as its close button does)
   if (phone.platform === 'android') await phone.back();
@@ -176,8 +173,7 @@ test("the player's own controls: full screen is the player with them where the b
   else await phone.evaluate(() => (document.querySelector('video') as HTMLVideoElement & { webkitExitFullscreen(): void }).webkitExitFullscreen());
   // Assert: the page's controls again, playing on, Go live there
   await expect.poll(() => fullScreenState(phone)).toBeNull();
-  const back = await videoState(phone);
-  await expect.poll(() => playedSince(phone, back)).toBeGreaterThan(PLAYS_ON_S);
+  await playsOn(phone, PLAYS_ON_S, 'leaving full screen');
   expect(await playerUi(phone)).toMatchObject({ bar: true, play: 'Pause' });
   expect(await isShown(phone, '#golive')).toBe(true);
 });

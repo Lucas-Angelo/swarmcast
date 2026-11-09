@@ -19,7 +19,9 @@ import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
-import { shownTouchPoint, touchPoint, type Orientation, type Phone, type TouchPoint } from './phone.js';
+import { actionablePoint, armTap, tapEndsInClick, touchState, type TouchState } from './actionability.js';
+import { CALM_WINDOW_MS, measuredWindow, untilCalm, type Load } from './calm.js';
+import type { Orientation, Phone } from './phone.js';
 import { ready, Session, tapActions } from './webdriver.js';
 
 const run = promisify(execFile);
@@ -217,73 +219,56 @@ async function hideSimulatorApp(): Promise<void> {
 }
 
 /**
- * What a tap is recorded by (IosPhone.tap): its events, the synthetic mouse events WebKit sends
- * before the click (mouseover, mousedown), and `shown`, an element the page revealed meanwhile
- * (its `hidden` attribute removed). A tap that brought mouseover and no mousedown was taken for a
- * hover: WebKit's content-change observer drops the click when clickable content becomes visible
- * between touchstart and the synthetic mouse move (WebPage::handleSyntheticClick,
- * ContentChangeObserver; docs/TESTING.md "iOS taps and content that appears").
+ * The most of one Mac core the simulator's processes may use together for the phone to count as
+ * calm (calm.ts): Safari on a blank page, the system idle. A first boot's own work, a daemon in a
+ * burst (siriactionsd's index of every app's actions: 76 to 118 % for 80 s, Devices run
+ * 42519281087) or the previous test's page still closing is above it.
  */
-const TAP_TYPES = ['touchstart', 'touchend', 'mouseover', 'mousedown', 'click', 'shown'] as const;
+const SIMULATOR_CALM_CORES = 0.5;
+/** How long the phone may take to become calm: after a new simulator's first boot, then before each test. */
+const CALM_AFTER_BOOT_MS = 300_000;
+const CALM_BEFORE_TEST_MS = 120_000;
 
-/**
- * One entry of a tap's record: its type, the element it reached when that was not the tapped one
- * (for `shown`, the element revealed), its time stamp and when the page handled it (epoch ms).
- */
-interface TapEvent {
-  type: (typeof TAP_TYPES)[number] | '?';
-  elsewhere?: string;
-  stamp: number;
-  handled: number;
+/** Seconds of CPU from `ps -o time` ("[[dd-]hh:]mm:ss.ss"). */
+function cpuSeconds(time: string): number {
+  const [days, rest] = time.includes('-') ? time.split('-') : ['0', time];
+  return (rest ?? '').split(':').reduce((sum, part) => sum * 60 + Number(part), 0) + Number(days) * 86_400;
 }
 
 /**
- * The page's record (`type[>element]@stamp:handled ...`). It comes from the page, so the type is
- * taken from TAP_TYPES and the times are numbers; only the name of an element hit elsewhere is the
- * page's own text, and describeTap leaves it out of what is written to taps.log.
+ * The CPU seconds each process of the iOS Simulator has used so far, by pid, with its name: every
+ * process whose executable lies under a CoreSimulator folder (the runtime's root, the device's
+ * data, the Mac's CoreSimulator services that draw it). One simulator runs on the CI Mac.
  */
-function parseTapEvents(record: string): TapEvent[] {
-  return record
-    .split(' ')
-    .filter(Boolean)
-    .map((entry) => {
-      const [what = '', times = ''] = entry.split('@');
-      const [raw = '', elsewhere] = what.split('>');
-      const [stamp = NaN, handled = NaN] = times.split(':').map(Number);
-      return { type: TAP_TYPES.find((t) => t === raw) ?? '?', ...(elsewhere === undefined ? {} : { elsewhere }), stamp, handled };
-    });
-}
-
-/**
- * What a tap delivered and when, for the log and a failure message: the events in order, the
- * finger's time down (touchstart to touchend, by the events' time stamps and by when the page
- * handled them) and the click's delay after touchend. "click" appears only when one arrived on the
- * element; one elsewhere is "click>element", or "click>elsewhere" without `names` (for the file).
- */
-export function describeTap(events: readonly TapEvent[], started: number, performed: number, names = true): string {
-  const own = (type: string) => events.find((e) => e.type === type && e.elsewhere === undefined);
-  const down = own('touchstart');
-  const up = own('touchend');
-  const click = own('click');
-  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : e.type === 'shown' ? 'element' : 'elsewhere'}`);
-  const parts = [`events: ${events.map(label).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
-  if (down) parts.push(`touchstart ${down.handled - started} ms after the actions began`);
-  if (down && up) parts.push(`finger down ${up.stamp - down.stamp} ms by time stamps, ${up.handled - down.handled} ms as handled`);
-  if (up && click) parts.push(`then the click ${click.handled - up.handled} ms after touchend`);
-  const over = own('mouseover');
-  if (over && !own('mousedown') && !click) {
-    const shown = events.filter((e) => e.type === 'shown' && down && e.handled >= down.handled && e.handled <= over.handled).map((e) => (names ? e.elsewhere : 'an element'));
-    parts.push(`taken for a hover (mouse moved, no press)${shown.length ? `: the page revealed ${shown.join(', ')} during the tap` : ''}`);
+async function simulatorCpu(): Promise<Map<number, { name: string; cpu: number }>> {
+  const { stdout } = await run('ps', ['-A', '-o', 'pid=,time=,comm='], { maxBuffer: 16 * 1024 * 1024 });
+  const found = new Map<number, { name: string; cpu: number }>();
+  for (const line of stdout.split('\n')) {
+    const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
+    if (!m || !m[3]!.includes('/CoreSimulator/')) continue;
+    found.set(Number(m[1]), { name: path.basename(m[3]!), cpu: cpuSeconds(m[2]!) });
   }
-  return parts.join('; ');
+  return found;
+}
+
+/** The simulator's load over one measured window (CALM_WINDOW_MS): the cores its processes used, and the three busiest. */
+async function simulatorLoad(): Promise<Load> {
+  const before = await simulatorCpu();
+  const started = Date.now();
+  await measuredWindow(CALM_WINDOW_MS);
+  const after = await simulatorCpu();
+  const seconds = (Date.now() - started) / 1000;
+  const used = [...after].map(([pid, p]) => ({ name: p.name, cores: (p.cpu - (before.get(pid)?.cpu ?? 0)) / seconds })).sort((a, b) => b.cores - a.cores);
+  const busiest = used.slice(0, 3).map((p) => `${p.name} ${Math.round(p.cores * 100)} %`);
+  return { cores: used.reduce((sum, p) => sum + p.cores, 0), busiest: busiest.join(', ') };
 }
 
 /** How this Xcode turns a simulator:`xcrun devicectl device orientation` (Xcode 27+) or Simulator.app's Device menu. */
 type Rotator = 'devicectl' | 'simulator-app';
 
 export class IosDevice {
-  /** Where the Simulator.app rotation left the simulator (its menu turns by 90 degrees). */
-  private orientation: Orientation = 'portrait';
+  /** Where the last rotation left the simulator (Simulator.app's menu turns by 90 degrees). */
+  private turned: Orientation = 'portrait';
 
   private constructor(
     readonly udid: string,
@@ -354,7 +339,14 @@ export class IosDevice {
     const base = new URL(`http://127.0.0.1:${port}`);
     await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
     note('safaridriver ready');
-    return new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
+    const device = new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
+    // The first boot's own work (indexes, caches, daemons starting) done before the first test.
+    await device.calm('after the boot', CALM_AFTER_BOOT_MS);
+    return device;
+  }
+
+  get orientation(): Orientation {
+    return this.turned;
   }
 
   /** A WebDriver session (Safari's automation sessions start with no cookies or storage of an earlier one). */
@@ -364,7 +356,32 @@ export class IosDevice {
       throw new Error(`${e.message}\n(${await this.sessionLogs(started)})`);
     });
     await this.rotate('portrait');
+    await this.verifyStart(session);
+    await this.calm('before the test', CALM_BEFORE_TEST_MS);
     return new IosPhone(this, session);
+  }
+
+  /**
+   * Checks that a new session starts where a viewer's Safari would: one tab, no prompt over it,
+   * the simulator upright, and Simulator.app hidden (shown, it draws the simulator's screen, and
+   * taps slowed into long presses: rotate()).
+   */
+  private async verifyStart(session: Session): Promise<void> {
+    const appShown = async () => this.rotator === 'simulator-app' && (await run('osascript', ['-e', 'tell application "System Events" to get visible of process "Simulator"'])).stdout.trim() === 'true';
+    const state = async () => JSON.stringify({ tabs: (await session.windowHandles()).length, prompt: await session.alertText(), upright: this.turned === 'portrait', simulatorAppShown: await appShown() });
+    await expect
+      .poll(state, { message: 'the new Safari session starts with one tab, no prompt, the simulator upright and Simulator.app hidden' })
+      .toBe(JSON.stringify({ tabs: 1, prompt: null, upright: true, simulatorAppShown: false }));
+  }
+
+  /** Waits until the simulator is calm (SIMULATOR_CALM_CORES, calm.ts); every window goes to device.log. */
+  calm(what: string, timeoutMs: number): Promise<void> {
+    return untilCalm({ what: `simulator ${what}`, maxCores: SIMULATOR_CALM_CORES, timeoutMs, measure: simulatorLoad, record: (line) => this.note(line) });
+  }
+
+  /** A line in device.log in the log folder, with the time. */
+  private note(line: string): void {
+    fs.appendFileSync(path.join(this.logDir, 'device.log'), `${new Date().toISOString()} ${line}\n`);
   }
 
   /**
@@ -421,7 +438,7 @@ export class IosDevice {
   async rotate(to: Orientation): Promise<void> {
     if (this.rotator === 'devicectl') {
       await run('xcrun', ['devicectl', 'device', 'orientation', 'set', '--device', this.udid, to === 'landscape' ? 'landscapeLeft' : 'portrait']);
-    } else if (to !== this.orientation) {
+    } else if (to !== this.turned) {
       // GitHub's macOS images let osascript drive System Events (Accessibility in their TCC database).
       // Activating it shows it again (attach() hid it).
       const item = to === 'landscape' ? 'Rotate Left' : 'Rotate Right';
@@ -432,7 +449,7 @@ export class IosDevice {
       // 41235159056, with the screen recording already off).
       if (to === 'portrait') await hideSimulatorApp();
     }
-    this.orientation = to;
+    this.turned = to;
   }
 
   /** Whether Simulator.app connects the Mac's keyboard (an attached keyboard hides the on-screen one), for a failure message. */
@@ -514,62 +531,37 @@ export class IosPhone implements Phone {
     return this.session.execute<R>(`return (${fn.toString()})(arguments[0]);`, [arg ?? null]);
   }
 
+  get orientation(): Orientation {
+    return this.device.orientation;
+  }
+
+  /**
+   * A finger's tap (actionability.ts): W3C touch actions, which safaridriver plays through WebKit's
+   * automation as touches on Safari's view (WebAutomationSession::simulateTouchInteraction), so the
+   * page gets real touch events and Safari's own click synthesis decides the rest
+   * (WebPage::handleSyntheticClick), as for a finger. A mouse pointer would skip the touches and
+   * that synthesis, and a script's click() is no finger at all.
+   */
   async tap(selector: string): Promise<void> {
     const element = await this.session.find(selector);
     // Scrolled only when not wholly in sight, as a finger would. After a scrollIntoView the page
     // reported the chat input at its new place while the screen (recording) still showed the old
-    // one, and the tap there reached #unmute in the player, with the element origin and with
-    // viewport coordinates alike (Devices runs 41181641808, 41183257695); unscrolled, every tap landed.
-    // Safari shows the page a frame after the page has moved: the point is read once Safari shows it
-    // (shownTouchPoint).
+    // one, and the tap there reached #unmute in the player (Devices runs 41181641808, 41183257695):
+    // the point is read once Safari shows the page where it reports it (actionablePoint).
     await this.session.execute(
       `const el = arguments[0], r = el.getBoundingClientRect(), vv = window.visualViewport;
        if (r.top < vv.offsetTop || r.bottom > vv.offsetTop + vv.height || r.left < vv.offsetLeft || r.right > vv.offsetLeft + vv.width) el.scrollIntoView({ block: "center" });`,
       [element],
     );
-    const point = await shownTouchPoint(this, selector, () => this.session.execute<TouchPoint | null>(`return (${touchPoint.toString()})(arguments[0]);`, [element]));
-    // What the tap delivers to the element, kept in sessionStorage (a tap on Watch may navigate):
-    // each event's type, its time stamp (the platform event's) and when the page handled it, as
-    // epoch milliseconds, so that a tap that ends in no click says how long the finger was down.
-    // An event on another element is kept as `type>element`, so a tap that missed says what it hit,
-    // and an element the page reveals meanwhile as `shown>element` (TAP_TYPES).
-    // Passive listeners: a touchend listener that may call preventDefault makes the browser wait
-    // for the page before it decides the tap (phone.ts recordInput).
-    await this.session.execute(
-      `const el = arguments[0];
-       window.__tapStop?.();
-       sessionStorage.setItem('__tap', '');
-       const name = (t) => t instanceof Element ? (t.id || t.getAttribute('data-testid') || t.tagName.toLowerCase()).replace(/[\\s@>:]/g, '_') : '?';
-       const now = () => Math.round(performance.timeOrigin + performance.now());
-       const add = (entry) => sessionStorage.setItem('__tap', sessionStorage.getItem('__tap') + entry + ' ');
-       const note = (e) => { if (e.isTrusted) add(e.type + (e.target === el || el.contains(e.target) ? '' : '>' + name(e.target)) + '@' + Math.round(performance.timeOrigin + e.timeStamp) + ':' + now()); };
-       const types = ['touchstart', 'touchend', 'mouseover', 'mousedown', 'click'];
-       for (const type of types) window.addEventListener(type, note, { capture: true, passive: true });
-       const shown = new MutationObserver((list) => { for (const m of list) if (m.target instanceof HTMLElement && !m.target.hidden) add('shown>' + name(m.target) + '@' + now() + ':' + now()); });
-       shown.observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ['hidden'] });
-       window.__tapStop = () => { shown.disconnect(); for (const type of types) window.removeEventListener(type, note, true); };`,
-      [element],
-    );
+    await this.session.execute(`(${armTap.toString()})(arguments[0]);`, [element]);
+    const wanted = { landscape: this.orientation === 'landscape', initialScale: true };
+    const point = await actionablePoint(this, selector, () => this.session.execute<TouchState>(`return (${touchState.toString()})(arguments[0], arguments[1]);`, [element, wanted]));
     const started = Date.now();
     await this.session.perform(tapActions(point.clientX, point.clientY));
     const performed = Date.now();
-    let events: TapEvent[] = [];
-    // A finger's tap ends in a click. When it does not (the touch reached the element and no click
-    // followed: runs 41184587941, 41190536745, the second with a tap that took 9.5 s to perform on
-    // an overloaded simulator), the test fails here, with what arrived and its timing.
-    try {
-      await expect
-        .poll(async () => describeTap((events = parseTapEvents((await this.evaluate(() => sessionStorage.getItem('__tap'))) ?? '')), started, performed), {
-          message: `the tap on ${selector} ended in a click`,
-        })
-        // A click on the element itself (one elsewhere is listed as "click>element").
-        .toMatch(/^events: (\S+, )*click[,;]/);
-    } catch (e) {
-      (e as Error).message += `\n(${await this.device.tapLogs(new Date(started))})`;
-      throw e;
-    } finally {
-      this.device.noteTap(`${selector}: ${describeTap(events, started, performed, false)}`);
-    }
+    // A tap that took 9.5 s to perform on an overloaded simulator ended in no click (run
+    // 41190536745), one with the finger down 1.3 s in a long press (run 42515339177).
+    await tapEndsInClick(this, selector, started, performed, { log: (line) => this.device.noteTap(line), onFailure: () => this.device.tapLogs(new Date(started)) });
   }
 
   /**

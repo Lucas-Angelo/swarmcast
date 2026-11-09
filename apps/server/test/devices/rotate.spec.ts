@@ -9,7 +9,7 @@
 // controls, and Back leaves it. Mobile Safari keeps the video in the page (playsinline).
 import { liveLink, uid } from '../e2e/fixtures.js';
 import { expect, test } from './fixtures.js';
-import { box, fullScreenState, isShown, joinOnPhone, playedSince, tapControl, videoState, viewport, watching, type Phone } from './phone.js';
+import { box, fullScreenState, isShown, joinOnPhone, playsOn, tapControl, viewport, watching, type Phone } from './phone.js';
 
 /** Seconds the video must play on (not paused) after each turn. */
 const PLAYS_ON_S = 2;
@@ -35,11 +35,6 @@ async function chatUnderPlayer(phone: Phone): Promise<boolean> {
   return !!player && !!chat && chat.y >= player.y + player.height - 1;
 }
 
-async function playsOn(phone: Phone): Promise<void> {
-  const from = await videoState(phone);
-  await expect.poll(() => playedSince(phone, from)).toBeGreaterThan(PLAYS_ON_S);
-}
-
 test('Chrome: turned sideways the page lays the player across the screen and plays on; its full-screen button fills the screen with the player, Back leaves it; upright the chat is under the player', { tag: '@android' }, async ({ phone }) => {
   // Arrange
   await joinAndWatch(phone);
@@ -48,25 +43,25 @@ test('Chrome: turned sideways the page lays the player across the screen and pla
   // Assert: no full screen by itself, the sideways layout
   await expect.poll(() => sidewaysLayout(phone)).toBe(true);
   expect(await fullScreenState(phone)).toBeNull();
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'the turn sideways');
   // Act
   await tapControl(phone, '[data-testid="fullscreen"]');
   // Assert
   await expect.poll(() => fullScreenState(phone)).toBe('player');
   expect(await isShown(phone, '[data-testid="controls"]')).toBe(true);
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'full screen');
   // Act
   await phone.back();
   // Assert
   await expect.poll(() => fullScreenState(phone)).toBeNull();
   await expect.poll(() => sidewaysLayout(phone)).toBe(true);
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'Back');
   // Act
   await phone.rotate('portrait');
   // Assert
   await expect.poll(async () => (await viewport(phone)).landscape).toBe(false);
   await expect.poll(() => chatUnderPlayer(phone)).toBe(true);
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'the turn upright');
 });
 
 test('Safari: turned sideways the page lays the player across the screen and plays on; upright the chat is under the player', { tag: '@ios' }, async ({ phone }) => {
@@ -77,11 +72,11 @@ test('Safari: turned sideways the page lays the player across the screen and pla
   // Assert
   await expect.poll(() => sidewaysLayout(phone)).toBe(true);
   expect(await fullScreenState(phone)).toBeNull();
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'the turn sideways');
   // Act
   await phone.rotate('portrait');
   // Assert
   await expect.poll(async () => (await viewport(phone)).landscape).toBe(false);
   await expect.poll(() => chatUnderPlayer(phone)).toBe(true);
-  await playsOn(phone);
+  await playsOn(phone, PLAYS_ON_S, 'the turn upright');
 });
