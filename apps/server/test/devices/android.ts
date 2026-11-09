@@ -240,9 +240,13 @@ export class AndroidDevice {
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
   }
 
-  /** The guest's CPU counters now (/proc/stat and every process's /proc/<pid>/stat, in one shell). */
+  /**
+   * The guest's CPU counters now (/proc/stat and every process's /proc/<pid>/stat, in one shell).
+   * A process that ends between the glob and its read makes cat fail: the shell's status is not
+   * the reading's (Devices run 42684571191).
+   */
   private async guestCpu(): Promise<GuestCpu> {
-    return parseGuestCpu(await this.shellOut(['sh', '-c', 'cat /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null']));
+    return parseGuestCpu(await this.shellOut(['sh', '-c', 'cat /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; exit 0']));
   }
 
   /** The guest's load over one measured window (CALM_WINDOW_MS): the cores used, and the three busiest processes. */

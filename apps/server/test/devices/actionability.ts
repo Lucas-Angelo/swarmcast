@@ -297,7 +297,14 @@ export function describeTap(events: readonly TapEvent[], started: number, perfor
  */
 export async function tapEndsInClick(phone: Phone, selector: string, started: number, performed: number, o: { waitedMs: number; log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
   let events: TapEvent[] = [];
-  const record = async () => describeTap((events = parseTapEvents((await phone.evaluate(() => sessionStorage.getItem('__tap'))) ?? '')), started, performed);
+  // A tap on Watch navigates: the page that answers may be the next one already, or none for a
+  // moment ("Execution context was destroyed"), and expect.poll stops at a callback that throws.
+  const read = () => phone.evaluate(() => sessionStorage.getItem('__tap')).catch((e: Error) => `(unreadable while the page changes: ${e.message.split('\n')[0]})`);
+  const record = async () => {
+    const text = (await read()) ?? '';
+    if (text.startsWith('(unreadable')) return `not yet: ${text}`;
+    return describeTap((events = parseTapEvents(text)), started, performed);
+  };
   try {
     // A click on the element itself (one elsewhere is listed as "click>element").
     await expect.poll(record, { message: `the tap on ${selector} ended in a click on it` }).toMatch(/^events: (\S+, )*click[,;]/);

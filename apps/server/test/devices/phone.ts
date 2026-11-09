@@ -217,7 +217,8 @@ export async function joinPageReady(phone: Phone): Promise<void> {
   await expect
     .poll(
       async () => {
-        const ready = await phone.evaluate(() => (document.getElementById('join') as HTMLButtonElement | null)?.disabled === false);
+        // A join page that lost a script reloads itself: an evaluate can meet no page for a moment.
+        const ready = await phone.evaluate(() => (document.getElementById('join') as HTMLButtonElement | null)?.disabled === false).catch(() => false);
         return ready ? 'ready' : `not yet: ${await joinPageState(phone)}`;
       },
       { message: 'the join page takes input (Watch enabled)' },
@@ -272,7 +273,8 @@ export async function joinOnPhone(phone: Phone, nickname: string, link: string):
   expect(outcome, `join as "${nickname}"`).toBe('watch');
   // The address changes before the watch page has loaded (Safari: "null is not an object
   // (evaluating 'v.played')" right after, Devices run 41227486868).
-  await expect.poll(() => phone.evaluate(() => document.readyState === 'complete' && !!document.querySelector('video')), { message: 'the watch page has loaded' }).toBe(true);
+  const loaded = () => phone.evaluate(() => document.readyState === 'complete' && !!document.querySelector('video')).catch(() => false);
+  await expect.poll(loaded, { message: 'the watch page has loaded' }).toBe(true);
   return seen;
 }
 
