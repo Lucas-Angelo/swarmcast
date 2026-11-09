@@ -1,10 +1,13 @@
 import crypto from 'node:crypto';
 import http from 'node:http';
 import { Window } from 'happy-dom';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import pino from 'pino';
+import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { encodeTrackerFrame, parseTrackerFrame } from '@swarmcast/shared';
 import type { App } from '../../src/app.js';
 import { isListening } from '../../src/core/ports.js';
+import { HlsOrigin } from '../../src/hls/origin.js';
+import { streamPath } from '../../src/media/mediamtx.js';
 import { STARTUP_GUARD_SOURCE } from '../../src/public/security.js';
 import { infoHashHexFor } from '../../src/tracker/tracker.js';
 import { bootApp, hasFfmpeg, isAlive, joinAs, signIn, startFeed, stopTracked, until, type Feed, type Ports } from './helpers.js';
@@ -50,6 +53,20 @@ async function stopStreaming(l: Live | undefined): Promise<void> {
 }
 
 const segmentsOf = (playlist: string): string[] => playlist.split('\n').filter((l) => l && !l.startsWith('#'));
+
+/** Each listed segment's date (ms, undefined when it has none), by its number in the run (MediaMTX's `_segN`). */
+function datesBySegment(playlist: string): Map<number, number | undefined> {
+  const out = new Map<number, number | undefined>();
+  let date: number | undefined;
+  for (const line of playlist.split('\n')) {
+    if (line.startsWith('#EXT-X-PROGRAM-DATE-TIME:')) date = Date.parse(line.slice(25));
+    else if (line && !line.startsWith('#')) {
+      out.set(Number(/_seg(\d+)\.mp4$/.exec(line)?.[1]), date);
+      date = undefined;
+    }
+  }
+  return out;
+}
 
 describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
   let live: Live;
@@ -116,6 +133,24 @@ describe.skipIf(!hasFfmpeg)('MediaMTX + server with a real RTMP stream', () => {
     expect(multi).not.toContain('audio-only');
     expect(media).toContain('#EXT-X-MAP');
     expect(segmentsOf(media).length).toBeGreaterThan(0);
+  });
+
+  it('an origin that starts reading a stream under way dates every segment, the audio ones like the video ones', async () => {
+    // Arrange: MediaMTX dates only the newest two segments of a playlist; wait until it lists more.
+    const video = 'video1_stream.m3u8';
+    const audio = 'audio2_stream.m3u8';
+    await until(() => segmentsOf(live.app.live.origin.getPlaylist(video) ?? '').length >= 5, { timeoutMs: 30_000, what: 'five segments', on: [[live.app.live.origin, 'updated']] });
+    const late = new HlsOrigin(`http://127.0.0.1:${live.ports.mediamtxHls}/${streamPath(live.app.live.snapshot().streamKey)}/`, pino({ level: 'silent' }), 200);
+    onTestFinished(() => late.stop());
+    // Act
+    late.start();
+    await until(() => late.available, { timeoutMs: 10_000, what: 'the second origin to serve the stream', on: [[late, 'available']] });
+    // Assert
+    const v = datesBySegment(late.getPlaylist(video)!);
+    const a = datesBySegment(late.getPlaylist(audio)!);
+    const both = [...v.keys()].filter((n) => a.has(n));
+    expect(both.length).toBeGreaterThanOrEqual(4);
+    expect(both.map((n) => ({ n, video: v.get(n), audio: a.get(n) }))).toEqual(both.map((n) => ({ n, video: expect.any(Number), audio: v.get(n) })));
   });
 
   it('rejects every protected resource without a session', async () => {
