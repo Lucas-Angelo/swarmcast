@@ -228,8 +228,18 @@ async function simulatorAppRunning(): Promise<boolean> {
  */
 async function quitSimulatorApp(): Promise<void> {
   if (!(await simulatorAppRunning())) return;
-  await run('osascript', ['-e', 'quit app "Simulator"']);
-  await until(async () => !(await simulatorAppRunning()), { timeoutMs: 30_000, what: 'Simulator.app to quit' });
+  // A signal, not AppleScript's quit: hidden and windowless, Simulator.app took the quit event and
+  // went on running (Devices run 42708098423).
+  await run('pkill', ['-TERM', '-x', 'Simulator']).catch(() => {});
+  const processes = () => run('ps', ['-axo', 'pid,stat,lstart,comm']).then((r) => r.stdout.split('\n').filter((l) => /\/Simulator(\.app|$)/.test(l)).join('; ') || 'none', (e: Error) => e.message);
+  let seen = '';
+  await until(
+    async () => {
+      seen = await processes();
+      return !(await simulatorAppRunning());
+    },
+    { timeoutMs: 30_000, what: 'Simulator.app to quit', detail: () => seen },
+  );
 }
 
 async function simulatorAppWindows(): Promise<number> {
