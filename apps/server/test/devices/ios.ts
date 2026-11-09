@@ -203,7 +203,33 @@ async function webInspectorReady(udid: string): Promise<net.Socket | null> {
 /** Simulator.app showing this simulator (its Device menu acts on the window), once its window is up. */
 async function openSimulatorApp(udid: string): Promise<void> {
   await run('open', ['-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid]);
-  await until(async () => (await simulatorAppWindows()) > 0, { timeoutMs: 60_000, what: "Simulator.app's window" });
+  let state = '';
+  await until(
+    async () => {
+      state = `${await simulatorAppWindows()} windows, ${(await simulatorAppRunning()) ? 'running' : 'not running'}`;
+      return (await simulatorAppWindows()) > 0;
+    },
+    { timeoutMs: 60_000, what: "Simulator.app's window", detail: () => state },
+  );
+}
+
+async function simulatorAppRunning(): Promise<boolean> {
+  return run('pgrep', ['-x', 'Simulator']).then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
+ * Quits Simulator.app while no simulator runs, so that the next open() starts it afresh with this
+ * simulator. A Simulator.app left running and hidden from the previous worker's simulator (which
+ * shut down) once showed no window for the next boot, for good: open() hands a running app no
+ * arguments (Devices run 42694261030, the fourth boot of a job, and every boot after it).
+ */
+async function quitSimulatorApp(): Promise<void> {
+  if (!(await simulatorAppRunning())) return;
+  await run('osascript', ['-e', 'quit app "Simulator"']);
+  await until(async () => !(await simulatorAppRunning()), { timeoutMs: 30_000, what: 'Simulator.app to quit' });
 }
 
 async function simulatorAppWindows(): Promise<number> {
@@ -294,55 +320,69 @@ export class IosDevice {
     const sim = await findSimulator();
     note(`simulator ${sim.udid} (${sim.state})`);
     let booted = false;
-    if (sim.state !== 'Booted') {
-      await simctl(['boot', sim.udid]);
-      booted = true;
-    }
-    await simctl(['bootstatus', sim.udid, '-b']);
-    note('booted');
-    const missing: string[] = [];
-    for (const [domain, key] of SIMULATOR_KEYS) {
-      const value = await simctl(['spawn', sim.udid, 'defaults', 'read', domain, key]).catch(() => '');
-      if (value !== '1') missing.push(`${domain} ${key}`);
-    }
-    if (missing.length > 0) {
-      for (const [domain, key] of SIMULATOR_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
-      // webinspectord and Safari read them at start.
-      await simctl(['shutdown', sim.udid]);
-      await simctl(['boot', sim.udid]);
+    let driver: Tracked | null = null;
+    let inspector: net.Socket | null = null;
+    try {
+      if (sim.state !== 'Booted') {
+        await quitSimulatorApp();
+        await simctl(['boot', sim.udid]);
+        booted = true;
+      }
       await simctl(['bootstatus', sim.udid, '-b']);
-      booted = true;
-      note(`automation settings written (${missing.join(', ')}), rebooted`);
+      note('booted');
+      const missing: string[] = [];
+      for (const [domain, key] of SIMULATOR_KEYS) {
+        const value = await simctl(['spawn', sim.udid, 'defaults', 'read', domain, key]).catch(() => '');
+        if (value !== '1') missing.push(`${domain} ${key}`);
+      }
+      if (missing.length > 0) {
+        for (const [domain, key] of SIMULATOR_KEYS) await simctl(['spawn', sim.udid, 'defaults', 'write', domain, key, '-bool', 'true']);
+        // webinspectord and Safari read them at start.
+        await simctl(['shutdown', sim.udid]);
+        await simctl(['boot', sim.udid]);
+        await simctl(['bootstatus', sim.udid, '-b']);
+        booted = true;
+        note(`automation settings written (${missing.join(', ')}), rebooted`);
+      }
+      const stopped = await unusedJobsOff(sim.udid);
+      const left = await unusedJobsRunning(sim.udid);
+      note(`unused jobs off (stopped: ${stopped.join(', ') || 'none'}; running still: ${left.join(', ') || 'none'})`);
+      // Safari running before the first session gives the Web Inspector an application to list
+      // (without it a new simulator answered safaridriver with a timeout: the same source).
+      await simctl(['launch', sim.udid, SAFARI]);
+      note('Safari launched');
+      const rotator: Rotator = await run('xcrun', ['devicectl', 'device', 'orientation', 'get', '--device', sim.udid]).then(
+        () => 'devicectl',
+        () => 'simulator-app',
+      );
+      if (rotator === 'simulator-app') {
+        // Opened here, where its first start (up to two minutes on CI) has the fixture's time, and
+        // hidden: rotate() shows it only to turn the phone.
+        await openSimulatorApp(sim.udid);
+        await hideSimulatorApp();
+        note('Simulator.app started and hidden');
+      }
+      inspector = await webInspectorReady(sim.udid);
+      note('Web Inspector up, Safari connected to it');
+      const [port] = await allocPorts(1);
+      driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
+      const base = new URL(`http://127.0.0.1:${port}`);
+      await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
+      note('safaridriver ready');
+      const device = new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
+      // The first boot's own work (indexes, caches, daemons starting) done before the first test.
+      await device.calm('after the boot', CALM_AFTER_BOOT_MS);
+      return device;
+    } catch (e) {
+      // Left as it was found: a simulator this attach booted is shut down again, so the next
+      // worker's attach starts from a shut-down simulator, not from this one's half-done setup.
+      note(`attach failed: ${(e as Error).message.split('\n')[0]}`);
+      await driver?.stop({ graceMs: 5_000 });
+      inspector?.destroy();
+      if (booted) await simctl(['shutdown', sim.udid]).catch(() => {});
+      sampler.kill();
+      throw e;
     }
-    const stopped = await unusedJobsOff(sim.udid);
-    const left = await unusedJobsRunning(sim.udid);
-    note(`unused jobs off (stopped: ${stopped.join(', ') || 'none'}; running still: ${left.join(', ') || 'none'})`);
-    // Safari running before the first session gives the Web Inspector an application to list
-    // (without it a new simulator answered safaridriver with a timeout: the same source).
-    await simctl(['launch', sim.udid, SAFARI]);
-    note('Safari launched');
-    const rotator: Rotator = await run('xcrun', ['devicectl', 'device', 'orientation', 'get', '--device', sim.udid]).then(
-      () => 'devicectl',
-      () => 'simulator-app',
-    );
-    if (rotator === 'simulator-app') {
-      // Opened here, where its first start (up to two minutes on CI) has the fixture's time, and
-      // hidden: rotate() shows it only to turn the phone.
-      await openSimulatorApp(sim.udid);
-      await hideSimulatorApp();
-      note('Simulator.app started and hidden');
-    }
-    const inspector = await webInspectorReady(sim.udid);
-    note('Web Inspector up, Safari connected to it');
-    const [port] = await allocPorts(1);
-    const driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
-    const base = new URL(`http://127.0.0.1:${port}`);
-    await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
-    note('safaridriver ready');
-    const device = new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
-    // The first boot's own work (indexes, caches, daemons starting) done before the first test.
-    await device.calm('after the boot', CALM_AFTER_BOOT_MS);
-    return device;
   }
 
   get orientation(): Orientation {
