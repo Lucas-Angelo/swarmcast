@@ -218,7 +218,9 @@ leaves none of them to luck; each rule below has the failure that taught it.
      sessionStorage, which outlives a navigation the tap causes;
    - the element must be actionable (`touchState`), Playwright's checks for a click
      (https://playwright.dev/docs/actionability) and what a phone adds: in the page, the page
-     shown and in the orientation the phone was turned to, enabled, visible by WebKit's rule (no
+     shown and in the orientation the phone was turned to, no full-screen change running (the
+     page keeps what was full screen at the last fullscreenchange, `recordFullscreen`: WebKit sets
+     the full-screen element as its animation begins and fires the change once it is over), enabled, visible by WebKit's rule (no
      box, visibility hidden, opacity 0 on it or on one of its four nearest ancestors), at least
      4 px of it inside the visual viewport (what the on-screen keyboard leaves), not covered at
      the point (`elementFromPoint`), nothing animating on it, no opacity or left transition running
