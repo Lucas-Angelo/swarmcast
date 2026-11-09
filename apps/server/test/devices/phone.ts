@@ -546,14 +546,13 @@ export function playerUi(phone: Phone): Promise<{ nativeControls: boolean; bar: 
       const el = document.querySelector<HTMLElement>(sel);
       return !!el && !el.hidden && el.getClientRects().length > 0;
     };
-    // Whether this browser lets a page set the volume: set it, read it back, put it back. Apple's
-    // guide says iOS keeps it read-only (always 1); the iOS 26 Simulator accepts it (Devices run
-    // 41507746407), so the check asks the browser, as the page does.
-    const before = v.volume;
-    const probe = before > 0.5 ? before - 0.25 : before + 0.25;
-    v.volume = probe;
-    const volumeApi = Math.abs(v.volume - probe) < 0.01;
-    v.volume = before;
+    // Whether this browser lets a page set the volume: set it and read it back, as the page does
+    // (player-caps.ts volumeSettable). Apple's guide says iOS keeps it read-only (always 1); the
+    // iOS 26 Simulator accepts it (Devices run 41507746407). Asked of a video element of its own,
+    // not of the one playing: the check must not touch the media the next steps tap and measure.
+    const probe = document.createElement('video');
+    probe.volume = 0.5;
+    const volumeApi = Math.abs(probe.volume - 0.5) < 0.01;
     const player = document.querySelector('.player') as HTMLElement & { webkitRequestFullscreen?: unknown };
     return {
       volumeApi,
