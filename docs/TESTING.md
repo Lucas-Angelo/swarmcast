@@ -90,6 +90,7 @@ Real time that a test measures, on purpose:
 | `BASELINE_SAMPLES` (5 s) and `SAMPLE_MS` (1 s) | [scripts/test/chat/bench.ts](../scripts/test/chat/bench.ts) | the server at rest with everyone connected, then during the run, sampled every second |
 | a scenario's length, rates, raid and reconnect times | [scripts/test/chat/scenarios.ts](../scripts/test/chat/scenarios.ts), [bots.ts](../scripts/test/chat/bots.ts) | the load itself |
 | `measuredWindow()` | the e2e fixtures (apps/server/test/e2e) | the windows an e2e test measures (playback, stalls); the only real-time wait there |
+| `CALM_WINDOW_MS` (2 s) | [apps/server/test/devices/calm.ts](../apps/server/test/devices/calm.ts) | a phone's CPU (the simulator's processes, the emulator's guest), two windows in a row under its bar before a test |
 | `ALIVE_AFTER_PANEL_S` (5 s) | [scripts/test/docker/appimage-test.sh](../scripts/test/docker/appimage-test.sh) | the AppImage still runs after opening its panel (a crash while the webview loads) |
 
 ## Where the tests are
@@ -174,35 +175,133 @@ free a moment later.
 an Android emulator (Pixel 7) and Mobile Safari on an iOS Simulator. Each test joins with a nickname
 typed on the on-screen keyboard and checks one behaviour: muted autoplay and Unmute by a tap; the chat
 under the player with the keyboard up (input and Send inside the visual viewport) and a message both
-ways with a scripted viewer (a desktop browser next to the iOS Simulator slowed its taps); the browser sent to the background and back (playback resumes, Go live
-returns to the live point); turning the phone (Android: Chrome's fullscreen video, then SwarmCast's
-sideways layout; iOS: the sideways layout).
+ways with a scripted viewer (a desktop browser next to the iOS Simulator slowed its taps); the browser
+sent to the background and back (playback resumes, Go live returns to the live point); turning the
+phone (Android: Chrome's fullscreen video, then SwarmCast's sideways layout; iOS: the sideways layout).
 
 - **Setup:** `scripts/test/devices/setup.sh install android|ios` (a manifest records what it created;
   `setup.sh remove all` deletes exactly that). iOS also needs `sudo safaridriver --enable` once.
-- **Design facts:** Android reaches the server through `adb reverse` on 127.0.0.1 (10.0.2.2 is not a
-  secure context, so the browser check could not run); the suite starts Chrome itself (Playwright's
-  launchBrowser disables renderer backgrounding) and detaches before backgrounding (focus emulation
-  keeps an attached page visible); taps wait for the keyboard and for two identical layout readings
-  and aim at the visible part of an enabled, uncovered element, at a point read the same before and
-  after two animation frames (`shownTouchPoint`); a mouse click does not raise the
-  keyboard, a touch does. The join page is touched only once Watch is enabled (`joinPageReady`):
-  its address says `/join` as soon as the browser commits it, while the head's stylesheet still
-  holds the parser (the startup guard's inline script waits for it), so `document.body` can be
-  null then (Devices run 42286829225).
-- **Keyboard up before the tap (Chrome on Android):** Chrome raises the on-screen keyboard for a
-  focus the page gives a field itself (the join page's autofocus) once the page has had a user
-  gesture (Blink `Element::Focus`, sticky user activation). On the emulator the join page has one
-  before any tap: Chrome gives it as the page finishes loading (`navigator.userActivation`
-  turns active as `readyState` becomes complete, whether the link came as a VIEW intent or by
-  DevTools' Page.navigate; not in desktop Chrome with the same page; Devices run 42315128472), and
-  Playwright's `page.evaluate` is one as well (it runs with `userGesture: true`). The autofocus
-  usually comes first and the keyboard stays down until the tap; when it comes after, the keyboard
-  comes up by itself as the page opens (Devices run 42307812551). A viewer may see that too, and
-  it is fine on a page whose only job is the nickname. So `tapToType` waits for the keyboard to be
-  up (the system reports it shown, it covers at least `KEYBOARD_MIN_PX` of the page, the field
-  has the tap and the focus, the page has stopped moving), never for the visible height to change
-  across the tap.
+- **CI:** `devices.yml` (the `devices` label or by hand; pipeline.yml calls it in release-flavour
+  runs). It gets a schedule only after a run of consecutive green dispatches on both jobs. Failed tests keep a screenshot of the whole screen, the player's state (`player`: the
+  element, the page's lines and hls.js's playlists and controllers), the screen recording (Android)
+  and the device's logs; every job prints `taps.log` and `device.log`.
+- **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
+  outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
+- **Windows 11:** `setup.sh install windows` builds a UTM VM from the official Windows 11 Arm64 ISO
+  (downloaded by hand from Microsoft's page) with an unattended answer file and OpenSSH; the
+  Windows harnesses then run in it over SSH. SmartScreen's "Run anyway" and the UAC prompt stay manual.
+
+#### How a test drives a phone
+
+A phone fails a test in ways a desktop browser never does: a tap that ends in no click, a page the
+browser has not shown yet, a daemon that eats the CPU, a keyboard that is up or not. The harness
+leaves none of them to luck; each rule below has the failure that taught it.
+
+1. **A calm device, once and before each test** (`calm.ts`). The phone's CPU is measured over
+   two-second windows (`CALM_WINDOW_MS`, a measured window): on iOS every simulator process on the
+   Mac (`ps`, executables under a CoreSimulator folder), on Android the guest's `/proc/stat`. The
+   device fixture waits until two windows in a row stay under the phone's bar
+   (`SIMULATOR_CALM_CORES` 0.5 of a core, `GUEST_CALM_CORES` 1 core) after the boot, so that a new
+   device's first-boot work is done before the first test, and again before each test; every window
+   goes to `device.log` with the three busiest processes, and a timeout names them. A busy device
+   lengthens what the harness cannot time itself: on iOS finger down and up are two steps of one
+   W3C `POST /actions` that Safari's automation plays one after the other, and with the Mac 0 % idle
+   the finger stayed down 1.26 s, a long press (Devices run 42515339177).
+2. **A known start, checked** (`newPhone`, `pageAtRest`). Android: Chrome stopped, its data
+   cleared, notifications allowed, upright, then checked: rotation 0, no keyboard, Chrome's window
+   in front with the input focus (no dialog over it). iOS: a new WebDriver session (no cookies or
+   storage of an earlier one), upright, then checked: one tab, no prompt, Simulator.app hidden.
+   Both: the first page shown, in the orientation the phone holds, at zoom 1, nothing full screen.
+3. **One gate for every tap** (`actionability.ts`, both phones):
+   - the page records the tap first (`armTap`): each trusted touchstart, touchend, mouseover,
+     mousedown and click, and every control it reveals meanwhile (`shown>element`), in
+     sessionStorage, which outlives a navigation the tap causes;
+   - the element must be actionable (`touchState`), Playwright's checks for a click
+     (https://playwright.dev/docs/actionability) and what a phone adds: in the page, the page
+     shown and in the orientation the phone was turned to, enabled, visible by WebKit's rule (no
+     box, visibility hidden, opacity 0 on it or on one of its four nearest ancestors), at least
+     4 px of it inside the visual viewport (what the on-screen keyboard leaves), not covered at
+     the point (`elementFromPoint`), nothing animating on it, no opacity or left transition running
+     anywhere, and on iOS zoom 1; then the same scene (point, visible part of the page, every
+     control in sight) read again after two animation frames (`actionablePoint`);
+   - the finger: W3C touch actions through safaridriver on iOS (`tapActions`; WebKit's automation
+     plays them as touches on Safari's view, so Safari's own click synthesis decides, as for a
+     finger), DevTools' `Input.dispatchTouchEvent` on Android (Chrome feeds it to the page as the
+     system's touches: touch events, its gesture detector's tap, the click, and the keyboard for
+     a field; a mouse click raises no keyboard);
+   - the tap counts only once the page got the click on the element (`tapEndsInClick`); otherwise
+     the test fails with what arrived, the finger's time down, and what the page revealed during
+     the tap ("taken for a hover"); on iOS with the simulator's log of the tap. Every tap's timing
+     goes to `taps.log`.
+4. **The page's own reveals waited out by state.** What a page shows by itself on its own clock
+   cannot be gated by a tap: a spec waits for the state after it. The watch page reveals Unmute, Go
+   live and "Live" with the video's first `playing`, and the delay behind live (with its "i"
+   button) a second later; `watching` (phone.ts) waits for 1.5 s played and the delay shown before
+   any tap on the watch page. The join page is touched once Watch is enabled (`joinPageReady`).
+   Player controls are focused before a tap (`tapControl`): focus holds them shown, and the gate
+   waits out their fade-in.
+5. **Every check polls the state, with what it saw.** No single read of something that passes
+   through other states (a status line, `paused` during an adaptive-delay hold, a layout during a
+   turn): `expect.poll` with a value that says, while waiting, what the page shows.
+6. **Playback counted on the media's clock** (`playsOn`): after a step (a turn, full screen, the
+   background, Unmute, Go live) the count of `played` seconds starts only once the video plays
+   (not paused, not seeking, readyState 3 or more), so the step's own pause or seek is never
+   counted against it, and a failure says what the element was doing (readyState, buffered,
+   status line).
+
+#### Why each rule
+
+- **iOS taps and content that appears:** Mobile Safari turns a tap into a click only if no control
+  appears between touchstart and its synthetic mouse move (Apple's Safari Web Content Guide,
+  "Handling Events": "if the contents of the page changes on the mousemove event, no subsequent
+  events in the sequence are sent"). WebKit's `ContentChangeObserver` watches every style change
+  from touchstart to that mouse move, and 32 ms more for an element that is not a form control: an
+  element that takes clicks going from hidden to visible inside the layout viewport, or an
+  opacity or left transition that ends with one shown, makes the tap a hover
+  (`WebPage::handleSyntheticClick`, `isConsideredActionableContent`). The join page's "Checking
+  your browser…" (with its "i" button) appeared once the challenge arrived, under a tap on the
+  nickname (Devices run 41566408164); the server now sends the page with the line already shown to
+  a browser it will check (`server.ts` `Pages.joinChecking`). The watch page's delay behind live
+  came up on its 1 s timer 15 ms after the touchstart of a tap on the chat input, about one run in
+  15: mouseover, no mousedown, no click (Devices runs 42521418840, 42524374628). It cannot come with
+  "Live": hls.js reads its latency as 0 until the video's first `timeupdate`.
+- **iOS taps on a page Safari has not shown yet:** WebKit's automation refuses a touch outside the
+  visible area Safari keeps for the page ("move target out of bounds",
+  `WebAutomationSession::simulateTouchInteraction` checks it against
+  `WebPageProxy::unobscuredContentRect`). The live link moves the page to a new web process (the
+  viewer pages send Cross-Origin-Opener-Policy); Safari then forgets that area
+  (`WebPageProxy::resetState`) and learns it again only from the new page's first frame, while the
+  page itself already reports its visual viewport. The tap on the join page's nickname came 147 ms
+  after its load event and was refused at (201, 275) of a 402 × 714 page (release-rehearsal run
+  42508591582); the join page's first paint comes 7 ms to 1.35 s after its load event (53 loads,
+  Devices run 42512440502). WebKit starts a page's next frame only once Safari has taken the
+  previous one (`RemoteLayerTreeDrawingArea` waits for `DisplayDidRefresh`), so after two frames
+  Safari shows the page where it reports itself. The same holds for a scroll: after a
+  `scrollIntoView` Safari still showed the old place for a moment, and a tap there reached another
+  element (Devices runs 41181641808, 41183257695); a tap scrolls only an element not wholly in sight.
+- **iOS taps at zoom 1:** Mobile Safari makes the click at once only at the initial scale of a
+  `width=device-width` page (https://webkit.org/blog/5610/more-responsive-tapping-on-ios/);
+  zoomed, it waits to see whether a second tap follows.
+- **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
+  saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
+  in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the
+  Mac's, and Health, Fitness, Siri and the widgets added theirs. `setup.sh` and the suite turn those
+  daemons off (`launchctl disable` in the simulator; `ios.ts` `UNUSED_JOBS`), and the harness's
+  touch listeners are passive, so WebKit does not hold a tap for the page. A simulator's first long
+  boot also has a burst of its own: about a minute in, siriactionsd (Shortcuts) indexes every app's
+  actions in its XPC service BackgroundShortcutRunner for some 80 s at up to 120 % CPU (Devices run
+  42519281087), which on CI was when the first test began, and the first tap's finger stayed down
+  1.3 s (run 42515339177); siriactionsd is in `UNUSED_JOBS` too, and the calm wait after the boot
+  holds the first test until whatever else a first boot runs is done. The Mac's load goes to
+  `host-load.log`. Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
+  from finger down to up (Devices runs 41227486868, 41235159056): it is shown only to turn the
+  phone, and the job records no simulator video.
+- **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
+  over the first page, and a tap while it was still coming up went to its popover (release-rehearsal
+  pipeline 42399897758). `setup.sh` and the suite set TipKit's own switch in Safari's defaults
+  (`com.apple.TipKit.HideAllTips`, `ios.ts` `SAFARI_TIPS_OFF`; side by side the tip came up in both
+  simulators without it and in none with it, Devices run 42403184245), and the `phone` fixture fails
+  a test in which Safari showed a tip (`IosDevice.tipsShown`).
 - **On-screen keyboard on iOS:** the iOS Simulator under safaridriver never raises it, though the
   tap reaches the field as trusted touch events and the field has focus, with or without the Mac's
   keyboard connected; and Send Keys delivers key events but inserts nothing (WebKit gives UIKit no
@@ -212,100 +311,50 @@ sideways layout; iOS: the sideways layout).
   keyboard would (`IosPhone.type`), and every other check runs (`Phone.onScreenKeyboard`).
 - **Background on iOS:** under safaridriver the session ends as Safari leaves the screen ("invalid
   session id" from then on), so the trip to the background runs on Android (`@android`).
+- **Screenshots on iOS:** `simctl io <udid> screenshot -` does not write to stdout on Xcode 26,
+  though its help says so: it writes a file named `-` in the current folder, so failed tests kept
+  an empty "screen". `IosDevice.screenshot` writes a file and reads it back, and fails ("screen
+  (failed)") with simctl's words when there is no image.
+- **Android: the address before the page.** The join page's address says `/join` as soon as
+  Chrome commits it, while the head's stylesheet still holds the parser (the startup guard's
+  inline script waits for it), so `document.body` can be null then (Devices run 42286829225): the
+  page is touched only once Watch is enabled (`joinPageReady`).
+- **Keyboard up before the tap (Chrome on Android):** Chrome raises the on-screen keyboard for a
+  focus the page gives a field itself (the join page's autofocus) once the page has had a user
+  gesture (Blink `Element::Focus`, sticky user activation), and on the emulator the join page has
+  one before any tap: Chrome gives it as the page finishes loading (Devices run 42315128472), and
+  Playwright's `page.evaluate` is one as well (`userGesture: true`). When the autofocus comes after
+  it, the keyboard comes up by itself as the page opens (Devices run 42307812551), which is fine on a
+  page whose only job is the nickname. So `tapToType` waits for the keyboard to be up (the system
+  reports it shown, it covers at least `KEYBOARD_MIN_PX` of the page, the field has the tap and the
+  focus, the page has stopped moving), never for the visible height to change across the tap.
+- **Android emulator:** `-gpu swangle_indirect` (`android.ts` `EMULATOR_GPU`): with
+  `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
+  versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
+  held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), with
+  animations off (the three `*_animation_scale` settings, as Android's guide to testing asks:
+  https://developer.android.com/training/testing/espresso/setup#set-up-environment), and
+  `setup.sh` pins version 37.2.12. The AVD has four cores (`hw.cpu.ncore`, the CI runner's count):
+  with the default two the guest stayed CPU-bound (CPU pressure near 90 % in every ANR report), and
+  in Devices run 42316622933 SystemUI did not start in time at two cold boots of the eight; its
+  "isn't responding" dialog took the window focus from Chrome, so Android refused Chrome's requests
+  for the keyboard while the suite's touches, which reach the page over DevTools, still focused the
+  field. With four cores the 15 boots of three runs had no ANR (Devices runs 42321838235,
+  42321840933, 42321843458). `keyboardOnce` brings the keyboard up once after the boot (Gboard's
+  first show took 13.9 s, Devices run 41226056177) once Chrome's window has the input focus.
+  CI boots the emulator the suite's way, after `setup.sh install android`, so `emulator.log` keeps
+  its output and exit, and a crash leaves a core and its backtrace with the job's artifacts.
 - **Time away (Android):** the phone stays in the background for whole segments of live counted
   from the first new one (`liveMovesOn`), four of them (8 to 10 s): the page must come back behind
   by more than Go live's 4 s, after the catch-up has begun, and by less than the 16 s past which
   hls.js jumps to the live point by itself. Three new segments counted from the call lasted 4 to
-  6 s, and the video stands paused for less than Chrome's window is hidden (its main thread was busy
-  for 1.2 s as the window went in release-rehearsal run 42382536965): the page came back only 4 s
-  behind and showed "LIVE" once the catch-up began. Thirty such trips with a record of the page
+  6 s, and the video stands paused for less than Chrome's window is hidden (release-rehearsal run
+  42382536965): the page came back only 4 s behind. Thirty trips with a record of the page
   (Devices runs 42385971521 and 42387936202) read 5.0 to 8.4 s behind when the check passed.
-- **Android emulator:** `-gpu swangle_indirect` (`android.ts` `EMULATOR_GPU`): with
-  `swiftshader_indirect` the emulator crashed in its host renderer thread (SIGSEGV) in most runs, on
-  versions 37.2.12 and 37.2.13 and on Android 15 and 16; measured side by side, `swangle_indirect`
-  held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), and `setup.sh`
-  pins version 37.2.12 (a known build, not whatever is newest). The AVD has four cores
-  (`hw.cpu.ncore`, the CI runner's count): with the default two the guest stayed CPU-bound
-  through the run (CPU pressure near 90 % in every ANR report) and system apps missed Android's
-  deadlines. In Devices run 42316622933 SystemUI did not start in time at two cold boots of the
-  eight ("ANR in com.android.systemui"; none in the other six, nor in the ten boots of the two
-  runs beside it); its "isn't responding" dialog took the window focus from Chrome, so Android
-  refused Chrome's requests for the keyboard ("onFailed at PHASE_CLIENT_VIEW_SERVED") while the
-  suite's touches, which reach the page over DevTools, still focused the field. In the same run
-  Gboard was killed for a background ANR mid-test, with the chat input focused. With four cores
-  the 15 boots of three runs of 25 tests (Devices runs 42321838235, 42321840933, 42321843458)
-  had no ANR at all. `keyboardOnce` waits for Chrome's window to have the input focus before its
-  tap, and the keyboard's state in a failure names the focused window; `device.log` records each
-  boot's cores and, for each test's Chrome, the guest's and the host's load. CI boots it the
-  suite's way, after `setup.sh install android`, so `emulator.log` keeps its output and exit,
-  and a crash leaves a core and its backtrace with the job's artifacts.
-- **iOS Simulator load:** the CI Mac has 3 cores, and with a stock iPhone simulator it stayed
-  saturated through the run (load average 300 to 550): the push daemon retried Apple's push server
-  in a loop and logged up to 2,300 lines a second, which the simulator's diagnosticd relays to the
-  Mac's, and Health, Fitness, Siri and the widgets added theirs. A tap then reached the element and
-  no click followed. `setup.sh` and the suite turn those daemons off (`launchctl disable` in the
-  simulator; `ios.ts` `UNUSED_JOBS`), and the harness's touch listeners are passive, so WebKit does
-  not hold a tap for the page. Every tap's timing goes to `taps.log`, the Mac's load to
-  `host-load.log`. A simulator's first long boot also has one burst of its own: a few seconds in,
-  siriactionsd (Shortcuts) schedules an index of every app's actions, and about a minute later its
-  XPC service BackgroundShortcutRunner runs it for some 80 s at up to 120 % CPU (26 s of CPU,
-  Devices run 42519281087), which on CI is when the first test begins. With the Mac 0 % idle, the
-  first tap's finger stayed down 1.3 s and iOS took it for a long press (a text-selection drag, no
-  click; run 42515339177). siriactionsd is in `UNUSED_JOBS` too. The time between finger down and
-  up is not the harness's to choose: both are steps of one WebDriver `POST /actions`, which
-  Safari's automation plays one after the other inside the simulator, so a busy Mac lengthens it
-  (there, Safari got finger down at once and finger up 1.26 s later). Keep the simulator calm.
-- **Screenshots on iOS:** `simctl io <udid> screenshot -` does not write to stdout on Xcode 26,
-  though its help says so: it writes a file named `-` in the current folder, exits 0 and leaves
-  stdout empty, so failed tests kept an empty "screen". `IosDevice.screenshot` writes a file and
-  reads it back, and fails ("screen (failed)") with simctl's words when there is no image.
-- **iOS taps and content that appears:** WebKit on iOS watches the page from touchstart to the
-  synthetic mouse move and takes a tap for a hover, with no click, when clickable content appears
-  meanwhile (its content-change observer). The join page's "Checking your browser…" line (with its
-  "i" button) appeared once the challenge arrived, under a tap on the nickname field (Devices run
-  41566408164); the server now sends the page with the line already shown to a browser it will check
-  (`server.ts` `Pages.joinChecking`). A page must not reveal buttons or links by itself while it takes taps.
-  The watch page does, by design, as the live starts: Unmute, Go live and, with the next second's
-  update once the video plays, the delay behind live with its "i" button (`watch.ts` `showDelay`).
-  The chat test tapped the chat input half a second after the page loaded, and once in about 15
-  runs the delay came up 15 ms after the touchstart: Safari sent mouseover and mousemove, no
-  mousedown, no click (Devices runs 42521418840, 42524374628). So every spec taps the watch page
-  only once the viewer is watching (`watching`, phone.ts: the video has played 1.5 s and the delay
-  shows), and a tap's record (`IosPhone.tap`) has the synthetic mouseover and mousedown and every
-  element the page revealed meanwhile (`shown>element`): a tap with mouseover and no mousedown
-  says "taken for a hover" and what was revealed.
-- **iOS taps on a page Safari has not shown yet:** WebKit's automation refuses a touch outside the
-  visible area Safari keeps for the page ("move target out of bounds",
-  `WebAutomationSession::simulateTouchInteraction` checks it against
-  `WebPageProxy::unobscuredContentRect`). The live link moves the page to a new web process (the
-  viewer pages send Cross-Origin-Opener-Policy); Safari then forgets that area
-  (`WebPageProxy::resetState`) and learns it again only from the new page's first frame, while the
-  page itself already reports its visual viewport. The tap on the join page's nickname came 147 ms
-  after its load event and was refused at (201, 275) of a 402 × 714 page (release-rehearsal run
-  42508591582). The join page's first paint comes after its load event: by 7 ms to 1.35 s in 53
-  loads of 53 on CI, more than 147 ms in 19 (Devices run 42512440502). So a tap reads its point,
-  lets the page run two animation frames and reads it again (`shownTouchPoint`, both phones): WebKit
-  starts a page's next frame only once Safari has taken the previous one, so Safari then shows the
-  page where it reports itself, and the element has not moved meanwhile. The same holds for a
-  scroll: after a `scrollIntoView` Safari still showed the old place for a moment, and a tap there
-  reached another element (Devices runs 41181641808, 41183257695).
-- **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
-  over the first page, a few seconds after it has loaded, and it stays up until the next tap. A
-  tap while the tip was still coming up went to its popover, which closed, and the page got no
-  touch and no click at all (release-rehearsal pipeline 42399897758). `setup.sh` and the suite set
-  TipKit's own switch in Safari's defaults (`com.apple.TipKit.HideAllTips`, `ios.ts`
-  `SAFARI_TIPS_OFF`): side by side, the tip came up in both simulators without it and in none with
-  it (Devices run 42403184245). After each test the `phone` fixture checks the simulator's log for
-  any tip Safari showed (`IosDevice.tipsShown`): without the switch that check failed the first
-  test, with it the three simulators of Devices run 42404125923 showed none.
-- **iOS on macOS 27 / Xcode 27:** safaridriver cannot drive iOS 18+ simulators (cryptex runtimes
-  outside its sandbox): run iOS in CI (`macos-26`) or with a classic iOS 17.x runtime.
-- **CI:** `devices.yml` (the `devices` label or by hand). It joins `pipeline.yml`/`ci-ok` and gets a
-  schedule only after a run of consecutive green dispatches on both jobs. Failed tests keep their
-  recording, screenshots and logs as artifacts.
-- **Windows 11:** `setup.sh install windows` builds a UTM VM from the official Windows 11 Arm64 ISO
-  (downloaded by hand from Microsoft's page) with an unattended answer file and OpenSSH; the
-  Windows harnesses then run in it over SSH. SmartScreen's "Run anyway" and the UAC prompt stay manual.
+- **Android, design facts:** the page is served on 127.0.0.1 through `adb reverse` (10.0.2.2 is
+  not a secure context, so the browser check could not run); the suite starts Chrome itself
+  (Playwright's launchBrowser disables renderer backgrounding) and detaches before backgrounding
+  (focus emulation keeps an attached page visible).
 
 ### Desktop shell (Rust)
 

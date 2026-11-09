@@ -608,13 +608,14 @@ export class AndroidPhone implements Phone {
     await target.scrollIntoViewIfNeeded();
     await target.evaluate(armTap);
     const wanted = { landscape: this.orientation === 'landscape', initialScale: false };
+    const asked = Date.now();
     const point = await actionablePoint(this, selector, () => target.evaluate(touchState, wanted));
     const cdp = this.cdp!;
     const started = Date.now();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
     const performed = Date.now();
-    await tapEndsInClick(this, selector, started, performed, { log: (line) => this.device.noteTap(line) });
+    await tapEndsInClick(this, selector, started, performed, { waitedMs: started - asked, log: (line) => this.device.noteTap(line) });
   }
 
   async type(selector: string, text: string): Promise<void> {

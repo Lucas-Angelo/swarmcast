@@ -291,10 +291,11 @@ export function describeTap(events: readonly TapEvent[], started: number, perfor
 /**
  * Waits until the tap armed by armTap and performed between `started` and `performed` (epoch ms)
  * ended in a click on the element, as a finger's tap does. Its description goes to `log` either
- * way; a tap that ends in no click fails here with what arrived and its timing, plus `onFailure`'s
- * words (iOS: where the simulator's log of the tap is).
+ * way, with how long the element took to become actionable (`waitedMs`); a tap that ends in no
+ * click fails here with what arrived and its timing, plus `onFailure`'s words (iOS: where the
+ * simulator's log of the tap is).
  */
-export async function tapEndsInClick(phone: Phone, selector: string, started: number, performed: number, o: { log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
+export async function tapEndsInClick(phone: Phone, selector: string, started: number, performed: number, o: { waitedMs: number; log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
   let events: TapEvent[] = [];
   const record = async () => describeTap((events = parseTapEvents((await phone.evaluate(() => sessionStorage.getItem('__tap'))) ?? '')), started, performed);
   try {
@@ -304,6 +305,6 @@ export async function tapEndsInClick(phone: Phone, selector: string, started: nu
     if (o.onFailure) (e as Error).message += `\n(${await o.onFailure()})`;
     throw e;
   } finally {
-    o.log(`${selector}: ${describeTap(events, started, performed, false)}`);
+    o.log(`${selector}: actionable after ${o.waitedMs} ms; ${describeTap(events, started, performed, false)}`);
   }
 }

@@ -237,8 +237,8 @@ function cpuSeconds(time: string): number {
 
 /**
  * The CPU seconds each process of the iOS Simulator has used so far, by pid, with its name: every
- * process whose executable lies under a CoreSimulator folder (the runtime's root, the device's
- * data, the Mac's CoreSimulator services that draw it). One simulator runs on the CI Mac.
+ * process whose executable lies under a CoreSimulator folder (the runtime's root under
+ * CoreSimulator/Volumes, the apps in the device's data). One simulator runs on the CI Mac.
  */
 async function simulatorCpu(): Promise<Map<number, { name: string; cpu: number }>> {
   const { stdout } = await run('ps', ['-A', '-o', 'pid=,time=,comm='], { maxBuffer: 16 * 1024 * 1024 });
@@ -555,13 +555,14 @@ export class IosPhone implements Phone {
     );
     await this.session.execute(`(${armTap.toString()})(arguments[0]);`, [element]);
     const wanted = { landscape: this.orientation === 'landscape', initialScale: true };
+    const asked = Date.now();
     const point = await actionablePoint(this, selector, () => this.session.execute<TouchState>(`return (${touchState.toString()})(arguments[0], arguments[1]);`, [element, wanted]));
     const started = Date.now();
     await this.session.perform(tapActions(point.clientX, point.clientY));
     const performed = Date.now();
     // A tap that took 9.5 s to perform on an overloaded simulator ended in no click (run
     // 41190536745), one with the finger down 1.3 s in a long press (run 42515339177).
-    await tapEndsInClick(this, selector, started, performed, { log: (line) => this.device.noteTap(line), onFailure: () => this.device.tapLogs(new Date(started)) });
+    await tapEndsInClick(this, selector, started, performed, { waitedMs: started - asked, log: (line) => this.device.noteTap(line), onFailure: () => this.device.tapLogs(new Date(started)) });
   }
 
   /**
