@@ -251,21 +251,27 @@ leaves none of them to luck; each rule below has the failure that taught it.
    counted against it, and a failure says what the element was doing (readyState, buffered,
    status line).
 
-What the soaks measured (Devices runs 42684571191 and 42694261030: ten iOS jobs and two Android
-jobs, each test five times, every repeat on a new simulator or emulator boot):
+What the soaks measured. The two proof runs, back to back on the same code (Devices runs
+42729435673 and 42739273055: ten iOS jobs and two Android jobs, each test five times, every repeat
+on a new simulator or emulator boot): iOS 400 of 400 tests, Android 100 of 100, 1,300 iOS and 340
+Android taps, every one ended in a click on its element.
 
-- Calm, iOS: after a boot 9.1 s at the median, 23.5 s at most (48 boots); before a test 4.6 s
-  (two windows), 11.5 s at most. Android: after a cold boot 35 s at the median, 95 s at most (the
-  guest at 3.7 to 3.96 of its 4 cores for about 70 s: system_server, Play services, Gboard, the
-  launcher, SystemUI; then Google Messages for about 30 s); before a test 4.2 s, 14.8 s at most.
-- The gate: 624 iOS taps and 170 Android taps, every one ended in a click on its element. An
-  element became actionable after 74 ms at the median on iOS (322 ms at the 95th percentile,
-  1.0 s at most), after 405 ms on Android (1.1 s, 2.0 s at most: the keyboard's slide).
-- The finger's time down, by the events' time stamps: 55 ms at the median on iOS, 172 ms at the
-  95th percentile; Android 43 and 165 ms. The tail is the tap that enters full screen: there the
-  page handled touchstart 0.4 to 5.3 s after its time stamp (its click still came), the most
-  marginal moment of the lane; the volume check that set the playing video's volume right before
-  that tap now asks an element of its own (`playerUi`).
+- Calm, iOS: after a boot 9 to 12 s at the median, 61 s at most (100 boots); before a test 4.5 s
+  (two windows), 22 s at the 95th percentile, 91 s at most: the simulator's Calendar
+  (MobileCal, CalendarIntentsExtension, calaccessd) and STExtractionService in a burst at up to
+  1.8 cores, held off the test. Android: after a cold boot 29 to 34 s at the median, 92 s at most
+  (the guest at 3.7 to 3.96 of its 4 cores for about 70 s: system_server, Play services, Gboard,
+  the launcher, SystemUI; then Google Messages); before a test 4.1 s, 12 s at most.
+- The gate: an element became actionable after 70 ms at the median on iOS (about 420 ms at the
+  95th percentile, 1.4 s at most), after 330 to 385 ms on Android (0.9 s, 1.3 s at most: the
+  keyboard's slide).
+- The finger's time down (the longer of the events' time stamps and their handling): 46 to
+  50 ms at the median on both phones, 126 to 202 ms at the 95th percentile, 504 ms at most on iOS
+  (the tap that enters full screen) and 352 ms on Android. Before the warm-ups below, the iOS tail
+  reached 538 ms on the nickname field, a long press (Devices run 42715017924), and the tap that
+  enters full screen up to 5.3 s from the touch's time stamp to the page (its click still came);
+  the volume check that set the playing video's volume right before that tap now asks an element
+  of its own (`playerUi`), and the slowest full-screen tap since took 1.0 s to perform.
 
 #### Why each rule
 
