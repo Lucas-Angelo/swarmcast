@@ -3,22 +3,17 @@
 #   - the test's own tools: a virtual display (xvfb, xauth) and a D-Bus session (dbus).
 # No curl, Python or Node: the checks use bash's /dev/tcp, so the test adds no library the app
 # could quietly borrow. When this image cannot run the AppImage, the list on the website is wrong.
-# Built by images.sh (BASE pinned by digest there), with apt through apt-retry.sh, mounted from
-# .github/scripts for this step only (build.sh): nothing of it or of apt's settings stays.
-#   docker build -f Dockerfile.appimage --build-context ci=../../../.github/scripts --build-arg BASE=ubuntu:22.04 .
+# Built by images.sh (BASE pinned by digest there); the packages go in through image-apt.sh, with
+# apt-retry.sh and the runner's mirror list mounted for this step only (build.sh): nothing but
+# the packages stays.
 ARG BASE=ubuntu:24.04
 FROM ${BASE}
 # Keep in sync with site/src/content/docs/install/linux.md (and pt-br).
 ARG HOST_PACKAGES="libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0"
 RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
-    set -e; \
-    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' \
-      'APT::Update::Error-Mode "any";' >/etc/apt/apt.conf.d/zzz-ci-retries; \
-    bash /ci/apt-retry.sh update; \
-    fuse=libfuse2; \
-    if apt-cache show libfuse2t64 >/dev/null 2>&1; then fuse=libfuse2t64; fi; \
-    bash /ci/apt-retry.sh install -y --no-install-recommends $HOST_PACKAGES "$fuse" xvfb xauth dbus; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /etc/apt/apt.conf.d/zzz-ci-retries; \
+    --mount=type=bind,source=image-apt.sh,target=/ci/image-apt.sh \
+    --mount=type=bind,from=apt,target=/ci/apt \
+    bash /ci/image-apt.sh $HOST_PACKAGES 'libfuse2t64|libfuse2' xvfb xauth dbus && \
     useradd -m -s /bin/bash tester
 USER tester
 WORKDIR /home/tester

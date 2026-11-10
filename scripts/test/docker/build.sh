@@ -7,9 +7,9 @@
 #   prefixed with "  | ", so a slow mirror shows while it is slow. It used to be printed only
 #   after a failure: release rehearsal 42757440898 showed nothing for 5 minutes, until the step's
 #   time limit, while apt fetched its indexes at 210 kB/s.
-# - The Dockerfiles install with .github/scripts/apt-retry.sh (a time limit per try, tries),
-#   mounted for the build only (`--build-context ci=.github/scripts`, RUN --mount): nothing of it
-#   stays in the image.
+# - The Dockerfiles install with image-apt.sh: apt through .github/scripts/apt-retry.sh (a time
+#   limit per try, tries) and, on a GitHub runner, the runner's own mirror list; both mounted for
+#   the build step only (RUN --mount): nothing of them stays in the image.
 # - Infra recovery, not a test retry: a failed build is tried ONCE more after a pause, with
 #   --no-cache (a fresh apt-get update), because a distribution mirror serving a half-synchronised
 #   archive is outside our control. Pipeline run 41273197813 (2026-11-01 05:38 UTC) lost
@@ -22,12 +22,19 @@
 BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_CI_SCRIPTS="$(cd "$BUILD_DIR/../../../.github/scripts" && pwd)"
 
-# One `docker build`, its log printed as it comes; the exit code is docker's.
+# One `docker build`, its log printed as it comes; the exit code is docker's. Named contexts for
+# the RUN step's mounts (image-apt.sh): `ci`, apt-retry.sh's folder, and `apt`, this machine's apt
+# mirror list when it has one (/etc/apt/apt-mirrors.txt: GitHub's Ubuntu runners), else nothing.
 build_once() {
-  local img="$1" df="$2"
+  local img="$1" df="$2" apt rc
   shift 2
-  docker build --progress=plain --build-context "ci=$BUILD_CI_SCRIPTS" -f "$BUILD_DIR/$df" "$@" -t "$img" "$BUILD_DIR" 2>&1 | prefixed '  | '
-  return "${PIPESTATUS[0]}"
+  apt="$(mktemp -d "${TMPDIR:-/tmp}/sc-apt.XXXXXX")"
+  if [ -f /etc/apt/apt-mirrors.txt ]; then cp /etc/apt/apt-mirrors.txt "$apt/"; fi
+  docker build --progress=plain --build-context "ci=$BUILD_CI_SCRIPTS" --build-context "apt=$apt" \
+    -f "$BUILD_DIR/$df" "$@" -t "$img" "$BUILD_DIR" 2>&1 | prefixed '  | '
+  rc="${PIPESTATUS[0]}"
+  rm -rf "$apt"
+  return "$rc"
 }
 
 build_image() {

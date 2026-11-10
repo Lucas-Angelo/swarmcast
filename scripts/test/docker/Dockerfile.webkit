@@ -2,21 +2,17 @@
 # for webkit.sh: Python GObject bindings for the race harness (webkit_coop.py), and the desktop
 # shell's build dependencies, Node (the mock server) and rustup (the toolchain comes from
 # rust-toolchain.toml at the first cargo call) for the watchdog check.
-# Built by images.sh (BASE: ubuntu:24.04 pinned by digest there), with apt through apt-retry.sh,
-# mounted from .github/scripts for this step only (build.sh).
-#   docker build -f Dockerfile.webkit --build-context ci=../../../.github/scripts -t swarmcast-test-webkit .
+# Built by images.sh (BASE: ubuntu:24.04 pinned by digest there); the packages go in through
+# image-apt.sh (build.sh mounts it for this step only).
 ARG BASE=ubuntu:24.04
 FROM ${BASE}
 RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
-    set -e; \
-    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' \
-      'APT::Update::Error-Mode "any";' >/etc/apt/apt.conf.d/zzz-ci-retries; \
-    bash /ci/apt-retry.sh update; \
-    bash /ci/apt-retry.sh install -y --no-install-recommends \
+    --mount=type=bind,source=image-apt.sh,target=/ci/image-apt.sh \
+    --mount=type=bind,from=apt,target=/ci/apt \
+    bash /ci/image-apt.sh \
       python3-gi gir1.2-webkit2-4.1 gir1.2-gtk-3.0 xvfb xauth dbus dbus-x11 fonts-dejavu-core \
       build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev \
-      nodejs curl ca-certificates rsync; \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /etc/apt/apt.conf.d/zzz-ci-retries; \
+      nodejs curl ca-certificates rsync && \
     useradd -m -s /bin/bash tester
 USER tester
 WORKDIR /home/tester

@@ -447,7 +447,8 @@ OBS, the Playwright image):
   failed lookup or download is a miss, never an error.
 - The suites `docker load` each archive, check its key label, and run it with
   `docker run --pull never`. A suite that finds no archive for its key builds the image (pull
-  and apt with their tries, the build log printed live) and saves it into `$SC_TEST_IMAGES`.
+  and apt with their tries, apt through the runner's own mirror list, the build log printed
+  live) and saves it into `$SC_TEST_IMAGES`.
 - `./.github/actions/test-images/save`, after the tests, uploads the job's set when the job built
   one of them (`built.txt`), with `compression-level: 0` (zstd already) and `retention-days: 90`.
   Any run saves, pull requests too: the scoping is in the restore.

@@ -1,6 +1,6 @@
 // scripts/test/docker/images.sh: the key and the names of the Docker suites' test images. A saved
-// image is used only for exactly what it was built from (its Dockerfile, its pinned base and the
-// architecture), so a change to any of them builds it again instead of testing an old image.
+// image is used only for exactly what it was built from (its Dockerfile and image-apt.sh, its pinned
+// base and the architecture), so a change to any of them builds it again instead of testing an old image.
 // The script runs in a copy of the folder (a temp folder with the same layout), so a test can
 // change a Dockerfile; no Docker is needed (the platform is given). Bash scripts for Linux and
 // macOS only, like the Docker suites: not run on Windows.
@@ -11,7 +11,7 @@ import path from 'node:path';
 import { beforeEach, describe, expect, it, onTestFinished } from 'vitest';
 
 const DOCKER_DIR = path.resolve(import.meta.dirname, '../docker');
-const FILES = ['images.sh', 'pull.sh', 'build.sh', 'Dockerfile.appimage', 'Dockerfile.obs', 'Dockerfile.e2e', 'Dockerfile.webkit'];
+const FILES = ['images.sh', 'pull.sh', 'build.sh', 'image-apt.sh', 'Dockerfile.appimage', 'Dockerfile.obs', 'Dockerfile.e2e', 'Dockerfile.webkit'];
 
 let root: string;
 beforeEach(() => {
@@ -59,10 +59,10 @@ describe.skipIf(process.platform === 'win32')('images.sh', () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 
-  it('changes the key when the Dockerfile changes', () => {
+  it.each(['Dockerfile.obs', 'image-apt.sh'])('changes the key when %s changes', (file) => {
     // Arrange
     const before = spec('obs');
-    fs.appendFileSync(path.join(root, 'scripts/test/docker/Dockerfile.obs'), 'ENV CHANGED=1\n');
+    fs.appendFileSync(path.join(root, 'scripts/test/docker', file), '# changed\n');
 
     // Act
     const after = spec('obs');

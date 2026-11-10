@@ -53,11 +53,19 @@ run builds it from the new base and the current packages. Sizes (arm64, zstd): t
 
 When an image is built, the build makes a failure explain itself and survive one hiccup:
 
-- `apt-get` runs through `.github/scripts/apt-retry.sh` (a time limit per try, 3 tries; mounted
-  for that build step only, `--build-context ci=.github/scripts`, so nothing of it stays in the
-  image), retries a connection 3 times with a 15 s time limit, and `apt-get update` fails on any
-  index it could not fetch (`APT::Update::Error-Mode=any`; by default it only warns and the
-  install then fails with "Unable to locate package"), so the log names the broken index;
+- the packages go in through `image-apt.sh`: `apt-get` through `.github/scripts/apt-retry.sh` (a
+  time limit per try, 3 tries), retrying a connection 3 times with a 15 s time limit, and
+  `apt-get update` fails on any index it could not fetch (`APT::Update::Error-Mode=any`; by
+  default it only warns and the install then fails with "Unable to locate package"), so the log
+  names the broken index. Both scripts are mounted for that build step only (RUN --mount, the
+  named contexts `ci` and `apt` of `build.sh`), and the step removes apt's lists, the .debs and
+  its settings: only the packages stay in the image;
+- on a GitHub Ubuntu runner, an Ubuntu image's archive sources go through the runner's own
+  mirror list for that step (`/etc/apt/apt-mirrors.txt`: Azure's copy of the archive first, then
+  archive.ubuntu.com), as the runner's apt does, and `apt-retry.sh` drops the Azure line after a
+  slow try, as on the runner; the image keeps its own sources. The first cold run of this design
+  (soak run 42763674289, an hour after the incident below) lost every Ubuntu x64 image to
+  archive.ubuntu.com still trickling: three 90 s tries of `apt-get update` ran out on it;
 - the BuildKit log (`--progress=plain`, apt's own lines) and `docker pull`'s lines are printed
   as they come, prefixed with `  | ` and `  pull | `, so a slow mirror shows while it is slow;
 - a failed build is tried once more after 60 s (`BUILD_RETRY_PAUSE`), with `--no-cache`; a second

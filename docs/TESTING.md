@@ -509,7 +509,8 @@ restores the job's images from the artifact an earlier run of the default branch
 own branch saved (`docker save` + zstd), the suites `docker load` them and start them with
 `docker run --pull never`, so a test asks no registry and no mirror. Only a job that finds no
 saved image for its key builds it (the cold path: once per key on `main`, again after 90 days,
-apt through `apt-retry.sh`, the build log printed as it comes) and saves it for the next runs
+apt through `apt-retry.sh` and the runner's own mirrors, the build log printed as it comes) and
+saves it for the next runs
 ([scripts/test/docker/README.md](../scripts/test/docker/README.md), "Test images"). Proved on
 `soak/docker-offline-proof` with every mirror and registry blocked on the runner and for its
 containers (`/etc/hosts`, `iptables`): the warm runs passed and built nothing.

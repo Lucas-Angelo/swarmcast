@@ -8,7 +8,7 @@
 #
 # SPEC: appimage:<base> (appimage:ubuntu:22.04, appimage:debian:12...), obs, e2e or webkit.
 #
-# An image is made of its Dockerfile, its base image (pinned by digest below, or the Playwright
+# An image is made of its Dockerfile (and image-apt.sh, which installs its packages), its base image (pinned by digest below, or the Playwright
 # image of the version in package-lock.json) and the architecture: the key is a hash of those.
 # test_image takes the first of:
 #   1. the image already in this Docker with that key (label org.swarmcast.test-image.key);
@@ -97,7 +97,7 @@ spec() {
     echo "format $IMAGE_FORMAT"
     echo "base $TI_BASE"
     echo "arch $TI_ARCH"
-    cat "$IMAGES_DIR/$TI_DOCKERFILE"
+    cat "$IMAGES_DIR/$TI_DOCKERFILE" "$IMAGES_DIR/image-apt.sh"
   } | sha256_text | cut -c1-16)"
   TI_FILE="$(printf '%s' "${TI_IMAGE%%:*}-${TI_IMAGE#*:}" | tr -c 'A-Za-z0-9._-' '-')-$TI_ARCH-$TI_KEY.tar.zst"
 }
