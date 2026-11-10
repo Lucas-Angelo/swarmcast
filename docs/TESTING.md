@@ -315,7 +315,13 @@ jobs, each test five times, every repeat on a new simulator or emulator boot):
   attach quits Simulator.app before it boots a shut-down simulator: one left running and hidden
   from the previous simulator once never showed a window for the next boot (`open` hands a
   running app no arguments), and since that attach left its simulator booted, every later one
-  met the same Simulator.app (Devices run 42694261030). An attach that fails shuts down what it booted. Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
+  met the same Simulator.app (Devices run 42694261030). An attach that fails shuts down what it booted.
+  A simulator's first text field after a boot sets its keyboard daemon (kbd) to work, with the
+  Mac reading the runtime's image (diskimagesiod), right as the first test's join page focuses
+  the nickname: the attach focuses a field once in a session of its own (`textFieldOnce`), and
+  the calm wait after the boot waits that out. The CI Mac has Spotlight off (`mdutil -a -i off`
+  in `devices.yml`): its indexer was among the busiest processes around a tap whose finger stayed
+  down 538 ms, a long press on the nickname field (Devices run 42715017924). Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
   from finger down to up (Devices runs 41227486868, 41235159056): it is shown only to turn the
   phone, and the job records no simulator video.
 - **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,

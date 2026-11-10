@@ -380,7 +380,8 @@ export class IosDevice {
       await until(() => ready(base), { timeoutMs: 30_000, what: 'safaridriver to answer /status', abortOn: [driver] });
       note('safaridriver ready');
       const device = new IosDevice(sim.udid, driver, base, rotator, booted, o.logDir, inspector, sampler);
-      // The first boot's own work (indexes, caches, daemons starting) done before the first test.
+      await device.textFieldOnce();
+      // The first boot's own work (indexes, caches, daemons starting, the text field's) done before the first test.
       await device.calm('after the boot', CALM_AFTER_BOOT_MS);
       return device;
     } catch (e) {
@@ -397,6 +398,25 @@ export class IosDevice {
 
   get orientation(): Orientation {
     return this.turned;
+  }
+
+  /**
+   * Focuses a text field once after the boot, in a session of its own, as Android's keyboardOnce
+   * brings its keyboard up once. A simulator's first text field after a boot sets kbd (the
+   * keyboard daemon) to work, with the Mac reading its runtime image (diskimagesiod): in Devices
+   * run 42715017924 kbd ran at 9 to 23 % right after each of a job's boots, as the first test's
+   * join page focused its nickname field and took its tap. The calm wait after the boot then
+   * waits that work out.
+   */
+  private async textFieldOnce(): Promise<void> {
+    const session = await Session.create(this.base, { browserName: 'Safari', platformName: 'iOS', 'safari:useSimulator': true, 'safari:deviceUDID': this.udid });
+    try {
+      await session.navigate('data:text/html,<meta name=viewport content="width=device-width"><input id=field autocomplete=off>');
+      const focused = await session.execute<boolean>('const f = document.getElementById("field"); f.focus(); return document.activeElement === f;');
+      this.note(`text field focused once after the boot (${focused ? 'focused' : 'not focused'})`);
+    } finally {
+      await session.delete().catch(() => {});
+    }
   }
 
   /** A WebDriver session (Safari's automation sessions start with no cookies or storage of an earlier one). */
