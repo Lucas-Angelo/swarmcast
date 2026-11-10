@@ -40,21 +40,22 @@ changes ─┬─ quick ──────────────────�
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first; the Rust crates' artifact when no run saved it yet ("Rust crates") |
-| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel, and its call starts after macos-arm64's: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
+| desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel; both calls are in the macOS lanes: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
-| e2e | `_e2e.yml`, called three times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos`: macOS `chat`, `media`; `e2e-macos-ui`: macOS `ui`, after `node-macos`) | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
+| e2e | `_e2e.yml`, called four times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos-chat`, `e2e-macos-ui`, `e2e-macos-media`: one macOS group each, in the macOS lanes) | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, 2-3 minutes on Ubuntu, up to about 5 on macOS), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
-| devices | `devices.yml` (`every-event: true`), only with `release-flavour` | 2 (iOS Simulator on `macos-26`, Android emulator on Ubuntu) | the viewer in real mobile browsers, after `e2e-macos-ui` (macOS lane 3) |
-| rendering | `rendering.yml`, only with `release-flavour` | 3 (Windows, macOS, Ubuntu) | the chat corpus and viewer chat UI in every engine, plus phone emulation, after `e2e-macos` (macOS lane 1) |
+| devices | `devices.yml` (`every-event: true`), only with `release-flavour` | 2 (iOS Simulator on `macos-26`, Android emulator on Ubuntu) | the viewer in real mobile browsers; heads macOS lane 1 |
+| rendering | `rendering.yml`, only with `release-flavour` | 3 (Windows, macOS, Ubuntu) | the chat corpus and viewer chat UI in every engine, plus phone emulation; heads macOS lane 2 |
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
 That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. A release rehearsal runs all of
 them plus `devices` and `rendering`: 47 jobs (10 on macOS, 7 on Windows). GitHub Free runs 20 jobs at once,
-5 of them on macOS; a pipeline uses at most 4 of those 5 at once (see "macOS concurrency" below).
+5 of them on macOS; a pipeline has at most 3 Apple silicon jobs queued or running at once (see "macOS
+concurrency" below).
 Every call of a stage keeps the stage's name, so the checks read `node / ... (macos-latest)` and
 `e2e / <group> (macos-latest)` whichever call ran them.
 
@@ -144,42 +145,73 @@ pipeline with `release: true`), without the release. What it adds to a plain dis
   codegen unit), the same bundles and the release jobs' 45-minute limit, signed with a key pair
   made in the job (`tauri signer generate --ci --password test`), and build A trusts that key;
 - `devices` (`devices.yml` with `every-event: true`: iOS Simulator and Android emulator) and
-  `rendering` (`rendering.yml`), chained into the macOS lanes ("macOS concurrency" below);
+  `rendering` (`rendering.yml`), each at the head of a macOS lane ("macOS concurrency" below);
 - `ci-ok` needs them too: it is red if either is skipped, fails or is cancelled.
 
 What it never does: name the `release` environment, read `secrets.*` (the updater key is passed on
 only with `release: true`, which only `release.yml` can set), or create a tag, release, draft,
 attestation or Pages deployment; its artifacts are the usual 14-day workflow artifacts. It is for
 proving a release candidate or the pipeline itself stable, many runs in a row. Start them one
-after the other (the next when the last has ended): one run uses at most four of the account's
-five macOS runners, two at once ask for up to eight, and GitHub drops a macOS job that waits too
-long ("macOS concurrency" below). `devices.yml` and `rendering.yml` take the calling run's own
+after the other (the next when the last has ended): one run asks for at most three Apple silicon
+runners at a time, two at once for six, and GitHub drops a macOS job that waits too long ("macOS
+concurrency" below). `devices.yml` and `rendering.yml` take the calling run's own
 concurrency group, so runs on the same branch never cancel each other's calls.
 
 ### macOS concurrency
 
-A pipeline's eight macOS jobs (ten in a release rehearsal) run in four lanes, so it never has more
-than four on macOS at once (`needs` in `pipeline.yml`; a chained call runs whatever the result of
-the call before it, not when the run is cancelled):
+A pipeline's eight macOS jobs (ten in a release rehearsal) run in three lanes chained with `needs`
+in `pipeline.yml`, so a run never has more than three Apple silicon jobs queued or running at once,
+and none of its jobs waits for a runner behind another of its own: each is asked for only when
+the job before it in its lane has ended. A chained call runs whatever the result of the call
+before it (not when the run is cancelled), so every check runs as before. `devices` and
+`rendering` run only in a release rehearsal; in any other run they are skipped as soon as
+`changes` is done, and their lane starts with its next job.
 
-| Lane | Jobs, in order | Minutes (p50, max) |
-|---|---|---|
-| 1 | `e2e / chat` (with the viewer chat UI); release rehearsal: then `rendering / macos-latest`, once `e2e / chat` and `e2e / media` are both done | 17.8, 24.4; rendering 1-6 |
-| 2 | `e2e / media` | 17.0, 19.6 |
-| 3 | `node / unit, integration, rust`, then `e2e / ui`; release rehearsal: then `devices / iOS Safari (Simulator)` (`macos-26`) | 4.3 + 12.2 = 16.5; 6.7 + 16.8; devices 6-12 |
-| 4 | `desktop macos-arm64` (build, clean-machine), then `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 4.1 + 2.7 + 4.1 + 3.7 = 14.6; 12.1 + 3.8 + 10.7 + 5.8 in a release |
+| Lane | Jobs, in order | Pull request, `main`: minutes (p50; max) | Release rehearsal: minutes (p50; max) |
+|---|---|---|---|
+| 1 | `devices / iOS Safari (Simulator)` (`macos-26`; release rehearsal only), `node / unit, integration, rust`, `e2e / chat` (with the viewer chat UI) | 4.2 + 19.4 = 23.6 (5.0; 23.4) | 10.1 + 4.5 + 19.9 = 34.5 (12.2; 5.2; 24.5) |
+| 2 | `rendering / macos-latest` (release rehearsal only), `e2e / ui`, `desktop macos-arm64` (build, clean-machine) | 15.4 + 3.6 + 2.7 = 21.7 (18.6; 4.2; 2.9) | 9.2 + 13.2 + 9.7 + 2.2 = 34.3 (10.9; 19.1; 11.2; 2.9) |
+| 3 | `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`), `e2e / media` | 3.8 + 3.4 + 17.4 = 24.6 (4.7; 4.9; 18.1) | 10.2 + 3.3 + 17.1 = 30.6 (12.1; 4.1; 18.6) |
 
-(Job times of the successful Pipeline and Release runs from 2026-11-03 12:00 to 2026-11-05 18:00
-UTC.) Lanes 3 and 4 end before lane 1 on a pull request or `main`, so the wall time is the same
-as with every macOS job at once, when runners come straight away. A release builds with fat LTO
-(macOS builds 5-12.5 minutes), so lane 4 there takes up to about 30 minutes against 22 for
-lane 1. A release rehearsal ends lane 3 with `devices` (about 16.5 + 10 minutes) and lane 1 with
-`rendering`, both still within lane 4's release builds. (`rendering` and `devices` also run Ubuntu
-and Windows jobs; the chain delays those too, which costs nothing, since lane 4 ends later.) A cold
-Rust cache (a `Cargo.lock` or toolchain change) doubles the two builds. Each
-chained job waits for its own runner.
+(Job times of the successful jobs of the 14 pull request and `main` runs and the 21 release
+rehearsals from 2026-11-08 16:32 to 2026-11-10 17:46 UTC.) A release (`release.yml`) builds like
+a rehearsal but runs no `devices` or `rendering`: lanes of about 24, 25 and 31 minutes. The Intel
+clean-machine runs in lane 3 too, so a run has at most three macOS jobs of any kind at once, two
+under the account's five. `devices` and `rendering` lead their lanes because they build what they
+test themselves and can start once `changes` is done; their Ubuntu and Windows jobs start then too.
 
-**Why.** GitHub Free gives the account 5 macOS jobs at once, Apple silicon and Intel together.
+**Wall time.** Each of those 27 successful runs replayed with its own job times and no queue
+waits, the run takes p50 26.6 and at most 30.6 minutes on a pull request or `main` (four lanes,
+replayed the same way: 24.0 and 26.7), and p50 35.8 and at most 41.3 minutes as a release
+rehearsal (four lanes: 31.8 and 38.8): about 2.5 and 4 minutes more. The critical path is the
+macOS lanes (the rest of a run ends by about minute 27, the Docker suites' Playwright jobs last).
+This layout is the fastest of every way to put these jobs into three chained lanes, measured
+against those runs; the order inside lanes 1 and 2 changes little. A cold Rust cache (a
+`Cargo.lock` or toolchain change) doubles the two builds.
+
+**Why three** (2026-11-10). In a campaign of release rehearsals started one at a time with
+nothing else of the account running, GitHub dropped four Apple silicon jobs in three runs of
+seven ("The job was not acquired by Runner of type hosted even after multiple attempts", 15
+minutes after it was queued): `rendering / macos-latest` and `e2e / media` in 42846972124, the
+macos-x64 build in 42855604890, the macos-arm64 clean-machine in 42868396790. Two of them were
+queued while three of the run's Apple silicon jobs ran, a fourth in the four-lane layout. That
+fits an effective limit of about three Apple silicon runners under the capacity notice, but does
+not prove it: the other two were queued with none and with two of ours running, and in each of
+the three runs a job queued after the dropped one got a runner within seconds while the dropped
+one went on waiting (`devices` in 42846972124 and 42855604890, `rendering` in 42855604890 and
+42868396790). Waits come in steps of about 5, 10 and 15 minutes, as if GitHub tried to place a
+queued job again every 5 minutes and dropped it after the third try; 161 of the 188 Apple silicon jobs of the 21 rehearsals started within a minute.
+So three lanes do not end the drops, which are GitHub's capacity: they keep a run from asking
+for a fourth Apple silicon runner and from queueing a job behind its own. A dropped job still
+leaves `ci-ok` red: start a new run. Merging jobs to ask for fewer runners would help less than
+it seems: with 4 of 188 placements dropped (2.1 %), a rehearsal's nine Apple silicon jobs lose
+it about 18 % of the time and eight would about 16 %, at the price of the checks' names.
+
+**Before: four lanes** (PR #125, 2026-11-05 to 2026-11-10). `e2e / chat` then `rendering`;
+`e2e / media`; node, `e2e / ui`, then `devices`; desktop macos-arm64 then macos-x64. At most four
+macOS jobs of a run at once, one runner left for another run's job. Its reasons, still true:
+
+GitHub Free gives the account 5 macOS jobs at once, Apple silicon and Intel together.
 In the 2,270 macOS jobs of every workflow that uses macOS (422 Pipeline, Soak, Release,
 Rendering, Devices and Chat load runs, 2026-11-01 10:28 to 2026-11-05 17:55 UTC), never more
 than 5 ran at once, Intel included, and 5 did in most hours; a queued Apple silicon job that
@@ -205,10 +237,10 @@ since 17:36:23, was dropped at 17:51:55.
 Not fixed here: in capacity mode GitHub also hands out runners slowly below the limit (in about
 half of the minutes in which an Apple silicon job of ours waited over a minute, fewer than 5 of
 ours were running; on 2026-11-05 one waited 18 minutes, 15:27-15:45, with none of ours running).
-Two runs at once (two pull requests, or one with a soak batch) still need up to 8 runners. Four
-lanes leave one runner for another run's job.
+Two runs at once (two pull requests, or one with a soak batch) needed up to 8 runners then (6
+Apple silicon now). Four lanes left one runner for another run's job.
 
-Proof (three pipeline runs dispatched one after the other on a `soak/*` marker branch,
+Proof of the four lanes (three pipeline runs dispatched one after the other on a `soak/*` marker branch,
 2026-11-05, 42081315067, 42089261822 and 42093902489, the first one overlapping the end of a
 pull request's run in the old layout): all green, no job dropped, at most 4 macOS jobs of a run
 at once, and the account never at 5 while one of their jobs waited, so none waited behind our
@@ -231,6 +263,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
+| `.github/actions/upload-build` | `actions/upload-artifact` for a build artifact the later jobs need, once more after a failed try, when the artifact service answers again (see "Artifact uploads" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
 | `.github/scripts/changes.sh` | the `changes` job |
@@ -292,10 +325,39 @@ runtime, and the fallback does not depend on that client.
 How often: in the 25 hours of runs before it (134 pipeline, soak and release runs, 2,659 jobs that
 download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact` try failed.
 
+### Artifact uploads
+
+The artifacts the desktop build makes for later jobs (`pkg-<target>`, `desktop-<target>`,
+`update-test-<target>`) go up through `.github/actions/upload-build`:
+
+1. `actions/upload-artifact` (from the copy `fetch-remote` fetched, as for every remote action our
+   actions run).
+2. If it fails: a warning, what the runner's resolver answers for the artifact service's host
+   (`dscacheutil`, `scutil --dns`, `getent`, `nslookup`), then a wait of at most 300 s until that
+   host takes an HTTPS request (any status), 5 s between tries.
+3. `upload-artifact` again with `overwrite: true` (a first try that got as far as creating the
+   artifact leaves one by that name). When it works: `infra recovery: artifact <name> uploaded on
+   try 2 of 2`, a warning the soak counts; when it fails, the step and the job fail, as before.
+
+Why: release rehearsal 42846972124 lost `desktop macos-arm64 / build (macos-latest)` 10 minutes
+into the job, after the installers were built and checked: "Failed to CreateArtifact: Unable to
+make request: ENOTFOUND" at 16:04:28 UTC, 30 s after the step started (upload-artifact's own five
+attempts). The same job had uploaded `pkg-macos-arm64` at 15:54. A macOS VM that cannot resolve
+names for a while is known from the start of a job (the wait for github.com before checkout);
+this one lost DNS in the middle. It is the network of the runner, not the build: the build's
+result is not retried, only its upload, once. The test results, reports and logs keep their
+`continue-on-error` uploads (Rules). How long such a loss lasts varies: about a minute at the
+start of a job (run 41283766285), over 3.5 minutes (run 42023369370, where checkout gave up after
+the 3-minute wait), and over 8 minutes on an Intel clean-machine (soak run 41994029873:
+`ListArtifacts` ENOTFOUND for the artifact service's host from 08:36 to 08:44 UTC, while the blob
+host still resolved, so `fetch-artifact`'s tries and REST fallback all failed). The wait saves the
+short ones; a longer one still fails the job, after at most 5 more minutes. In the 200 failed runs
+of every workflow from 2026-10-28 to 2026-11-10, that was the one upload lost this way.
+
 ### Remote actions
 
 The remote actions our own actions run (setup-node, actions/cache, download-artifact,
-Swatinem/rust-cache) are not downloaded by the runner:
+upload-artifact, Swatinem/rust-cache) are not downloaded by the runner:
 `./.github/actions/fetch-remote` fetches each with git, at its pin, into
 `.git/remote-actions/<owner>/<repo>` of the workspace, and the step runs it from there
 (`uses: ./.git/remote-actions/Swatinem/rust-cache`, `./.git/remote-actions/actions/cache/save`).
@@ -751,7 +813,8 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), the remote actions our steps run (`fetch-remote`: a git
+  then the REST fallback, each a warning), the build artifacts' uploads (`upload-build`: once more
+  when the artifact service answers again, a warning; "Artifact uploads" above), the remote actions our steps run (`fetch-remote`: a git
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
   41636784175), the pinned
   downloads (`fetch-binaries.mjs`; also the AppImage tools, through `appimage-tools.mjs`, so the
