@@ -7,7 +7,7 @@
 // the keyboard reaches and presses every control; and the page's CSP refuses nothing.
 // Layout, phones and touch targets: apps/viewer/test/chat/player-controls.spec.ts (mock hub).
 import type { Page } from '@playwright/test';
-import { cspViolations, expect, recordCsp, test, uid, waitPlaying } from './fixtures.js';
+import { cspViolations, expect, recordCsp, startsAtLive, test, uid, waitPlaying } from './fixtures.js';
 
 const videoState = (page: Page) =>
   page.evaluate(() => {
@@ -53,9 +53,10 @@ async function reduceMotion(page: Page): Promise<void> {
 test('the bar replaces the browser controls: play / pause, the big Play button, sound, volume, LIVE and theater mode work; no CSP refusal', { tag: '@ui' }, async ({ viewers }) => {
   // Arrange
   const { page } = await viewers.join(uid('bar'), { setup: async (c) => void (await c.addInitScript(recordCsp)) });
+  await startsAtLive(page);
+  await expect(page.getByTestId('controls').getByTestId('go-live')).toBeVisible();
   await waitPlaying(page);
   expect(await videoState(page)).toMatchObject({ paused: false, muted: true, controls: false });
-  await expect(page.getByTestId('controls').getByTestId('go-live')).toHaveText('LIVE');
 
   // Act
   await page.getByTestId('play').click();

@@ -1,10 +1,13 @@
 // "Audio only (saves data)" (docs/QUALITY.md "Audio only"): a viewer picks it in the quality menu
 // and the player loads /hls/audio-only.m3u8, the stream's own audio rendition alone, instead of
 // index.m3u8. Checked while live, on every engine:
-// - switching to it and back keeps playing near the live edge ("LIVE", not "Go live"); the video
-//   area shows "Audio only" instead of a picture (no video track: videoWidth 0); the data used
-//   drops (the fake OBS sends 1200 kbps video + 96 kbps audio, so audio alone is about 7 %; the bar
-//   is a third, which a full 20 s buffer refill right after the switch stays under);
+// - switching to it and back starts playing near the live edge ("LIVE", not "Go live") and plays
+//   on (checked as the new source starts playing: a few seconds later, muted Chrome on the macOS
+//   runner, which plays at about 0.6x real time, is rightly behind live; fixtures.ts
+//   startsAtLive); the video area shows "Audio only" instead of a picture (no video track:
+//   videoWidth 0); the data used drops (the fake OBS sends 1200 kbps video + 96 kbps audio, so
+//   audio alone is about 7 %; the bar is a third, which a full 20 s buffer refill right after the
+//   switch stays under);
 // - the choice is remembered per browser: after a reload the player starts on audio only, and an
 //   OBS reconnect (the stream's next run) keeps it playing on audio only;
 // - on Linux WebKit, the switch and the reload never seek the new sound-only MediaSource before it
@@ -41,6 +44,7 @@ import {
   reconnectObs,
   startStallMonitor,
   stallReport,
+  startsAtLive,
   stats,
   test,
   uid,
@@ -106,12 +110,6 @@ async function bytesDuring(page: Page, counter: () => number, ms: number): Promi
   const before = counter();
   await measuredWindow(page, ms);
   return counter() - before;
-}
-
-/** Playing near the live edge: "LIVE", not "Go live −N s". */
-async function atLive(page: Page): Promise<void> {
-  await expect(page.locator('#golive')).toHaveClass(/at-live/);
-  await expect(page.locator('#status')).toHaveText('Live');
 }
 
 /**
@@ -186,8 +184,8 @@ test('a viewer switches to audio only and back while live: far less data, no pic
 
   // Assert
   await playingAudioOnly(page);
+  await startsAtLive(page);
   await playsOn(page, 3);
-  await atLive(page);
   await noEarlySoundSeek(page, browserName);
   expect(await savedChoice(page)).toBe('on');
   const audioBytes = await bytesDuring(page, received, MEASURE_MS);
@@ -200,8 +198,8 @@ test('a viewer switches to audio only and back while live: far less data, no pic
 
   // Assert
   await playingAudioOnly(page);
+  await startsAtLive(page);
   await waitPlaying(page);
-  await atLive(page);
   await noEarlySoundSeek(page, browserName);
 
   // Act: OBS drops its connection and publishes again, as its own reconnect does.
@@ -221,8 +219,8 @@ test('a viewer switches to audio only and back while live: far less data, no pic
   await expect.poll(async () => (await player(page)).source).toBe('/hls/index.m3u8');
   await expect.poll(async () => (await player(page)).videoWidth).toBeGreaterThan(0);
   await expect(page.getByTestId('audio-only')).toBeHidden();
+  await startsAtLive(page);
   await playsOn(page, 2);
-  await atLive(page);
   expect(await savedChoice(page)).toBeNull();
   // Automatic quality (the one quality of the default feed, by its name: nothing else to choose).
   await expect(qualityMenu.checked(page)).toHaveAttribute('data-value', '-1');
