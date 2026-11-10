@@ -5,6 +5,10 @@ name: docker
 #   packages the website's Linux page lists (appimage.sh);
 # - real OBS Studio streaming to the staged server (obs.sh), and the Playwright suite in the
 #   official Playwright image (e2e.sh).
+# Their test images (scripts/test/docker/Dockerfile.*) come from an artifact an earlier run saved
+# (.github/actions/test-images), so a test asks no registry and no distribution mirror; a job that
+# finds none builds its image and keeps it (.github/actions/test-images/save). README.md, "Test
+# images".
 #
 # A stage of pipeline.yml (it gates pull requests through ci-ok whenever `changes` turns it on:
 # the Docker suites, these workflows, the e2e specs and server), and the body of linux-docker.yml
@@ -109,9 +113,16 @@ jobs:
         timeout-minutes: 10
         with:
           names: linux-docker-${{ matrix.arch }}
-      # Time limit: far above the slowest run (0.5 minutes), since image builds and pulls vary.
-      # One that runs out fails, so the summary below still runs (a job that runs out is
-      # cancelled).
+      # The base's test image, saved by an earlier run (an artifact: .github/actions/test-images),
+      # so the test asks no registry and no distribution mirror; none yet: appimage.sh builds it.
+      - uses: ./.github/actions/test-images
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          images: appimage:${{ matrix.base }}
+      # Time limit: far above the slowest run (0.5 minutes; about 1 more when the image is built
+      # and saved here). One that runs out fails, so the summary below still runs (a job that runs
+      # out is cancelled).
       - name: AppImage on a minimal host (appimage.sh)
         timeout-minutes: 5
         run: |
@@ -123,6 +134,10 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: node .github/scripts/test-summary.mjs --title "AppImage on a minimal host ($BASE $ARCH)" --lines "$RUNNER_TEMP/appimage.log"
+      - uses: ./.github/actions/test-images/save
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
 
   obs:
     name: OBS Studio ${{ matrix.arch }}
@@ -144,6 +159,13 @@ jobs:
         timeout-minutes: 10
         with:
           names: linux-docker-${{ matrix.arch }}
+      # OBS Studio's test image, saved by an earlier run (.github/actions/test-images); none yet:
+      # obs.sh builds it (about 1.5 minutes) and the last step keeps it.
+      - uses: ./.github/actions/test-images
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          images: obs
       - name: OBS Studio streaming to the staged server (obs.sh)
         timeout-minutes: 12
         run: scripts/test/docker/obs.sh --staging linux-release/server 2>&1 | tee "$RUNNER_TEMP/obs.log"
@@ -153,6 +175,10 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: node .github/scripts/test-summary.mjs --title "OBS Studio ($ARCH)" --lines "$RUNNER_TEMP/obs.log"
+      - uses: ./.github/actions/test-images/save
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
 
   e2e:
     name: Playwright in Docker ${{ matrix.arch }}
@@ -181,8 +207,16 @@ jobs:
         with:
           npm-ci: 'false'
           downloads: 'true'
-      # e2e.sh reads the Playwright version from package-lock.json; the container does the rest
-      # (npm ci, binaries, build, firefox + chromium). 45 minutes: about 3 times the slowest run.
+      # The Playwright image of package-lock.json's version plus ffmpeg (Dockerfile.e2e), saved by
+      # an earlier run (.github/actions/test-images: about 1 GB); none yet: e2e.sh builds it and
+      # the last step keeps it.
+      - uses: ./.github/actions/test-images
+        timeout-minutes: 8
+        continue-on-error: true
+        with:
+          images: e2e
+      # The container does the rest (npm ci, binaries, build, firefox + chromium). 45 minutes:
+      # about 3 times the slowest run.
       - name: Playwright in the Playwright image (e2e.sh)
         timeout-minutes: 45
         run: scripts/test/docker/e2e.sh 2>&1 | tee "$RUNNER_TEMP/e2e.log"
@@ -202,3 +236,7 @@ jobs:
           path: test-results/docker-e2e/
           if-no-files-found: ignore
           retention-days: 14
+      - uses: ./.github/actions/test-images/save
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5

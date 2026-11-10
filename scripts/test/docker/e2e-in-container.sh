@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs INSIDE mcr.microsoft.com/playwright:v<version>-noble (as root), started by e2e.sh.
+# Runs INSIDE the Dockerfile.e2e image (mcr.microsoft.com/playwright:v<version>-noble plus
+# ffmpeg; as root), started by e2e.sh.
 # /src = the repo (read-only), /out = where reports are copied.
 #   PROJECTS="firefox chromium"   Playwright projects to run
 #   SC_DOWNLOAD_CACHE=/dl-cache   the host's download cache, when e2e.sh mounted one
@@ -16,8 +17,8 @@ tar -C /src --exclude=./node_modules --exclude='*/node_modules' --exclude=./vend
   -cf - . | tar -C /work -xf -
 cd /work || exit 2
 
-echo "== system packages (ffmpeg for the synthetic OBS stream)"
-apt-get update -qq >/dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg >/dev/null || exit 2
+# ffmpeg (the synthetic OBS stream) comes with the image: no apt here (Dockerfile.e2e).
+command -v ffmpeg >/dev/null || { echo "no ffmpeg in the image (Dockerfile.e2e)"; exit 2; }
 echo "node $(node --version), npm $(npm --version), ffmpeg $(ffmpeg -version | head -n1 | cut -d' ' -f3), $(uname -m)"
 
 echo "== npm ci"

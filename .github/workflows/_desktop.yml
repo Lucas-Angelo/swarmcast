@@ -394,10 +394,23 @@ jobs:
             --update-from release/update-test/0.0.0-test.1 --update-to release/desktop --update-port 17811 2>&1 | tee "$RUNNER_TEMP/desktop.log"
 
       # ---------------------------------------------------------------- AppImage, minimal host
+      # The two hosts' test images, saved by an earlier run (an artifact:
+      # .github/actions/test-images), so the test asks no registry and no distribution mirror;
+      # none yet: appimage.sh builds them (about 1 minute each) and the save step keeps them.
+      - uses: ./.github/actions/test-images
+        if: ${{ !cancelled() && steps.installers.outcome == 'success' && matrix.appimage }}
+        timeout-minutes: 5
+        continue-on-error: true
+        with:
+          images: appimage:ubuntu:22.04 appimage:ubuntu:24.04
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
         if: ${{ !cancelled() && steps.installers.outcome == 'success' && matrix.appimage }}
         timeout-minutes: 5
         run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04 2>&1 | tee "$RUNNER_TEMP/appimage.log"
+      - uses: ./.github/actions/test-images/save
+        if: ${{ !cancelled() && matrix.appimage }}
+        continue-on-error: true
+        timeout-minutes: 5
 
       - name: Results in the job summary
         if: ${{ !cancelled() }}

@@ -12,10 +12,8 @@
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
-# shellcheck source-path=SCRIPTDIR source=pull.sh
-. "$DIR/pull.sh"
-# shellcheck source-path=SCRIPTDIR source=build.sh
-. "$DIR/build.sh"
+# shellcheck source-path=SCRIPTDIR source=images.sh
+. "$DIR/images.sh"
 STAGING=""
 BUILD=1
 PLATFORM=""
@@ -35,13 +33,13 @@ if [ -z "$STAGING" ]; then
   case "$(uname -m)" in aarch64 | arm64) STAGING="$ROOT/release/staging/linux-arm64" ;; *) STAGING="$ROOT/release/staging/linux-x64" ;; esac
 fi
 [ -x "$STAGING/swarmcast" ] || { echo "No staged server in $STAGING (node scripts/build/package.mjs --target linux-<arch>). Use --staging DIR." >&2; exit 2; }
-IMAGE="swarmcast-test-obs${PLATFORM:+-${PLATFORM##*/}}"
+# The image: saved (SC_TEST_IMAGES) or built (images.sh); --no-build takes the one already here.
+spec obs "$PLATFORM" || exit 2
 if [ "$BUILD" = 1 ]; then
-  pull_image ubuntu:24.04 "$PLATFORM" || exit 2
-  build_image "$IMAGE" Dockerfile.obs ${PLATFORM:+--platform "$PLATFORM"} || exit 2
+  test_image obs "$PLATFORM" || exit 2
 fi
 # --shm-size: OBS and Mesa use shared memory; the 64 MB default is tight.
-docker run --rm --init --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \
+docker run --rm --init --pull never --shm-size=512m ${PLATFORM:+--platform "$PLATFORM"} \
   -v "$(cd "$STAGING" && pwd):/server:ro" -v "$DIR:/tests:ro" \
   -e "OUTPUT_MODE=$MODE" \
-  "$IMAGE" bash /tests/obs-test.sh
+  "$TI_IMAGE" bash /tests/obs-test.sh

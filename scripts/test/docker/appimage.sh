@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Section 4: the desktop AppImage on a minimal host. Builds Dockerfile.appimage (a bare image plus
-# only the host packages the website lists) and runs appimage-test.sh in it.
+# Section 4: the desktop AppImage on a minimal host. Makes the Dockerfile.appimage image of each
+# base (a bare image plus only the host packages the website lists; images.sh: saved, or built)
+# and runs appimage-test.sh in it.
 #
 #   scripts/test/docker/appimage.sh [--no-build] [--version X.Y.Z] [--platform linux/amd64] APPIMAGE [BASE...]
 #
@@ -8,13 +9,12 @@
 # BASE      base images (default: ubuntu:22.04 ubuntu:24.04 debian:12)
 #   --version   expect /api/desktop to report this version
 #   --platform  run another architecture (emulated: much slower; CI runs both natively)
-#   --no-build  reuse the images of a previous run
+#   --no-build  reuse the images of a previous run as they are
+# SC_TEST_IMAGES  a folder of saved test images (images.sh): loaded from there, and built ones saved there
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source-path=SCRIPTDIR source=pull.sh
-. "$DIR/pull.sh"
-# shellcheck source-path=SCRIPTDIR source=build.sh
-. "$DIR/build.sh"
+# shellcheck source-path=SCRIPTDIR source=images.sh
+. "$DIR/images.sh"
 BUILD=1
 VERSION=""
 PLATFORM=""
@@ -25,7 +25,7 @@ while [ $# -gt 0 ]; do
     --no-build) BUILD=0 ;;
     --version) VERSION="$2"; shift ;;
     --platform) PLATFORM="$2"; shift ;;
-    -h | --help) sed -n '2,11p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,13p' "$0"; exit 0 ;;
     -*) echo "Unknown option: $1" >&2; exit 2 ;;
     *) if [ -z "$FILE" ]; then FILE="$1"; else BASES+=("$1"); fi ;;
   esac
@@ -38,17 +38,16 @@ FILE="$(cd "$(dirname "$FILE")" && pwd)/$(basename "$FILE")"
 fails=0
 results=()
 for base in "${BASES[@]}"; do
-  img="swarmcast-test-appimage:${base//[:\/]/-}${PLATFORM:+-${PLATFORM##*/}}"
+  spec "appimage:$base" "$PLATFORM" || exit 2
+  img="$TI_IMAGE"
   echo "##### $base${PLATFORM:+ ($PLATFORM)}: $(basename "$FILE")"
   if [ "$BUILD" = 1 ]; then
-    pull_image "$base" "$PLATFORM" ||
-      { echo "FAIL pull of $base"; results+=("FAIL $base (base image pull)"); fails=$((fails + 1)); continue; }
-    build_image "$img" Dockerfile.appimage ${PLATFORM:+--platform "$PLATFORM"} --build-arg "BASE=$base" ||
-      { echo "FAIL build of $img"; results+=("FAIL $base (image build)"); fails=$((fails + 1)); continue; }
+    test_image "appimage:$base" "$PLATFORM" ||
+      { echo "FAIL test image of $base"; results+=("FAIL $base (test image)"); fails=$((fails + 1)); continue; }
   fi
   # --init reaps the AppImage's children; --shm-size: WebKitGTK and Mesa use shared memory.
   # --network none: the check needs only 127.0.0.1 (no quick tunnel, no blocklist download).
-  if docker run --rm --init --shm-size=512m --network none ${PLATFORM:+--platform "$PLATFORM"} \
+  if docker run --rm --init --pull never --shm-size=512m --network none ${PLATFORM:+--platform "$PLATFORM"} \
     -v "$(dirname "$FILE"):/appimage:ro" -v "$DIR:/tests:ro" \
     -e "APPIMAGE_FILE=/appimage/$(basename "$FILE")" -e "EXPECT_VER=$VERSION" -e "CLEAR_APPIMAGE_MAGIC=${PLATFORM:+1}" \
     "$img" bash /tests/appimage-test.sh; then

@@ -1,0 +1,14 @@
+# The official Playwright image of the repository's @playwright/test version (its browsers and
+# their libraries, Node.js) plus ffmpeg for the synthetic OBS stream, for e2e.sh.
+# Built by images.sh (BASE: mcr.microsoft.com/playwright:v<version>-noble), with apt through
+# apt-retry.sh, mounted from .github/scripts for this step only (build.sh).
+#   docker build -f Dockerfile.e2e --build-context ci=../../../.github/scripts --build-arg BASE=mcr.microsoft.com/playwright:v1.64.1-noble .
+ARG BASE
+FROM ${BASE}
+RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
+    set -e; \
+    printf '%s\n' 'Acquire::Retries "3";' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' \
+      'APT::Update::Error-Mode "any";' >/etc/apt/apt.conf.d/zzz-ci-retries; \
+    bash /ci/apt-retry.sh update; \
+    bash /ci/apt-retry.sh install -y --no-install-recommends ffmpeg; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*.deb /etc/apt/apt.conf.d/zzz-ci-retries

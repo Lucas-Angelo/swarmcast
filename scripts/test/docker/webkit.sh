@@ -20,10 +20,8 @@
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
-# shellcheck source-path=SCRIPTDIR source=pull.sh
-. "$DIR/pull.sh"
-# shellcheck source-path=SCRIPTDIR source=build.sh
-. "$DIR/build.sh"
+# shellcheck source-path=SCRIPTDIR source=images.sh
+. "$DIR/images.sh"
 CMD="${1:-}"
 shift || true
 case "$CMD" in race | watchdog) ;; *) sed -n '2,21p' "$0"; exit 2 ;; esac
@@ -50,18 +48,18 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ ${#PATTERNS[@]} -eq 0 ] && PATTERNS=(app)
-IMAGE="swarmcast-test-webkit${PLATFORM:+-${PLATFORM##*/}}"
+spec webkit "$PLATFORM" || exit 2
+IMAGE="$TI_IMAGE"
 if [ "$BUILD" = 1 ]; then
-  pull_image ubuntu:24.04 "$PLATFORM" || exit 2
-  build_image "$IMAGE" Dockerfile.webkit ${PLATFORM:+--platform "$PLATFORM"} || exit 2
+  test_image webkit "$PLATFORM" || exit 2
 fi
 # --shm-size: WebKit's web processes share memory with the UI process; the 64 MB default is tight.
 if [ "$CMD" = race ]; then
-  exec docker run --rm --init --shm-size=1g --network none ${PLATFORM:+--platform "$PLATFORM"} \
+  exec docker run --rm --init --pull never --shm-size=1g --network none ${PLATFORM:+--platform "$PLATFORM"} \
     -v "$DIR:/tests:ro" "$IMAGE" bash /tests/webkit-race.sh "$COPIES" "${PATTERNS[*]}" ${ARGS[@]+"${ARGS[@]}"}
 fi
 [ -f "$SRC/apps/desktop/src-tauri/Cargo.toml" ] || { echo "No desktop shell in $SRC (apps/desktop/src-tauri)" >&2; exit 2; }
 # The mock server of this checkout (MOCK_LOSE_PANEL_LOADS), also for an older --src.
-exec docker run --rm --init --shm-size=1g ${PLATFORM:+--platform "$PLATFORM"} \
+exec docker run --rm --init --pull never --shm-size=1g ${PLATFORM:+--platform "$PLATFORM"} \
   -v "$SRC:/src:ro" -v "$DIR:/tests:ro" -v "$ROOT/apps/desktop/test/mock-server.mjs:/mock-server.mjs:ro" \
   -e "LOSE=$LOSE" "$IMAGE" bash /tests/webkit-watchdog.sh
