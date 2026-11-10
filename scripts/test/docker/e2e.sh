@@ -11,6 +11,8 @@
 # SC_DOWNLOAD_CACHE=<dir> (fetch-binaries.mjs; CI's setup action restores it): mounted into the
 # container, so the pinned MediaMTX and cloudflared come from it (SHA-256 checked) and only
 # what it lacks is downloaded (and added to it).
+# SC_TEST_IMAGES=<dir> (images.sh; CI's test-images action restores it): the saved test image,
+# loaded from there; one built here is saved there.
 set -u
 DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$DIR/../../.." && pwd)"
@@ -21,7 +23,7 @@ PROJECTS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --platform) PLATFORM="$2"; shift ;;
-    -h | --help) sed -n '2,8p' "$0"; exit 0 ;;
+    -h | --help) sed -n '2,9p' "$0"; exit 0 ;;
     *) PROJECTS+=("$1") ;;
   esac
   shift
