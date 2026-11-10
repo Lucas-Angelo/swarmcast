@@ -529,7 +529,13 @@ crate with `206` and a partial body, which cargo does not try again. The crates 
 SHA-256 in `Cargo.lock`, and cargo runs with `CARGO_NET_OFFLINE=true`, so a cargo job asks
 crates.io only when no run has saved them yet (once per lockfile on `main`, with the tries
 [above](#infra-recoveries); [.github/workflows/README.md](../.github/workflows/README.md), "Rust
-crates").
+crates"). Proved on a `soak/*` branch with the real build stage, node job (Ubuntu) and Linux
+desktop builds (linux-arm64 in release flavour, as in the rehearsal): a cold run saved the
+crates in its build stage and every cargo job took them from there (42804579104), a warm run
+saved nothing (42806594604), and a warm run with crates.io, index.crates.io and static.crates.io
+blocked in every cargo job (`/etc/hosts`; an online `cargo fetch` then fails) passed too
+(42808529703), 7 of 7 jobs green each, with no crate downloaded and no index update in any cargo
+job. A job that finds no artifact fetches the crates itself (soak 42804773481: 4 s).
 
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
