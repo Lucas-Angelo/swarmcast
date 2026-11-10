@@ -35,6 +35,27 @@ async function box(page: Page, testid: string) {
   return { top: b.y, bottom: b.y + b.height, left: b.x, right: b.x + b.width, width: b.width };
 }
 
+/**
+ * Makes the page a Safari on an iPhone before iOS 26 (player-caps.ts "video-native"): elements have
+ * no full screen, only the video's own `webkitEnterFullscreen()`, which counts its calls in
+ * `window.__nativeFullscreen` instead of opening a player. The element methods are covered with
+ * `undefined` rather than deleted: since WebKit 322993@main (in Playwright's WebKit from r2388),
+ * WebKit puts its fullscreen members back on the prototypes when the document finishes parsing,
+ * on every platform (`ScriptController::reevaluateQuirkDependentProperties`, for the iPhone
+ * viewport-fit=cover quirk), but never over a value the page set itself. The page code sees the
+ * same as on such an iPhone: no `requestFullscreen` function (player-caps.ts tests `typeof`).
+ */
+async function asIphoneWithoutElementFullscreen(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const w = window as unknown as { __nativeFullscreen: number };
+    w.__nativeFullscreen = 0;
+    for (const name of ['requestFullscreen', 'webkitRequestFullscreen']) {
+      Object.defineProperty(Element.prototype, name, { configurable: true, writable: true, value: undefined });
+    }
+    Object.defineProperty(HTMLVideoElement.prototype, 'webkitEnterFullscreen', { configurable: true, value: () => void w.__nativeFullscreen++ });
+  });
+}
+
 test.describe('the chat over the video in full screen (mock hub)', () => {
   test('off by default; the bar\'s "Chat on the video" button, only in full screen, turns it on: the latest lines at the bottom left, above the controls, taking no click; remembered after a reload', async ({ page }) => {
     // Arrange
@@ -308,15 +329,7 @@ test.describe('the chat over the video in full screen (mock hub)', () => {
 
   test('an iPhone without element full screen: with the chat on the video on, the full-screen button fills the page instead of opening the iPhone\'s own player; Escape leaves', async ({ page }) => {
     // Arrange: Safari on an iPhone before iOS 26 (player-caps.ts "video-native").
-    await page.addInitScript(() => {
-      const w = window as unknown as { __nativeFullscreen: number };
-      w.__nativeFullscreen = 0;
-      for (const proto of [Element.prototype, HTMLElement.prototype]) {
-        delete (proto as unknown as Record<string, unknown>).requestFullscreen;
-        delete (proto as unknown as Record<string, unknown>).webkitRequestFullscreen;
-      }
-      Object.defineProperty(HTMLVideoElement.prototype, 'webkitEnterFullscreen', { configurable: true, value: () => void w.__nativeFullscreen++ });
-    });
+    await asIphoneWithoutElementFullscreen(page);
     const hub = new MockHub('Bia');
     await openWatch(page, hub);
     const native = () => page.evaluate(() => (window as unknown as { __nativeFullscreen: number }).__nativeFullscreen);
