@@ -120,11 +120,12 @@ jobs:
         continue-on-error: true
         with:
           images: appimage:${{ matrix.base }}
-      # Time limit: far above the slowest run (0.5 minutes; about 1 more when the image is built
-      # and saved here). One that runs out fails, so the summary below still runs (a job that runs
-      # out is cancelled).
+      # Time limit: the slowest run with the image restored is 0.5 minutes; one that builds and
+      # saves it took up to 3.2 (soak run 42765482889: apt at 430 kB/s from the runner's mirror),
+      # so 2.5 times that. One that runs out fails, so the summary below still runs (a job that
+      # runs out is cancelled).
       - name: AppImage on a minimal host (appimage.sh)
-        timeout-minutes: 5
+        timeout-minutes: 8
         run: |
           . linux-release/VERSION.env
           scripts/test/docker/appimage.sh --version "$VERSION" linux-release/*.AppImage "$BASE" 2>&1 | tee "$RUNNER_TEMP/appimage.log"

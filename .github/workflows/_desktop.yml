@@ -403,9 +403,11 @@ jobs:
         continue-on-error: true
         with:
           images: appimage:ubuntu:22.04 appimage:ubuntu:24.04
+      # Restored, both hosts take about 0.5 minutes; built and saved, up to 3.2 minutes each
+      # (soak run 42765482889), so 10.
       - name: AppImage on minimal ubuntu:22.04 and ubuntu:24.04 hosts
         if: ${{ !cancelled() && steps.installers.outcome == 'success' && matrix.appimage }}
-        timeout-minutes: 5
+        timeout-minutes: 10
         run: scripts/test/docker/appimage.sh --version "$VERSION" release/desktop/*.AppImage ubuntu:22.04 ubuntu:24.04 2>&1 | tee "$RUNNER_TEMP/appimage.log"
       - uses: ./.github/actions/test-images/save
         if: ${{ !cancelled() && matrix.appimage }}
