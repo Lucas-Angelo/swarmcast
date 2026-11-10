@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { AUDIO_ONLY_DEFAULT_BPS, AUDIO_ONLY_PLAYLIST, PLAYLIST_WINDOW_S, type SourceInfo } from '@swarmcast/shared';
 import type { Logger } from '../core/logger.js';
+import { segmentStart, trackTimescales } from './fmp4.js';
 import {
   SAFE_NAME,
   DiscontinuityClock,
@@ -43,6 +44,10 @@ export interface CachedFile {
   addedAt: number;
   /** Last time the file was referenced by a live playlist. */
   lastListedAt: number;
+  /** Ticks per second of each track, read once from an init segment (fmp4.ts). */
+  timescales?: Map<number, number>;
+  /** Where a media segment starts on the media clock, s, read once (null: not readable). */
+  start?: number | null;
 }
 
 /** Where the origin pulls HLS from. */
@@ -408,7 +413,8 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
           const isNew = !this.files.has(fname);
           if (!(await this.ensureFile(src, e.uri, now))) break;
           if (isNew) this.lastSegmentAt = now;
-          ready.push(e);
+          const start = this.mediaStart(fname, parsed.mapUri);
+          ready.push(start === undefined ? e : { ...e, start });
         }
         if (!audio.has(name)) maxSegment = Math.max(maxSegment, maxRecentDuration(ready));
         if (src !== this.source) return;
@@ -465,6 +471,22 @@ export class HlsOrigin extends EventEmitter<{ updated: []; available: [boolean];
     } finally {
       this.polling = false;
     }
+  }
+
+  /**
+   * Where cached segment `name` starts on the stream's media clock, seconds, from its bytes and
+   * those of its init segment `mapUri` (read once). The stitchers date every playlist's segments
+   * on one timeline by it (PlaylistStitcher.dateOf). Undefined when unknown.
+   */
+  private mediaStart(name: string, mapUri: string | undefined): number | undefined {
+    const f = this.files.get(name);
+    const init = mapUri ? this.files.get(fileName(mapUri)) : undefined;
+    if (!f || !init) return undefined;
+    if (f.start === undefined) {
+      init.timescales ??= trackTimescales(init.data);
+      f.start = segmentStart(f.data, init.timescales) ?? null;
+    }
+    return f.start ?? undefined;
   }
 
   private async ensureFile(src: HlsSource, uri: string, now: number): Promise<boolean> {
