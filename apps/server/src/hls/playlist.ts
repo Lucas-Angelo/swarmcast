@@ -5,6 +5,11 @@ export interface MediaEntry {
   tags: string[];
   uri: string;
   duration: number;
+  /**
+   * Where the segment starts on the stream's media clock, seconds (fMP4 `tfdt`, read by the
+   * origin from the cached segment: fmp4.ts). Undefined when unknown.
+   */
+  start?: number;
 }
 
 export interface MediaPlaylist {
@@ -268,6 +273,24 @@ export function runKey(map: string | undefined): string | undefined {
 }
 
 /**
+ * Two segments of different playlists that start this close on the media clock begin at the same
+ * cut, seconds. MediaMTX cuts every track at the same video keyframe and the ladder cuts its 1 s
+ * audio on the 2 s video's cuts; the tracks' first samples there lie within an audio frame
+ * (21 ms at 48 kHz, measured: 20.026 s against 20.047 s) plus the video's composition offset,
+ * while two different cuts are at least a second apart.
+ */
+const SAME_CUT_S = 0.25;
+
+/** Dated points of a run kept for the playlists that start later (about a minute of 2 s segments in two playlists). */
+const RUN_POINTS = 64;
+
+/** A moment of a run: where it is on the media clock (s) and the date the origin serves for it (ms). */
+interface RunPoint {
+  start: number;
+  date: number;
+}
+
+/**
  * Discontinuity sequence numbers shared by every playlist of one origin. A player matches the
  * audio segment to the video one, and a new quality's segments to the one playing, by this
  * number (hls.js `cc`), so it must be the same for the same upstream run in every playlist.
@@ -279,6 +302,8 @@ export function runKey(map: string | undefined): string | undefined {
 export class DiscontinuityClock {
   private readonly byRun = new Map<string, number>();
   private max = -1;
+  /** Dated moments of each run (by cc), newest last: one timeline for every playlist (dateAt). */
+  private readonly points = new Map<number, RunPoint[]>();
 
   /** The number of upstream run `key` (a new run gets the next one). */
   ccOf(key: string): number {
@@ -307,12 +332,70 @@ export class DiscontinuityClock {
   note(cc: number): void {
     this.max = Math.max(this.max, cc);
   }
+
+  /**
+   * The date (ms) of the moment `start` (media clock, s) of run `cc`, for a playlist that starts
+   * dating there: the date another playlist already gave the same cut (SAME_CUT_S), else the
+   * nearest dated moment plus the media time between them. A run's first date comes from
+   * `upstream` (the date the source gave a segment of it: a moment and its date), and is never
+   * replaced. Undefined while the run has no date at all.
+   *
+   * Why one timeline: hls.js places the audio playlist against the video one by these dates
+   * (alignMediaPlaylistByPDT). MediaMTX dates by the wall clock at which a segment arrived, and
+   * only the newest two of a playlist; a playlist that started from MediaMTX's date of another
+   * segment than the other playlist (it first read the run a segment later, or after the dates
+   * of what it missed were gone) got dates apart by however far OBS had fallen behind real time
+   * in between, 49.5 s on a loaded CI machine: hls.js then loaded audio of a moment where there
+   * was no video and the picture never started.
+   */
+  dateAt(cc: number, start: number, upstream?: RunPoint): number | undefined {
+    const points = this.points.get(cc);
+    let near: RunPoint | undefined;
+    for (const p of points ?? []) if (!near || Math.abs(p.start - start) < Math.abs(near.start - start)) near = p;
+    near ??= upstream;
+    if (!near) return undefined;
+    if (!points) this.mark(cc, near);
+    return Math.abs(near.start - start) <= SAME_CUT_S ? near.date : Math.round(near.date + (start - near.start) * 1000);
+  }
+
+  /** A moment of run `cc` a playlist serves with this date: the playlists that start later take their dates from it. */
+  mark(cc: number, point: RunPoint): void {
+    let points = this.points.get(cc);
+    if (!points) {
+      this.points.set(cc, (points = []));
+      // Runs are only ever looked up while they are in some playlist window.
+      if (this.points.size > 200) this.points.delete(this.points.keys().next().value as number);
+    }
+    points.push(point);
+    if (points.length > RUN_POINTS) points.shift();
+  }
 }
 
 const PDT_TAG = '#EXT-X-PROGRAM-DATE-TIME:';
 
+/** The date the source gave a segment, ms (NaN when none). */
+function upstreamDate(e: MediaEntry): number {
+  const pdt = e.tags.find((t) => t.startsWith(PDT_TAG));
+  return pdt === undefined ? Number.NaN : Date.parse(pdt.slice(PDT_TAG.length));
+}
+
 /**
- * A segment's tags with its PROGRAM-DATE-TIME set to `ms` (unchanged when it has none).
+ * The first moment of `ready[i]`'s run from `i` on that the source dated, with its media time:
+ * where a run's dates begin when the origin's first read of it starts with segments the source
+ * no longer dates. Undefined when there is none before a discontinuity.
+ */
+function upstreamPoint(ready: MediaEntry[], i: number): RunPoint | undefined {
+  for (let j = i; j < ready.length; j++) {
+    const e = ready[j]!;
+    if (j > i && e.tags.some((t) => DISCONTINUITY_TAG.test(t))) return undefined;
+    const date = upstreamDate(e);
+    if (e.start !== undefined && Number.isFinite(date)) return { start: e.start, date };
+  }
+  return undefined;
+}
+
+/**
+ * A segment's tags with its PROGRAM-DATE-TIME set to `ms` (added when it has none).
  *
  * Why the origin dates segments itself: MediaMTX dates a segment by the wall clock at which its
  * first frame arrived, so when OBS sends its first seconds at once (the burst at connect, a
@@ -325,11 +408,13 @@ const PDT_TAG = '#EXT-X-PROGRAM-DATE-TIME:';
  * delay) then loaded audio and video of neighbouring segments and jumped to where the video
  * started and the audio did not. Linux WebKit froze for good on that jump (its GStreamer media
  * source deadlocks); the other engines waited. So inside one run every date is the previous one
- * plus its duration, exactly, from the date MediaMTX gave the run's first segment: the same
- * dates for the same moments in every playlist of the run, which never move once served.
+ * plus its duration, exactly, and every playlist starts from the run's one timeline (its first
+ * MediaMTX date, carried by media time: DiscontinuityClock.dateAt): the same dates for the same
+ * moments in every playlist of the run, which never move once served (PlaylistStitcher.dateOf).
  */
 function withDate(tags: string[], ms: number): string[] {
-  return tags.map((t) => (t.startsWith(PDT_TAG) ? `${PDT_TAG}${new Date(Math.round(ms)).toISOString()}` : t));
+  const tag = `${PDT_TAG}${new Date(Math.round(ms)).toISOString()}`;
+  return tags.some((t) => t.startsWith(PDT_TAG)) ? tags.map((t) => (t.startsWith(PDT_TAG) ? tag : t)) : [tag, ...tags];
 }
 
 /** Header tags the stitcher writes itself (or drops: a live playlist never ends). */
@@ -352,7 +437,7 @@ export class PlaylistStitcher {
   private droppedCc: number | null = null;
   private lastMap?: string;
   /** The last segment added that had a date (withDate): the next one of its run follows from it. */
-  private lastDated: { cc: number; date: number; duration: number } | null = null;
+  private lastDated: { cc: number; date: number; duration: number; start?: number } | null = null;
   private targetDuration = 1;
   private version = '#EXT-X-VERSION:7';
   private header: string[] = [];
@@ -398,21 +483,18 @@ export class PlaylistStitcher {
     const td = p.header.find((h) => h.startsWith('#EXT-X-TARGETDURATION:'));
     if (td) this.targetDuration = Math.max(this.targetDuration, Number.parseInt(td.slice(22), 10) || 1);
     let added = false;
-    for (const e of ready) {
+    for (const [i, e] of ready.entries()) {
       const name = fileName(e.uri);
       if (this.seen.has(name)) continue;
       const upstreamDisc = e.tags.some((t) => DISCONTINUITY_TAG.test(t));
       const cc = this.ccFor(map, upstreamDisc);
       let tags = e.tags.filter((t) => !DISCONTINUITY_TAG.test(t) && !OWN_HEADER.test(t));
-      // The date: MediaMTX's for a run's first segment, then the previous one plus its duration (withDate).
-      const pdt = tags.find((t) => t.startsWith(PDT_TAG));
-      let date = pdt === undefined ? Number.NaN : Date.parse(pdt.slice(PDT_TAG.length));
-      const last = this.lastDated;
-      if (Number.isFinite(date) && last && last.cc === cc) {
-        date = last.date + last.duration * 1000;
+      const date = this.dateOf(e, cc, ready, i);
+      if (date !== undefined) {
         tags = withDate(tags, date);
+        if (e.start !== undefined) this.clock.mark(cc, { start: e.start, date });
       }
-      this.lastDated = Number.isFinite(date) ? { cc, date, duration: e.duration } : null;
+      this.lastDated = date === undefined ? null : { cc, date, duration: e.duration, ...(e.start !== undefined ? { start: e.start } : {}) };
       this.window.push({ name, tags, duration: e.duration, map, cc, seq: this.nextSeq++ });
       this.targetDuration = Math.max(this.targetDuration, Math.round(e.duration));
       this.lastMap = map;
@@ -423,6 +505,24 @@ export class PlaylistStitcher {
     }
     while (this.window.length > Math.max(this.maxEntries, ready.length) && this.durationS() - this.window[0]!.duration >= this.minWindowS - 0.5) this.dropFirst();
     return added;
+  }
+
+  /**
+   * The date of new entry `ready[i]` of run `cc` (withDate): inside a run every date is the
+   * previous segment's plus its duration, exactly, also for a segment the source no longer
+   * dates (MediaMTX dates only the newest two of a playlist, so a late poll first sees older
+   * ones without). Where a playlist starts dating a run (its first segment of it, or one after
+   * segments it never got), the date comes from the run's one timeline (DiscontinuityClock.dateAt),
+   * so every playlist dates the same moment alike. Without media times (a source that is not
+   * fMP4), the first date the source gave.
+   */
+  private dateOf(e: MediaEntry, cc: number, ready: MediaEntry[], i: number): number | undefined {
+    const last = this.lastDated?.cc === cc ? this.lastDated : null;
+    const follows = last !== null && (e.start === undefined || last.start === undefined || Math.abs(last.start + last.duration - e.start) <= SAME_CUT_S);
+    if (last && follows) return last.date + last.duration * 1000;
+    if (e.start !== undefined) return this.clock.dateAt(cc, e.start, upstreamPoint(ready, i));
+    const own = upstreamDate(e);
+    return Number.isFinite(own) ? own : undefined;
   }
 
   /**

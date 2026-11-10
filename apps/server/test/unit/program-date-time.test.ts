@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DiscontinuityClock, PlaylistStitcher, parseMediaPlaylist } from '../../src/hls/playlist.js';
+import { DiscontinuityClock, PlaylistStitcher, parseMediaPlaylist, type MediaEntry } from '../../src/hls/playlist.js';
 
 // The PROGRAM-DATE-TIME of each segment the origin serves is, inside one upstream run, the
 // previous segment's date plus its duration, exactly. MediaMTX stamps a segment with the wall
@@ -14,18 +14,21 @@ import { DiscontinuityClock, PlaylistStitcher, parseMediaPlaylist } from '../../
 // Docker, gdb: main thread in gst_pad_push_event, webkitmediasrc waiting on the main thread).
 // A tolerance of 250 ms was tried first: the few ms it left still froze 4 starts in 5.
 
-/** One MediaMTX-style fMP4 media playlist of run `run`: segments `[from, to)` with their dates. */
+/** One MediaMTX-style fMP4 media playlist of run `run`: segments `[from, to)` with their dates (none where `dates` has none). */
 function playlist(run: string, from: number, to: number, dates: Record<number, string>, durations: Record<number, number> = {}): string {
   const lines = ['#EXTM3U', '#EXT-X-VERSION:9', '#EXT-X-TARGETDURATION:2', `#EXT-X-MEDIA-SEQUENCE:${from}`, `#EXT-X-MAP:URI="${run}_video1_init.mp4"`];
   for (let i = from; i < to; i++) {
-    lines.push(`#EXT-X-PROGRAM-DATE-TIME:${dates[i]}`, `#EXTINF:${(durations[i] ?? 2).toFixed(5)},`, `${run}_video1_seg${i}.mp4`);
+    if (dates[i] !== undefined) lines.push(`#EXT-X-PROGRAM-DATE-TIME:${dates[i]}`);
+    lines.push(`#EXTINF:${(durations[i] ?? 2).toFixed(5)},`, `${run}_video1_seg${i}.mp4`);
   }
   return lines.join('\n') + '\n';
 }
 
-function feed(st: PlaylistStitcher, text: string): void {
+/** Feeds `text`; `start(n)` is where segment n starts on the media clock, as the origin reads it from the segment (fmp4.ts). */
+function feed(st: PlaylistStitcher, text: string, start?: (n: number) => number): void {
   const p = parseMediaPlaylist(text);
-  st.update(p, p.entries);
+  const timed = (e: MediaEntry): MediaEntry => (start ? { ...e, start: start(Number(/seg(\d+)\.mp4$/.exec(e.uri)?.[1])) } : e);
+  st.update(p, p.entries.map(timed));
 }
 
 /** Each served segment's date in ms, by file name. */
@@ -129,6 +132,53 @@ describe('PROGRAM-DATE-TIME served by the origin', () => {
     expect(d['r2_video1_seg0.mp4']).toBe(Date.parse('2026-11-01T18:00:36.000Z'));
     expect(d['r2_video1_seg1.mp4']).toBe(Date.parse('2026-11-01T18:00:38.000Z'));
     expect(d['r2_video1_seg2.mp4']).toBe(Date.parse('2026-11-01T18:00:40.000Z'));
+  });
+
+  it('a segment MediaMTX no longer dates (a late read) keeps the date of its moment', () => {
+    // Arrange: MediaMTX dates only the newest two segments of a playlist, by when each arrived;
+    // OBS fell 5 s behind real time before segment 1.
+    const st = new PlaylistStitcher(20, 40);
+    feed(st, playlist('r1', 0, 1, { 0: '2026-11-01T18:00:00.000Z' }));
+
+    // Act
+    feed(st, playlist('r1', 0, 4, { 2: '2026-11-01T18:00:09.000Z', 3: '2026-11-01T18:00:11.000Z' }));
+
+    // Assert
+    expect(Object.values(dates(st.render()))).toEqual([0, 2000, 4000, 6000].map((ms) => Date.parse('2026-11-01T18:00:00.000Z') + ms));
+  });
+
+  it("the ladder's 1 s audio, first read from a later segment, dates each cut like the 2 s video", () => {
+    // Arrange: the video playlist dated from MediaMTX's first date; the audio playlist's first
+    // read starts 6 s into the run with a segment no longer dated, then dates 3 s behind.
+    const clock = new DiscontinuityClock();
+    const video = new PlaylistStitcher(20, 40, clock);
+    const audio = new PlaylistStitcher(40, 40, clock);
+    feed(video, playlist('r1', 0, 6, { 0: '2026-11-01T18:00:00.000Z' }), (n) => 100 + 2 * n);
+    const audioText = playlist('r1', 6, 10, { 8: '2026-11-01T18:00:05.000Z', 9: '2026-11-01T18:00:06.000Z' }, { 6: 1, 7: 1, 8: 1, 9: 1 }).replaceAll('video1', 'audio2');
+
+    // Act
+    feed(audio, audioText, (n) => 100 + n - 0.021);
+
+    // Assert
+    const v = dates(video.render());
+    const a = dates(audio.render());
+    expect(a['r1_audio2_seg6.mp4']).toBe(v['r1_video1_seg3.mp4']);
+    expect(a['r1_audio2_seg8.mp4']).toBe(v['r1_video1_seg4.mp4']);
+    expect([7, 8, 9].map((n) => a[`r1_audio2_seg${n}.mp4`]! - a['r1_audio2_seg6.mp4']!)).toEqual([1000, 2000, 3000]);
+  });
+
+  it('after segments it never got, a playlist dates the next ones by the media time in between', () => {
+    // Arrange: segments 3 and 4 left MediaMTX before the origin read them (a stalled poll).
+    const st = new PlaylistStitcher(20, 40);
+    feed(st, playlist('r1', 0, 3, { 0: '2026-11-01T18:00:00.000Z' }), (n) => 50 + 2 * n);
+
+    // Act
+    feed(st, playlist('r1', 5, 7, { 5: '2026-11-01T18:00:17.000Z', 6: '2026-11-01T18:00:19.000Z' }), (n) => 50 + 2 * n);
+
+    // Assert
+    const d = dates(st.render());
+    expect(d['r1_video1_seg5.mp4']! - d['r1_video1_seg0.mp4']!).toBe(10_000);
+    expect(d['r1_video1_seg6.mp4']! - d['r1_video1_seg0.mp4']!).toBe(12_000);
   });
 
   it('segments without a date stay without one', () => {

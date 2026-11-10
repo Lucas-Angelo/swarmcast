@@ -180,6 +180,47 @@ export function mediaPlaylist(run: string, from: number, count: number, o: { seg
   return lines.join('\n');
 }
 
+// ---- fMP4 ----
+
+/** An ISO BMFF box: 32-bit size, type, payload. */
+function box(type: string, ...payload: Uint8Array[]): Buffer {
+  const body = Buffer.concat(payload);
+  const head = Buffer.alloc(8);
+  head.writeUInt32BE(8 + body.length, 0);
+  head.write(type, 4, 'latin1');
+  return Buffer.concat([head, body]);
+}
+
+/** A full box's version and flags, then `fields` as 32-bit words. */
+function fullBox(type: string, version: number, ...fields: number[]): Buffer {
+  const b = Buffer.alloc(4 + 4 * fields.length);
+  b.writeUInt8(version, 0);
+  fields.forEach((f, i) => b.writeUInt32BE(f, 4 + 4 * i));
+  return box(type, b);
+}
+
+/**
+ * The boxes an fMP4 init segment holds that say a track's timescale, as MediaMTX writes them
+ * (moov > trak > tkhd, mdia > mdhd, version 0): track 1 at `timescale` ticks per second.
+ */
+export function fmp4Init(timescale: number): Uint8Array<ArrayBuffer> {
+  const tkhd = fullBox('tkhd', 0, 0, 0, 1, 0, 0);
+  const mdhd = fullBox('mdhd', 0, 0, 0, timescale, 0, 0);
+  return new Uint8Array(Buffer.concat([box('ftyp', Buffer.from('iso5\0\0\0\x01iso5', 'latin1')), box('moov', box('trak', tkhd, box('mdia', mdhd)))]));
+}
+
+/**
+ * An fMP4 media segment of track 1 that starts at `decodeTime` ticks (moof > traf > tfhd, tfdt
+ * version 1, as MediaMTX writes it), then a few bytes of media.
+ */
+export function fmp4Segment(decodeTime: number, media = 'media'): Uint8Array<ArrayBuffer> {
+  const tfdt = Buffer.alloc(12);
+  tfdt.writeUInt8(1, 0);
+  tfdt.writeBigUInt64BE(BigInt(decodeTime), 4);
+  const traf = box('traf', fullBox('tfhd', 0, 1), box('tfdt', tfdt));
+  return new Uint8Array(Buffer.concat([box('moof', fullBox('mfhd', 0, 1), traf), box('mdat', Buffer.from(media))]));
+}
+
 // ---- quality ----
 
 /** What OBS usually sends: 1080p30 at 6 Mbps, with audio. */
