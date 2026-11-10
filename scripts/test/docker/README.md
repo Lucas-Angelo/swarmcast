@@ -8,7 +8,7 @@ changes the build output.
 | Script | What it runs |
 | --- | --- |
 | `obs.sh` | Section 1: real OBS Studio (Ubuntu 24.04 package, obs-websocket) headless under Xvfb + Mesa llvmpipe, streaming to the staged server in the same container |
-| `e2e.sh` | Section 2: the Playwright suite (Firefox, Chromium) in `mcr.microsoft.com/playwright:v<version>-noble` (version read from `package-lock.json`) |
+| `e2e.sh` | Section 2: the Playwright suite (Firefox, Chromium) in `mcr.microsoft.com/playwright:v<version>-noble` (version read from `package-lock.json`) plus ffmpeg (`Dockerfile.e2e`) |
 | `appimage.sh` | Section 3: the desktop AppImage on a minimal Ubuntu 22.04/24.04 and Debian 12 that has only the host packages the website's Linux page lists |
 | `webkit.sh` | Section 4: the desktop window's WebKitGTK (Ubuntu 24.04's): how often it loses the panel's first navigation (`race`), and the shell's panel load watchdog against a mock server that never answers the first load (`watchdog`). By hand only, not in CI |
 
@@ -26,33 +26,64 @@ architecture `e2e.sh`, with the download cache mounted (Section 2).
 
 ### Test images
 
-The images (`Dockerfile.*`: the test's scaffolding, installed with `apt-get`) are built in each
-job by `build.sh`, with no layer cache: a weekly job outlives GitHub's 7-day cache eviction, and
-the repository's 10 GB cache is full. So each job depends on the distribution's mirror at that
-moment, and `build.sh` makes a failure explain itself and survive one hiccup:
+The images (`Dockerfile.*`: the test's scaffolding, installed with `apt-get`) are the test's
+set-up, not what it tests, so a test never fetches them: no Docker Hub, MCR, Ubuntu or Debian
+mirror at test time ([docs/TESTING.md](../../../docs/TESTING.md#no-third-party-service-in-the-gate)).
+`images.sh` gives each one a key, a hash of what it is made of: its Dockerfile, its base image
+(`ubuntu:22.04`, `ubuntu:24.04`, `debian:12` pinned by digest in `BASE_PINS`; for `e2e`, the
+Playwright image of the `@playwright/test` version in `package-lock.json`, whose tag a release
+never moves) and the architecture. A suite takes its image from the first of:
 
-- `apt-get` retries a connection 5 times with a 30 s time limit, and `apt-get update` fails on
-  any index it could not fetch (`APT::Update::Error-Mode=any`; by default it only warns and the
+1. the image already in this Docker with that key (label `org.swarmcast.test-image.key`);
+2. `$SC_TEST_IMAGES/<name>-<arch>-<key>.tar.zst` (`docker save` + zstd), loaded with
+   `docker load`. In CI, `.github/actions/test-images` puts there the files an earlier run
+   uploaded as an artifact, from the default branch or the job's own branch;
+3. a build (the cold path): the pinned base pulled (`pull.sh`: a time limit per try, 4 tries),
+   the Dockerfile built (`build.sh`). With `SC_TEST_IMAGES` set, the image is then saved there
+   and listed in `built.txt`, and in CI `.github/actions/test-images/save` uploads the job's
+   images for the next runs (kept 90 days).
+
+Every suite then starts its image with `docker run --pull never`. So in CI a key is built once
+per branch scope (once for `main`, whose artifacts every branch uses), and again only when its
+Dockerfile, its pin or the Playwright version changes, or after 90 days. To move a base on,
+replace its digest in `BASE_PINS`
+(`docker buildx imagetools inspect ubuntu:24.04 --format '{{json .Manifest.Digest}}'`); the next
+run builds it from the new base and the current packages. Sizes (arm64, zstd): the AppImage hosts
+99, 116 and 139 MB, OBS 243 MB, the Playwright image 958 MB.
+
+When an image is built, the build makes a failure explain itself and survive one hiccup:
+
+- `apt-get` runs through `.github/scripts/apt-retry.sh` (a time limit per try, 3 tries; mounted
+  for that build step only, `--build-context ci=.github/scripts`, so nothing of it stays in the
+  image), retries a connection 3 times with a 15 s time limit, and `apt-get update` fails on any
+  index it could not fetch (`APT::Update::Error-Mode=any`; by default it only warns and the
   install then fails with "Unable to locate package"), so the log names the broken index;
-- the whole BuildKit log (`--progress=plain`, apt's own lines) is printed when a build fails;
+- the BuildKit log (`--progress=plain`, apt's own lines) and `docker pull`'s lines are printed
+  as they come, prefixed with `  | ` and `  pull | `, so a slow mirror shows while it is slow;
 - a failed build is tried once more after 60 s (`BUILD_RETRY_PAUSE`), with `--no-cache`; a second
   failure fails the suite with both logs. Infra recovery, not a test retry (the rules in
   `.github/workflows/README.md`): only the scaffolding image is rebuilt, never a step that runs
   SwarmCast.
 
-Why: pipeline run 41273197813 (a 10-pipeline stability batch, 2026-11-01 05:38 UTC) lost
-`docker / ubuntu:24.04 x64` when `apt-get` exited with 100 while building a test image (the start
-script suite's, removed since), and `docker build -q` hid apt's message. The whole step took 22 s, two pulls and two earlier builds
-included, while apt's retries of a network error take 31 s by themselves (a 404 fails in 2 s): the
-error was one apt does not retry (a 404, a hash or size mismatch, an inconsistent index), so a
-mirror serving a half-synchronised archive, not a slow or refused connection. The other docker
-jobs of the batch ran one or two at a time, and the same run's OBS job built its Ubuntu 24.04 x64
-image from the same mirror two minutes later.
+Why: release rehearsal 42757440898 (`soak/p100g`, 2026-11-10 04:47 UTC) lost four jobs at once
+(`docker / AppImage ubuntu:22.04 x64` and `ubuntu:24.04 x64`, `desktop linux-x64 /
+clean-machine (ubuntu-22.04)`, `docker / OBS Studio x64`), all in their image builds, before any
+SwarmCast code ran. archive.ubuntu.com and security.ubuntu.com answered at 210 kB/s: `apt-get
+update` took 155 s for OBS's image and then failed on "File has unexpected size ... Mirror sync in
+progress?", and its second build ran out of the step's 12 minutes; the AppImage steps printed
+nothing for 5 minutes (the build log was printed only after a failure) until their limit. Before
+that, pipeline run 41273197813 (2026-11-01 05:38 UTC) lost `docker / ubuntu:24.04 x64` when
+`apt-get` exited with 100 within seconds (a 404 or a hash mismatch: a mirror serving a
+half-synchronised archive), and `docker build -q` hid apt's message.
 
-A future option: prebuild the images on a schedule and pull them from GitHub's container
-registry (ghcr.io), pinned by tag or digest, building only when a Dockerfile changed; then a run
-would not touch the mirrors at all. It needs the package to be public (a private one has 500 MB
-of free storage, less than these images), which only the repository owner can switch.
+Why an artifact and not the Actions cache: the images of one pipeline weigh about 3.5 GB (both
+architectures, the clean-machine jobs' pair included), the repository's 10 GB of caches held
+9.6 GB on 2026-11-10, and GitHub evicts what is over (the Rust caches first, as the least
+recently used), while a public repository's artifacts have no quota; and a cache unused for 7
+days is deleted, longer than between two weekly runs of `linux-docker.yml`, while an artifact
+stays 90 days. A container registry (ghcr.io) would need `packages: write` and the package made
+public (a private one has 500 MB of free storage), which only the repository owner can switch;
+the artifacts need neither.
 
 `obs.sh` takes the staged server from `release/staging/linux-<arch>` of this checkout (or the main
 checkout; override with `--staging DIR`). Make it first: `npm run build && node scripts/build/package.mjs`.
@@ -83,8 +114,8 @@ scripts/test/docker/e2e.sh                 # firefox + chromium
 scripts/test/docker/e2e.sh firefox
 ```
 
-Copies the repo into the container (without `node_modules`, build output, `vendor/`), installs
-ffmpeg, runs `npm ci`, `fetch-binaries.mjs` (detects linux-arm64), `npm run build`, prints the
+Copies the repo into the container (without `node_modules`, build output, `vendor/`), runs
+`npm ci`, `fetch-binaries.mjs` (detects linux-arm64), `npm run build`, prints the
 H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each project with
 `playwright.linux.config.ts`: the main config, but the chromium project has no `channel`
 (Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/<project>/`,
@@ -158,9 +189,12 @@ Linux), Python's GObject bindings, Xvfb, and the desktop shell's build dependenc
 
 ## Cleanup
 
-Remove the images the suites built:
+Remove the images the suites built (and the bases they pulled):
 
 ```sh
 docker rmi $(docker images -q 'swarmcast-test-*')
 docker rmi mcr.microsoft.com/playwright:v1.64.1-noble
 ```
+
+A suite builds its image again only when none with its key is left (`images.sh`), so after a
+change to a Dockerfile the next run builds it by itself.

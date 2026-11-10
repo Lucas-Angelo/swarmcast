@@ -34,10 +34,21 @@ runs:
           printf '%s\n' "${paths[@]}"
           echo "EOF"
         } >>"$GITHUB_OUTPUT"
+    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
+    # the runner's own download of a remote action is not tried again after a 404
+    # (.github/workflows/README.md, "Remote actions"). One that cannot be fetched skips the upload,
+    # with a warning: the next run builds the images again.
+    - name: upload-artifact (git fetch, with tries)
+      id: action
+      if: steps.plan.outputs.upload == 'true'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/upload-artifact
+        optional: 'true'
     # compression-level 0: the files are zstd already.
     - name: Upload them
-      if: steps.plan.outputs.upload == 'true'
-      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      if: steps.plan.outputs.upload == 'true' && steps.action.outputs.fetched == 'true'
+      uses: ./.git/remote-actions/actions/upload-artifact
       with:
         name: ${{ env.SC_TEST_IMAGES_ARTIFACT }}
         path: ${{ steps.plan.outputs.paths }}

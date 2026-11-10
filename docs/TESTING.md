@@ -73,7 +73,8 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | A live link that Cloudflare's edge answers with its own 530 page (no connection for the tunnel) while cloudflared runs on | `joinAndPlay` in [scripts/test/preflight/verify.mjs](../scripts/test/preflight/verify.mjs), only with `--real-cloudflare` (`real-services.yml`); with the stand-in a 530 fails the step | Cloudflare's free quick-tunnel edge, not SwarmCast (gate run 42164021587). It is the app's job to notice and replace the tunnel (`tunnel/watch.ts`), so it is checked: the app must show a new link within its watch time plus the tunnel step's limit, and the viewer then plays that one. The gate checks the same replacement deterministically: `local-cloudflare.test.ts` makes the stand-in answer 530 |
 | `hdiutil detach` while macOS services still scan a new volume ("Resource busy") | `detach` in [scripts/test/desktop/verify.mjs](../scripts/test/desktop/verify.mjs) | only "Resource busy" is waited out, then the detach is forced; any other error fails |
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
-| A registry hiccup on `docker pull` | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test |
+| A registry hiccup on `docker pull`, only when a Docker test image is built (no saved one yet) | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test; a test runs its saved image and pulls nothing ([below](#no-third-party-service-in-the-gate)) |
+| A Docker test image's build that failed (a mirror mid-sync), only when it is built | [scripts/test/docker/build.sh](../scripts/test/docker/build.sh) | the distribution's mirror: one more build after 60 s, `--no-cache`, apt through `apt-retry.sh` |
 | A slow apt mirror, an artifact service hiccup | `.github/scripts/apt-retry.sh`, `.github/actions/fetch-artifact` | CI infrastructure |
 | A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
 | A GitHub release download that answers 5xx, breaks off or stalls (MediaMTX, cloudflared, Pebble, the test ffmpeg, cargo-llvm-cov, the AppImage tools, pkg's Node.js base binary) | `download` in [scripts/build/fetch-binaries.mjs](../scripts/build/fetch-binaries.mjs) (also through `pkg-base.mjs`), after the Actions download cache (`.github/actions/setup`) | github.com's release downloads, not the test (504s for most of an hour, PR #141): 6 tries in a row without progress, resumed with Range, then the next source, and the GitHub release files once more through GitHub's REST API (`githubApiUrl`, which served them during that outage); a source that worked only after failed tries or through the API logs `infra recovery:`; a SHA-256 pin decides, whichever source. In CI the cache serves the file first, and a download that still fails stops the job at that step (`::error title=fetch-binaries::`): no test runs without its binaries ([.github/workflows/README.md](../.github/workflows/README.md), "Release downloads") |
@@ -494,9 +495,24 @@ tests, and the suite reads it from there
 ([scripts/test/lib/pinned-archive.mjs](../scripts/test/lib/pinned-archive.mjs), SHA-256 checked),
 so its test step downloads nothing. OBS is test scaffolding, not a service the app uses, so
 `real-services.yml` does not cover it; a pin change downloads it again in set-up, with
-fetch-binaries' recoveries. The Docker OBS suite installs Ubuntu's `obs-studio` package when its
-image is built (`Dockerfile.obs`, with `build.sh`'s infra recovery): a set-up download, like
-the other images' apt packages.
+fetch-binaries' recoveries.
+
+The Docker suites' test images (`scripts/test/docker/Dockerfile.*`: the AppImage's minimal hosts,
+OBS Studio, the Playwright image plus ffmpeg) were built in every gating job, with apt from the
+Ubuntu and Debian mirrors and the bases from Docker Hub and MCR. Release rehearsal 42757440898
+lost four jobs at once that way (2026-11-10): archive.ubuntu.com answered at 210 kB/s, OBS's
+`apt-get update` took 155 s and failed on a mirror being synchronised, and the AppImage steps
+sat silent until their 5-minute limit. Each image now has a key (its Dockerfile, its base pinned
+by digest, the architecture;
+[scripts/test/docker/images.sh](../scripts/test/docker/images.sh)): `.github/actions/test-images`
+restores the job's images from the artifact an earlier run of the default branch or of the job's
+own branch saved (`docker save` + zstd), the suites `docker load` them and start them with
+`docker run --pull never`, so a test asks no registry and no mirror. Only a job that finds no
+saved image for its key builds it (the cold path: once per key on `main`, again after 90 days,
+apt through `apt-retry.sh`, the build log printed as it comes) and saves it for the next runs
+([scripts/test/docker/README.md](../scripts/test/docker/README.md), "Test images"). Proved on
+`soak/docker-offline-proof` with every mirror and registry blocked on the runner and for its
+containers (`/etc/hosts`, `iptables`): the warm runs passed and built nothing.
 
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
@@ -522,8 +538,9 @@ low" warning only on a measured fast uplink, else record it), STUN (stun.cloudfl
 browsers' P2P candidates (the viewers find each other on loopback without it), Direct mode's public
 IP lookup in the Windows direct suite (1.1.1.1/cdn-cgi/trace), and cloudflared's own lookup of its
 feature flags in DNS (`cfd-features.argotunnel.com`, 10 s limit, defaults on failure). CI set-up
-downloads (npm, apt, Docker images, pinned binaries, actions) are infrastructure with their own
-recoveries ([above](#infra-recoveries)), not services under test.
+downloads (npm, apt on the runner, pinned binaries, actions, and a Docker test image's cold
+build) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
+under test.
 
 ### Chat bench
 
