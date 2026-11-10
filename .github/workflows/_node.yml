@@ -6,8 +6,8 @@ name: node
 # (clippy, cargo test, crate licences, the glib advisory guard). Uses web-dist from _build.yml.
 # Vitest writes its own job summary; cargo test goes through .github/scripts/test-summary.mjs. Test steps have their own time limit (2 to 7 times their
 # slowest run), so a hung one fails and the steps that upload its results still run.
-# pipeline.yml calls it twice: Ubuntu and Windows, and macOS on its own, the call the macOS e2e
-# ui group runs after (README.md, "macOS concurrency").
+# pipeline.yml calls it twice: Ubuntu and Windows, and macOS on its own, in a macOS lane before
+# the macOS e2e chat group (README.md, "macOS concurrency").
 on:
   workflow_call:
     inputs:

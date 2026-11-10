@@ -25,10 +25,10 @@ name: e2e
 # config ever retries and a test passes only on its retry. Each Playwright run's results go to
 # the job summary (.github/scripts/test-summary.mjs).
 #
-# pipeline.yml calls it three times, so its macOS jobs fit the pipeline's macOS runners
-# (README.md, "macOS concurrency"): Ubuntu with every group plus the Windows chat UI; macOS
-# chat and media; macOS ui, after the macOS node job. Every call names its stage `e2e`, so the
-# checks read `e2e / <group> (<runner>)` as before.
+# pipeline.yml calls it four times, so each macOS group can take its place in a macOS lane
+# (README.md, "macOS concurrency"): Ubuntu with every group plus the Windows chat UI; then one
+# call per macOS group (chat, ui, media), each after the job before it in its lane. Every call
+# names its stage `e2e`, so the checks read `e2e / <group> (<runner>)` as before.
 on:
   workflow_call:
     inputs:

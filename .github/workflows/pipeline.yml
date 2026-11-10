@@ -8,10 +8,12 @@ name: Pipeline
 #            ├─ site (when the site changed) ──────────────────────────────────────────┤
 #            └─ docker (when the Docker suites or what they run changed) ──────────────┘
 #
-# - macOS: at most 4 of the account's 5 macOS runners at once, in four lanes (README.md,
-#   "macOS concurrency"): e2e chat, then rendering; e2e media; node, then e2e ui, then devices
-#   (iOS); desktop macos-arm64 (build, clean-machine), then desktop macos-x64 (build, then the
-#   Intel clean-machine). rendering and devices run only with release-flavour (below).
+# - macOS: at most 3 Apple silicon jobs queued or running at once, in three lanes chained with
+#   `needs` (README.md, "macOS concurrency"): (1) devices' iOS job, node, e2e chat; (2) rendering's
+#   macOS job, e2e ui, desktop macos-arm64 (build, clean-machine); (3) desktop macos-x64 (build on
+#   Apple silicon, clean-machine on Intel), e2e media. devices and rendering run only with
+#   release-flavour (below); otherwise they are skipped at once and their lane starts with the
+#   next job.
 # - changes: what the change touches (.github/scripts/changes.sh). Docs-only changes skip
 #   every stage; ci-ok is then green within a minute.
 # - docker: the Linux Docker suites (_docker.yml: AppImage on minimal hosts, OBS streaming to the
@@ -139,9 +141,15 @@ jobs:
       TAURI_SIGNING_PRIVATE_KEY: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
       TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ inputs.release && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
 
+  # The two macOS targets are in the macOS lanes (README.md, "macOS concurrency"). A chained call
+  # needs nothing of the call before it and runs whatever its result (not when the run is
+  # cancelled), so every check still runs.
+  # macOS lane 2, last: after e2e ui. Its build and clean-machine are both Apple silicon jobs, one
+  # after the other.
   desktop-macos-arm64:
     name: desktop macos-arm64
-    needs: [changes, build]
+    needs: [changes, build, e2e-macos-ui]
+    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' }}
     uses: ./.github/workflows/_desktop.yml
     with:
       target: macos-arm64
@@ -150,13 +158,11 @@ jobs:
       screenshots: ${{ inputs.screenshots == true }}
     secrets: *tauri-key
 
-  # macOS lane 4 (README.md, "macOS concurrency"): after the macos-arm64 call, so the two
-  # targets' four macOS jobs take one runner at a time. It needs nothing of macos-arm64's and
-  # runs whatever that call's result (not when the run is cancelled).
+  # macOS lane 3, first: the build on Apple silicon as soon as `build` is done, then the Intel
+  # clean-machine (macos-15-intel, not an Apple silicon runner); e2e media after it.
   desktop-macos-x64:
     name: desktop macos-x64
-    needs: [changes, build, desktop-macos-arm64]
-    if: ${{ !cancelled() && needs.changes.result == 'success' && needs.build.result == 'success' }}
+    needs: [changes, build]
     uses: ./.github/workflows/_desktop.yml
     with:
       target: macos-x64
@@ -188,9 +194,10 @@ jobs:
     secrets: *tauri-key
 
   # ---------------------------------------------------------------- test stage
-  # The macOS jobs are separate calls in lanes, at most 4 macOS runners at once (README.md,
-  # "macOS concurrency"); each call names its stage like the others, so the checks still read
-  # `node / ... (macos-latest)` and `e2e / <group> (macos-latest)`.
+  # The macOS jobs are separate calls, one Apple silicon job each, chained in three lanes
+  # (README.md, "macOS concurrency"); each call names its stage like the others, so the checks
+  # still read `node / ... (macos-latest)` and `e2e / <group> (macos-latest)`. A chained call runs
+  # whatever the result of the call before it (not when the run is cancelled).
   node:
     name: node
     needs: [quick, build]
@@ -198,10 +205,11 @@ jobs:
     with:
       os: ${{ github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest","windows-latest"]' || '["ubuntu-24.04","windows-latest"]' }}
 
-  # macOS lane 3, first: node; then e2e-macos-ui.
+  # macOS lane 1, second: after devices (a release rehearsal; otherwise skipped at once).
   node-macos:
     name: node
-    needs: [quick, build]
+    needs: [quick, build, devices]
+    if: ${{ !cancelled() && needs.quick.result == 'success' && needs.build.result == 'success' }}
     uses: ./.github/workflows/_node.yml
     with:
       os: '["macos-latest"]'
@@ -214,25 +222,36 @@ jobs:
       os: ${{ github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest"]' || '["ubuntu-24.04"]' }}
       chat-windows: true
 
-  # macOS lanes 1 and 2: the two longest groups (chat with the viewer chat UI, media), at once.
-  e2e-macos:
-    name: e2e
-    needs: [quick, build]
-    uses: ./.github/workflows/_e2e.yml
-    with:
-      os: '["macos-latest"]'
-      groups: '["chat","media"]'
-
-  # macOS lane 3, second: the ui group after the macOS node job, whatever its result (not when
-  # the run is cancelled).
-  e2e-macos-ui:
+  # macOS lane 1, last: the chat group (with the viewer chat UI) after the macOS node job.
+  e2e-macos-chat:
     name: e2e
     needs: [quick, build, node-macos]
     if: ${{ !cancelled() && needs.quick.result == 'success' && needs.build.result == 'success' }}
     uses: ./.github/workflows/_e2e.yml
     with:
       os: '["macos-latest"]'
+      groups: '["chat"]'
+
+  # macOS lane 2, second: the ui group after rendering (a release rehearsal; otherwise skipped
+  # at once); desktop macos-arm64 after it.
+  e2e-macos-ui:
+    name: e2e
+    needs: [quick, build, rendering]
+    if: ${{ !cancelled() && needs.quick.result == 'success' && needs.build.result == 'success' }}
+    uses: ./.github/workflows/_e2e.yml
+    with:
+      os: '["macos-latest"]'
       groups: '["ui"]'
+
+  # macOS lane 3, last: the media group after desktop macos-x64.
+  e2e-macos-media:
+    name: e2e
+    needs: [quick, build, desktop-macos-x64]
+    if: ${{ !cancelled() && needs.quick.result == 'success' && needs.build.result == 'success' }}
+    uses: ./.github/workflows/_e2e.yml
+    with:
+      os: '["macos-latest"]'
+      groups: '["media"]'
 
   windows:
     name: windows
@@ -243,23 +262,24 @@ jobs:
       suites: ${{ inputs.windows-suites || '["app","quality","direct","obs"]' }}
 
   # ---------------------------------------------------------------- release-flavour only
-  # The phone suites and the rendering checks, which otherwise run on their labels. Chained after
-  # the macOS e2e calls so the run stays within four macOS runners (README.md, "macOS
-  # concurrency"): devices' iOS job (macos-26) in lane 3 after e2e ui, rendering's macOS job in
-  # lane 1 once chat and media are done. Both build what they test themselves; like the other
-  # chained calls they run whatever the result of the call before them (not when cancelled).
+  # The phone suites and the rendering checks, which otherwise run on their labels. Each heads a
+  # macOS lane (README.md, "macOS concurrency"): devices' iOS job (macos-26, Apple silicon) before
+  # the macOS node and e2e chat jobs (lane 1), rendering's macOS job before e2e ui and desktop
+  # macos-arm64 (lane 2). Both build what they test themselves, so they start once `changes` is
+  # done. In any other run they are skipped straight away, and the next job of the lane does not
+  # wait for them.
   devices:
     name: devices
-    needs: [changes, e2e-macos-ui]
-    if: ${{ !cancelled() && inputs.release-flavour == true && needs.changes.result == 'success' }}
+    needs: changes
+    if: inputs.release-flavour == true && needs.changes.result == 'success'
     uses: ./.github/workflows/devices.yml
     with:
       every-event: true
 
   rendering:
     name: rendering
-    needs: [changes, e2e-macos]
-    if: ${{ !cancelled() && inputs.release-flavour == true && needs.changes.result == 'success' }}
+    needs: changes
+    if: inputs.release-flavour == true && needs.changes.result == 'success'
     uses: ./.github/workflows/rendering.yml
 
   site:
@@ -281,7 +301,7 @@ jobs:
   # little it does. Each stage's jobs write their own results to their summaries.
   ci-ok:
     name: ci-ok
-    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, node-macos, e2e, e2e-macos, e2e-macos-ui, devices, rendering, windows, site, docker]
+    needs: [changes, quick, build, desktop-windows-x64, desktop-macos-arm64, desktop-macos-x64, desktop-linux-x64, desktop-linux-arm64, node, node-macos, e2e, e2e-macos-chat, e2e-macos-ui, e2e-macos-media, devices, rendering, windows, site, docker]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -301,7 +321,7 @@ jobs:
           FLAVOUR: ${{ inputs.release-flavour == true }}
           ATTEMPT: ${{ github.run_attempt }}
         run: |
-          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node node-macos e2e e2e-macos e2e-macos-ui windows'
+          app_stages='quick build desktop-windows-x64 desktop-macos-arm64 desktop-macos-x64 desktop-linux-x64 desktop-linux-arm64 node node-macos e2e e2e-macos-chat e2e-macos-ui e2e-macos-media windows'
           bad=0
           {
             echo '## ci-ok'
