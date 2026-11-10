@@ -511,9 +511,11 @@ own branch saved (`docker save` + zstd), the suites `docker load` them and start
 saved image for its key builds it (the cold path: once per key on `main`, again after 90 days,
 apt through `apt-retry.sh` and the runner's own mirrors, the build log printed as it comes) and
 saves it for the next runs
-([scripts/test/docker/README.md](../scripts/test/docker/README.md), "Test images"). Proved on
-`soak/docker-offline-proof` with every mirror and registry blocked on the runner and for its
-containers (`/etc/hosts`, `iptables`): the warm runs passed and built nothing.
+([scripts/test/docker/README.md](../scripts/test/docker/README.md), "Test images"). Proved with
+`Linux in Docker` on a `soak/*` branch, the clean-machine AppImage step added: a cold run built
+and saved every image (42765482889), two warm runs restored them and built nothing (42767598157,
+42772076283), and so did a warm run with every mirror and registry blocked on the runner and for
+its containers (`/etc/hosts`, `iptables`, all plain HTTP; 42775089768), 14 of 14 jobs green each.
 
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first

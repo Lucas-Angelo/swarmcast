@@ -43,7 +43,10 @@ never moves) and the architecture. A suite takes its image from the first of:
    and listed in `built.txt`, and in CI `.github/actions/test-images/save` uploads the job's
    images for the next runs (kept 90 days).
 
-Every suite then starts its image with `docker run --pull never`. So in CI a key is built once
+Every suite then starts its image with `docker run --pull never`. A restored image takes 3 to 12 s
+to load (the Playwright image 24 to 47 s), and the job never reaches a registry or a mirror: a
+run with all of them blocked passed (docs/TESTING.md, "No third-party service in the gate"). So
+in CI a key is built once
 per branch scope (once for `main`, whose artifacts every branch uses), and again only when its
 Dockerfile, its pin or the Playwright version changes, or after 90 days. To move a base on,
 replace its digest in `BASE_PINS`
