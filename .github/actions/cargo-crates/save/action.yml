@@ -1,0 +1,65 @@
+name: Save the Rust crates for the cargo jobs
+description: >-
+  The build stage's half of ./.github/actions/cargo-crates: when no run of the default branch or
+  of this run's own branch has saved the crates of this Cargo.lock and toolchain yet (the cold
+  path: once per Cargo.lock change on main, again when the artifact expires after 90 days),
+  fetches them from crates.io with tries into a fresh cargo home (.github/scripts/cargo-crates.mjs
+  fetch: every target platform), checks them and uploads them as that artifact, before any job
+  that runs cargo starts. A run that finds one does nothing more: the cargo jobs download it.
+  Never fatal: call it with `continue-on-error: true` and a `timeout-minutes`; when it fails, each
+  cargo job fetches the crates itself. The job needs `actions: read`. .github/workflows/README.md,
+  "Rust crates".
+
+runs:
+  using: composite
+  steps:
+    - name: Has a run saved these crates
+      id: find
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        TRUSTED_BRANCHES: ${{ github.event.repository.default_branch || 'main' }} ${{ github.head_ref || github.ref_name }}
+      run: |
+        name="$(node .github/scripts/cargo-crates.mjs name)" || exit 1
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        out="$(node .github/scripts/cargo-crates.mjs find "$name")" || exit 1
+        if [ -n "$out" ]; then
+          echo "Rust crates: $name is saved already ($(tr '\n' ' ' <<<"$out")); nothing to do"
+        else
+          echo "Rust crates: no artifact $name yet; fetching and saving it (cold)"
+          echo "save=true" >>"$GITHUB_OUTPUT"
+        fi
+    # A cargo home of its own, so the artifact holds Cargo.lock's crates and nothing the runner
+    # image or another step left in ~/.cargo; the pinned toolchain without components.
+    - name: Fetch them from crates.io
+      if: steps.find.outputs.save == 'true'
+      shell: bash
+      run: |
+        export CARGO_HOME="$RUNNER_TEMP/cargo-crates-home"
+        channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)"
+        rustup toolchain install "$channel" --profile minimal --no-self-update
+        node .github/scripts/cargo-crates.mjs fetch
+        node .github/scripts/cargo-crates.mjs check
+        mkdir -p "$RUNNER_TEMP/cargo-crates-save"
+        node .github/scripts/cargo-crates.mjs pack "$RUNNER_TEMP/cargo-crates-save/cargo-crates.tar"
+    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
+    # the runner's own download of a remote action is not tried again after a 404
+    # (.github/workflows/README.md, "Remote actions"). One that cannot be fetched skips the upload,
+    # with a warning: the cargo jobs then fetch the crates themselves.
+    - name: upload-artifact (git fetch, with tries)
+      id: action
+      if: steps.find.outputs.save == 'true'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/upload-artifact
+        optional: 'true'
+    # Kept 90 days: the artifact service has no size quota for a public repository, unlike the
+    # 10 GB Actions cache (README.md, "Caches").
+    - name: Upload them
+      if: steps.find.outputs.save == 'true' && steps.action.outputs.fetched == 'true'
+      uses: ./.git/remote-actions/actions/upload-artifact
+      with:
+        name: ${{ steps.find.outputs.name }}
+        path: ${{ runner.temp }}/cargo-crates-save/cargo-crates.tar
+        if-no-files-found: error
+        retention-days: 90

@@ -76,6 +76,7 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | A registry hiccup on `docker pull`, only when a Docker test image is built (no saved one yet) | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test; a test runs its saved image and pulls nothing ([below](#no-third-party-service-in-the-gate)) |
 | A Docker test image's build that failed (a mirror mid-sync), only when it is built | [scripts/test/docker/build.sh](../scripts/test/docker/build.sh) | the distribution's mirror: one more build after 60 s, `--no-cache`, apt through `apt-retry.sh` |
 | A slow apt mirror, an artifact service hiccup | `.github/scripts/apt-retry.sh`, `.github/actions/fetch-artifact` | CI infrastructure |
+| A crates.io download that failed (a `206` with a partial body, a 5xx, a refused or cut-off connection, a corrupt `.crate`) or stalled, only when the Rust crates are fetched (no saved artifact for this `Cargo.lock` yet) | `fetchWithTries` in [.github/scripts/cargo-crates.mjs](../.github/scripts/cargo-crates.mjs) | crates.io's CDN, not the test (release rehearsal 42799834042: `got 206`, which cargo does not try again): 3 tries, each cut off after 60 s; a failure that is not the network fails at once; every cargo command after it runs offline ([below](#no-third-party-service-in-the-gate)) |
 | A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
 | A GitHub release download that answers 5xx, breaks off or stalls (MediaMTX, cloudflared, Pebble, the test ffmpeg, cargo-llvm-cov, the AppImage tools, pkg's Node.js base binary) | `download` in [scripts/build/fetch-binaries.mjs](../scripts/build/fetch-binaries.mjs) (also through `pkg-base.mjs`), after the Actions download cache (`.github/actions/setup`) | github.com's release downloads, not the test (504s for most of an hour, PR #141): 6 tries in a row without progress, resumed with Range, then the next source, and the GitHub release files once more through GitHub's REST API (`githubApiUrl`, which served them during that outage); a source that worked only after failed tries or through the API logs `infra recovery:`; a SHA-256 pin decides, whichever source. In CI the cache serves the file first, and a download that still fails stops the job at that step (`::error title=fetch-binaries::`): no test runs without its binaries ([.github/workflows/README.md](../.github/workflows/README.md), "Release downloads") |
 | NSIS and its Tauri plugin for the Windows installer | the Tauri tools cache of `.github/actions/setup` (`tauri-tools`) | `tauri build` downloads them from github.com with one try each; the cached folder means it does not (a cold cache still downloads once) |
@@ -517,6 +518,19 @@ and saved every image (42765482889), two warm runs restored them and built nothi
 42772076283), and so did a warm run with every mirror and registry blocked on the runner and for
 its containers (`/etc/hosts`, `iptables`, all plain HTTP; 42775089768), 14 of 14 jobs green each.
 
+The jobs that run cargo (the desktop builds, the node jobs' Rust checks, the Docker stage's
+builds) downloaded their crates from crates.io whenever their rust-cache missed, and asked
+index.crates.io on every cargo command even when it hit (rust-cache's clean-up drops the sparse
+index's `config.json`). Release rehearsal 42799834042 lost its linux-arm64 desktop build that
+way: a release-flavour build never matches a rust-cache entry, and static.crates.io answered a
+crate with `206` and a partial body, which cargo does not try again. The crates of
+`apps/desktop/src-tauri/Cargo.lock` now come from an artifact the build stage saves once per
+`Cargo.lock` and toolchain (`.github/actions/cargo-crates`), each `.crate` checked against the
+SHA-256 in `Cargo.lock`, and cargo runs with `CARGO_NET_OFFLINE=true`, so a cargo job asks
+crates.io only when no run has saved them yet (once per lockfile on `main`, with the tries
+[above](#infra-recoveries); [.github/workflows/README.md](../.github/workflows/README.md), "Rust
+crates").
+
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
 (the edge answers an interface or method it does not know with an RPC exception, which
@@ -541,8 +555,8 @@ low" warning only on a measured fast uplink, else record it), STUN (stun.cloudfl
 browsers' P2P candidates (the viewers find each other on loopback without it), Direct mode's public
 IP lookup in the Windows direct suite (1.1.1.1/cdn-cgi/trace), and cloudflared's own lookup of its
 feature flags in DNS (`cfd-features.argotunnel.com`, 10 s limit, defaults on failure). CI set-up
-downloads (npm, apt on the runner, pinned binaries, actions, and a Docker test image's cold
-build) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
+downloads (npm, apt on the runner, pinned binaries, actions, a Docker test image's cold
+build and the Rust crates' cold fetch) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
 under test.
 
 ### Chat bench

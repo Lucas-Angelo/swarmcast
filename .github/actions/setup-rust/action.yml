@@ -1,9 +1,11 @@
 name: Set up Rust for the desktop app
 description: >-
   The Rust toolchain pinned in apps/desktop/src-tauri/rust-toolchain.toml (also made the default),
-  the rust-cache for apps/desktop/src-tauri (saved on main only), and on Linux the Tauri build
-  dependencies through .github/scripts/apt-retry.sh. Run ./.github/actions/setup first, with
-  `apt-debs: tauri-build` on Linux so the .debs come from (and go to) the .deb cache.
+  the rust-cache for apps/desktop/src-tauri (saved on main only), every crate of its Cargo.lock
+  from a saved artifact with cargo offline from then on (./.github/actions/cargo-crates), and on
+  Linux the Tauri build dependencies through .github/scripts/apt-retry.sh. Run
+  ./.github/actions/setup first, with `apt-debs: tauri-build` on Linux so the .debs come from (and
+  go to) the .deb cache. The job needs `actions: read`.
 
 inputs:
   components:
@@ -64,6 +66,11 @@ runs:
         key: ${{ inputs.cache-key }}
         save-if: ${{ github.ref == 'refs/heads/main' }}
         cache-on-failure: true
+    # After rust-cache: CARGO_NET_OFFLINE, which this sets, is a CARGO_* variable and so would
+    # change rust-cache's key; and the crates go over what rust-cache restored. Before any cargo
+    # command of the job: from here on, cargo never asks crates.io (README.md, "Rust crates").
+    - name: Rust crates (saved artifact, then cargo offline)
+      uses: ./.github/actions/cargo-crates
     # Tauri v2 build prerequisites on Linux. apt-retry.sh downloads them (time limit per try,
     # retries, another mirror after a slow try) into $APT_DEBS when the setup action restored the
     # .deb cache, then installs offline.

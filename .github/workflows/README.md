@@ -39,7 +39,7 @@ changes ─┬─ quick ──────────────────�
 |---|---|---|---|
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
 | quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
-| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first |
+| build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first; the Rust crates' artifact when no run saved it yet ("Rust crates") |
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel, and its call starts after macos-arm64's: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
@@ -226,7 +226,8 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
-| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
+| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux |
+| `.github/actions/cargo-crates` | every crate of `apps/desktop/src-tauri/Cargo.lock` into `$CARGO_HOME/registry` from the artifact an earlier run saved, checked against `Cargo.lock`'s SHA-256 values, else from crates.io with tries; then `CARGO_NET_OFFLINE=true` for the job; `cargo-crates/save` (the build stage) saves that artifact once per `Cargo.lock` and toolchain (`.github/scripts/cargo-crates.mjs`; see "Rust crates" below) |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
@@ -466,6 +467,54 @@ which only the repository owner can switch.
 Why: release rehearsal 42757440898 lost four jobs, all in their image builds, while
 archive.ubuntu.com answered at 210 kB/s (scripts/test/docker/README.md, "Test images").
 
+### Rust crates
+
+No job that runs cargo asks crates.io: the crates of `apps/desktop/src-tauri/Cargo.lock` reach it
+as an artifact, `cargo-crates-<toolchain>-<hash of Cargo.lock>` (about 120 MB: what `cargo fetch
+--locked` leaves in `$CARGO_HOME/registry`, the `.crate` files of every target platform and the
+sparse index entries the lockfile resolves with), and cargo runs with `CARGO_NET_OFFLINE=true`.
+
+- The build stage (`_build.yml`, `./.github/actions/cargo-crates/save`) looks the artifact up with
+  `test-images.mjs`'s rules (the newest of that name from a run of this repository on the default
+  branch or on the run's own branch, never a fork's, not about to expire). When there is none (the
+  cold path: once per `Cargo.lock` or toolchain change on `main`, again after 90 days), it fetches
+  the crates into a cargo home of its own (`cargo-crates.mjs fetch`, below), checks them and uploads
+  them, before any cargo job starts. Not fatal: when it fails, each cargo job fetches the crates
+  itself.
+- `./.github/actions/setup-rust`, after rust-cache, runs `./.github/actions/cargo-crates` in every
+  job that runs cargo (the five desktop builds, the node jobs' clippy, `cargo test` under
+  cargo-llvm-cov and crate licences, the Docker stage's builds, the soak's Rust and DMG jobs):
+  the same lookup (a release's tag counts as its own branch: `main`'s artifact or its own
+  run's), the download through `fetch-artifact`, the tar extracted over what rust-cache restored,
+  then `cargo-crates.mjs check`: every `.crate` must have the SHA-256 that `Cargo.lock` records
+  (cargo checks that when it downloads a crate, not when it finds one in its cache, so a crate
+  from the artifact is the one crates.io served), and `cargo metadata --offline` must resolve the
+  lockfile for the host. Then `CARGO_NET_OFFLINE=true` goes into the job's environment, after
+  rust-cache's step (a `CARGO_*` variable is part of rust-cache's key) and before any cargo
+  command. A miss, a failed download or a failed check is a warning, and the crates come from
+  crates.io (the cold path); cargo is offline after that too.
+- The cold path, `cargo-crates.mjs fetch`: `cargo fetch --locked` (every platform), its output
+  printed as it comes, each try cut off after 60 s (a whole fetch took 12 s), at most 3 tries 10
+  and 30 s apart, one more only after a network failure or a cut-off try (each keeps what the
+  earlier ones downloaded); anything else (a lockfile that needs an update) fails at once. A
+  fetch that worked only after failed tries logs `infra recovery:` (docs/TESTING.md, "Infra
+  recoveries"). When it fails in a cargo job, the job stops there with the cause.
+
+Why: release rehearsal 42799834042 lost `desktop linux-arm64 / build (ubuntu-22.04-arm)` in its
+licence check (`crate-licenses.mjs`, `cargo metadata --locked --filter-platform
+aarch64-unknown-linux-gnu`), which had to download every crate: static.crates.io answered
+`pxfm 0.1.30` with `206` and a partial body (`x-cache: Hit from cloudfront`), and cargo, which
+counts only some answers as spurious, did not try again. Its rust-cache could not have helped:
+a release-flavour build has no `CARGO_PROFILE_RELEASE_*` variables, so its key
+(`v0-rust-linux-arm64-build-Linux-arm64-0203a50a-...`) never matches the test builds' entry that
+`main` saves (`...-2ded1ba8-...`), and nothing saves a release-flavour entry; every rehearsal and
+release build downloaded all its crates (372 on linux-x64, 297 on windows-x64 in that run). Nor
+does a warm cache keep cargo off the network: rust-cache's clean-up keeps only the index entries
+named after a package, so it drops the sparse index's `config.json`, and every cargo command of a
+job with a full rust-cache hit printed `Updating crates.io index` and asked index.crates.io
+(that run's `node / unit, integration, rust (ubuntu-24.04)`, in clippy). Not the Actions cache
+for the crates: the caches held 9.6 of their 10 GB (see "Test images").
+
 ### Release downloads
 
 Files downloaded from `github.com/<owner>/<repo>/releases/download/...` while a job runs come from
@@ -546,7 +595,7 @@ copy is not the version it is linked to ("Unable to download and extract CodeQL 
 HTTP response: 504" in the same outage, `codeql.yml`, not a required check). Not GitHub: the
 WebView2 bootstrapper `tauri build` takes from go.microsoft.com, Playwright's browsers (their CDN,
 cached on Linux), Rust toolchains (static.rust-lang.org), npm packages (the registry, `npm ci`'s
-retry).
+retry). Rust crates come from crates.io only on their cold path ("Rust crates" above).
 
 ## Caches
 

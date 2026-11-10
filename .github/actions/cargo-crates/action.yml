@@ -1,0 +1,69 @@
+name: Rust crates for an offline cargo
+description: >-
+  Every crate of apps/desktop/src-tauri/Cargo.lock into $CARGO_HOME/registry from the artifact an
+  earlier run of this repository saved on the default branch or this run's own branch (the build
+  stage saves it once per Cargo.lock and toolchain: ./.github/actions/cargo-crates/save), each
+  .crate checked against Cargo.lock's SHA-256; then CARGO_NET_OFFLINE=true for the rest of the
+  job, so no cargo command asks crates.io. When there is no such artifact, or it cannot be
+  downloaded or does not match, the crates come from crates.io once, with tries (the cold path,
+  .github/scripts/cargo-crates.mjs fetch), and cargo is offline after that too. Fails only when
+  the cold path fails. Called by ./.github/actions/setup-rust; the job needs `actions: read`.
+  .github/workflows/README.md, "Rust crates".
+
+runs:
+  using: composite
+  steps:
+    - name: Which crates, and which artifact has them
+      id: find
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        # Like the Actions cache's scopes: the default branch's artifacts, and this branch's own (a
+        # release's tag: its own run). Never a fork's (.github/scripts/test-images.mjs).
+        TRUSTED_BRANCHES: ${{ github.event.repository.default_branch || 'main' }} ${{ github.head_ref || github.ref_name }}
+      run: |
+        name="$(node .github/scripts/cargo-crates.mjs name)" || exit 1
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        echo "SC_CARGO_CRATES_ARTIFACT=$name" >>"$GITHUB_ENV"
+        # A lookup that fails (the API, after its tries) is a miss: the crates come from crates.io.
+        node .github/scripts/cargo-crates.mjs find "$name" >>"$GITHUB_OUTPUT" ||
+          echo "::warning title=cargo-crates::could not look up the artifact $name; the crates come from crates.io"
+    - name: Download them
+      if: steps.find.outputs.run-id != ''
+      continue-on-error: true
+      uses: ./.github/actions/fetch-artifact
+      with:
+        name: ${{ steps.find.outputs.name }}
+        path: ${{ runner.temp }}/cargo-crates
+        run-id: ${{ steps.find.outputs.run-id }}
+        github-token: ${{ github.token }}
+    - name: Into the registry, checked; else from crates.io; then cargo offline
+      shell: bash
+      env:
+        RUN: ${{ steps.find.outputs.run-id }}
+      run: |
+        tarball="$RUNNER_TEMP/cargo-crates/cargo-crates.tar"
+        registry="${CARGO_HOME:-$HOME/.cargo}/registry"
+        # Git Bash's GNU tar reads "D:\..." as host:path; give it /d/... paths.
+        if [ "$RUNNER_OS" = Windows ]; then tarball="$(cygpath -u "$tarball")" registry="$(cygpath -u "$registry")"; fi
+        restored=false
+        if [ -f "$tarball" ]; then
+          mkdir -p "$registry"
+          if tar -xf "$tarball" -C "$registry" && node .github/scripts/cargo-crates.mjs check; then
+            restored=true
+            echo "Rust crates: from run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT ($(($(wc -c <"$tarball") / 1000000)) MB)"
+          else
+            echo "::warning title=cargo-crates::run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT did not give every crate of Cargo.lock; they come from crates.io"
+          fi
+          rm -f "$tarball"
+        elif [ -n "$RUN" ]; then
+          echo "::warning title=cargo-crates::run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT could not be downloaded; the crates come from crates.io"
+        else
+          echo "Rust crates: no artifact $SC_CARGO_CRATES_ARTIFACT yet; they come from crates.io (cold)"
+        fi
+        if [ "$restored" != true ]; then
+          node .github/scripts/cargo-crates.mjs fetch || exit 1
+          node .github/scripts/cargo-crates.mjs check || exit 1
+        fi
+        echo "CARGO_NET_OFFLINE=true" >>"$GITHUB_ENV"
+        echo "Rust crates: cargo runs offline for the rest of the job (CARGO_NET_OFFLINE=true)"

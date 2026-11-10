@@ -52,8 +52,9 @@ export function pickArtifact(artifacts, { branches, now }) {
  * after a network error or a 5xx/429; any other status fails at once.
  * @param {string} url
  * @param {string} token
+ * @param {string} label
  */
-async function api(url, token) {
+async function api(url, token, label) {
   let last = '';
   for (let i = 1; i <= API_TRIES; i++) {
     try {
@@ -68,11 +69,52 @@ async function api(url, token) {
       last = err instanceof Error ? err.message : String(err);
     }
     if (i < API_TRIES) {
-      console.error(`test-images: ${url}: ${last} (try ${i} of ${API_TRIES})`);
+      console.error(`${label}: ${url}: ${last} (try ${i} of ${API_TRIES})`);
       await new Promise((r) => setTimeout(r, 5000 * 3 ** (i - 1)));
     }
   }
   throw new Error(`${url}: ${last}`);
+}
+
+/**
+ * The newest artifact named `name` that this run may trust (pickArtifact), from the REST API, or
+ * null. Also used by .github/scripts/cargo-crates.mjs, whose saved Rust crates follow the same rules.
+ * @param {{ name: string, repo: string, token: string, base: string, branches: string[], label?: string }} o
+ * @returns {Promise<Artifact | null>}
+ */
+export async function findArtifact({ name, repo, token, base, branches, label = 'test-images' }) {
+  /** @type {Artifact[]} */
+  const all = [];
+  for (let page = 1; page <= 5; page++) {
+    const body = await api(`${base}/repos/${repo}/actions/artifacts?name=${encodeURIComponent(name)}&per_page=100&page=${page}`, token, label);
+    all.push(...body.artifacts);
+    if (body.artifacts.length < 100) break;
+  }
+  const hit = pickArtifact(all, { branches, now: Date.now() });
+  if (!hit) console.error(`${label}: no artifact ${name} from a trusted branch (${all.length} of that name in all)`);
+  else console.error(`${label}: ${name} from run ${hit.workflow_run?.id} on ${hit.workflow_run?.head_branch}, uploaded ${hit.created_at}`);
+  return hit;
+}
+
+/**
+ * The `find` command for GITHUB_OUTPUT: `run-id=` and `artifact-id=` lines, or nothing on a miss.
+ * Environment: GITHUB_REPOSITORY, GITHUB_TOKEN, GITHUB_API_URL, TRUSTED_BRANCHES.
+ * @param {string} name
+ * @param {string} [label]
+ */
+export async function findCommand(name, label = 'test-images') {
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GITHUB_TOKEN;
+  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
+  const branches = (process.env.TRUSTED_BRANCHES || '').split(/\s+/).filter(Boolean);
+  if (!repo || !token || branches.length === 0) {
+    console.error(`${label}: GITHUB_REPOSITORY, GITHUB_TOKEN and TRUSTED_BRANCHES are required`);
+    process.exit(2);
+  }
+  const hit = await findArtifact({ name, repo, token, base, branches, label });
+  if (!hit) return;
+  console.log(`run-id=${hit.workflow_run?.id}`);
+  console.log(`artifact-id=${hit.id}`);
 }
 
 async function main() {
@@ -81,29 +123,7 @@ async function main() {
     console.error('usage: test-images.mjs find <artifact name>');
     process.exit(2);
   }
-  const repo = process.env.GITHUB_REPOSITORY;
-  const token = process.env.GITHUB_TOKEN;
-  const base = process.env.GITHUB_API_URL || 'https://api.github.com';
-  const branches = (process.env.TRUSTED_BRANCHES || '').split(/\s+/).filter(Boolean);
-  if (!repo || !token || branches.length === 0) {
-    console.error('test-images: GITHUB_REPOSITORY, GITHUB_TOKEN and TRUSTED_BRANCHES are required');
-    process.exit(2);
-  }
-  /** @type {Artifact[]} */
-  const all = [];
-  for (let page = 1; page <= 5; page++) {
-    const body = await api(`${base}/repos/${repo}/actions/artifacts?name=${encodeURIComponent(name)}&per_page=100&page=${page}`, token);
-    all.push(...body.artifacts);
-    if (body.artifacts.length < 100) break;
-  }
-  const hit = pickArtifact(all, { branches, now: Date.now() });
-  if (!hit) {
-    console.error(`test-images: no artifact ${name} from a trusted branch (${all.length} of that name in all)`);
-    return;
-  }
-  console.error(`test-images: ${name} from run ${hit.workflow_run?.id} on ${hit.workflow_run?.head_branch}, uploaded ${hit.created_at}`);
-  console.log(`run-id=${hit.workflow_run?.id}`);
-  console.log(`artifact-id=${hit.id}`);
+  await findCommand(name);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
