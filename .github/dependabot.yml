@@ -19,6 +19,15 @@ updates:
     ignore:
       - dependency-name: '*'
         update-types: ['version-update:semver-major']
+      # Playwright 1.65 (WebKit r2388) kills its own driver with "Assertion error" in
+      # WKPage._onTargetCreated on any cross-origin navigation to a page with
+      # Cross-Origin-Opener-Policy: WebKit now opens the second provisional page before it
+      # closes the first, on macOS and Linux (https://github.com/microsoft/playwright/issues/43067).
+      # panel-login.spec.ts (the desktop splash opening the panel) needs exactly that navigation.
+      # package.json holds @playwright/test on ~1.64.1 until then; 1.66 is proposed as usual,
+      # and once its WebKit passes CI this entry goes.
+      - dependency-name: '@playwright/test'
+        versions: ['1.65.x']
     commit-message:
       prefix: deps
 
