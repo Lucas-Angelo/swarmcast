@@ -505,6 +505,22 @@ export async function waitPlaying(page: Page, seconds = 1.5): Promise<void> {
 }
 
 /**
+ * The player starts near the live edge: once the video plays the source it loaded last (some of
+ * it played; `played` starts over with every load), the badge reads "LIVE", not "Go live −N s",
+ * and the status "Live". Checked as playback starts, never after a window of it: how far behind
+ * the player is a few seconds later depends on the machine's media clock. Muted Chrome on the
+ * 3-vCPU macOS runner plays at about 0.6x real time (see `unmute`; sound alone too: 0.62x in run
+ * 42907306001), 0.4 s further behind live every second, and the live edge hls.js estimates moves
+ * a whole segment (2 s) when a playlist reload finds two new ones: 3 s of playback after a
+ * switch to audio only, the player was 4.2 s behind and "Go live" was the right badge.
+ */
+export async function startsAtLive(page: Page): Promise<void> {
+  await waitPlaying(page, 0);
+  await expect(page.getByTestId('go-live')).toHaveText('LIVE');
+  await expect(page.locator('#status')).toHaveText('Live');
+}
+
+/**
  * Turns the sound on, as a viewer does with the Unmute button (the video autoplays muted). For
  * the scenarios that time playback: Chrome clocks muted, video-only playback by the frames it
  * gets on screen, and on the 3-vCPU macOS runner, which composites about 15 frames a second,

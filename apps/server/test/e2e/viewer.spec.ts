@@ -11,7 +11,7 @@
 // the browser never asks for it again: the page reloads itself (its startup guard, the one inline
 // script, allowed by its hash in the CSP). The tests drop the first request for one of them.
 import type { BrowserContext } from '@playwright/test';
-import { admin, adminState, currentTime, expect, liveLink, openSettings, playerStopped, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
+import { admin, adminState, currentTime, expect, liveLink, openSettings, playerStopped, startsAtLive, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
 
@@ -174,9 +174,9 @@ test('"Go live" appears after pausing and brings the viewer back near the live e
   // Arrange
   test.skip(browserName !== 'chromium', 'checked on Chromium');
   const { page } = await viewers.join(uid('golive'));
+  await startsAtLive(page);
   await waitPlaying(page);
   const goLive = page.getByTestId('go-live');
-  await expect(goLive).toHaveText('LIVE');
 
   // Act
   await page.locator('#video').click();
