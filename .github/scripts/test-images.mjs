@@ -98,7 +98,7 @@ async function main() {
   }
   const hit = pickArtifact(all, { branches, now: Date.now() });
   if (!hit) {
-    console.error(`test-images: no artifact ${name} from ${branches.join(' or ')} (${all.length} of that name in all)`);
+    console.error(`test-images: no artifact ${name} from a trusted branch (${all.length} of that name in all)`);
     return;
   }
   console.error(`test-images: ${name} from run ${hit.workflow_run?.id} on ${hit.workflow_run?.head_branch}, uploaded ${hit.created_at}`);
