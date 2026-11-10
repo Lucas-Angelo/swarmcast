@@ -1,14 +1,16 @@
 # OBS Studio (Ubuntu package, includes obs-websocket) running headless under Xvfb with
 # Mesa software rendering (llvmpipe), plus what obs-test.sh needs.
-#   docker build -f Dockerfile.obs -t swarmcast-test-obs .
-FROM ubuntu:24.04
-RUN set -e; \
-    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+# Built by images.sh (BASE: ubuntu:24.04 pinned by digest there); the packages go in through
+# image-apt.sh (build.sh mounts it for this step only).
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
+    --mount=type=bind,source=image-apt.sh,target=/ci/image-apt.sh \
+    --mount=type=bind,from=apt,target=/ci/apt \
+    bash /ci/image-apt.sh \
       obs-studio xvfb xauth libgl1-mesa-dri libegl-mesa0 libglx-mesa0 mesa-utils \
       fonts-dejavu-core ffmpeg curl ca-certificates tar gzip jq procps iproute2 util-linux \
-      python3 python3-websockets; \
-    rm -rf /var/lib/apt/lists/*; \
+      python3 python3-websockets && \
     useradd -m -s /bin/bash tester
 ENV LIBGL_ALWAYS_SOFTWARE=1 QT_QPA_PLATFORM=xcb
 USER tester

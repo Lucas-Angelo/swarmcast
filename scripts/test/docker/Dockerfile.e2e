@@ -1,0 +1,10 @@
+# The official Playwright image of the repository's @playwright/test version (its browsers and
+# their libraries, Node.js) plus ffmpeg for the synthetic OBS stream, for e2e.sh.
+# Built by images.sh (BASE: mcr.microsoft.com/playwright:v<version>-noble); ffmpeg goes in through
+# image-apt.sh (build.sh mounts it for this step only).
+ARG BASE
+FROM ${BASE}
+RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
+    --mount=type=bind,source=image-apt.sh,target=/ci/image-apt.sh \
+    --mount=type=bind,from=apt,target=/ci/apt \
+    bash /ci/image-apt.sh ffmpeg

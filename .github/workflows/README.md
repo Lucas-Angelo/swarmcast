@@ -228,6 +228,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the Tauri build dependencies on Linux |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
+| `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
 | `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
@@ -404,10 +405,9 @@ The job never saves the cache: the builds fetch the same two archives and save t
 
 The other Docker suites download nothing pinned at run time: `obs.sh` runs the staged server
 from the build's artifact (with `--no-tunnel`), `appimage.sh` runs with `--network none`, and their
-images install only distribution packages (`build.sh`, "Test images" in
-[scripts/test/docker/README.md](../../scripts/test/docker/README.md)). Inside the Playwright
-image, the browsers come with the image, and `ffmpeg` (apt, Ubuntu's own retries) and `npm ci`
-(npm's own retries) are not pinned files, so the cache does not cover them.
+images come from saved artifacts ("Test images" below). Inside the Playwright container, the
+browsers and `ffmpeg` come with the image (`Dockerfile.e2e`), and `npm ci` (npm's own retries)
+is not a pinned file, so the cache does not cover it.
 
 Why: in 10x stability run 42046773993 (`soak/p10-0.5.2b`), `docker / Playwright in Docker x64`
 failed in `e2e.sh` at `fetch-binaries`: the job had no download cache, so its only source was
@@ -427,6 +427,44 @@ and downloaded its own binaries from github.com on every run. The key now names 
 binaries the job fetches (`-for-<target>-`: `setup`'s `downloads-for` input, or the runner's own
 OS and architecture), and the Windows package job passes `downloads-for: windows-x64`. The entries
 under the old keys are no longer restored and expire after GitHub's 7 days without use.
+
+### Test images
+
+The Docker suites' test images (`scripts/test/docker/Dockerfile.*`) reach a gating job as
+artifacts, never from a registry or a distribution mirror. Each image has a key, a hash of its
+Dockerfile, its base (pinned by digest; the Playwright image by its version's tag) and the
+architecture (`scripts/test/docker/images.sh`), and its archive is named by it
+(`swarmcast-test-obs-latest-x64-<key>.tar.zst`). A job's set of images is one artifact,
+`test-images-<arch>-<hash of their file names>` (one AppImage host, the clean-machine job's two,
+OBS, the Playwright image):
+
+- `./.github/actions/test-images` (input `images`: `appimage:ubuntu:22.04 appimage:ubuntu:24.04`,
+  `obs`, `e2e`) asks the REST API for the artifacts of that name
+  (`.github/scripts/test-images.mjs`, 30 s per try, 3 tries) and takes the newest one uploaded by
+  a run of this repository on the default branch or on the job's own branch (like a cache scope:
+  never a fork's pull request, whose runs upload here too) that does not expire within the hour;
+  it downloads it through `fetch-artifact` into `$SC_TEST_IMAGES` and says what it found. A
+  failed lookup or download is a miss, never an error.
+- The suites `docker load` each archive, check its key label, and run it with
+  `docker run --pull never`. A suite that finds no archive for its key builds the image (pull
+  and apt with their tries, apt through the runner's own mirror list, the build log printed
+  live) and saves it into `$SC_TEST_IMAGES`.
+- `./.github/actions/test-images/save`, after the tests, uploads the job's set when the job built
+  one of them (`built.txt`), with `compression-level: 0` (zstd already) and `retention-days: 90`.
+  Any run saves, pull requests too: the scoping is in the restore.
+
+Both are `continue-on-error` with a time limit (5 minutes; the Playwright image, about 1 GB, 8).
+So `main` builds each key once and every run after that, of every branch, restores it; a pull
+request that changes a Dockerfile builds its own once. Not the Actions cache: the images weigh
+about 3.5 GB per pipeline (both architectures), the caches held 9.6 GB of their 10 GB on
+2026-11-10 (GitHub evicts the least recently used entries above that: the Rust caches), and an
+entry unused for 7 days is deleted, while the weekly `linux-docker.yml` runs 7 days apart; a
+public repository's artifacts have no storage quota and are kept 90 days. Not ghcr.io either:
+pushing needs `packages: write`, and a package is free beyond 500 MB only when it is public,
+which only the repository owner can switch.
+
+Why: release rehearsal 42757440898 lost four jobs, all in their image builds, while
+archive.ubuntu.com answered at 210 kB/s (scripts/test/docker/README.md, "Test images").
 
 ### Release downloads
 
@@ -514,7 +552,8 @@ retry).
 
 GitHub gives the repository 10 GB of Actions caches. Over that, it evicts the least recently used
 entries, so a job can find `main`'s npm or Rust cache gone and do the whole download or compile
-again (a cold run). What is saved, all from `main` unless noted:
+again (a cold run). The Docker suites' test images are artifacts, not caches, for that reason
+("Test images" above). What is saved, all from `main` unless noted:
 
 | Cache | Saved by | Entries | Size |
 |---|---|---|---|
@@ -669,13 +708,14 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   downloads (`fetch-binaries.mjs`; also the AppImage tools, through `appimage-tools.mjs`, so the
   Tauri bundler downloads nothing without a retry: run 42000871599, "AppImage tools" above; in the Playwright container from the download cache, "Pinned downloads in Docker" above), cache restores (`cache-restore`: one more try after a try that
   timed out or failed), npm's requests (`fetch-retries 4`, `fetch-timeout 60000`) and `npm ci` once more after a network error, npm's or a prebuild-install download's (`setup`, `npm-network-error.mjs`), the wait for github.com on macOS (a step before every checkout of a job that can run on macOS: one VM reached neither github.com nor the cache service for its first minute and lost a release run, another lost a 10x stability job when checkout's three tries could not resolve github.com, run 41283766285), the macOS `.dmg`
-  bundling step (hdiutil "Resource busy", `desktop.mjs`), Docker base image pulls
-  (`scripts/test/docker/pull.sh`) and the build of a Docker suite's test image: once more after
-  60 s with `--no-cache`, with both BuildKit logs printed (`scripts/test/docker/build.sh`). The
-  images are the test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's
-  mirror), and a mirror serving a half-synchronised archive is outside our control: pipeline run
-  41273197813 lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds
-  (2026-11-01 05:38 UTC). Nothing that runs SwarmCast is retried there.
+  bundling step (hdiutil "Resource busy", `desktop.mjs`), and, only when a Docker test image has
+  no saved artifact yet ("Test images" above), its base image pull
+  (`scripts/test/docker/pull.sh`) and its build: apt through `apt-retry.sh`, and the whole build
+  once more after 60 s with `--no-cache` (`scripts/test/docker/build.sh`). The images are the
+  test's scaffolding (a user, sudo, curl, ffmpeg, OBS... from the distribution's mirror), and a
+  mirror serving a half-synchronised archive is outside our control: pipeline run 41273197813
+  lost `docker / ubuntu:24.04 x64` when `apt-get` exited with 100 within seconds (2026-11-01
+  05:38 UTC). Nothing that runs SwarmCast is retried there.
 - **Time limits:** every job has `timeout-minutes` with real headroom over its slowest measured run:
   at least 10 minutes (a job that needs one also waits on GitHub's services: checkout, caches,
   artifacts, its own completion), otherwise 2 to 3 times the slowest run. Its setup steps and long

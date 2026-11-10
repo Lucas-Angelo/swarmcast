@@ -2,15 +2,17 @@
 # for webkit.sh: Python GObject bindings for the race harness (webkit_coop.py), and the desktop
 # shell's build dependencies, Node (the mock server) and rustup (the toolchain comes from
 # rust-toolchain.toml at the first cargo call) for the watchdog check.
-#   docker build -f Dockerfile.webkit -t swarmcast-test-webkit .
-FROM ubuntu:24.04
-RUN set -e; \
-    apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 -o APT::Update::Error-Mode=any update; \
-    DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y --no-install-recommends \
+# Built by images.sh (BASE: ubuntu:24.04 pinned by digest there); the packages go in through
+# image-apt.sh (build.sh mounts it for this step only).
+ARG BASE=ubuntu:24.04
+FROM ${BASE}
+RUN --mount=type=bind,from=ci,source=apt-retry.sh,target=/ci/apt-retry.sh \
+    --mount=type=bind,source=image-apt.sh,target=/ci/image-apt.sh \
+    --mount=type=bind,from=apt,target=/ci/apt \
+    bash /ci/image-apt.sh \
       python3-gi gir1.2-webkit2-4.1 gir1.2-gtk-3.0 xvfb xauth dbus dbus-x11 fonts-dejavu-core \
       build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev \
-      nodejs curl ca-certificates rsync; \
-    rm -rf /var/lib/apt/lists/*; \
+      nodejs curl ca-certificates rsync && \
     useradd -m -s /bin/bash tester
 USER tester
 WORKDIR /home/tester

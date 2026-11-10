@@ -1,0 +1,75 @@
+name: Restore the Docker suites' test images
+description: >-
+  Downloads the job's test images (scripts/test/docker/images.sh: `docker save` + zstd of each
+  Dockerfile.* image, named by its key) from the artifact an earlier run of this repository
+  uploaded on the default branch or this run's own branch, into $SC_TEST_IMAGES; the suites then
+  `docker load` them and ask no registry and no distribution mirror. When there is none, or it
+  cannot be downloaded, the suites build the images (the cold path) and
+  ./.github/actions/test-images/save uploads them for the next runs. Never fails the job: run it
+  with `continue-on-error: true` and a `timeout-minutes`. The job needs `actions: read`.
+  .github/workflows/README.md, "Test images".
+
+inputs:
+  images:
+    description: The images the job's suites run, space-separated images.sh specs (appimage:ubuntu:22.04, obs, e2e).
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Which test images, and which artifact has them
+      id: find
+      shell: bash
+      env:
+        IMAGES: ${{ inputs.images }}
+        GITHUB_TOKEN: ${{ github.token }}
+        # Like the Actions cache's scopes: the default branch's artifacts, and this branch's own.
+        TRUSTED_BRANCHES: ${{ github.event.repository.default_branch || 'main' }} ${{ github.head_ref || github.ref_name }}
+      run: |
+        dir="$RUNNER_TEMP/test-images"
+        mkdir -p "$dir"
+        # shellcheck disable=SC2086 # a list of specs
+        name="$(scripts/test/docker/images.sh artifact $IMAGES)" || exit 1
+        # shellcheck disable=SC2086
+        files="$(scripts/test/docker/images.sh file $IMAGES | tr '\n' ' ')" || exit 1
+        {
+          echo "SC_TEST_IMAGES=$dir"
+          echo "SC_TEST_IMAGES_ARTIFACT=$name"
+          echo "SC_TEST_IMAGES_FILES=$files"
+        } >>"$GITHUB_ENV"
+        echo "artifact $name: $files"
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        # A lookup that fails (the API, after its tries) is a miss: the suites build the images.
+        node .github/scripts/test-images.mjs find "$name" >>"$GITHUB_OUTPUT" ||
+          echo "::warning title=test images::could not look up the artifact $name; the suites build the images"
+    - name: Download them
+      if: steps.find.outputs.run-id != ''
+      continue-on-error: true
+      uses: ./.github/actions/fetch-artifact
+      with:
+        name: ${{ steps.find.outputs.name }}
+        path: ${{ runner.temp }}/test-images
+        run-id: ${{ steps.find.outputs.run-id }}
+        github-token: ${{ github.token }}
+    - name: What the suites will load
+      shell: bash
+      env:
+        RUN: ${{ steps.find.outputs.run-id }}
+      run: |
+        have=0 want=0
+        for f in $SC_TEST_IMAGES_FILES; do
+          want=$((want + 1))
+          if [ -f "$SC_TEST_IMAGES/$f" ]; then
+            have=$((have + 1))
+            echo "  $f: $(($(wc -c <"$SC_TEST_IMAGES/$f") / 1000000)) MB"
+          else
+            echo "  $f: not here, the suite builds it"
+          fi
+        done
+        if [ "$have" = "$want" ]; then
+          echo "Test images: all $want from run $RUN's artifact $SC_TEST_IMAGES_ARTIFACT"
+        elif [ -n "$RUN" ]; then
+          echo "::warning title=test images::$have of $want test images from run $RUN's artifact $SC_TEST_IMAGES_ARTIFACT; the suites build the others from the distribution's mirror"
+        else
+          echo "Test images: no artifact $SC_TEST_IMAGES_ARTIFACT yet; the suites build the images (cold) and the save step keeps them"
+        fi

@@ -1,0 +1,57 @@
+name: Keep the Docker suites' new test images
+description: >-
+  Last step of a job that used ./.github/actions/test-images: when its suites built a test image
+  (cold: $SC_TEST_IMAGES/built.txt, scripts/test/docker/images.sh), uploads all of the job's
+  images as the artifact that later runs of this branch (of the default branch: every run)
+  restore. Kept 90 days: the artifact service has no size quota for a public repository, unlike
+  the 10 GB Actions cache. Never fatal: call it with `if: !cancelled()`, `continue-on-error: true`
+  and a `timeout-minutes`. .github/workflows/README.md, "Test images".
+
+runs:
+  using: composite
+  steps:
+    - name: Did the job build a test image
+      id: plan
+      shell: bash
+      run: |
+        dir="${SC_TEST_IMAGES:-}"
+        if [ -z "$dir" ] || [ ! -s "$dir/built.txt" ]; then
+          echo "No test image was built: nothing to keep"
+          exit 0
+        fi
+        echo "Built here: $(tr '\n' ' ' <"$dir/built.txt")"
+        paths=()
+        for f in $SC_TEST_IMAGES_FILES; do
+          if [ ! -f "$dir/$f" ]; then
+            echo "::warning title=test images::$f is missing (its suite did not run or could not save it): $SC_TEST_IMAGES_ARTIFACT is not uploaded"
+            exit 0
+          fi
+          paths+=("$dir/$f")
+        done
+        {
+          echo "upload=true"
+          echo "paths<<EOF"
+          printf '%s\n' "${paths[@]}"
+          echo "EOF"
+        } >>"$GITHUB_OUTPUT"
+    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
+    # the runner's own download of a remote action is not tried again after a 404
+    # (.github/workflows/README.md, "Remote actions"). One that cannot be fetched skips the upload,
+    # with a warning: the next run builds the images again.
+    - name: upload-artifact (git fetch, with tries)
+      id: action
+      if: steps.plan.outputs.upload == 'true'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/upload-artifact
+        optional: 'true'
+    # compression-level 0: the files are zstd already.
+    - name: Upload them
+      if: steps.plan.outputs.upload == 'true' && steps.action.outputs.fetched == 'true'
+      uses: ./.git/remote-actions/actions/upload-artifact
+      with:
+        name: ${{ env.SC_TEST_IMAGES_ARTIFACT }}
+        path: ${{ steps.plan.outputs.paths }}
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 90

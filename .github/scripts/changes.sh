@@ -16,7 +16,8 @@
 #            the files below that only other workflows read
 #   site     the website's sources and what it embeds (site.yml / _site.yml)
 #   docker   what the Docker suites test or are made of (the docker stage, _docker.yml): the
-#            suites (scripts/test/docker), the Docker workflows and the pipeline itself, the e2e
+#            suites (scripts/test/docker), their test images (.github/actions/test-images,
+#            test-images.mjs, apt-retry.sh), the Docker workflows and the pipeline itself, the e2e
 #            specs and server (apps/server/test/e2e, playwright.config.ts: e2e.sh runs them in
 #            the Playwright image)
 set -uo pipefail
@@ -51,7 +52,7 @@ if [ "$diff_ok" = true ]; then
   #   hygiene (cache-hygiene.yml, scripts/ci), Dependabot, issue forms, release notes.
   not_app='^(docs/|site/)|\.md$|^\.github/(workflows/(soak|linux-docker|_docker|codeql|stats|cache-hygiene|real-services)\.yml|soak-plan\.json|dependabot\.yml|release\.yml|ISSUE_TEMPLATE/)|^scripts/(ci|test/docker)/'
   site_re='^(site/|scripts/releases/|docs/img/|assets/brand/|apps/admin/src/onboarding/img/|packages/shared/src/i18n/|packages/shared/web/font-licenses\.mjs|\.github/actions/|\.github/workflows/(_site|site|pipeline)\.yml)'
-  docker_re='^(scripts/test/docker/|\.github/workflows/(_docker|linux-docker|pipeline)\.yml$|apps/server/test/e2e/|playwright\.config\.ts$)'
+  docker_re='^(scripts/test/docker/|\.github/workflows/(_docker|linux-docker|pipeline)\.yml$|\.github/actions/test-images/|\.github/scripts/(test-images\.mjs|apt-retry\.sh)$|apps/server/test/e2e/|playwright\.config\.ts$)'
   has() { grep -qE "$1" <<<"$files" && echo true || echo false; }
   app="$(grep -vE "$not_app" <<<"$files" | grep -q . && echo true || echo false)"
   site="$(has "$site_re")"
