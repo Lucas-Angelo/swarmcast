@@ -179,13 +179,15 @@ jobs:
       - name: No development dependencies in the ${{ matrix.target }} package (macOS, Linux)
         if: runner.os != 'Windows'
         run: node .github/scripts/no-dev-deps.mjs --server --staging "release/staging/$TARGET"
+      # The build's artifacts go through upload-build: once more after a failed try, when the
+      # artifact service answers again (a macOS VM lost DNS mid-job in run 42846972124; README.md,
+      # "Artifact uploads").
       - name: Upload pkg-${{ matrix.target }}
         if: runner.os != 'Windows'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: ./.github/actions/upload-build
         with:
           name: pkg-${{ matrix.target }}
           path: ${{ runner.temp }}/pkg-${{ matrix.target }}.tar
-          if-no-files-found: error
           retention-days: ${{ env.RETENTION }}
 
       # ---- the two desktop builds ----
@@ -234,22 +236,22 @@ jobs:
         run: node .github/scripts/no-dev-deps.mjs --staging "release/staging/$TARGET" --installers "release/desktop/$TARGET"
 
       # The .app bundle stays out: the .dmg and the updater's .app.tar.gz carry it.
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload desktop-${{ matrix.target }}
+        uses: ./.github/actions/upload-build
         with:
           name: desktop-${{ matrix.target }}
           path: |
             release/desktop/${{ matrix.target }}/
             !release/**/SwarmCast.app/**
-          if-no-files-found: error
           compression-level: 0
           retention-days: ${{ env.RETENTION }}
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload update-test-${{ matrix.target }}
+        uses: ./.github/actions/upload-build
         with:
           name: update-test-${{ matrix.target }}
           path: |
             release/update-test/
             !release/**/SwarmCast.app/**
-          if-no-files-found: error
           compression-level: 0
           retention-days: ${{ env.RETENTION }}
       - uses: ./.github/actions/setup/save
