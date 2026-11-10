@@ -82,6 +82,11 @@ jobs:
         run: scripts/test/devices/setup.sh install ios
       - name: Allow safaridriver to drive Safari
         run: sudo safaridriver --enable
+      # Spotlight off on the runner's volumes (mdutil(1)): its indexer (mds_stores, mdworker_shared)
+      # was among the Mac's busiest processes around a tap whose finger stayed down 538 ms, a long
+      # press on the nickname field (Devices run 42715017924), on a Mac with no core to spare.
+      - name: Spotlight off
+        run: sudo mdutil -a -i off
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       # No screen recording (DEVICES_VIDEO=off): simctl's video encoding competes with the simulator
       # for the runner's CPU, and on a loaded simulator a tap took up to 1.6 s from finger down to
@@ -94,11 +99,12 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: node .github/scripts/test-summary.mjs --title 'Real devices, iOS Safari (macos-26)' --playwright test-results/devices.json
-      # Every tap's timing (ios.ts IosPhone.tap): the finger's time down and the click's delay.
-      - name: Tap timings
+      # Every tap's timing (actionability.ts): the finger's time down and the click's delay; and
+      # the device's steps with each calm window (calm.ts): the simulator's load before each test.
+      - name: Tap timings and the device's load
         if: ${{ !cancelled() }}
         continue-on-error: true
-        run: cat test-results/devices/ios-device/taps.log
+        run: cat test-results/devices/ios-device/taps.log test-results/devices/ios-device/device.log
       # The report holds each failed test's screen recording, screenshot and page state.
       - name: Upload the report, recordings and logs
         if: ${{ !cancelled() }}
@@ -180,6 +186,11 @@ jobs:
         if: ${{ !cancelled() }}
         continue-on-error: true
         run: node .github/scripts/test-summary.mjs --title 'Real devices, Android Chrome (ubuntu-24.04 emulator)' --playwright test-results/devices.json
+      # As on iOS: every tap's timing, the device's steps and the guest's load before each test.
+      - name: Tap timings and the device's load
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        run: cat test-results/devices/android-device/taps.log test-results/devices/android-device/device.log
       # What the runner says about a device that stopped answering: memory, the kernel's kills, the
       # emulator's own crash reports. Kept with the report.
       - name: Host state (a failed run)

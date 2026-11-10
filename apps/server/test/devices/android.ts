@@ -25,7 +25,9 @@ import { chromium, type Browser, type CDPSession, type Page } from '@playwright/
 import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mjs';
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
-import { joinPageReady, shownTouchPoint, touchPoint, type Orientation, type Phone } from './phone.js';
+import { actionablePoint, armTap, tapEndsInClick, touchState } from './actionability.js';
+import { CALM_WINDOW_MS, measuredWindow, untilCalm, type Load } from './calm.js';
+import { joinPageReady, type Orientation, type Phone } from './phone.js';
 
 const run = promisify(execFile);
 
@@ -67,6 +69,41 @@ export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as con
  * another Android).
  */
 export const EMULATOR_GPU = process.env.SWARMCAST_EMULATOR_GPU ?? 'swangle_indirect';
+
+/**
+ * The most of one core the guest may use, all its processes together, for the phone to count as
+ * calm (calm.ts): Chrome just started on its blank tab, the system idle. A cold boot's own work
+ * (package optimisation, Gboard's first start) or the previous test's Chrome still going is above it.
+ */
+const GUEST_CALM_CORES = 1;
+/** How long the phone may take to become calm: after a cold boot, then before each test. */
+const CALM_AFTER_BOOT_MS = 300_000;
+const CALM_BEFORE_TEST_MS = 120_000;
+
+/** The guest's CPU counters: jiffies of all its CPUs (busy, and in all), its CPUs, and each process's (utime + stime) by pid. */
+interface GuestCpu {
+  busy: number;
+  total: number;
+  cpus: number;
+  processes: Map<number, { name: string; ticks: number }>;
+}
+
+/** /proc/stat followed by the processes' /proc/<pid>/stat lines. */
+function parseGuestCpu(text: string): GuestCpu {
+  const lines = text.split('\n').map((l) => l.trim());
+  // user nice system idle iowait irq softirq steal: idle and iowait are not busy.
+  const cpu = (lines.find((l) => l.startsWith('cpu ')) ?? '').split(/\s+/).slice(1, 9).map(Number);
+  const total = cpu.reduce((a, b) => a + b, 0);
+  const processes = new Map<number, { name: string; ticks: number }>();
+  for (const l of lines) {
+    // pid (comm) state ppid ...: utime and stime are the 12th and 13th fields after the name.
+    const m = /^(\d+) \((.*)\) (.*)$/.exec(l);
+    if (!m) continue;
+    const rest = m[3]!.split(' ');
+    processes.set(Number(m[1]), { name: m[2]!, ticks: Number(rest[11]) + Number(rest[12]) });
+  }
+  return { busy: total - (cpu[3] ?? 0) - (cpu[4] ?? 0), total, cpus: lines.filter((l) => /^cpu\d+ /.test(l)).length, processes };
+}
 
 function sdkRoot(): string {
   const env = process.env.ANDROID_HOME ?? process.env.ANDROID_SDK_ROOT;
@@ -134,6 +171,8 @@ export class AndroidDevice {
    * per-test `logcat -d`, it keeps what the device said before it stopped answering.
    */
   private log: Tracked | null = null;
+  /** Where the last rotate() turned the display. */
+  private turned: Orientation = 'portrait';
 
   private constructor(
     readonly serial: string,
@@ -159,6 +198,8 @@ export class AndroidDevice {
     if (!serial && listed.length > 1) throw new Error(`${listed.length} Android devices are connected (${listed.join(', ')}): set ANDROID_SERIAL`);
     const device = new AndroidDevice(serial ?? `emulator-${OWN_EMULATOR_PORT}`, serial ? null : AndroidDevice.bootEmulator(o.logDir), o);
     await device.prepare();
+    // The cold boot's own work done before the first test.
+    await device.calm('after the boot', CALM_AFTER_BOOT_MS);
     return device;
   }
 
@@ -197,6 +238,37 @@ export class AndroidDevice {
     await this.shell(['wm', 'user-rotation', 'lock', '0']);
     await this.shell(['sh', '-c', `echo ${shellWord(CHROME_FLAGS)} > /data/local/tmp/chrome-command-line`]);
     await run(ADB, ['-s', serial, 'reverse', `tcp:${o.publicPort}`, `tcp:${o.publicPort}`]);
+  }
+
+  /**
+   * The guest's CPU counters now (/proc/stat and every process's /proc/<pid>/stat, in one shell).
+   * A process that ends between the glob and its read makes cat fail: the shell's status is not
+   * the reading's (Devices run 42684571191).
+   */
+  private async guestCpu(): Promise<GuestCpu> {
+    return parseGuestCpu(await this.shellOut(['sh', '-c', 'cat /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; exit 0']));
+  }
+
+  /** The guest's load over one measured window (CALM_WINDOW_MS): the cores used, and the three busiest processes. */
+  private async guestLoad(): Promise<Load> {
+    const before = await this.guestCpu();
+    await measuredWindow(CALM_WINDOW_MS);
+    const after = await this.guestCpu();
+    const total = after.total - before.total;
+    const cores = (ticks: number) => (total > 0 ? (ticks / total) * after.cpus : 0);
+    const used = [...after.processes].map(([pid, p]) => ({ name: p.name, cores: cores(p.ticks - (before.processes.get(pid)?.ticks ?? 0)) })).sort((a, b) => b.cores - a.cores);
+    const busiest = used.slice(0, 3).map((p) => `${p.name} ${Math.round(p.cores * 100)} %`);
+    return { cores: cores(after.busy - before.busy), busiest: busiest.join(', ') };
+  }
+
+  /** Waits until the guest is calm (GUEST_CALM_CORES, calm.ts); every window goes to device.log. */
+  async calm(what: string, timeoutMs = CALM_BEFORE_TEST_MS): Promise<void> {
+    await untilCalm({ what: `guest ${what}`, maxCores: GUEST_CALM_CORES, timeoutMs, measure: () => this.guestLoad(), record: (line) => this.record(line) });
+  }
+
+  /** Appends one tap's timing (actionability.ts tapEndsInClick) to taps.log in the log folder. */
+  noteTap(line: string): void {
+    fs.appendFileSync(path.join(this.o.logDir, 'taps.log'), `${new Date().toISOString()} ${line}\n`);
   }
 
   /** A line in device.log in the log folder, with the time. */
@@ -333,7 +405,12 @@ export class AndroidDevice {
   async rotate(to: Orientation): Promise<void> {
     const quarter = to === 'landscape' ? 1 : 0;
     await this.shell(['wm', 'user-rotation', 'lock', String(quarter)]);
+    this.turned = to;
     await until(async () => (await this.rotation()) === quarter, { timeoutMs: 15_000, what: `the display turned ${to}`, detail: () => `rotation ${quarter} wanted` });
+  }
+
+  get orientation(): Orientation {
+    return this.turned;
   }
 
   /** A fresh Chrome for one test: stopped, its data cleared (no cookie or remembered choice of an earlier test), portrait. */
@@ -359,7 +436,16 @@ export class AndroidDevice {
       { timeoutMs: 60_000, what: 'Chrome started and idle', detail: () => JSON.stringify(seen) },
     );
     this.record(`new Chrome; ${await this.load()}`);
-    return new AndroidPhone(this);
+    const phone = new AndroidPhone(this);
+    // Where a viewer's phone starts: upright, no keyboard, Chrome's window in front with the input
+    // focus (no dialog of the system's or of Chrome's over it).
+    const state = async () => {
+      const focus = await this.focusedWindow();
+      return JSON.stringify({ rotation: await this.rotation(), keyboard: await phone.keyboardShown(), focus: focus.includes(` ${CHROME}/`) ? 'Chrome' : focus });
+    };
+    await expect.poll(state, { message: 'the new Chrome starts upright, with no keyboard, its window in front' }).toBe(JSON.stringify({ rotation: 0, keyboard: false, focus: 'Chrome' }));
+    await this.calm('before the test');
+    return phone;
   }
 
   /**
@@ -510,13 +596,30 @@ export class AndroidPhone implements Phone {
     return this.current.evaluate(fn as (arg: unknown) => R, arg);
   }
 
+  get orientation(): Orientation {
+    return this.device.orientation;
+  }
+
+  /**
+   * A finger's tap (actionability.ts): DevTools' Input.dispatchTouchEvent, a touch start and end at
+   * the point in CSS pixels of the visual viewport, which Chrome feeds into the page's input as the
+   * system's touches are: touch events, its gesture detector's tap, then the click, and for a field
+   * the on-screen keyboard (a mouse click raises none). Each command returns once Chrome has taken
+   * the event (https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchTouchEvent).
+   */
   async tap(selector: string): Promise<void> {
     const target = this.current.locator(selector);
     await target.scrollIntoViewIfNeeded();
-    const point = await shownTouchPoint(this, selector, () => target.evaluate(touchPoint));
+    await target.evaluate(armTap);
+    const wanted = { landscape: this.orientation === 'landscape', initialScale: false };
+    const asked = Date.now();
+    const point = await actionablePoint(this, selector, () => target.evaluate(touchState, wanted));
     const cdp = this.cdp!;
+    const started = Date.now();
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] });
     await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    const performed = Date.now();
+    await tapEndsInClick(this, selector, started, performed, { waitedMs: started - asked, log: (line) => this.device.noteTap(line) });
   }
 
   async type(selector: string, text: string): Promise<void> {

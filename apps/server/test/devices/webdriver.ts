@@ -22,7 +22,12 @@ export interface Capabilities {
   [name: string]: unknown;
 }
 
-/** A W3C touch tap (pointer down and up) at `x`, `y` CSS pixels of the viewport (the page's client coordinates). */
+/**
+ * A W3C touch tap at `x`, `y` CSS pixels of the viewport (the page's client coordinates): one
+ * pointer input source of type "touch", moved there, put down and lifted (WebDriver 2, "Actions":
+ * pointerMove with the "viewport" origin, pointerDown, pointerUp). No pause between down and up:
+ * Safari's automation plays the steps one after the other, as a finger's quick tap.
+ */
 export function tapActions(x: number, y: number): unknown {
   return {
     actions: [
@@ -115,6 +120,21 @@ export class Session {
   async perform(actions: unknown): Promise<void> {
     await this.cmd('POST', '/actions', actions);
     await this.cmd('DELETE', '/actions');
+  }
+
+  /** The handles of the session's windows (tabs). */
+  windowHandles(): Promise<string[]> {
+    return this.cmd<string[]>('GET', '/window/handles');
+  }
+
+  /** The text of the user prompt (alert, confirm) the page shows; null when there is none ("no such alert"). */
+  async alertText(): Promise<string | null> {
+    try {
+      return await this.cmd<string>('GET', '/alert/text');
+    } catch (e) {
+      if (e instanceof WebDriverError && e.code === 'no such alert') return null;
+      throw e;
+    }
   }
 
   /** The browser's viewport as a PNG. */

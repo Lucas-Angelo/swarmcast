@@ -236,8 +236,9 @@ SIM_KEYS="com.apple.webinspectord:RemoteInspectorEnabled com.apple.webinspectord
 # Safari's tips (TipKit) off: one popped up over the page and took a tap (ios.ts SAFARI_TIPS_OFF).
 SIM_KEYS="$SIM_KEYS com.apple.mobilesafari:com.apple.TipKit.HideAllTips"
 # Daemons a page in Safari never needs, turned off for every later boot: the push daemon's retry
-# loop and the rest kept the CI Mac saturated (apps/server/test/devices/ios.ts UNUSED_JOBS).
-SIM_UNUSED_JOBS="com.apple.apsd com.apple.identityservicesd com.apple.StatusKitAgent com.apple.remindd com.apple.healthd com.apple.fitcore com.apple.fitnessintelligenced com.apple.finhealthd com.apple.assistantd com.apple.mediaanalysisd com.apple.chronod"
+# loop and the rest kept the CI Mac saturated, and siriactionsd's index of every app's actions
+# (BackgroundShortcutRunner) took the first test's CPU (apps/server/test/devices/ios.ts UNUSED_JOBS).
+SIM_UNUSED_JOBS="com.apple.apsd com.apple.identityservicesd com.apple.StatusKitAgent com.apple.remindd com.apple.healthd com.apple.fitcore com.apple.fitnessintelligenced com.apple.finhealthd com.apple.assistantd com.apple.mediaanalysisd com.apple.chronod com.apple.siriactionsd"
 
 # shellcheck disable=SC2016 # ${...} below is JavaScript, for node
 ios_runtimes() {

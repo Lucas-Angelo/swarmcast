@@ -1,10 +1,11 @@
 // Fixtures of the device suite, on top of the e2e ones (one e2e server for the run, reset and
 // checked by the e2e stream gate before every test):
 // - `device` (worker): the project's phone, once for the run: the Android emulator (attached or
-//   booted) or the iOS Simulator with safaridriver;
-// - `phone` (test): a fresh browser on it. Its screen is recorded; a failed test keeps the
-//   recording, a screenshot of the whole screen and the device's log. On iOS, Safari must have
-//   shown none of its tips meanwhile.
+//   booted) or the iOS Simulator with safaridriver, calm once its first-boot work is done (calm.ts);
+// - `phone` (test): a fresh browser on it, checked to start as a viewer's does (upright, no
+//   keyboard, one tab, no prompt or dialog) on a calm device. Its screen is recorded; a failed
+//   test keeps the recording, a screenshot of the whole screen, the player's state and the
+//   device's log. On iOS, Safari must have shown none of its tips meanwhile.
 import fs from 'node:fs';
 import path from 'node:path';
 import { SEGMENT_DURATION_S } from '@swarmcast/shared';
@@ -14,7 +15,7 @@ import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect, liveLink, test as e2e } from '../e2e/fixtures.js';
 import { AndroidDevice, AndroidPhone } from './android.js';
 import { IosDevice } from './ios.js';
-import type { Phone, Platform } from './phone.js';
+import { playerReport, type Phone, type Platform } from './phone.js';
 
 export { expect };
 
@@ -55,6 +56,8 @@ export const test = e2e.extend<{ phone: Phone }, { platform: Platform; device: D
           .screenshot()
           .then((body) => testInfo.attach('screen', { body, contentType: 'image/png' }))
           .catch((e: Error) => testInfo.attach('screen (failed)', { body: e.message }));
+        // The player as the page and hls.js see it (a failure in playback says where it stopped).
+        await testInfo.attach('player', { body: await playerReport(phone).catch((e: Error) => `(unreadable: ${e.message})`), contentType: 'application/json' });
         if (phone instanceof AndroidPhone) {
           const page = await phone.pageScreenshot();
           if (page) await testInfo.attach('page', { body: page, contentType: 'image/png' });
