@@ -181,9 +181,14 @@ jobs:
       # The viewer chat UI against a mock hub (apps/viewer/test/chat: the built watch page, no
       # server, no network): every engine plus an iPhone, so it rides along with the chat group
       # instead of a job of its own. The same flows against the real server are in
-      # apps/server/test/e2e/chat.spec.ts. With the 0.5.0 player and chat specs (177 tests) it takes
-      # 2-3 minutes on Ubuntu and 3-5.2 minutes on macOS (5.2 in run 41543720366, where the old
-      # 5-minute limit stopped it after its last test passed), so the limit is twice the slowest.
+      # apps/server/test/e2e/chat.spec.ts. Two workers on every runner (its playwright.config.ts).
+      # With the 0.5.x specs (326 tests) it took 3.1-5.3 minutes on Ubuntu with two, but 4.9-10.1
+      # (p50 7.3, p90 8.4) on macOS, whose 3 CPUs gave Playwright's default a single worker: run
+      # 43000767631 reached the 10-minute limit at test 301, every test passing, no gap over 12 s.
+      # The macOS hosts with more CPUs, at two workers, took 2.4-3.2 (pipeline runs of 2026-11-07 to
+      # 11-11). Ubuntu ran its tests 1.8 times faster than their summed durations at two workers, so
+      # macOS should take about 4.3 (p50) to 6.5 (the slowest runner) minutes: the 10-minute limit,
+      # a hang guard, keeps half again over the slowest.
       # Also after a failed e2e run, but not when a setup step failed (the binaries, the
       # browsers): then the e2e step never ran, and the failed step is the job's one error.
       - name: Playwright, viewer chat UI (mock hub)
