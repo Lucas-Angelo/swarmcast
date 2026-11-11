@@ -5,6 +5,9 @@
 // for good (soak run 41194466705, windows-app job 15: one script of the join page failed with
 // net::ERR_NO_BUFFER_SPACE and the harness waited 30 s for Watch). The guard reloads the page
 // instead, a few times in a row at most, so a server that is gone does not reload it forever.
+// It reloads once the page has loaded without the script (`load`): a page the viewer leaves or
+// stops while it loads never fires `load`, and Firefox fails its scripts in flight then (a reload
+// took the viewer back to the page they had left: an e2e goto failed with NS_BINDING_ABORTED).
 //
 // The guard runs here as the pages carry it, with the window's addEventListener, sessionStorage
 // and location replaced by doubles (it uses them as globals, so they come in as same-named
@@ -43,14 +46,46 @@ function startGuard(store = storage()) {
 
 const script = (type: string): HTMLScriptElement => Object.assign(document.createElement('script'), { type, src: '/assets/page.js' });
 
+/** A page load whose module script failed: the script's error, then the page's own events. */
+function failedLoad(g: ReturnType<typeof startGuard>): void {
+  g.fire('error', script('module'));
+  g.fire('DOMContentLoaded');
+  g.fire('load');
+}
+
 describe('startup guard', () => {
-  it('reloads the page when one of its scripts fails to load', () => {
+  it('reloads the page once it has loaded without one of its scripts', () => {
+    // Arrange
+    const g = startGuard();
+    // Act
+    failedLoad(g);
+    // Assert
+    expect(g.reload).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the page to finish loading before it reloads', () => {
     // Arrange
     const g = startGuard();
     // Act
     g.fire('error', script('module'));
+    g.fire('DOMContentLoaded');
     // Assert
-    expect(g.reload).toHaveBeenCalledTimes(1);
+    expect(g.reload).not.toHaveBeenCalled();
+  });
+
+  it('never reloads a page the viewer left or stopped while it loaded (its scripts cancelled, no load)', () => {
+    // Arrange
+    const store = storage();
+    const g = startGuard(store);
+    // Act
+    g.fire('beforeunload');
+    g.fire('error', script('module'));
+    g.fire('error', script('module'));
+    g.fire('DOMContentLoaded');
+    g.fire('pagehide');
+    // Assert
+    expect(g.reload).not.toHaveBeenCalled();
+    expect(store.items.size).toBe(0);
   });
 
   it('leaves other failures alone: an image, a stylesheet, a classic script', () => {
@@ -62,6 +97,8 @@ describe('startup guard', () => {
     g.fire('error', sheet);
     g.fire('error', script('text/javascript'));
     g.fire('error', window);
+    g.fire('DOMContentLoaded');
+    g.fire('load');
     // Assert
     expect(g.reload).not.toHaveBeenCalled();
   });
@@ -72,6 +109,7 @@ describe('startup guard', () => {
     g.fire('DOMContentLoaded');
     // Act
     g.fire('error', script('module'));
+    g.fire('load');
     // Assert
     expect(g.reload).not.toHaveBeenCalled();
   });
@@ -82,6 +120,8 @@ describe('startup guard', () => {
     // Act
     g.fire('error', script('module'));
     g.fire('error', script('module'));
+    g.fire('DOMContentLoaded');
+    g.fire('load');
     // Assert
     expect(g.reload).toHaveBeenCalledTimes(1);
   });
@@ -93,7 +133,7 @@ describe('startup guard', () => {
     // Act
     for (let load = 0; load < 4; load++) {
       const g = startGuard(store);
-      g.fire('error', script('module'));
+      failedLoad(g);
       reloads.push(g.reload.mock.calls.length);
     }
     // Assert
@@ -103,12 +143,15 @@ describe('startup guard', () => {
   it('counts again from zero once the page loads with its scripts', () => {
     // Arrange
     const store = storage();
-    for (let load = 0; load < 3; load++) startGuard(store).fire('error', script('module'));
+    for (let load = 0; load < 3; load++) failedLoad(startGuard(store));
     // Act
-    startGuard(store).fire('DOMContentLoaded');
+    const ok = startGuard(store);
+    ok.fire('DOMContentLoaded');
+    ok.fire('load');
     const g = startGuard(store);
-    g.fire('error', script('module'));
+    failedLoad(g);
     // Assert
+    expect(ok.reload).not.toHaveBeenCalled();
     expect(g.reload).toHaveBeenCalledTimes(1);
   });
 
@@ -116,8 +159,7 @@ describe('startup guard', () => {
     // Arrange
     const g = startGuard(storage(true));
     // Act
-    g.fire('error', script('module'));
-    g.fire('DOMContentLoaded');
+    failedLoad(g);
     // Assert
     expect(g.reload).not.toHaveBeenCalled();
   });
