@@ -28,7 +28,7 @@ organization-owned repositories only, and this one belongs to a user.
 ## The pipeline
 
 ```
-changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×7, windows ×4 ──────────────┐
+changes ─┬─ quick ──────────────────────┬─ node ×3, e2e ×9, windows ×4 ──────────────┐
          ├─ build (web + windows pkg) ──┤                                             ├─ ci-ok
          │                              └─ desktop <target> ×5: build ─ clean-machine ┤
          ├─ site (when the site changed) ─────────────────────────────────────────────┤
@@ -43,7 +43,7 @@ changes ─┬─ quick ──────────────────�
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel; both calls are in the macOS lanes: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
 | node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
-| e2e | `_e2e.yml`, called four times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos-chat`, `e2e-macos-ui`, `e2e-macos-media`: one macOS group each, in the macOS lanes) | 7 (Ubuntu, macOS × `ui`, `chat`, `media`; Windows chat UI) | Playwright, all three browser projects, in three groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, privacy, flood, nickname, browser check), `media` the other `@media` tests, `ui` the rest plus the `@media` file(s) in `MEDIA_WITH_UI`, balanced to take about the same time (with the 0.5.0 specs 9-13 minutes each on macOS, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, two Playwright workers on every runner: 3-5 minutes on Ubuntu; 5-10 on macOS while its 3 CPUs gave it one), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
+| e2e | `_e2e.yml`, called five times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos-chat`, `e2e-macos-ui`, `e2e-macos-media`, `e2e-macos-live`: one macOS group each, in the macOS lanes) | 9 (Ubuntu, macOS × `ui`, `chat`, `live`, `media`; Windows chat UI) | Playwright, all three browser projects, in four groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, polls, privacy, flood, nickname), `live` the files in `LIVE_FILES` (P2P, adaptive delay, stream start, attack, browser check), `media` the other `@media` tests plus the file(s) in `UI_WITH_MEDIA` (player controls), `ui` the rest, balanced to take about the same time (with the 0.5.x specs p90 10.8-11.9 minutes each on macOS and at most 10.2 on Ubuntu, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, two Playwright workers on every runner: 3-5 minutes on Ubuntu; 5-10 on macOS while its 3 CPUs gave it one), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
 | devices | `devices.yml` (`every-event: true`), only with `release-flavour` | 2 (iOS Simulator on `macos-26`, Android emulator on Ubuntu) | the viewer in real mobile browsers; heads macOS lane 1 |
@@ -51,9 +51,9 @@ changes ─┬─ quick ──────────────────�
 | docker | `_docker.yml` (also weekly through `linux-docker.yml`) | 12 (x64 and arm64: build, Ubuntu 22.04/24.04 and Debian 12, OBS, Playwright) | the Linux Docker suites of `scripts/test/docker` on their own staged server and AppImage builds: AppImage on a minimal host, real OBS Studio, the Playwright suite in the Playwright image |
 | ci-ok | `pipeline.yml` | 1 | the verdict, and nothing else: one shell step, no checkout, no action, no artifact (each stage's jobs write their own results to their summaries) |
 
-That is 29 jobs for a change to the app (8 on macOS, 6 on Windows), 30 when it also touches the
+That is 31 jobs for a change to the app (9 on macOS, 6 on Windows), 32 when it also touches the
 site, 12 more when it touches the Docker suites or what they run. A release rehearsal runs all of
-them plus `devices` and `rendering`: 47 jobs (10 on macOS, 7 on Windows). GitHub Free runs 20 jobs at once,
+them plus `devices` and `rendering`: 49 jobs (11 on macOS, 7 on Windows). GitHub Free runs 20 jobs at once,
 5 of them on macOS; a pipeline has at most 3 Apple silicon jobs queued or running at once (see "macOS
 concurrency" below).
 Every call of a stage keeps the stage's name, so the checks read `node / ... (macos-latest)` and
@@ -159,7 +159,7 @@ concurrency group, so runs on the same branch never cancel each other's calls.
 
 ### macOS concurrency
 
-A pipeline's eight macOS jobs (ten in a release rehearsal) run in three lanes chained with `needs`
+A pipeline's nine macOS jobs (eleven in a release rehearsal) run in three lanes chained with `needs`
 in `pipeline.yml`, so a run never has more than three Apple silicon jobs queued or running at once,
 and none of its jobs waits for a runner behind another of its own: each is asked for only when
 the job before it in its lane has ended. A chained call runs whatever the result of the call
@@ -169,25 +169,33 @@ before it (not when the run is cancelled), so every check runs as before. `devic
 
 | Lane | Jobs, in order | Pull request, `main`: minutes (p50; max) | Release rehearsal: minutes (p50; max) |
 |---|---|---|---|
-| 1 | `devices / iOS Safari (Simulator)` (`macos-26`; release rehearsal only), `node / unit, integration, rust`, `e2e / chat` (with the viewer chat UI) | 4.2 + 19.4 = 23.6 (5.0; 23.4) | 10.1 + 4.5 + 19.9 = 34.5 (12.2; 5.2; 24.5) |
-| 2 | `rendering / macos-latest` (release rehearsal only), `e2e / ui`, `desktop macos-arm64` (build, clean-machine) | 15.4 + 3.6 + 2.7 = 21.7 (18.6; 4.2; 2.9) | 9.2 + 13.2 + 9.7 + 2.2 = 34.3 (10.9; 19.1; 11.2; 2.9) |
-| 3 | `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`), `e2e / media` | 3.8 + 3.4 + 17.4 = 24.6 (4.7; 4.9; 18.1) | 10.2 + 3.3 + 17.1 = 30.6 (12.1; 4.1; 18.6) |
+| 1 | `devices / iOS Safari (Simulator)` (`macos-26`; release rehearsal only), `e2e / ui`, `e2e / media` | 23.6 (26.5) | 31.6 (40.0) |
+| 2 | `rendering / macos-latest` (release rehearsal only), `e2e / chat` (with the viewer chat UI), `desktop macos-arm64` (build, clean-machine) | 22.1 (25.1) | 33.1 (37.7) |
+| 3 | `node / unit, integration, rust`, `e2e / live`, `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 23.5 (26.1) | 29.5 (38.1) |
 
-(Job times of the successful jobs of the 14 pull request and `main` runs and the 21 release
-rehearsals from 2026-11-08 16:32 to 2026-11-10 17:46 UTC.) A release (`release.yml`) builds like
-a rehearsal but runs no `devices` or `rendering`: lanes of about 24, 25 and 31 minutes. The Intel
+(2026-11-11, with the fourth e2e group, `live`, and the viewer chat UI on two workers: the 16 pull
+request and `main` runs and the 30 release rehearsals of 2026-11-07 to 11-11 whose macOS jobs all
+passed, replayed with their own job times and no queue waits. The e2e groups' times are each
+run's own test times regrouped, plus the step's and the job's own time; the viewer chat UI's step
+is taken at 1/1.7 of its one-worker time, Ubuntu's measured gain at two workers being 1.8.) The
+longest lane is p50 24.5 and at most 26.5 minutes on a pull request or `main` (the three-group
+layout, replayed the same way: 25.4 and 28.5), and p50 34.5 and at most 40.0 as a release
+rehearsal (three groups: 36.9 and 40.7). Were the chat UI no faster at two workers, the longest
+lane would be p50 25.6 (pull request) and 40.0 (rehearsal). A release (`release.yml`) builds like
+a rehearsal but runs no `devices` or `rendering`: lanes of about 22, 28 and 29 minutes. The Intel
 clean-machine runs in lane 3 too, so a run has at most three macOS jobs of any kind at once, two
 under the account's five. `devices` and `rendering` lead their lanes because they build what they
 test themselves and can start once `changes` is done; their Ubuntu and Windows jobs start then too.
+The macOS node job leads lane 3: it needs only `quick` and `build`.
 
-**Wall time.** Each of those 27 successful runs replayed with its own job times and no queue
-waits, the run takes p50 26.6 and at most 30.6 minutes on a pull request or `main` (four lanes,
-replayed the same way: 24.0 and 26.7), and p50 35.8 and at most 41.3 minutes as a release
-rehearsal (four lanes: 31.8 and 38.8): about 2.5 and 4 minutes more. The critical path is the
-macOS lanes (the rest of a run ends by about minute 27, the Docker suites' Playwright jobs last).
-This layout is the fastest of every way to put these jobs into three chained lanes, measured
-against those runs; the order inside lanes 1 and 2 changes little. A cold Rust cache (a
-`Cargo.lock` or toolchain change) doubles the two builds.
+**Wall time.** The critical path is the macOS lanes (the rest of a run ends by about minute 27,
+the Docker suites' Playwright jobs last). Of every assignment of the seven jobs to the three lanes,
+tried against the jobs' p50 times (pull request and rehearsal together), the layout above is
+the fastest but one, 0.1 minute apart; the order inside a lane changes little. The three-group layout before it
+(lanes: devices, node, `e2e / chat`; rendering, `e2e / ui`, desktop macos-arm64; desktop
+macos-x64, `e2e / media`) took p50 26.6 and at most 30.6 minutes for a whole pull request run and
+p50 35.8 and at most 41.3 as a rehearsal (2026-11-08 to 11-10). A cold Rust cache (a `Cargo.lock`
+or toolchain change) doubles the two builds.
 
 **Why three** (2026-11-10). In a campaign of release rehearsals started one at a time with
 nothing else of the account running, GitHub dropped four Apple silicon jobs in three runs of
@@ -205,7 +213,8 @@ So three lanes do not end the drops, which are GitHub's capacity: they keep a ru
 for a fourth Apple silicon runner and from queueing a job behind its own. A dropped job still
 leaves `ci-ok` red: start a new run. Merging jobs to ask for fewer runners would help less than
 it seems: with 4 of 188 placements dropped (2.1 %), a rehearsal's nine Apple silicon jobs lose
-it about 18 % of the time and eight would about 16 %, at the price of the checks' names.
+it about 18 % of the time and eight would about 16 %, at the price of the checks' names (ten,
+with the `live` group since 2026-11-11: about 19 %).
 
 **Before: four lanes** (PR #125, 2026-11-05 to 2026-11-10). `e2e / chat` then `rendering`;
 `e2e / media`; node, `e2e / ui`, then `devices`; desktop macos-arm64 then macos-x64. At most four

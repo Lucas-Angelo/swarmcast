@@ -21,7 +21,7 @@ export default defineConfig({
   // stream). Tests are independent (the gate in fixtures.ts resets the server before each, and
   // every fixture puts back what its test changed). Every test is tagged @media (live video,
   // P2P, the ladder: p2p, quality, adaptive-delay, attack, chat-flood) or @ui (the rest). CI runs
-  // the suite in three groups on separate runners, by tag and file (_e2e.yml: ui, chat, media).
+  // the suite in four groups on separate runners, by tag and file (_e2e.yml: ui, chat, live, media).
   fullyParallel: false,
   workers: 1,
   // Never retried, in CI too: a test passes on its first run on every engine and runner, or its
