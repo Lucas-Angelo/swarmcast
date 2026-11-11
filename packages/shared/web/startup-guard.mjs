@@ -8,6 +8,15 @@
 // looks at module scripts that fail before DOMContentLoaded (the pages' own), and never reloads
 // where it cannot count (site data blocked).
 //
+// It reloads once the page has finished loading without that script (its `load` event), never at
+// the script's error itself. Firefox also fails a script it cancels: a page still loading when the
+// viewer leaves it (a link, Back, a typed address) or stops it (Esc) gets an error for each of its
+// scripts in flight, after `beforeunload` and before the next page arrives. A reload then took the
+// viewer back to the page they had just left (the e2e chat spec's goto failed with
+// NS_BINDING_ABORTED, main run 42925388330), or reloaded a page they had stopped. A page left or
+// stopped never fires `load` (Firefox, Chromium and WebKit alike); one whose script really failed
+// does, at once.
+//
 // Inline on purpose: a guard in a file of its own could fail to load just the same. One source
 // for both sides, so nothing ever parses HTML to find it: the viewer build writes this text into
 // the pages (startupGuard, a Vite plugin), and the public server allows exactly this text by its
@@ -22,16 +31,8 @@ export const STARTUP_GUARD = `(function () {
     'error',
     function (e) {
       var s = e.target;
-      if (failed || started || !(s instanceof HTMLScriptElement) || s.type !== 'module') return;
+      if (started || !(s instanceof HTMLScriptElement) || s.type !== 'module') return;
       failed = true;
-      try {
-        var n = Number(sessionStorage.getItem(KEY)) || 0;
-        if (n >= 3) return;
-        sessionStorage.setItem(KEY, String(n + 1));
-      } catch (_) {
-        return;
-      }
-      location.reload();
     },
     true
   );
@@ -41,6 +42,17 @@ export const STARTUP_GUARD = `(function () {
     try {
       sessionStorage.removeItem(KEY);
     } catch (_) {}
+  });
+  addEventListener('load', function () {
+    if (!failed) return;
+    try {
+      var n = Number(sessionStorage.getItem(KEY)) || 0;
+      if (n >= 3) return;
+      sessionStorage.setItem(KEY, String(n + 1));
+    } catch (_) {
+      return;
+    }
+    location.reload();
   });
 })();`;
 

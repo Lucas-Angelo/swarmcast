@@ -1,8 +1,9 @@
 // The viewer chat against the real server (plan §10.3, chat.spec.ts @ui): two viewers both ways
 // ("sending…" until the server's copy), slow mode waiting on the client and a server reject
-// translated with the text kept (EN and pt-BR), "hide chat" remembered across a reload, a chosen
-// name colour that reaches every viewer readable on both themes (set through the CSSOM, under the
-// real CSP), the streamer's badge, links never clickable, still one WebSocket per viewer, and
+// translated with the text kept (EN and pt-BR, as the browser's language), "hide chat"
+// remembered across a reload, a chosen name colour that reaches every viewer readable on both
+// themes (set through the CSSOM, under the real CSP), the streamer's badge, links never
+// clickable, still one WebSocket per viewer, and
 // replies and @mentions between real pages (the quote, the @ list of people who wrote, the mark for
 // the mentioned viewer only, the quote wiped when the original is deleted), reactions over the
 // video between real pages (a tap floats over the other page's video, under the real CSP), and the
@@ -84,8 +85,7 @@ test('two viewers chat both ways; "sending…" then the server copy', { tag: '@u
 test('slow mode waits on the client; a server reject is translated and keeps the text (EN and pt-BR)', { tag: '@ui' }, async ({ viewers }) => {
   for (const lang of ['en', 'pt-BR'] as const) {
     // Arrange
-    const { page } = await viewers.join(uid(`rej${lang}`));
-    await page.goto(`/watch?lang=${lang}`);
+    const { page } = await viewers.join(uid(`rej${lang}`), { context: { locale: lang } });
     await chatReady(page);
     const text = `de novo ${uid('dup')}`;
     const sendStates = await recordSend(page);

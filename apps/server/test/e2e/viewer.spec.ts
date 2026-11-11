@@ -10,10 +10,23 @@
 // A script of the join or watch page that fails to load (a dropped connection) never runs, and
 // the browser never asks for it again: the page reloads itself (its startup guard, the one inline
 // script, allowed by its hash in the CSP). The tests drop the first request for one of them.
-import type { BrowserContext } from '@playwright/test';
+// It reloads only a page that finished loading without its script: Firefox also fails the
+// scripts of a page the viewer leaves while it loads, and a reload then pulled the viewer back
+// (a goto failed with NS_BINDING_ABORTED). The test holds the watch page's script on its way and
+// goes elsewhere.
+import type { BrowserContext, Route } from '@playwright/test';
 import { admin, adminState, currentTime, expect, liveLink, openSettings, playerStopped, startsAtLive, stats, test, uid, viewerByNick, waitPlaying } from './fixtures.js';
 
 const INVALID = /no longer valid/;
+
+/** Counts the loads of `page` in `context` (its navigation requests) from now on. */
+function loadsOf(context: BrowserContext, page: string): () => number {
+  let loads = 0;
+  context.on('request', (r) => {
+    if (r.isNavigationRequest() && new URL(r.url()).pathname === page) loads++;
+  });
+  return () => loads;
+}
 
 /**
  * Drops the connection of the first request in `context` whose path matches `script` (as a
@@ -21,15 +34,27 @@ const INVALID = /no longer valid/;
  */
 async function dropFirstLoad(context: BrowserContext, script: RegExp, page: string): Promise<() => number> {
   let requests = 0;
-  let loads = 0;
   await context.route(
     (url) => script.test(url.pathname),
     (route) => (requests++ === 0 ? route.abort('connectionreset') : route.continue()),
   );
-  context.on('request', (r) => {
-    if (r.isNavigationRequest() && new URL(r.url()).pathname === page) loads++;
-  });
-  return () => loads;
+  return loadsOf(context, page);
+}
+
+/**
+ * Holds the first request in `context` whose path matches `script`, unanswered (a script still on
+ * its way); the result gives its route once the browser has asked for it. Later requests go
+ * through.
+ */
+async function holdFirstRequest(context: BrowserContext, script: RegExp): Promise<() => Promise<Route>> {
+  let requests = 0;
+  let hold: (route: Route) => void = () => {};
+  const held = new Promise<Route>((resolve) => (hold = resolve));
+  await context.route(
+    (url) => script.test(url.pathname),
+    (route) => (requests++ === 0 ? hold(route) : route.continue()),
+  );
+  return () => held;
 }
 
 test('a viewer joins with the live link, picks a nickname and watches', { tag: '@ui' }, async ({ viewers }) => {
@@ -168,6 +193,28 @@ test('a watch page that lost its script on the way reloads itself and plays', { 
   // Assert
   await waitPlaying(page);
   expect(watchLoads()).toBe(2);
+});
+
+test('a viewer who leaves the watch page while its script is still on its way gets where they went', { tag: '@ui' }, async ({ viewers }) => {
+  // Arrange
+  let held = (): Promise<Route> => Promise.reject(new Error('the context was never set up'));
+  let watchLoads = (): number => 0;
+  const setup = async (context: BrowserContext): Promise<void> => {
+    held = await holdFirstRequest(context, /^\/assets\/watch-[\w-]+\.js$/);
+    watchLoads = loadsOf(context, '/watch');
+  };
+  const { page } = await viewers.join(uid('leave'), { setup });
+  const script = await held();
+
+  // Act
+  await page.goto('/watch?lang=pt-BR');
+
+  // Assert
+  await waitPlaying(page);
+  await expect(page.locator('#status')).toHaveText('Ao vivo');
+  expect(page.url()).toMatch(/\/watch\?lang=pt-BR$/);
+  expect(watchLoads()).toBe(2);
+  await script.abort('connectionreset');
 });
 
 test('"Go live" appears after pausing and brings the viewer back near the live edge', { tag: '@ui' }, async ({ viewers, browserName }) => {
