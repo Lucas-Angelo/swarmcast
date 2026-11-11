@@ -3,9 +3,9 @@ description: >-
   The Rust toolchain pinned in apps/desktop/src-tauri/rust-toolchain.toml (also made the default),
   the rust-cache for apps/desktop/src-tauri (saved on main only), every crate of its Cargo.lock
   from a saved artifact with cargo offline from then on (./.github/actions/cargo-crates), and on
-  Linux the Tauri build dependencies through .github/scripts/apt-retry.sh. Run
-  ./.github/actions/setup first, with `apt-debs: tauri-build` on Linux so the .debs come from (and
-  go to) the .deb cache. The job needs `actions: read`.
+  Linux the Tauri build dependencies from the job's saved .deb set with apt offline
+  (.github/scripts/apt-debs.sh). Run ./.github/actions/setup first, with `apt-debs: tauri-build`
+  on Linux, which restores that set. The job needs `actions: read`.
 
 inputs:
   components:
@@ -71,13 +71,12 @@ runs:
     # command of the job: from here on, cargo never asks crates.io (README.md, "Rust crates").
     - name: Rust crates (saved artifact, then cargo offline)
       uses: ./.github/actions/cargo-crates
-    # Tauri v2 build prerequisites on Linux. apt-retry.sh downloads them (time limit per try,
-    # retries, another mirror after a slow try) into $APT_DEBS when the setup action restored the
-    # .deb cache, then installs offline.
+    # Tauri v2 build prerequisites on Linux, from the job's saved .deb set with apt offline (no
+    # apt-get update, no download); the Ubuntu archive only when that set does not fit this runner
+    # image, and then a failure says it is the archive (.github/scripts/apt-debs.sh).
     - name: Linux build dependencies
       if: runner.os == 'Linux' && inputs.linux-deps == 'true'
       shell: bash
       run: |
         deps=(build-essential pkg-config libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev patchelf libssl-dev file xz-utils)
-        "$GITHUB_WORKSPACE/.github/scripts/apt-retry.sh" update
-        "$GITHUB_WORKSPACE/.github/scripts/apt-retry.sh" install -y --no-install-recommends "${deps[@]}"
+        "$GITHUB_WORKSPACE/.github/scripts/apt-debs.sh" install "${deps[@]}"

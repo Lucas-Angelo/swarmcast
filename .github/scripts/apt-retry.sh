@@ -4,14 +4,17 @@
 #   apt-retry.sh update
 #   apt-retry.sh install  [apt-get options] PKG|./x.deb...  download (time-limited, retried), then install offline
 #   apt-retry.sh download [apt-get options] PKG|./x.deb...  download only: the .debs a later step or test installs
-#   apt-retry.sh playwright-deps BROWSER...                 the system libraries of Playwright's browsers (install)
 #   apt-retry.sh --run CMD...                               any other command that runs apt itself (time-limited, retried)
 #
 # `install ... --download-only` is the same as `download`.
 #
+# The gating jobs on GitHub's runners do not call this directly: .github/scripts/apt-debs.sh installs
+# from their saved .deb set offline and comes here only on its cold path. Its direct users: the
+# Docker test images' builds (scripts/test/docker/image-apt.sh) and the soak's `apt` suite.
+#
 # Environment:
-#   APT_DEBS              folder for the downloaded .debs (apt's Dir::Cache::archives), e.g. the
-#                         .deb cache the setup action restores (input apt-debs). Default: apt's own.
+#   APT_DEBS              folder for the downloaded .debs (apt's Dir::Cache::archives), e.g. a
+#                         job's saved .deb set (apt-debs.sh's cold path). Default: apt's own.
 #   APT_UPDATE_TIMEOUT    seconds per `apt-get update` try (default 90)
 #   APT_DOWNLOAD_TIMEOUT  seconds per download try (default 150)
 #   APT_TRIES             tries per phase (default 3)
@@ -29,6 +32,10 @@
 #   (/etc/apt/apt-mirrors.txt; the maintainers' workaround in runner-images#15142), so the next
 #   tries and every later apt call of the job use archive.ubuntu.com. arm64 runners use
 #   ports.ubuntu.com and have no azure line: nothing changes there;
+# - an `update` that could not fetch the Ubuntu archive's index is a failed try, although apt
+#   exits 0 then (it warns "Failed to fetch" and goes on with old lists, or none: a runner that
+#   cannot resolve the archive's name "updated" in seconds, and every install after it failed with
+#   "Unable to locate package"). Another source failing (packages.microsoft.com...) is not;
 # - Dpkg::Lock::Timeout: wait for another apt or dpkg instead of failing at once;
 # - every phase prints one line: "apt: <what>: Fetched <size> in <time> (<s> s in all) from <mirrors>".
 set -u
@@ -46,6 +53,10 @@ if [ -n "${APT_DEBS:-}" ]; then
   "${SUDO[@]}" mkdir -p "$APT_DEBS/partial"
   OPTS+=(-o "Dir::Cache::archives=$APT_DEBS")
 fi
+
+# A line of `apt-get update` that says the Ubuntu archive's index did not download (the runners'
+# sources go through mirror+file:/etc/apt/apt-mirrors.txt; a container's name the archive).
+ARCHIVE_FAILED_RE='^[WE]: Failed to fetch (mirror\+file:|https?://[^ ]*ubuntu\.com/)'
 
 LOG="$(mktemp)"
 trap 'rm -f "$LOG"' EXIT
@@ -65,13 +76,18 @@ summary() {
   echo "apt: $1: ${fetched:-nothing to fetch} ($2 s in all) from ${hosts:-the local cache}"
 }
 
-# limited SECONDS WHAT CMD...: CMD (run as root) up to $TRIES times, each try limited to SECONDS.
+# limited SECONDS WHAT FAILED_RE CMD...: CMD (run as root) up to $TRIES times, each try limited to
+# SECONDS; a try whose output has a line matching FAILED_RE (when not empty) failed too.
 limited() {
-  local limit="$1" what="$2" start=$SECONDS i rc
-  shift 2
+  local limit="$1" what="$2" failed_re="$3" start=$SECONDS i rc line
+  shift 3
   for i in $(seq 1 "$TRIES"); do
     "${SUDO[@]}" timeout -k "$KILL_AFTER" "$limit" "$@" 2>&1 | tee "$LOG"
     rc="${PIPESTATUS[0]}"
+    if [ "$rc" = 0 ] && [ -n "$failed_re" ] && line="$(grep -m 1 -E "$failed_re" "$LOG")"; then
+      echo "$what: $line"
+      rc=100
+    fi
     if [ "$rc" = 0 ]; then
       summary "$what" $((SECONDS - start))
       return 0
@@ -84,11 +100,11 @@ limited() {
 }
 
 apt_update() {
-  limited "$UPDATE_TIMEOUT" "apt-get update" apt-get "${OPTS[@]}" update
+  limited "$UPDATE_TIMEOUT" "apt-get update" "$ARCHIVE_FAILED_RE" apt-get "${OPTS[@]}" update
 }
 
 apt_download() {
-  limited "$DOWNLOAD_TIMEOUT" "apt-get install --download-only" \
+  limited "$DOWNLOAD_TIMEOUT" "apt-get install --download-only" "" \
     env DEBIAN_FRONTEND=noninteractive apt-get "${OPTS[@]}" install -y --download-only "$@"
 }
 
@@ -100,19 +116,6 @@ apt_install() {
     return 1
   }
   echo "apt: apt-get install (offline): $((SECONDS - start)) s"
-}
-
-# Playwright's `install-deps` runs its own `apt-get update && apt-get install` with no limit.
-# Instead: ask it which packages are missing (`--dry-run` resolves them with `apt-get install -s`),
-# install those through apt_install, then check that nothing is missing any more.
-playwright_deps() {
-  local out pkgs
-  apt_update || return 1
-  out="$(npx --no-install playwright install-deps --dry-run "$@" 2>&1)"
-  mapfile -t pkgs < <(sed -n '/^Missing system dependencies/,$ s/^  \([^ ]\{1,\}\)$/\1/p' <<<"$out")
-  echo "Playwright ($*) needs ${#pkgs[@]} more packages"
-  if [ "${#pkgs[@]}" -gt 0 ]; then apt_install --no-install-recommends "${pkgs[@]}" || return 1; fi
-  npx --no-install playwright install-deps --dry-run "$@"
 }
 
 # A command that runs apt itself (as root through sudo): limited the same way, but timeout runs
@@ -134,7 +137,7 @@ run_limited() {
   return 1
 }
 
-[ $# -gt 0 ] || { sed -n '2,8p' "$0"; exit 2; }
+[ $# -gt 0 ] || { sed -n '2,7p' "$0"; exit 2; }
 mode="$1"
 shift
 case "$mode" in
@@ -151,10 +154,9 @@ case "$mode" in
     done
     apt_install "$@"
     ;;
-  playwright-deps) playwright_deps "$@" ;;
   --run) run_limited "$@" ;;
   *)
-    echo "apt-retry.sh: unknown mode '$mode' (update, install, download, playwright-deps, --run)" >&2
+    echo "apt-retry.sh: unknown mode '$mode' (update, install, download, --run)" >&2
     exit 2
     ;;
 esac

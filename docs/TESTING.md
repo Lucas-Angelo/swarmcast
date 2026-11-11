@@ -75,7 +75,8 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | `hdiutil` "Resource busy" while the .dmg is made | the .dmg step of [scripts/build/desktop.mjs](../scripts/build/desktop.mjs) | the create-dmg script Tauri vendors does not retry it (tauri#14686): up to 4 tries, 5, 10 and 20 s apart, only on "Resource busy"; any other failure fails at once |
 | A registry hiccup on `docker pull`, only when a Docker test image is built (no saved one yet) | [scripts/test/docker/pull.sh](../scripts/test/docker/pull.sh) | Docker Hub's 502s are the network, not the test; a test runs its saved image and pulls nothing ([below](#no-third-party-service-in-the-gate)) |
 | A Docker test image's build that failed (a mirror mid-sync), only when it is built | [scripts/test/docker/build.sh](../scripts/test/docker/build.sh) | the distribution's mirror: one more build after 60 s, `--no-cache`, apt through `apt-retry.sh` |
-| A slow apt mirror, an artifact service hiccup | `.github/scripts/apt-retry.sh`, `.github/actions/fetch-artifact` | CI infrastructure |
+| A slow or unreachable Ubuntu archive, only when a job's saved `.deb` set does not fit its runner image (none saved yet, an image that moved a package the set pins) | `.github/scripts/apt-debs.sh`, its cold path through `.github/scripts/apt-retry.sh` | the archive, not the test (pipeline run 43034880513: it did not answer, and every Linux job that runs apt failed in `apt-get update`): a time limit per try, 3 tries, another mirror; a job whose set fits installs from it with apt offline and never asks; one whose cold path fails stops with `apt (infrastructure)` ([below](#no-third-party-service-in-the-gate)) |
+| An artifact service hiccup | `.github/actions/fetch-artifact` | CI infrastructure |
 | An upload of a build artifact (staged server, installers) that failed, for example a macOS VM that lost DNS mid-job | `.github/actions/upload-build` | the runner's network, not the build (release rehearsal 42846972124: "Failed to CreateArtifact: Unable to make request: ENOTFOUND" after the installers were built and checked): a wait of at most 5 minutes until the artifact service answers, then one more upload with `overwrite`, logged `infra recovery:`; a second failure fails the job. Only the upload is tried again, never the build ([.github/workflows/README.md](../.github/workflows/README.md), "Artifact uploads") |
 | A crates.io download that failed (a `206` with a partial body, a 5xx, a refused or cut-off connection, a corrupt `.crate`) or stalled, only when the Rust crates are fetched (no saved artifact for this `Cargo.lock` yet) | `fetchWithTries` in [.github/scripts/cargo-crates.mjs](../.github/scripts/cargo-crates.mjs) | crates.io's CDN, not the test (release rehearsal 42799834042: `got 206`, which cargo does not try again): 3 tries, each cut off after 60 s; a failure that is not the network fails at once; every cargo command after it runs offline ([below](#no-third-party-service-in-the-gate)) |
 | A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
@@ -538,6 +539,27 @@ blocked in every cargo job (`/etc/hosts`; an online `cargo fetch` then fails) pa
 (42808529703), 7 of 7 jobs green each, with no crate downloaded and no index update in any cargo
 job. A job that finds no artifact fetches the crates itself (soak 42804773481: 4 s).
 
+The gating Linux jobs' apt packages (the Tauri build dependencies, the system libraries of
+Playwright's Firefox and WebKit, the desktop test's AppImage host libraries and `.deb`
+dependencies) came from the Ubuntu archive in every job: each restored a `.deb` cache for its
+runner image, but ran `apt-get update` first and resolved against the archive's lists. Pipeline
+run 43034880513 lost every one of those jobs (the Docker stage and Linux desktop builds, the node
+job, the four Ubuntu e2e groups, Ubuntu rendering) when the archive did not answer: `apt-get update
+failed 3 times (270 s)`. Each job now installs from its saved `.deb` set with apt offline
+(`.github/scripts/apt-debs.sh`): the set is checked against its `SHA256SUMS`, becomes apt's only
+source for the rest of the job (a flat `file:` repository; no `apt-get update` against the archive,
+no download), and apt itself decides whether it fits the runner image (`apt-get install -s` in that
+closed world; nothing on the image is downgraded). Only a set that does not fit (none yet, or a
+runner image that moved a package it pins) sends the job to the archive, once, with the tries
+[above](#infra-recoveries), and `main` saves the result for the next jobs; when the archive does
+not answer then, the step says so (`apt (infrastructure)`) and stops
+([.github/workflows/README.md](../.github/workflows/README.md), "Ubuntu packages"). Checked in
+`ubuntu:22.04` and `ubuntu:24.04` containers: a set made with the network installed the same
+requests, Playwright's list and a `.deb`'s dependencies with `--network none`, also on a newer
+image version; a request outside the set, a changed `.deb` and an installed library newer than
+the set's `-dev` package pins each went to the archive and failed there with the infrastructure
+error.
+
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first
 (the edge answers an interface or method it does not know with an RPC exception, which
@@ -562,8 +584,8 @@ low" warning only on a measured fast uplink, else record it), STUN (stun.cloudfl
 browsers' P2P candidates (the viewers find each other on loopback without it), Direct mode's public
 IP lookup in the Windows direct suite (1.1.1.1/cdn-cgi/trace), and cloudflared's own lookup of its
 feature flags in DNS (`cfd-features.argotunnel.com`, 10 s limit, defaults on failure). CI set-up
-downloads (npm, apt on the runner, pinned binaries, actions, a Docker test image's cold
-build and the Rust crates' cold fetch) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
+downloads (npm, pinned binaries, actions, a Docker test image's cold build, the Rust crates'
+cold fetch and a `.deb` set's cold fetch) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
 under test.
 
 ### Chat bench

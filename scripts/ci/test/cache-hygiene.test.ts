@@ -40,6 +40,8 @@ describe('familyOf', () => {
       [`codeql-trap-1-2.27.3-javascript-${SHA}`]: 'codeql-trap-1-*-javascript-*',
       'apt-debs-desktop-test-linux-arm64-ubuntu24-arm64-20261026.166.1-ARM64': 'apt-debs-desktop-test-linux-arm64-ubuntu24-arm64-*-ARM64',
       [`apt-debs-playwright-${LOCK}-ubuntu24-20261026.354.1-X64`]: 'apt-debs-playwright-*-ubuntu24-*-X64',
+      [`apt-debs-v2-ubuntu24-X64-playwright-${LOCK}-20261111.364.1-1a2b3c4d5e6f7081`]: 'apt-debs-v2-ubuntu24-X64-playwright-*-*-*',
+      'apt-debs-v2-ubuntu22-arm64-ARM64-tauri-build-20261101.179.1-0a1b2c3d4e5f6071': 'apt-debs-v2-ubuntu22-arm64-ARM64-tauri-build-*-*',
       'ms-playwright-Linux-X64-1.64.1': 'ms-playwright-Linux-X64-*',
       [`sc-downloads-macOS-ARM64-ffmpeg-true-${LOCK}`]: 'sc-downloads-macOS-ARM64-ffmpeg-true-*',
       [`sc-downloads-Windows-X64-ffmpeg-true-for-windows-x64-${LOCK}-42472780332-1a2b3c4d5e6f`]: 'sc-downloads-Windows-X64-ffmpeg-true-for-windows-x64-*-*-*',

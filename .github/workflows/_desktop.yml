@@ -307,7 +307,7 @@ jobs:
       # Preflight drives Google Chrome through Playwright and streams an ffmpeg feed; both preflight
       # and the desktop step run the local Cloudflare stand-in (scripts/test/lib/cloudflare.mjs),
       # whose certificates come from an npm package, so every image gets npm ci. The desktop
-      # step's apt downloads go into the .deb cache.
+      # step's packages come from the job's saved .deb set (apt offline, apt-debs.sh).
       # The checks below run even after one of them failed, but only once this job's setup and
       # their own downloads worked: a failed setup or artifact download is the job's one error,
       # not followed by checks that fail for want of it.
@@ -356,19 +356,19 @@ jobs:
           name: update-test-${{ matrix.target }}
           path: release/update-test
       # The AppImage runs first, with only the host libraries the install guide lists. The .deb
-      # pulls its own libraries: they are downloaded here first (time limit per try, retries,
-      # another mirror after a slow try) into the .deb cache ($APT_DEBS), from which the test's
-      # `apt-get install ./*.deb` installs them. Xvfb and D-Bus come with the image.
+      # pulls its own libraries: apt-debs.sh checks here that the job's saved .deb set holds them
+      # (the Ubuntu archive only when it does not fit this runner image) and leaves apt offline
+      # with that set as its only source, so the test's own `apt-get install ./*.deb` resolves
+      # them from it. Xvfb and D-Bus come with the image.
       - name: Linux display, the AppImage's host libraries and the .deb's dependencies
         id: host
         if: ${{ !cancelled() && steps.update-test.outcome == 'success' && runner.os == 'Linux' }}
         run: |
           command -v xvfb-run dbus-run-session
-          .github/scripts/apt-retry.sh update
           # shellcheck disable=SC2086 # a list of package names
-          .github/scripts/apt-retry.sh install -y --no-install-recommends $APPIMAGE_HOST_PACKAGES
+          .github/scripts/apt-debs.sh install $APPIMAGE_HOST_PACKAGES
           deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
-          .github/scripts/apt-retry.sh download -y --no-install-recommends "./$deb"
+          .github/scripts/apt-debs.sh download "./$deb"
       # Diagnostics only: one run's first silent NSIS install took 4 min instead of the usual
       # 15 s (the same installer again: 8 s). This records whether Defender scans what the job
       # runs, so a repeat can be told apart from a slow VM.

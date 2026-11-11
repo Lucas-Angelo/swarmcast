@@ -165,7 +165,7 @@ jobs:
         if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'Linux'
         run: |
           npx playwright install firefox webkit
-          .github/scripts/apt-retry.sh playwright-deps firefox webkit
+          .github/scripts/apt-debs.sh playwright-deps firefox webkit
       # The `chromium` project runs the Google Chrome of the runner image.
       - name: Playwright browsers (macOS)
         if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'macOS'
@@ -408,10 +408,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The .deb set main saved for the pipeline's desktop test (restored, never saved here).
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
           npm-ci: 'false'
+          apt-debs: ${{ runner.os == 'Linux' && format('desktop-test-{0}', matrix.target) || '' }}
       - uses: ./.github/actions/fetch-artifact
         timeout-minutes: 10
         with:
@@ -426,16 +428,15 @@ jobs:
           path: release/update-test
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
-      # As in _desktop.yml's clean-machine job: the AppImage's host libraries, and the .deb's dependencies
-      # downloaded first (apt-retry.sh), so the test's own `apt-get install ./*.deb` installs them
-      # from the local cache.
+      # As in _desktop.yml's clean-machine job: the AppImage's host libraries, and the .deb's
+      # dependencies in the saved .deb set with apt offline (apt-debs.sh), so the test's own
+      # `apt-get install ./*.deb` resolves them from it.
       - name: The AppImage's host libraries and the .deb's dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
-          .github/scripts/apt-retry.sh update
-          .github/scripts/apt-retry.sh install -y --no-install-recommends libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
+          .github/scripts/apt-debs.sh install libgl1 libegl1 fontconfig fonts-dejavu-core libharfbuzz0b libfribidi0
           deb="$(find release/desktop -maxdepth 1 -name '*.deb' | head -n 1)"
-          .github/scripts/apt-retry.sh download -y --no-install-recommends "./$deb"
+          .github/scripts/apt-debs.sh download "./$deb"
       # The update test's target is the real build, served with this latest.json (_desktop.yml).
       - name: latest.json for the update test
         run: |
