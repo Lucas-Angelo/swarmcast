@@ -20,6 +20,14 @@ export default defineConfig({
   timeout: 30_000,
   expect: { timeout: 5_000 },
   fullyParallel: true,
+  // Two workers on CI, whatever the runner. Playwright's default is half the CPUs: two on the
+  // 4-CPU Ubuntu and Windows runners, but one on the 3-CPU macOS ones, where the same 326 tests then
+  // took 4.9-10.1 minutes (p50 7.3 in the e2e chat job, whose 10-minute step limit one run
+  // outlasted), against 3.1-5.3 on Ubuntu and 2.4-3.2 on the macOS hosts with more CPUs, which got
+  // two (pipeline runs of 2026-11-07 to 11-11). Every test has its own page, context and mock hub,
+  // and the warm-ups (globalSetup, then each worker's browser in fixtures.ts) are made for several
+  // workers. Locally, the default.
+  workers: process.env.CI ? 2 : undefined,
   // Never retried, CI included: a test that fails once is a bug to fix, not a flake to rerun.
   retries: 0,
   reporter: process.env.CI

@@ -17,7 +17,8 @@
   "e2e-server": {
     "ui": { "total": { "lines": 72 } },
     "chat": { "total": { "lines": 71 } },
-    "media": { "total": { "lines": 71 } }
+    "media": { "total": { "lines": 71 } },
+    "live": { "total": { "lines": 72 } }
   },
   "desktop": {
     "linux": { "total": { "lines": 32, "functions": 38, "regions": 36 } },
