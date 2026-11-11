@@ -81,6 +81,11 @@ runs:
     # entry for this runner image, else the newest of any image (a new runner image: apt-debs.sh
     # asks apt whether that set still fits, and goes to the archive only when it does not), else,
     # for a name that ends in a hash (playwright-<hash of package-lock.json>), the newest of any hash.
+    # Transition: with no set saved yet, the .deb cache from before sets (key apt-debs-<name>-
+    # <ImageOS>-<ImageVersion>-<arch>, its old path: .debs only), this image's, else the newest of
+    # the same OS and architecture (`-<ImageOS>-2`: an image version, so ubuntu22 never takes
+    # ubuntu22-arm64's). apt-debs.sh writes its SHA256SUMS from the files and uses it only when
+    # apt says it fits (SC_APT_DEBS_LEGACY). Remove once main has saved a set for every list.
     - name: .deb set keys (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       id: apt-debs
@@ -96,6 +101,8 @@ runs:
           echo "key=$base$NAME-${ImageVersion:?}-"
           echo "name=$base$NAME-"
           echo "family=$family"
+          echo "legacy=apt-debs-$NAME-$ImageOS-$ImageVersion-$RUNNER_ARCH"
+          echo "legacy-prefix=apt-debs-$NAME-$ImageOS-2"
         } >> "$GITHUB_OUTPUT"
     - name: Restore the .deb set (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
@@ -114,15 +121,34 @@ runs:
           ${{ steps.apt-debs.outputs.key }}
           ${{ steps.apt-debs.outputs.name }}
           ${{ steps.apt-debs.outputs.family }}
+    - name: Restore the pre-v2 .deb cache (Linux, transition)
+      if: inputs.apt-debs != '' && runner.os == 'Linux' && steps.apt-debs-cache.outputs.cache-matched-key == ''
+      id: apt-debs-legacy
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
+      with:
+        path: ${{ runner.temp }}/apt-debs/*.deb
+        key: ${{ steps.apt-debs.outputs.legacy }}
+        restore-keys: ${{ steps.apt-debs.outputs.legacy-prefix }}
     - name: Remember the .deb set for the save step (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       shell: bash
       env:
         KEY: ${{ steps.apt-debs.outputs.key }}
         MATCHED: ${{ steps.apt-debs-cache.outputs.cache-matched-key }}
+        LEGACY: ${{ steps.apt-debs-legacy.outputs.cache-matched-key }}
       run: |
         echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
-        echo ".deb set: ${MATCHED:-none saved yet} (this runner image: ${KEY%-})"
+        if [ -n "$MATCHED" ]; then
+          echo ".deb set: $MATCHED (this runner image: ${KEY%-})"
+        elif [ -n "$LEGACY" ]; then
+          echo "SC_APT_DEBS_LEGACY=$LEGACY" >> "$GITHUB_ENV"
+          echo ".deb set: none saved yet; transition from the pre-v2 cache $LEGACY (this runner image: ${KEY%-})"
+        else
+          echo ".deb set: none saved yet, no pre-v2 cache either (this runner image: ${KEY%-})"
+        fi
 
     # The remote actions of this action (setup-node, actions/cache) run from copies
     # fetched with git at their pins (.github/actions/remote-pins), with tries: the runner's own

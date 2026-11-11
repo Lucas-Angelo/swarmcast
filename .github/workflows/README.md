@@ -628,6 +628,19 @@ the job's saved `.deb` set, installed by `.github/scripts/apt-debs.sh` with apt 
   that was made on the same runner image (an older image's leftovers go). Main only, like the Rust
   cache: the set is installed as root, and a release build restores what `main`'s own runs saved.
 
+**Transition from the `.deb` caches before sets.** When no `apt-debs-v2-*` entry restores, setup
+also restores the cache the jobs used before (`apt-debs-<name>-<ImageOS>-<ImageVersion>-<arch>`,
+its old path `*.deb`): this image's, else the newest for the same OS and architecture
+(`apt-debs-<name>-<ImageOS>-2`, so `ubuntu22` never takes `ubuntu22-arm64`'s), and sets
+`SC_APT_DEBS_LEGACY` to its key. Those hold the `.debs` a cold job downloaded and no manifest:
+`apt-debs.sh` writes `SHA256SUMS` from the files at restore (they come from `main`'s own cache
+scope, as the sets do) and uses them only as any set, when apt says they fit; the log and an
+`apt (infrastructure)` error name the pre-v2 cache as the origin, and `finish` on `main` saves it
+whole as the first set. Every list had one when sets came in (2026-11-11), each for the runner
+image version the jobs ran on, and each held every package those jobs' apt installed in the last
+green `main` run (51 to 181 per list), so the first runs need no archive either. Remove this step
+once `main` has saved a set for every list.
+
 So the archive is asked once per list and runner image change that moves a pinned package, by the
 first jobs that need that set, and never by a job whose set fits. Not one producer job per run
 (as the crates have): it would need the archive at the same moment as its consumers, so an outage

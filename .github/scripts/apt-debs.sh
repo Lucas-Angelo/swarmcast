@@ -16,12 +16,18 @@
 #                    (input apt-debs): the .debs, SHA256SUMS (sha256sum's format: every .deb of the
 #                    set with its SHA-256) and made-on (the runner image the set was made on)
 #   SC_APT_DEBS_KEY  (finish) the cache key up to the runner image version (setup sets it)
+#   SC_APT_DEBS_LEGACY  the key of a pre-v2 .deb cache setup restored instead, when no set was
+#                    saved yet (apt-debs-<name>-<ImageOS>-<ImageVersion>-<arch>: .debs only)
 #   ImageOS, ImageVersion, RUNNER_ARCH: the runner image (GitHub sets them)
 #   apt-retry.sh's APT_* settings, for the cold path
 #
 # How (.github/workflows/README.md, "Ubuntu packages"):
 # - The set is checked once per job: every .deb in SHA256SUMS with that SHA-256 (sha256sum --strict),
 #   and nothing else in the folder; a set that does not match is not used at all (a warning).
+#   The transition from the .deb caches before sets (SC_APT_DEBS_LEGACY): those hold .debs with no
+#   manifest, so SHA256SUMS is written from the files at restore. They come from main's own cache
+#   scope like the sets, and are used only as any set is, when apt says they fit; the log and an
+#   `apt (infrastructure)` error name them as the origin. finish then saves them as a set.
 # - apt then runs in a closed world for the rest of the job: /etc/apt/apt.conf.d/zzzz-sc-apt-debs
 #   replaces every source with one flat repository, file:$APT_DEBS (its Packages index made here
 #   from the .debs, with their SHA-256), and keeps its lists in a folder of its own. No `apt-get
@@ -72,7 +78,19 @@ check_set() {
       bad="$(head -n 3 "$WORK/check.log" | paste -sd ' ' -)"
     fi
   elif compgen -G "$SET/*.deb" >/dev/null; then
-    bad="no SHA256SUMS"
+    if [ -n "${SC_APT_DEBS_LEGACY:-}" ]; then
+      for f in "$SET"/*.deb; do
+        b="$(basename "$f")"
+        [[ "$b" =~ $NAME_RE ]] || { log "$b is not a name apt gives a .deb: removed"; "${SUDO[@]}" rm -f "$f"; }
+      done
+      write_sums
+      echo "pre-v2 cache $SC_APT_DEBS_LEGACY" >"$SET/made-on"
+      echo "the pre-v2 .deb cache $SC_APT_DEBS_LEGACY (no manifest: SHA256SUMS written from its files at restore)" >"$WORK/origin"
+      touch "$WORK/legacy"
+      log "transition: no .deb set saved yet; using the pre-v2 cache $SC_APT_DEBS_LEGACY, $(grep -c . "$SET/SHA256SUMS") .debs with no manifest (SHA256SUMS written from the files now; main's own cache scope), only if apt says it fits"
+    else
+      bad="no SHA256SUMS"
+    fi
   fi
   if [ -n "$bad" ]; then
     echo "::warning title=apt-debs::the saved .deb set does not match its manifest ($bad): not used"
@@ -91,9 +109,11 @@ check_set() {
   n="$(grep -c . "$SET/SHA256SUMS")"
   if [ "$n" -gt 0 ]; then
     cat "$SET/made-on" >"$WORK/restored-on" 2>/dev/null || echo unknown >"$WORK/restored-on"
-    log "the saved set: $n .debs, each with its manifest's SHA-256, made on $(cat "$WORK/restored-on") (this runner: $IMAGE)"
+    [ -f "$WORK/origin" ] || echo "the saved .deb set (made on $(cat "$WORK/restored-on"), every .deb checked against its SHA256SUMS)" >"$WORK/origin"
+    log "the set: $n .debs, from $(cat "$WORK/origin") (this runner: $IMAGE)"
   else
     echo none >"$WORK/restored-on"
+    : >"$WORK/origin"
     log "no saved set for this job (cold)"
   fi
   touch "$WORK/checked"
@@ -178,11 +198,10 @@ simulate() {
 
 # infra_fail WHAT WHY: the cold path could not reach the archive. Says so, and stops the job.
 infra_fail() {
-  local on set why="${2%.}"
-  on="$(cat "$WORK/restored-on")"
-  set="the saved .deb set (made on $on) does not hold all that this runner image ($IMAGE) needs"
-  [ "$on" != none ] || set="no .deb set has been saved for this job on this runner image ($IMAGE) yet"
-  echo "::error title=apt (infrastructure)::$1 failed: the Ubuntu archive did not answer (the tries above). The job needed it because $set ($why). Nothing was tested: this is an outage of the archive, not a failure of SwarmCast. Run the job again once the archive answers."
+  local why="${2%.}" because
+  because="its packages come from $(cat "$WORK/origin"), which does not hold all that this runner image ($IMAGE) needs"
+  [ -s "$WORK/origin" ] || because="no .deb set (nor a pre-v2 .deb cache) was saved for this job on this runner image ($IMAGE) yet"
+  echo "::error title=apt (infrastructure)::$1 failed: the Ubuntu archive did not answer (the tries above). The job needed it because $because ($why). Nothing was tested: this is an outage of the archive, not a failure of SwarmCast. Run the job again once the archive answers."
   exit 1
 }
 
@@ -299,14 +318,16 @@ playwright_deps() {
 # finish: the set the next jobs restore, when this job fetched. Prints key=<cache key> (stdout).
 finish() {
   local keep n mb suffix
-  if [ ! -f "$WORK/fetched" ]; then
+  if [ ! -f "$WORK/fetched" ] && [ ! -f "$WORK/legacy" ]; then
     log "nothing fetched from the archive in this job: no new set to save"
     return 0
   fi
   : "${SC_APT_DEBS_KEY:?SC_APT_DEBS_KEY is not set}"
   keep="$(mktemp)"
   sort -u "$WORK/used" >"$keep"
-  if [ "$(cat "$WORK/restored-on")" = "$IMAGE" ]; then
+  # The rest of the restored set too when it was made on this image, or came from a pre-v2 cache
+  # (kept whole: a job that stopped early must not leave the next ones a smaller set).
+  if [ "$(cat "$WORK/restored-on")" = "$IMAGE" ] || [ -f "$WORK/legacy" ]; then
     awk '{ print $2 }' "$WORK/restored.sha256" >>"$keep"
     sort -u -o "$keep" "$keep"
   fi
