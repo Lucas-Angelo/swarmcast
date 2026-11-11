@@ -358,11 +358,11 @@ async function install(dir) {
     const stable = v.replace(/-.*$/, '');
     step(`dpkg sorts ${debVersion} below ${stable}`, spawnSync('dpkg', ['--compare-versions', debVersion, 'lt', stable]).status === 0);
   }
-  // No time limit: apt resolving the .deb's dependencies is part of the test, and a slow mirror
-  // is not a failure (the workflow downloads them beforehand; the job timeout is the backstop).
-  // The workflow downloads them with apt-retry.sh into $APT_DEBS (the .deb cache).
-  const cache = process.env.APT_DEBS ? ['-o', `Dir::Cache::archives=${process.env.APT_DEBS}`] : [];
-  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=3', ...cache, deb], { timeout: undefined });
+  // No time limit: apt resolving the .deb's dependencies is part of the test. In CI this apt is
+  // offline: .github/scripts/apt-debs.sh checked beforehand that the job's saved .deb set holds
+  // them and left that set as apt's only source, so they never come from the Ubuntu archive here
+  // (the job timeout is the backstop). Elsewhere apt uses the machine's own sources.
+  run('sudo', ['apt-get', 'install', '-y', '--no-install-recommends', '-o', 'Acquire::Retries=3', deb], { timeout: undefined });
   step(`the .deb (package ${debPackage}) installs swarmcast-desktop`, fs.existsSync('/usr/bin/swarmcast-desktop'));
   return '/usr/bin/swarmcast-desktop';
 }

@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux: the browsers' system libraries come from apt into the same .deb cache as _e2e.yml's.
+      # Linux: the browsers' system libraries come from the same saved .deb set as _e2e.yml's.
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
@@ -83,9 +83,9 @@ jobs:
       - name: Build the viewer
         run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer
       # The `chromium` projects run the runner image's Google Chrome (CI=true), Edge is preinstalled
-      # on Windows; Firefox and WebKit come from Playwright. Their Linux libraries through
-      # apt-retry.sh (time limit per try, retries, another mirror), as in _e2e.yml: `install
-      # --with-deps` runs apt without a limit, and GitHub's mirror has stalled it for 20+ minutes.
+      # on Windows; Firefox and WebKit come from Playwright. Their Linux libraries from the saved
+      # .deb set with apt offline (apt-debs.sh), as in _e2e.yml: `install --with-deps` runs apt
+      # against the archive without a limit, and GitHub's mirror has stalled it for 20+ minutes.
       - name: Playwright browsers
         timeout-minutes: 10
         env:
@@ -94,7 +94,7 @@ jobs:
           # shellcheck disable=SC2086 # BROWSERS is a list
           npx playwright install $BROWSERS
           # shellcheck disable=SC2086
-          if [ "$RUNNER_OS" = Linux ]; then .github/scripts/apt-retry.sh playwright-deps $BROWSERS; fi
+          if [ "$RUNNER_OS" = Linux ]; then .github/scripts/apt-debs.sh playwright-deps $BROWSERS; fi
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       - name: Corpus and chat UI
         timeout-minutes: 15

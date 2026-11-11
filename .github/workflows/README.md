@@ -262,18 +262,19 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 
 | Path | What |
 |---|---|
-| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the app's pinned ffmpeg archive (`app-ffmpeg`) and the portable OBS zip (`obs-studio`) into the download cache, the download cache, the Tauri tools on Windows (`tauri-tools`) and a `.deb` cache (`apt-debs`); apt settings that retry |
+| `.github/actions/setup` | Node.js and `npm ci` with the npm cache (restored through `cache-restore`, saved from `main` only; elsewhere also `main`'s latest entry after a lockfile change), npm's network limits; optional: the pinned test ffmpeg (`FFMPEG_BIN`), the app's pinned ffmpeg archive (`app-ffmpeg`) and the portable OBS zip (`obs-studio`) into the download cache, the download cache, the Tauri tools on Windows (`tauri-tools`) and the job's saved `.deb` set (`apt-debs`, see "Ubuntu packages" below); apt settings that retry |
 | `.github/actions/setup/save` | last step of a job: saves the caches it added or changed files in (`.github/scripts/cache-files.mjs`), on `main` only (the download cache also from pull requests; see "Release downloads" below) |
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
-| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux |
+| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux from the saved `.deb` set with apt offline (`apt-debs.sh`) |
 | `.github/actions/cargo-crates` | every crate of `apps/desktop/src-tauri/Cargo.lock` into `$CARGO_HOME/registry` from the artifact an earlier run saved, checked against `Cargo.lock`'s SHA-256 values, else from crates.io with tries; then `CARGO_NET_OFFLINE=true` for the job; `cargo-crates/save` (the build stage) saves that artifact once per `Cargo.lock` and toolchain (`.github/scripts/cargo-crates.mjs`; see "Rust crates" below) |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/actions/upload-build` | `actions/upload-artifact` for a build artifact the later jobs need, once more after a failed try, when the artifact service answers again (see "Artifact uploads" below) |
-| `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch; `install`, `download`, `playwright-deps` |
+| `.github/scripts/apt-debs.sh` | every apt install of a gating Linux job: from the job's saved `.deb` set, checked against its `SHA256SUMS`, with apt offline (the set is its only source); the Ubuntu archive only when the set does not fit the runner image; `install`, `download`, `playwright-deps`, `finish` (see "Ubuntu packages" below) |
+| `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch (`update`, `install`, `download`): `apt-debs.sh`'s cold path, the Docker test images' builds, the soak's `apt` suite |
 | `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
 | `.github/scripts/changes.sh` | the `changes` job |
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
@@ -586,6 +587,84 @@ job with a full rust-cache hit printed `Updating crates.io index` and asked inde
 (that run's `node / unit, integration, rust (ubuntu-24.04)`, in clippy). Not the Actions cache
 for the crates: the caches held 9.6 of their 10 GB (see "Test images").
 
+### Ubuntu packages
+
+No gating Linux job asks the Ubuntu archive for a package while its saved set fits the runner
+image: the Tauri build dependencies (`setup-rust`: the desktop and Docker builds, the node job's
+Rust checks), the system libraries of Playwright's Firefox and WebKit (`_e2e.yml`, `rendering.yml`)
+and the desktop test's AppImage host libraries and `.deb` dependencies (`_desktop.yml`) come from
+the job's saved `.deb` set, installed by `.github/scripts/apt-debs.sh` with apt offline.
+
+- `./.github/actions/setup` (input `apt-debs`, the set's name: `tauri-build`,
+  `playwright-<hash of package-lock.json>`, `desktop-test-<target>`) restores the set into
+  `$APT_DEBS`: its `.deb` files, `SHA256SUMS` (each file's SHA-256) and `made-on` (the runner image
+  it was made on). Key: `apt-debs-v2-<ImageOS>-<arch>-<name>-<ImageVersion>-<hash of SHA256SUMS>`.
+  The restore takes the newest entry for this runner image, else the newest for any image, else,
+  for a name that ends in a hash, the newest for any hash.
+- `apt-debs.sh` checks the set once per job (`sha256sum --check --strict`, and no other `.deb` in
+  the folder; a set that does not match is not used, with a warning), then makes it apt's only
+  source for the rest of the job: `/etc/apt/apt.conf.d/zzzz-sc-apt-debs` replaces every source
+  with one flat repository, `file:$APT_DEBS` (a `Packages` index written from the files and their
+  SHA-256), and gives apt a lists folder of its own. Every `apt-get` of the job sees only the set
+  and the image, also with sudo and from other tools (Playwright's `install-deps --dry-run`, the
+  desktop test's `apt-get install ./*.deb`): no `apt-get update` against the archive, nothing to
+  download.
+- Whether the set fits is apt's own answer: `apt-get install -s` of the request in that closed
+  world. A set made on an older runner image fits unless the new image moved a package the set
+  pins (a `-dev` package wants its library at its own version, `libgtk-3-dev` and `libgtk-3-0`);
+  nothing on the image is downgraded. Then `apt-get install` from the set, and every named package
+  must be installed after it.
+- Only a set that does not fit (none saved yet, a runner image that moved such a package, a new
+  package in a list) sends the job to the archive, through `apt-retry.sh` (a time limit per try,
+  3 tries, another mirror): `apt-get update`, the missing `.deb` files downloaded into the set (apt
+  checks each against the archive's signed index), and the request must then fit the closed world
+  too. An `apt-get update` that could not fetch the archive's index is a failed try (apt itself
+  exits 0 then, with old lists or none). When the archive does not answer, the step fails with
+  `apt (infrastructure): ... the Ubuntu archive did not answer`, with the reason the set did not
+  fit; nothing is skipped, and nothing is tested without its packages. A request that the archive
+  cannot resolve either (a package that does not exist) is an `apt-debs` error instead.
+- `./.github/actions/setup/save`, on `main`, saves a new entry only when the job had to fetch
+  (`apt-debs.sh finish`): the `.deb` files the job used, plus the rest of the restored set when
+  that was made on the same runner image (an older image's leftovers go). Main only, like the Rust
+  cache: the set is installed as root, and a release build restores what `main`'s own runs saved.
+
+**Transition from the `.deb` caches before sets.** When no `apt-debs-v2-*` entry restores, setup
+also restores the cache the jobs used before (`apt-debs-<name>-<ImageOS>-<ImageVersion>-<arch>`,
+its old path `*.deb`): this image's, else the newest for the same OS and architecture
+(`apt-debs-<name>-<ImageOS>-2`, so `ubuntu22` never takes `ubuntu22-arm64`'s), and sets
+`SC_APT_DEBS_LEGACY` to its key. Those hold the `.debs` a cold job downloaded and no manifest:
+`apt-debs.sh` writes `SHA256SUMS` from the files at restore (they come from `main`'s own cache
+scope, as the sets do) and uses them only as any set, when apt says they fit; the log and an
+`apt (infrastructure)` error name the pre-v2 cache as the origin, and `finish` on `main` saves it
+whole as the first set. Every list had one when sets came in (2026-11-11), each for the runner
+image version the jobs ran on, and each held every package those jobs' apt installed in the last
+green `main` run (51 to 181 per list), so the first runs need no archive either. Remove this step
+once `main` has saved a set for every list.
+
+So the archive is asked once per list and runner image change that moves a pinned package, by the
+first jobs that need that set, and never by a job whose set fits. Not one producer job per run
+(as the crates have): it would need the archive at the same moment as its consumers, so an outage
+would fail it too; it would add a job per runner kind (`ubuntu-22.04`, `ubuntu-22.04-arm`,
+`ubuntu-24.04`) ahead of the builds; and during a runner image rollout it and its consumers run on
+different image versions anyway. A set from the previous image, checked by apt in the closed
+world, is the "previous good" without one. Not an artifact either: the sets are small (about
+0.45 GB in all), and the Actions cache's prefix restore gives that fallback.
+
+Still reached at job time: the cold path above; the Docker test images' cold builds (inside their
+containers: "Test images" above); `devices.yml`'s `gdb` for a crashed emulator's core (diagnostics
+after a failure); the soak's `apt` suite, which times the cold path on purpose.
+
+Why: in pipeline run 43034880513 (2026-11-11, from 14:05 UTC) neither azure.archive.ubuntu.com
+nor archive.ubuntu.com answered, nor ports.ubuntu.com for arm64 (`Ign` for every `InRelease`, while
+packages.microsoft.com did), and every Linux job that runs apt failed with `apt-get update failed
+3 times (270 s)`: both Docker stage builds, both Linux desktop builds, the node job, the four
+Ubuntu e2e groups and Ubuntu rendering. Each had restored its `.deb` cache for that exact runner
+image and still ran `apt-get update` first: the cache was only apt's download folder, and apt
+resolves a package against the archive's lists. Nor was a warm job independent of the archive
+when it answered: apt fetched whatever the archive had updated since the cache was saved
+(3.8 MB of GStreamer in `desktop linux-x64 / build` of run 43017518002), and that cache, saved
+once per image, never held it.
+
 ### Release downloads
 
 Files downloaded from `github.com/<owner>/<repo>/releases/download/...` while a job runs come from
@@ -681,7 +760,7 @@ again (a cold run). The Docker suites' test images are artifacts, not caches, fo
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
 | `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more), which start from the plain entry until they exist; a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
-| `apt-debs-*` | `setup/save`: the downloaded .debs, per list and runner image | 7-8 | 0.45 GB |
+| `apt-debs-v2-*` | `setup/save`: the saved `.deb` sets (`apt-debs.sh`), per runner image OS, architecture and list, a new entry only when a job had to add to one ("Ubuntu packages") | 7-8 | about 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
 | `sc-tauri-tools-*` | `setup/save` in the Windows desktop build: NSIS and its Tauri plugin ("Release downloads") | 1 | about 0.005 GB |
 | `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
@@ -821,7 +900,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `--fail-on-flaky-tests` in every CI invocation, so a config that ever retried could not pass a test
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
-  the place that needs it: apt (`apt-retry.sh`), artifact downloads (`fetch-artifact`: a second try,
+  the place that needs it: apt, only when a job's saved `.deb` set does not fit its runner image (`apt-retry.sh` through `apt-debs.sh`; "Ubuntu packages" above), artifact downloads (`fetch-artifact`: a second try,
   then the REST fallback, each a warning), the build artifacts' uploads (`upload-build`: once more
   when the artifact service answers again, a warning; "Artifact uploads" above), the remote actions our steps run (`fetch-remote`: a git
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run

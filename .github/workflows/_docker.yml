@@ -60,7 +60,7 @@ jobs:
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
       # The pinned toolchain and the only apt on the runner: the desktop build's own dependencies,
-      # through apt-retry.sh (time limit per try, retries, another mirror after a slow try).
+      # from the saved .deb set with apt offline (.github/scripts/apt-debs.sh).
       # No rust-cache: a weekly build is not worth half a gigabyte of the repository's cache.
       - uses: ./.github/actions/setup-rust
         timeout-minutes: 8

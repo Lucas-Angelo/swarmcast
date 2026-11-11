@@ -45,8 +45,9 @@ inputs:
     default: 'false'
   apt-debs:
     description: >-
-      Linux: a name for a .deb cache (for example `playwright-<hash>`). Sets APT_DEBS, which
-      .github/scripts/apt-retry.sh downloads into; save it with ./.github/actions/setup/save.
+      Linux: the name of the job's saved .deb set (for example `tauri-build`, `playwright-<hash>`),
+      restored into APT_DEBS for .github/scripts/apt-debs.sh, which installs from it with apt
+      offline; save it with ./.github/actions/setup/save.
     default: ''
 
 runs:
@@ -72,11 +73,20 @@ runs:
         fi
         if [ -f /etc/apt/apt-mirrors.txt ]; then echo "Mirrors:"; cat /etc/apt/apt-mirrors.txt; fi
 
-    # Downloaded .debs (apt-retry.sh install/download put them in $APT_DEBS), for jobs whose apt
-    # packages are part of what they test. The key has the runner image version: a new image
-    # brings new package versions, and the first job on main refills the cache. Saved on main only
-    # (./.github/actions/setup/save at the end of the job): pull requests restore main's.
-    - name: .deb cache key (Linux)
+    # The job's saved .deb set (.github/scripts/apt-debs.sh; .github/workflows/README.md, "Ubuntu
+    # packages"): the .debs its apt installs, SHA256SUMS and made-on. apt-debs.sh checks it against
+    # SHA256SUMS and installs from it with apt offline, so a warm job never asks the Ubuntu archive.
+    # Keys: apt-debs-v2-<ImageOS>-<arch>-<name>-<ImageVersion>-<hash of SHA256SUMS> (setup/save,
+    # main only, a new entry only when a job had to add to the set). The restore takes the newest
+    # entry for this runner image, else the newest of any image (a new runner image: apt-debs.sh
+    # asks apt whether that set still fits, and goes to the archive only when it does not), else,
+    # for a name that ends in a hash (playwright-<hash of package-lock.json>), the newest of any hash.
+    # Transition: with no set saved yet, the .deb cache from before sets (key apt-debs-<name>-
+    # <ImageOS>-<ImageVersion>-<arch>, its old path: .debs only), this image's, else the newest of
+    # the same OS and architecture (`-<ImageOS>-2`: an image version, so ubuntu22 never takes
+    # ubuntu22-arm64's). apt-debs.sh writes its SHA256SUMS from the files and uses it only when
+    # apt says it fits (SC_APT_DEBS_LEGACY). Remove once main has saved a set for every list.
+    - name: .deb set keys (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       id: apt-debs
       shell: bash
@@ -84,8 +94,17 @@ runs:
         NAME: ${{ inputs.apt-debs }}
       run: |
         echo "APT_DEBS=$RUNNER_TEMP/apt-debs" >> "$GITHUB_ENV"
-        echo "key=apt-debs-$NAME-${ImageOS:?}-${ImageVersion:?}-$RUNNER_ARCH" >> "$GITHUB_OUTPUT"
-    - name: Restore the .deb cache (Linux)
+        base="apt-debs-v2-${ImageOS:?}-$RUNNER_ARCH-"
+        family=""
+        if [[ "$NAME" =~ ^(.+)-[0-9a-f]{7,}$ ]]; then family="$base${BASH_REMATCH[1]}-"; fi
+        {
+          echo "key=$base$NAME-${ImageVersion:?}-"
+          echo "name=$base$NAME-"
+          echo "family=$family"
+          echo "legacy=apt-debs-$NAME-$ImageOS-$ImageVersion-$RUNNER_ARCH"
+          echo "legacy-prefix=apt-debs-$NAME-$ImageOS-2"
+        } >> "$GITHUB_OUTPUT"
+    - name: Restore the .deb set (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       id: apt-debs-cache
       continue-on-error: true
@@ -93,17 +112,43 @@ runs:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
       uses: ./.github/actions/cache-restore
       with:
-        path: ${{ runner.temp }}/apt-debs/*.deb
+        path: |
+          ${{ runner.temp }}/apt-debs/*.deb
+          ${{ runner.temp }}/apt-debs/SHA256SUMS
+          ${{ runner.temp }}/apt-debs/made-on
         key: ${{ steps.apt-debs.outputs.key }}
-    - name: Remember the .deb cache for the save step (Linux)
+        restore-keys: |
+          ${{ steps.apt-debs.outputs.key }}
+          ${{ steps.apt-debs.outputs.name }}
+          ${{ steps.apt-debs.outputs.family }}
+    - name: Restore the pre-v2 .deb cache (Linux, transition)
+      if: inputs.apt-debs != '' && runner.os == 'Linux' && steps.apt-debs-cache.outputs.cache-matched-key == ''
+      id: apt-debs-legacy
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '1'
+      uses: ./.github/actions/cache-restore
+      with:
+        path: ${{ runner.temp }}/apt-debs/*.deb
+        key: ${{ steps.apt-debs.outputs.legacy }}
+        restore-keys: ${{ steps.apt-debs.outputs.legacy-prefix }}
+    - name: Remember the .deb set for the save step (Linux)
       if: inputs.apt-debs != '' && runner.os == 'Linux'
       shell: bash
       env:
         KEY: ${{ steps.apt-debs.outputs.key }}
-        HIT: ${{ steps.apt-debs-cache.outputs.cache-hit }}
+        MATCHED: ${{ steps.apt-debs-cache.outputs.cache-matched-key }}
+        LEGACY: ${{ steps.apt-debs-legacy.outputs.cache-matched-key }}
       run: |
         echo "SC_APT_DEBS_KEY=$KEY" >> "$GITHUB_ENV"
-        echo "SC_APT_DEBS_HIT=${HIT:-false}" >> "$GITHUB_ENV"
+        if [ -n "$MATCHED" ]; then
+          echo ".deb set: $MATCHED (this runner image: ${KEY%-})"
+        elif [ -n "$LEGACY" ]; then
+          echo "SC_APT_DEBS_LEGACY=$LEGACY" >> "$GITHUB_ENV"
+          echo ".deb set: none saved yet; transition from the pre-v2 cache $LEGACY (this runner image: ${KEY%-})"
+        else
+          echo ".deb set: none saved yet, no pre-v2 cache either (this runner image: ${KEY%-})"
+        fi
 
     # The remote actions of this action (setup-node, actions/cache) run from copies
     # fetched with git at their pins (.github/actions/remote-pins), with tries: the runner's own

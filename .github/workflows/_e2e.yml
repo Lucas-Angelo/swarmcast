@@ -101,8 +101,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Linux: the browsers' system libraries come from apt, cached as .debs per runner image and
-      # Playwright version (package-lock.json).
+      # Linux: the browsers' system libraries come from the job's saved .deb set (per runner image
+      # and package-lock.json), installed with apt offline (.github/scripts/apt-debs.sh).
       - uses: ./.github/actions/setup
         timeout-minutes: 8
         with:
@@ -119,9 +119,11 @@ jobs:
         id: playwright
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
       # Ubuntu: Firefox and WebKit come from Playwright's CDN (cached per version). Their system
-      # libraries come through apt-retry.sh (time-limited downloads, retries, mirror failover,
-      # then an offline install), not `install-deps`, whose own apt calls have no limit (GitHub's
-      # Ubuntu mirror has stalled `playwright install --with-deps` for 20+ minutes).
+      # libraries come from the saved .deb set with apt offline (apt-debs.sh: Playwright's own
+      # `install-deps --dry-run` lists them; the Ubuntu archive only when the set does not fit
+      # this runner image), not `install-deps`, whose own apt-get update and install have no time
+      # limit (GitHub's Ubuntu mirror has stalled `playwright install --with-deps` for 20+
+      # minutes) and ask the archive in every job (run 43034880513: the archive did not answer).
       # Saved on main only (end of the job), like the other caches.
       - name: Restore the Playwright browsers (Linux)
         if: runner.os == 'Linux'
@@ -139,7 +141,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           npx playwright install firefox webkit
-          .github/scripts/apt-retry.sh playwright-deps firefox webkit
+          .github/scripts/apt-debs.sh playwright-deps firefox webkit
       # macOS: the `chromium` project runs Google Chrome, so only Firefox and WebKit (macOS needs
       # no system libraries for them).
       - name: Playwright browsers (macOS)
