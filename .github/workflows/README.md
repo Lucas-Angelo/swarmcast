@@ -196,6 +196,24 @@ under the account's five. `devices` and `rendering` lead their lanes because the
 test themselves and can start once `changes` is done; their Ubuntu and Windows jobs start then too.
 The macOS node job leads lane 3: it needs only `quick` and `build`.
 
+**Measured** (the 30 release rehearsals and 6 pull request and `main` runs of 2026-11-11 to 11-12
+in this layout whose jobs all passed; minutes from the run's start to the lane's last job's end,
+queue waits included):
+
+| | Lane 1 | Lane 2 | Lane 3 | Rest of the run | Whole run |
+|---|---|---|---|---|---|
+| Release rehearsal (p50, p90, max) | 35.3, 37.6, 42.6 | 40.1, 44.5, 50.2 | 33.2, 36.8, 41.4 | 25.7, 26.7, 27.2 | 40.5, 44.6, 50.5 |
+| Pull request, `main` (p50, max) | 27.3, 36.1 | 31.8, 34.1 | 26.5, 36.0 | 26.5, 27.1 | 31.9, 36.2 |
+
+Lane 2 is the critical path. Its `e2e / chat (macos-latest)` took p50 19.4 minutes: the chat
+group 11.3 and the viewer chat UI 7.1 (2.5 to 9.4; the 4.3 expected at two workers above did
+not come). A rehearsal's Apple silicon jobs ran p50 100 minutes in all (a pull request's 68), at
+most three at once, and waited p50 2.3 minutes for runners (a pull request's 6.6). Since then:
+release-flavour builds restore the test builds' Rust cache ("Desktop builds" above: build A p50
+3.6 to about 0.9 minutes on Apple silicon, so lanes 2 and 3 of a rehearsal or release end about
+2.7 minutes sooner), and `quick` ends with `build` (p50 1.1 instead of 2.0 minutes into a run,
+so in a pull request or `main` run every lane starts about 0.9 minutes sooner).
+
 **Wall time.** The critical path is the macOS lanes (the rest of a run ends by about minute 27,
 the Docker suites' Playwright jobs last). Of every assignment of the seven jobs to the three lanes,
 tried against the jobs' p50 times (pull request and rehearsal together), the layout above is
