@@ -38,11 +38,11 @@ changes ─┬─ quick ──────────────────�
 | Stage | File | Jobs | What |
 |---|---|---|---|
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
-| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
+| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, `npm audit`, upstream binaries check, `cargo fmt`; kept about as short as `build` (the unit tests run in `node`), since every test stage waits for both |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first; the Rust crates' artifact when no run saved it yet ("Rust crates") |
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel; both calls are in the macOS lanes: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
+| node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit, integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
 | e2e | `_e2e.yml`, called five times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos-chat`, `e2e-macos-ui`, `e2e-macos-media`, `e2e-macos-live`: one macOS group each, in the macOS lanes) | 9 (Ubuntu, macOS × `ui`, `chat`, `live`, `media`; Windows chat UI) | Playwright, all three browser projects, in four groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, polls, privacy, flood, nickname), `live` the files in `LIVE_FILES` (P2P, adaptive delay, stream start, attack, browser check), `media` the other `@media` tests plus the file(s) in `UI_WITH_MEDIA` (player controls), `ui` the rest, balanced to take about the same time (with the 0.5.x specs p90 10.8-11.9 minutes each on macOS and at most 10.2 on Ubuntu, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, two Playwright workers on every runner: 3-5 minutes on Ubuntu; 5-10 on macOS while its 3 CPUs gave it one), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
@@ -965,7 +965,7 @@ reports (lcov, json-summary, HTML) as `coverage-*` artifacts, kept 14 days.
 
 | Suite | Jobs | How | Floors checked by |
 |---|---|---|---|
-| unit | quick (Ubuntu), node (macOS, Windows) | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
+| unit | node ×3 | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
 | integration | node ×3 | `npm run coverage:integration`: Vitest, V8 (the code the tests run in-process) | Vitest, in the test step (this OS's floors) |
 | e2e server | e2e ×4 | `NODE_V8_COVERAGE` on the Playwright step; `scripts/coverage/e2e-server.mjs` keeps the e2e server's files, c8 maps them onto the sources | `report.mjs --check`, after a passing run (this group's floors, lines) |
 | desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (pinned in `scripts/build/versions.json`, from the download cache: "Release downloads"; `llvm-tools` from `setup-rust`) | `report.mjs --check` |

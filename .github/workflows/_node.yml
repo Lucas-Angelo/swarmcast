@@ -1,7 +1,7 @@
 name: node
 
-# Per OS (pipeline.yml test stage): the unit tests (macOS and Windows; Ubuntu runs them in
-# `quick`), the integration tests (the parallel `integration` project, then the serial
+# Per OS (pipeline.yml test stage): the unit tests (here on every OS, so `quick`, which every
+# test stage waits for, ends about when `build` does), the integration tests (the parallel `integration` project, then the serial
 # `integration-media` one: vitest.integration.config.ts), and the desktop shell's Rust checks
 # (clippy, cargo test, crate licences, the glib advisory guard). Uses web-dist from _build.yml.
 # Vitest writes its own job summary; cargo test goes through .github/scripts/test-summary.mjs. Test steps have their own time limit (2 to 7 times their
@@ -88,14 +88,14 @@ jobs:
 
       # `npm test` also runs the website's unit tests (site/test/unit), which need its packages.
       # With coverage: Vitest fails the step when a floor is not met (scripts/coverage/floors.json).
-      - name: Unit tests (macOS, Windows)
-        if: runner.os != 'Linux'
+      # Ubuntu: p50 0.8, at most 1.0 minutes (in `quick` until 2026-11); macOS and Windows: p50 1.3.
+      - name: Unit tests
         timeout-minutes: 5
         run: |
           npm ci --prefix site --no-audit --no-fund
           npm run coverage:unit
       - name: Upload the unit test results
-        if: ${{ !cancelled() && runner.os != 'Linux' }}
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         continue-on-error: true
         timeout-minutes: 5
@@ -128,11 +128,7 @@ jobs:
       # The coverage tables of this job's Vitest runs (with their floors) in the job summary.
       - name: Unit and integration coverage
         if: ${{ !cancelled() }}
-        env:
-          SUITES: ${{ runner.os == 'Linux' && 'integration' || 'unit integration' }}
-        run: |
-          read -ra suites <<<"$SUITES"
-          node scripts/coverage/report.mjs "${suites[@]}"
+        run: node scripts/coverage/report.mjs unit integration
 
       # ---- apps/desktop/src-tauri ----
       # Also after a failed Node.js step (the Rust checks do not need them), but only with the
