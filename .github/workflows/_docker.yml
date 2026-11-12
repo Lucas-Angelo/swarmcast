@@ -77,13 +77,41 @@ jobs:
           echo "VERSION=$(node -p "require('./package.json').version")" > linux-release/VERSION.env
           tar -cf "$RUNNER_TEMP/linux-docker.tar" linux-release
           ls -la linux-release
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # Two tries, each with its own time limit (README.md, "Artifact uploads"): this upload
+      # (335 MB) took at most 24 s in 435 uploads of 2026-11-03 to 11-12; 5 minutes holds it at the
+      # slowest rate any build artifact went up at (1.6 MB/s). Try 2 only after a failed or
+      # timed-out try 1: up to 5 minutes' wait for the artifact service, then the upload. Pipeline
+      # run 43232320009 lost this job here, its build done: "Failed to CreateArtifact: Unable to
+      # make request: ETIMEDOUT" after 2 min 16 s, in a single plain upload-artifact step.
+      - name: Upload linux-docker-${{ matrix.arch }}
+        id: upload-1
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: linux-docker-${{ matrix.arch }}
           path: ${{ runner.temp }}/linux-docker.tar
-          if-no-files-found: error
           compression-level: 0
           retention-days: 3
+      - name: Upload linux-docker-${{ matrix.arch }} (try 2)
+        id: upload-2
+        if: steps.upload-1.outcome == 'failure'
+        uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: linux-docker-${{ matrix.arch }}
+          path: ${{ runner.temp }}/linux-docker.tar
+          compression-level: 0
+          retention-days: 3
+          try: '2'
+      # A try 2 that failed or ran out of time: GitHub's artifact service or the runner's network,
+      # not the build (which passed, and is not run again).
+      - name: Name a failed upload as infrastructure
+        if: ${{ failure() && steps.upload-2.outcome == 'failure' }}
+        env:
+          NAME: linux-docker-${{ matrix.arch }}
+        run: |
+          echo "::error title=Artifact upload (infrastructure)::infra: $NAME could not be uploaded in 2 tries, each failed or out of time: GitHub's artifact service or the runner's network, not the build (which passed). Start a new run."
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3

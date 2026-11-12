@@ -1,15 +1,17 @@
-name: Upload a build artifact, once more after the artifact service is reachable again
+name: Upload a build artifact (one try of two)
 description: >-
-  actions/upload-artifact for an artifact the later jobs need (a staged server, the installers),
-  tried a second time when the first try fails: first a wait of up to 5 minutes until the artifact
-  service answers (its name resolves and it takes a request), then the upload again with
-  `overwrite` (a first try that got as far as creating the artifact leaves one by that name). A
-  second try that works logs `infra recovery:`; one that fails too fails the step, as before. A
-  macOS VM can lose DNS mid-job: release rehearsal 42846972124 lost `desktop macos-arm64 / build`
-  at "Failed to CreateArtifact: Unable to make request: ENOTFOUND", 10 minutes into the job, after
-  upload-artifact's own 5 attempts (about 30 s). upload-artifact runs from a copy fetched with git
-  (./.github/actions/fetch-remote; .github/workflows/README.md, "Remote actions" and "Artifact
-  uploads"). Only for build artifacts: test results and logs keep `continue-on-error`.
+  One try of actions/upload-artifact for an artifact the later jobs need (web-dist, a staged
+  server, the installers, the Docker suites' build). The workflow runs it twice, as two steps,
+  because a step's `timeout-minutes` is the only time limit GitHub Actions applies to an action
+  (a composite action's own steps cannot have one; they share what is left of the calling
+  step's): try 1 (`try: 1`) with `continue-on-error` and a limit of its own, then try 2
+  (`try: 2`) only when try 1 failed or ran out of time. Try 2 first waits up to 5 minutes until
+  the artifact service answers (its name resolves and it takes a request), then uploads with
+  `overwrite` (a try 1 that got as far as finishing the artifact on the service's side leaves one
+  by that name) and logs `infra recovery:` when it works. A step after try 2 names its failure
+  as infrastructure (an `infra:` error). upload-artifact runs from a copy fetched with git
+  (./.github/actions/fetch-remote). .github/workflows/README.md, "Artifact uploads". Test
+  results, reports and logs do not come here: they keep `continue-on-error`.
 
 inputs:
   name:
@@ -24,39 +26,29 @@ inputs:
   compression-level:
     description: upload-artifact's `compression-level`.
     default: '6'
+  if-no-files-found:
+    description: upload-artifact's `if-no-files-found`.
+    default: error
+  try:
+    description: '`1`: the upload. `2`, after a failed or timed-out try 1: the wait for the artifact service, then the upload with `overwrite`.'
+    default: '1'
 
 runs:
   using: composite
   steps:
-    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
-    # the runner's own download of a remote action is not tried again after a 404. Fetched once
-    # per job, at its first upload; the later ones find it in place.
-    - name: upload-artifact (git fetch, with tries)
-      uses: ./.github/actions/fetch-remote
-      with:
-        repos: actions/upload-artifact
-    - id: try1
-      continue-on-error: true
-      uses: ./.git/remote-actions/actions/upload-artifact
-      with:
-        name: ${{ inputs.name }}
-        path: ${{ inputs.path }}
-        if-no-files-found: error
-        compression-level: ${{ inputs.compression-level }}
-        retention-days: ${{ inputs.retention-days }}
     # The artifact service's host (ACTIONS_RESULTS_URL, which the runner gives to actions only;
     # GitHub documents results-receiver.actions.githubusercontent.com for artifacts). Any HTTP
     # answer means the name resolves and the service takes connections. What the resolver says
     # goes to the log, so a lost DNS shows as one.
-    - name: Wait for the artifact service (after a failed upload)
-      if: steps.try1.outcome == 'failure'
+    - name: Wait for the artifact service (try 2)
+      if: inputs.try == '2'
       shell: bash
       env:
         NAME: ${{ inputs.name }}
       run: |
         url="${ACTIONS_RESULTS_URL:-https://results-receiver.actions.githubusercontent.com/}"
         host="$(sed -E 's#^[a-z]+://([^/:]+).*#\1#' <<<"$url")"
-        echo "::warning::upload of $NAME failed (try 1 of 2); waiting up to 300 s for $host, then one more try"
+        echo "::warning::upload of $NAME failed or ran out of time (try 1 of 2); waiting up to 300 s for $host, then one more try"
         echo "::group::upload-build diagnostics ($host)"
         case "$RUNNER_OS" in
           macOS) dscacheutil -q host -a name "$host" || true; scutil --dns | sed -n '1,12p' || true ;;
@@ -73,17 +65,26 @@ runs:
           sleep 5
         done
         echo "$host answered after $((SECONDS - start)) s"
-    - id: try2
-      if: steps.try1.outcome == 'failure'
-      uses: ./.git/remote-actions/actions/upload-artifact
+    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
+    # the runner's own download of a remote action is not tried again after a 404. Fetched once
+    # per job, at its first upload; the later ones (and a try 2) find it in place.
+    - name: upload-artifact (git fetch, with tries)
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/upload-artifact
+    # Try 2 overwrites: upload-artifact then deletes an artifact of this name first (only one
+    # that exists; it goes on when there is none), so a try 1 that finished on the service's side
+    # but never heard back does not make this one fail on "an artifact with this name already
+    # exists". Nothing has read it yet: the jobs that download it need this one to end.
+    - uses: ./.git/remote-actions/actions/upload-artifact
       with:
         name: ${{ inputs.name }}
         path: ${{ inputs.path }}
-        if-no-files-found: error
+        if-no-files-found: ${{ inputs.if-no-files-found }}
         compression-level: ${{ inputs.compression-level }}
         retention-days: ${{ inputs.retention-days }}
-        overwrite: true
-    - if: steps.try2.outcome == 'success'
+        overwrite: ${{ inputs.try == '2' }}
+    - if: inputs.try == '2'
       shell: bash
       env:
         NAME: ${{ inputs.name }}
