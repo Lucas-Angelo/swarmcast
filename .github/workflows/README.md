@@ -96,6 +96,14 @@ A release rehearsal (`release-flavour`) builds exactly as a release does (`Cargo
 the same bundles, the 45-minute build limit; the step "Build profile (release flavour)" prints the
 profile and fails if a `CARGO_PROFILE_RELEASE_*` variable overrides it) but signs with the job's
 key pair, as pull requests do.
+Both restore `main`'s test-build Rust cache of their target (`setup-rust`'s `cache-as-test-build`:
+rust-cache's step alone computes its key with the test profile's two variables, and never saves),
+so build A, a test-profile build, compiles only the app's own crate, as in a pull request; the
+installers' fat-LTO build compiles what its profile needs (cargo's fingerprints keep the two apart).
+Before, a release-flavour key never matched an entry and A compiled every crate: p50 3.6 minutes
+on macOS arm64 against 0.9 in a pull request, 3.8 against 0.8 for macos-x64, 4.7 against 1.1 on
+Windows, 4.3 against 1.9 and 3.7 against 1.6 on Linux x64 and arm64 (63 to 67 release rehearsals
+per target, 2026-11-10 to 11-12; 55 pull request and `main` runs, 2026-11-06 to 11-12).
 `desktop.mjs` signs only with a key it is given (`TAURI_SIGNING_PRIVATE_KEY`, or `--release-key`
 locally); it never picks up a key file by itself.
 
@@ -653,7 +661,8 @@ counts only some answers as spurious, did not try again. Its rust-cache could no
 a release-flavour build has no `CARGO_PROFILE_RELEASE_*` variables, so its key
 (`v0-rust-linux-arm64-build-Linux-arm64-0203a50a-...`) never matches the test builds' entry that
 `main` saves (`...-2ded1ba8-...`), and nothing saves a release-flavour entry; every rehearsal and
-release build downloaded all its crates (372 on linux-x64, 297 on windows-x64 in that run). Nor
+release build downloaded all its crates (372 on linux-x64, 297 on windows-x64 in that run; since
+then they restore the test builds' entry, keyed as one: "Desktop builds" above). Nor
 does a warm cache keep cargo off the network: rust-cache's clean-up keeps only the index entries
 named after a package, so it drops the sparse index's `config.json`, and every cargo command of a
 job with a full rust-cache hit printed `Updating crates.io index` and asked index.crates.io
@@ -829,7 +838,7 @@ again (a cold run). The Docker suites' test images are artifacts, not caches, fo
 
 | Cache | Saved by | Entries | Size |
 |---|---|---|---|
-| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
+| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop test builds (`_desktop.yml`); also restored, never saved, by the release-flavour builds | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
 | `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more), which start from the plain entry until they exist; a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |

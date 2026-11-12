@@ -143,14 +143,25 @@ jobs:
           downloads-for: ${{ matrix.target }}
           tauri-tools: ${{ runner.os == 'Windows' }}
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
-      # Before setup-rust: rust-cache puts every CARGO_* variable into its key, so test builds and
-      # release builds never share a cache entry.
+      # Before setup-rust: rust-cache puts every CARGO_* variable into its key (the test builds'
+      # entry is the one main saves; release-flavour builds restore it keyed as one, setup-rust's
+      # cache-as-test-build).
       - name: Build profile (test builds; releases keep Cargo.toml's)
         if: ${{ !inputs.release && !inputs.release-flavour }}
         run: |
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
-      # The log shows which profile a release or rehearsal built, and fails if anything overrode it.
+      # A release or rehearsal restores main's test-build entry (its key computed with the test
+      # profile's two variables, in rust-cache's step only): build A is a test-profile build and
+      # finds its crates compiled; the installers keep Cargo.toml's profile (the check below).
+      - uses: ./.github/actions/setup-rust
+        timeout-minutes: 8
+        with:
+          cache-key: ${{ matrix.target }}
+          targets: ${{ matrix.rust-target || '' }}
+          cache-as-test-build: ${{ inputs.release || inputs.release-flavour }}
+      # The log shows which profile a release or rehearsal built, and fails if anything overrode it
+      # (after setup-rust, so also if its cache step had left a variable behind).
       - name: Build profile (release flavour, Cargo.toml's)
         if: ${{ inputs.release || inputs.release-flavour }}
         run: |
@@ -160,11 +171,6 @@ jobs:
             exit 1
           fi
           echo "release flavour: Cargo.toml's [profile.release], updater key: $([ "$RELEASE" = true ] && echo release || echo throwaway)"
-      - uses: ./.github/actions/setup-rust
-        timeout-minutes: 8
-        with:
-          cache-key: ${{ matrix.target }}
-          targets: ${{ matrix.rust-target || '' }}
       - uses: ./.github/actions/get-build
         timeout-minutes: 10
         with:
