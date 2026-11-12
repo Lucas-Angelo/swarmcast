@@ -150,7 +150,7 @@ everywhere, and what each change runs are in [.github/workflows/README.md](../.g
 
 | Stage | What | Runs on |
 |-------|------|---------|
-| `quick` | lint, typecheck, unit tests, `npm audit`, upstream binaries, `cargo fmt` | Ubuntu |
+| `quick` | lint, typecheck, `npm audit`, upstream binaries, `cargo fmt` | Ubuntu |
 | `build`, `desktop` | the web build, the staged server per target (the desktop sidecar), the desktop installers per target | Ubuntu, Windows, macOS arm64 + Intel, Ubuntu x64 + arm64 |
 | `node` | unit and integration tests, `cargo clippy`/`test` | Windows, macOS, Ubuntu |
 | `e2e` | Playwright (Chrome, Firefox, WebKit), split into the `ui` and `media` tests | macOS, Ubuntu |

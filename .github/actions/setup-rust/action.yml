@@ -17,6 +17,14 @@ inputs:
   cache-key:
     description: rust-cache key (one per target and build flavour); empty for no rust-cache.
     default: ''
+  cache-as-test-build:
+    description: >-
+      'true' in the release-flavour desktop builds (a release, a release rehearsal): rust-cache's
+      key is computed as a test build's (CARGO_PROFILE_RELEASE_LTO=false and
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16, for that one step only), so the build restores the
+      entry main saved for that target's test builds, and never saves one. The job's own
+      environment, and so cargo's profile, are not changed.
+    default: 'false'
   linux-deps:
     description: Linux only. Install the Tauri build dependencies (WebKitGTK 4.1, tray, AppImage tools).
     default: 'true'
@@ -56,7 +64,7 @@ runs:
       with:
         repos: Swatinem/rust-cache
         optional: 'true'
-    - if: inputs.cache-key != '' && steps.rust-cache-action.outputs.fetched == 'true'
+    - if: inputs.cache-key != '' && steps.rust-cache-action.outputs.fetched == 'true' && inputs.cache-as-test-build != 'true'
       continue-on-error: true
       env:
         SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
@@ -65,6 +73,27 @@ runs:
         workspaces: apps/desktop/src-tauri -> target
         key: ${{ inputs.cache-key }}
         save-if: ${{ github.ref == 'refs/heads/main' }}
+        cache-on-failure: true
+    # A release-flavour build has no CARGO_PROFILE_RELEASE_* variables (it builds with Cargo.toml's
+    # profile), so its own key never matched an entry and it compiled every crate, twice: for build
+    # A (--fast, which desktop.mjs builds with the test profile) and for the installers (fat LTO).
+    # Keyed as a test build, it restores main's test-build entry: A then compiles only the app's
+    # own crate, as in a pull request; the installers' build still compiles what fat LTO needs
+    # (cargo's fingerprints keep the two profiles apart). The two variables are this step's only:
+    # rust-cache reads them for its key, and cargo never sees them. Never saved: the entry is a
+    # test build's, written only by main's test builds (README.md, "Caches").
+    - name: rust-cache (keyed as the test build, release flavour)
+      if: inputs.cache-key != '' && steps.rust-cache-action.outputs.fetched == 'true' && inputs.cache-as-test-build == 'true'
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+        CARGO_PROFILE_RELEASE_LTO: 'false'
+        CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+      uses: ./.git/remote-actions/Swatinem/rust-cache
+      with:
+        workspaces: apps/desktop/src-tauri -> target
+        key: ${{ inputs.cache-key }}
+        save-if: 'false'
         cache-on-failure: true
     # After rust-cache: CARGO_NET_OFFLINE, which this sets, is a CARGO_* variable and so would
     # change rust-cache's key; and the crates go over what rust-cache restored. Before any cargo

@@ -38,11 +38,11 @@ changes ─┬─ quick ──────────────────�
 | Stage | File | Jobs | What |
 |---|---|---|---|
 | changes | `pipeline.yml` + `.github/scripts/changes.sh` | 1 | which parts the change touches: `app`, `site`, `docker`; and that `ci-ok` waits for every job |
-| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, unit tests, `npm audit`, upstream binaries check, `cargo fmt` |
+| quick | `_quick.yml` | 1 Ubuntu | lint, typecheck, `npm audit`, upstream binaries check, `cargo fmt`; kept about as short as `build` (the unit tests run in `node`), since every test stage waits for both |
 | build | `_build.yml` | 1 Ubuntu | `npm run build` → `web-dist`; the staged windows-x64 server (`release/staging/windows-x64`) → `pkg-windows-x64`; both checked for development dependencies first; the Rust crates' artifact when no run saved it yet ("Rust crates") |
 | desktop &lt;target&gt;: build | `_desktop.yml`, called once per target | 5 (2 macOS; macos-x64 is cross-built on Apple silicon and tested on Intel; both calls are in the macOS lanes: "macOS concurrency") | macOS/Linux: their staged server → `pkg-<target>`; every target: build A of the update test and the real installers → `desktop-<target>`, `update-test-<target>`; the staged server and the installers checked for development dependencies first |
 | desktop &lt;target&gt;: clean-machine | same, after that target's build | 6 (Windows, macOS arm64 + Intel, Ubuntu 22.04, 24.04, 24.04 arm) | preflight (5 images), desktop install/update/uninstall (6), AppImage on a minimal host in Docker (2) |
-| node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit (macOS, Windows), integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
+| node | `_node.yml`, called twice (`node`: Ubuntu, Windows; `node-macos`) | 3 (Ubuntu, macOS, Windows) | unit, integration (`integration` in parallel, then `integration-media`), clippy, `cargo test`, crate licences |
 | e2e | `_e2e.yml`, called five times (`e2e`: Ubuntu and the Windows chat UI; `e2e-macos-chat`, `e2e-macos-ui`, `e2e-macos-media`, `e2e-macos-live`: one macOS group each, in the macOS lanes) | 9 (Ubuntu, macOS × `ui`, `chat`, `live`, `media`; Windows chat UI) | Playwright, all three browser projects, in four groups whose greps are exact complements: `chat` is the files in `CHAT_FILES` (chat, moderation, polls, privacy, flood, nickname), `live` the files in `LIVE_FILES` (P2P, adaptive delay, stream start, attack, browser check), `media` the other `@media` tests plus the file(s) in `UI_WITH_MEDIA` (player controls), `ui` the rest, balanced to take about the same time (with the 0.5.x specs p90 10.8-11.9 minutes each on macOS and at most 10.2 on Ubuntu, under a 20-minute hang guard); the `chat` group also runs the viewer chat UI and corpus specs against a mock hub (`apps/viewer/test/chat`, two Playwright workers on every runner: 3-5 minutes on Ubuntu; 5-10 on macOS while its 3 CPUs gave it one), and `chat UI (windows-latest)` runs them in Google Chrome, Microsoft Edge and Firefox on Windows |
 | windows | `_windows.yml` | 4 | the Windows suites on the staged server: app, quality, direct, obs |
 | site | `_site.yml` | 1 | the website's unit, type, link and browser tests |
@@ -96,6 +96,14 @@ A release rehearsal (`release-flavour`) builds exactly as a release does (`Cargo
 the same bundles, the 45-minute build limit; the step "Build profile (release flavour)" prints the
 profile and fails if a `CARGO_PROFILE_RELEASE_*` variable overrides it) but signs with the job's
 key pair, as pull requests do.
+Both restore `main`'s test-build Rust cache of their target (`setup-rust`'s `cache-as-test-build`:
+rust-cache's step alone computes its key with the test profile's two variables, and never saves),
+so build A, a test-profile build, compiles only the app's own crate, as in a pull request; the
+installers' fat-LTO build compiles what its profile needs (cargo's fingerprints keep the two apart).
+Before, a release-flavour key never matched an entry and A compiled every crate: p50 3.6 minutes
+on macOS arm64 against 0.9 in a pull request, 3.8 against 0.8 for macos-x64, 4.7 against 1.1 on
+Windows, 4.3 against 1.9 and 3.7 against 1.6 on Linux x64 and arm64 (63 to 67 release rehearsals
+per target, 2026-11-10 to 11-12; 55 pull request and `main` runs, 2026-11-06 to 11-12).
 `desktop.mjs` signs only with a key it is given (`TAURI_SIGNING_PRIVATE_KEY`, or `--release-key`
 locally); it never picks up a key file by itself.
 
@@ -187,6 +195,24 @@ clean-machine runs in lane 3 too, so a run has at most three macOS jobs of any k
 under the account's five. `devices` and `rendering` lead their lanes because they build what they
 test themselves and can start once `changes` is done; their Ubuntu and Windows jobs start then too.
 The macOS node job leads lane 3: it needs only `quick` and `build`.
+
+**Measured** (the 30 release rehearsals and 6 pull request and `main` runs of 2026-11-11 to 11-12
+in this layout whose jobs all passed; minutes from the run's start to the lane's last job's end,
+queue waits included):
+
+| | Lane 1 | Lane 2 | Lane 3 | Rest of the run | Whole run |
+|---|---|---|---|---|---|
+| Release rehearsal (p50, p90, max) | 35.3, 37.6, 42.6 | 40.1, 44.5, 50.2 | 33.2, 36.8, 41.4 | 25.7, 26.7, 27.2 | 40.5, 44.6, 50.5 |
+| Pull request, `main` (p50, max) | 27.3, 36.1 | 31.8, 34.1 | 26.5, 36.0 | 26.5, 27.1 | 31.9, 36.2 |
+
+Lane 2 is the critical path. Its `e2e / chat (macos-latest)` took p50 19.4 minutes: the chat
+group 11.3 and the viewer chat UI 7.1 (2.5 to 9.4; the 4.3 expected at two workers above did
+not come). A rehearsal's Apple silicon jobs ran p50 100 minutes in all (a pull request's 68), at
+most three at once, and waited p50 2.3 minutes for runners (a pull request's 6.6). Since then:
+release-flavour builds restore the test builds' Rust cache ("Desktop builds" above: build A p50
+3.6 to about 0.9 minutes on Apple silicon, so lanes 2 and 3 of a rehearsal or release end about
+2.7 minutes sooner), and `quick` ends with `build` (p50 1.1 instead of 2.0 minutes into a run,
+so in a pull request or `main` run every lane starts about 0.9 minutes sooner).
 
 **Wall time.** The critical path is the macOS lanes (the rest of a run ends by about minute 27,
 the Docker suites' Playwright jobs last). Of every assignment of the seven jobs to the three lanes,
@@ -653,7 +679,8 @@ counts only some answers as spurious, did not try again. Its rust-cache could no
 a release-flavour build has no `CARGO_PROFILE_RELEASE_*` variables, so its key
 (`v0-rust-linux-arm64-build-Linux-arm64-0203a50a-...`) never matches the test builds' entry that
 `main` saves (`...-2ded1ba8-...`), and nothing saves a release-flavour entry; every rehearsal and
-release build downloaded all its crates (372 on linux-x64, 297 on windows-x64 in that run). Nor
+release build downloaded all its crates (372 on linux-x64, 297 on windows-x64 in that run; since
+then they restore the test builds' entry, keyed as one: "Desktop builds" above). Nor
 does a warm cache keep cargo off the network: rust-cache's clean-up keeps only the index entries
 named after a package, so it drops the sparse index's `config.json`, and every cargo command of a
 job with a full rust-cache hit printed `Updating crates.io index` and asked index.crates.io
@@ -829,7 +856,7 @@ again (a cold run). The Docker suites' test images are artifacts, not caches, fo
 
 | Cache | Saved by | Entries | Size |
 |---|---|---|---|
-| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop builds (`_desktop.yml`) | 5 | 0.41-0.69 GB each, 2.84 GB |
+| `v0-rust-<target>-build-*` | `setup-rust` in the five desktop test builds (`_desktop.yml`); also restored, never saved, by the release-flavour builds | 5 | 0.41-0.69 GB each, 2.84 GB |
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
 | `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more), which start from the plain entry until they exist; a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
@@ -956,7 +983,7 @@ reports (lcov, json-summary, HTML) as `coverage-*` artifacts, kept 14 days.
 
 | Suite | Jobs | How | Floors checked by |
 |---|---|---|---|
-| unit | quick (Ubuntu), node (macOS, Windows) | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
+| unit | node ×3 | `npm run coverage:unit`: Vitest, V8 | Vitest, in the test step |
 | integration | node ×3 | `npm run coverage:integration`: Vitest, V8 (the code the tests run in-process) | Vitest, in the test step (this OS's floors) |
 | e2e server | e2e ×4 | `NODE_V8_COVERAGE` on the Playwright step; `scripts/coverage/e2e-server.mjs` keeps the e2e server's files, c8 maps them onto the sources | `report.mjs --check`, after a passing run (this group's floors, lines) |
 | desktop (Rust) | node ×3 | `npm run coverage:desktop`: `cargo test` under cargo-llvm-cov (pinned in `scripts/build/versions.json`, from the download cache: "Release downloads"; `llvm-tools` from `setup-rust`) | `report.mjs --check` |
