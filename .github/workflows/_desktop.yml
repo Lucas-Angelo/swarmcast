@@ -100,9 +100,12 @@ jobs:
     # environment can read it once the key is an environment secret (docs/RELEASING.md, section 3).
     # An empty name means no environment: pull request runs never ask for it.
     environment: ${{ inputs.release && 'release' || '' }}
-    # Warm-cache p99 8.8 min; a cold Rust cache (a Cargo.lock or toolchain change) costs about
-    # twice that, so 2 x 8.8 x 1.5. Release builds (fat LTO) have no measurements yet.
-    timeout-minutes: ${{ (inputs.release || inputs.release-flavour) && 45 || 27 }}
+    # Test builds: warm-cache p99 8.8 min; a cold Rust cache (a Cargo.lock or toolchain change)
+    # costs about twice that, so 2 x 8.8 x 1.5 = 27, plus 17 for one build artifact's two upload
+    # tries at their limits (5 + 12 minutes, README.md "Artifact uploads"): 44. Release flavour
+    # (fat LTO): at most 14.8 min in 584 builds of 2026-11-03 to 11-12, plus the same 17 is 32.
+    # One limit for both: 45.
+    timeout-minutes: 45
     defaults:
       run:
         shell: bash
@@ -179,16 +182,34 @@ jobs:
       - name: No development dependencies in the ${{ matrix.target }} package (macOS, Linux)
         if: runner.os != 'Windows'
         run: node .github/scripts/no-dev-deps.mjs --server --staging "release/staging/$TARGET"
-      # The build's artifacts go through upload-build: once more after a failed try, when the
-      # artifact service answers again (a macOS VM lost DNS mid-job in run 42846972124; README.md,
-      # "Artifact uploads").
+      # The build's artifacts go up in two tries, each a step with its own time limit (README.md,
+      # "Artifact uploads"; a macOS VM lost DNS mid-job in run 42846972124, and in run 43088776972
+      # one upload's CreateArtifact calls took 11 minutes to fail). In the 289 pipeline runs of
+      # 2026-11-03 to 11-12 the 1,146 pkg-<target> uploads took at most 50 s, the 1,431
+      # desktop-<target> ones 13 s and the 1,431 update-test-<target> ones 18 s; 5 minutes holds
+      # the largest (desktop-linux-x64, 241 MB) at the slowest rate any of them went up at
+      # (1.6 MB/s, pkg-macos-x64). Try 2 only after a failed or timed-out try 1: up to 5 minutes'
+      # wait for the artifact service, then the upload.
       - name: Upload pkg-${{ matrix.target }}
+        id: pkg-1
         if: runner.os != 'Windows'
         uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: pkg-${{ matrix.target }}
           path: ${{ runner.temp }}/pkg-${{ matrix.target }}.tar
           retention-days: ${{ env.RETENTION }}
+      - name: Upload pkg-${{ matrix.target }} (try 2)
+        id: pkg-2
+        if: steps.pkg-1.outcome == 'failure'
+        uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: pkg-${{ matrix.target }}
+          path: ${{ runner.temp }}/pkg-${{ matrix.target }}.tar
+          retention-days: ${{ env.RETENTION }}
+          try: '2'
 
       # ---- the two desktop builds ----
       # A key pair for this job only. Test builds sign A and the real build with it; a release
@@ -237,7 +258,10 @@ jobs:
 
       # The .app bundle stays out: the .dmg and the updater's .app.tar.gz carry it.
       - name: Upload desktop-${{ matrix.target }}
+        id: desktop-1
         uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: desktop-${{ matrix.target }}
           path: |
@@ -245,8 +269,24 @@ jobs:
             !release/**/SwarmCast.app/**
           compression-level: 0
           retention-days: ${{ env.RETENTION }}
-      - name: Upload update-test-${{ matrix.target }}
+      - name: Upload desktop-${{ matrix.target }} (try 2)
+        id: desktop-2
+        if: steps.desktop-1.outcome == 'failure'
         uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: desktop-${{ matrix.target }}
+          path: |
+            release/desktop/${{ matrix.target }}/
+            !release/**/SwarmCast.app/**
+          compression-level: 0
+          retention-days: ${{ env.RETENTION }}
+          try: '2'
+      - name: Upload update-test-${{ matrix.target }}
+        id: update-test-1
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: update-test-${{ matrix.target }}
           path: |
@@ -254,6 +294,27 @@ jobs:
             !release/**/SwarmCast.app/**
           compression-level: 0
           retention-days: ${{ env.RETENTION }}
+      - name: Upload update-test-${{ matrix.target }} (try 2)
+        id: update-test-2
+        if: steps.update-test-1.outcome == 'failure'
+        uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: update-test-${{ matrix.target }}
+          path: |
+            release/update-test/
+            !release/**/SwarmCast.app/**
+          compression-level: 0
+          retention-days: ${{ env.RETENTION }}
+          try: '2'
+      # A try 2 that failed or ran out of time: GitHub's artifact service or the runner's network,
+      # not the build (which passed, and is not run again).
+      - name: Name a failed upload as infrastructure
+        if: ${{ failure() && (steps.pkg-2.outcome == 'failure' || steps.desktop-2.outcome == 'failure' || steps.update-test-2.outcome == 'failure') }}
+        env:
+          NAME: ${{ steps.pkg-2.outcome == 'failure' && format('pkg-{0}', matrix.target) || steps.desktop-2.outcome == 'failure' && format('desktop-{0}', matrix.target) || format('update-test-{0}', matrix.target) }}
+        run: |
+          echo "::error title=Artifact upload (infrastructure)::infra: $NAME could not be uploaded in 2 tries, each failed or out of time: GitHub's artifact service or the runner's network, not the build (which passed). Start a new run."
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3
@@ -439,14 +500,31 @@ jobs:
           path: desktop-test-logs/
           if-no-files-found: ignore
           retention-days: 14
+      # For the user guide (a run by hand with `screenshots`), not a test or a later job's input:
+      # two tries like a build artifact's, but a failed one never fails the job (start a new run
+      # for the pictures).
       - name: Upload the guide screenshots
+        id: screenshots-1
         if: always() && inputs.screenshots && runner.os == 'Windows'
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: guide-screenshots-${{ matrix.target }}
           path: guide-screenshots/
           if-no-files-found: ignore
           retention-days: 7
+      - name: Upload the guide screenshots (try 2)
+        if: ${{ !cancelled() && steps.screenshots-1.outcome == 'failure' }}
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 12
+        with:
+          name: guide-screenshots-${{ matrix.target }}
+          path: guide-screenshots/
+          if-no-files-found: ignore
+          retention-days: 7
+          try: '2'
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3

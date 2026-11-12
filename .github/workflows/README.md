@@ -272,7 +272,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
-| `.github/actions/upload-build` | `actions/upload-artifact` for a build artifact the later jobs need, once more after a failed try, when the artifact service answers again (see "Artifact uploads" below) |
+| `.github/actions/upload-build` | one try of `actions/upload-artifact` for an artifact a later job needs; the workflow runs it twice, as two steps with their own time limits, try 2 only after a failed or timed-out try 1, when the artifact service answers again, with `overwrite` (see "Artifact uploads" below) |
 | `.github/scripts/apt-debs.sh` | every apt install of a gating Linux job: from the job's saved `.deb` set, checked against its `SHA256SUMS`, with apt offline (the set is its only source); the Ubuntu archive only when the set does not fit the runner image; `install`, `download`, `playwright-deps`, `finish` (see "Ubuntu packages" below) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch (`update`, `install`, `download`): `apt-debs.sh`'s cold path, the Docker test images' builds, the soak's `apt` suite |
 | `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
@@ -337,32 +337,105 @@ download artifacts, 79 of them on `macos-15-intel`), no other `download-artifact
 
 ### Artifact uploads
 
-The artifacts the desktop build makes for later jobs (`pkg-<target>`, `desktop-<target>`,
-`update-test-<target>`) go up through `.github/actions/upload-build`:
+Every artifact that a later job downloads goes up through `.github/actions/upload-build`:
+`web-dist` and `pkg-windows-x64` (`_build.yml`), `pkg-<target>`, `desktop-<target>` and
+`update-test-<target>` (`_desktop.yml`), and `linux-docker-<arch>` (`_docker.yml`). The workflow
+runs it as two steps, each with its own `timeout-minutes`:
 
-1. `actions/upload-artifact` (from the copy `fetch-remote` fetched, as for every remote action our
-   actions run).
-2. If it fails: a warning, what the runner's resolver answers for the artifact service's host
-   (`dscacheutil`, `scutil --dns`, `getent`, `nslookup`), then a wait of at most 300 s until that
-   host takes an HTTPS request (any status), 5 s between tries.
-3. `upload-artifact` again with `overwrite: true` (a first try that got as far as creating the
-   artifact leaves one by that name). When it works: `infra recovery: artifact <name> uploaded on
-   try 2 of 2`, a warning the soak counts; when it fails, the step and the job fail, as before.
+1. Try 1 (`try: 1`): `actions/upload-artifact` (from the copy `fetch-remote` fetched, as for
+   every remote action our actions run). `continue-on-error`, at most 5 minutes.
+2. Try 2 (`try: 2`), only when try 1 failed or ran out of time, at most 12 minutes: a warning, what
+   the runner's resolver answers for the artifact service's host (`dscacheutil`, `scutil --dns`,
+   `getent`, `nslookup`), a wait of at most 300 s until that host takes an HTTPS request (any
+   status), 5 s between tries; then `upload-artifact` again with `overwrite: true`. When it works:
+   `infra recovery: artifact <name> uploaded on try 2 of 2`, a warning the soak counts.
+3. When try 2 fails or runs out of time too, the job fails, and the step after it says why:
+   `infra: <name> could not be uploaded in 2 tries ...` (an error titled "Artifact upload
+   (infrastructure)"). Only the upload is tried again, never the build.
+
+Why two steps: a step's `timeout-minutes` is the only time limit GitHub Actions puts on an action.
+A composite action's own steps cannot have one (the runner's `action_yaml.json` allows `name`,
+`id`, `if`, `uses`/`run`, `with`, `env`, `continue-on-error`, `working-directory`, `shell`); they
+inherit what is left of the calling step's limit (`ExecutionContext.CreateEmbeddedChild`,
+`GetRemainingTimeout`). One step for both tries would let a hung try 1 use up the time of try 2,
+and `upload-artifact` is a Node.js action, so no `timeout` command can wrap it. A step that runs
+out of time fails ("has timed out after N minutes"), and `continue-on-error` then lets the job go
+on with that step's `outcome` at `failure`, which is what starts try 2.
+
+The limits, from the 289 pipeline runs of 2026-11-03 to 11-12 (each step's own time, which
+includes the git fetch of `upload-artifact` at a job's first upload):
+
+| Artifact | Size | Uploads | Slowest | p99 |
+|---|---|---|---|---|
+| `web-dist` | 4 MB | 289 | 4 s | 3 s |
+| `pkg-windows-x64` | 88 MB | 289 | 34 s | 14 s |
+| `pkg-<target>` (macOS, Linux) | 76-81 MB | 1,146 | 50 s (`pkg-macos-x64`) | 8-13 s |
+| `desktop-<target>` | 69-241 MB | 1,431 | 13 s | 8-9 s |
+| `update-test-<target>` | 80-226 MB | 1,431 | 18 s | 6-8 s |
+| `linux-docker-<arch>` | 335 MB | 435 | 24 s | 7-8 s |
+
+The slowest rate any of them went up at was 1.6 MB/s (`pkg-macos-x64`, 81 MB in 50 s); at that
+rate the largest, `linux-docker-<arch>`, takes 3.5 minutes, so 5 minutes per try leaves room over
+any upload that was working, while a hung one is cut off long before the job's own limit. Try 2's
+12 minutes are its wait (at most 5), the same 5 for the upload, and 2 for a `fetch-remote` that
+has to fetch again (4 tries of at most 30 s, when try 1 ended inside it). Each job that uploads
+has room for one artifact's two tries at their limits, 17 minutes, over its slowest run:
+`_build.yml` 25 minutes (slowest 3.5; 10 before), the desktop builds 45 in both flavours (slowest
+9.2 for a test build, 14.8 in release flavour; a test build with a cold Rust cache about twice
+its warm p99 of 8.8; 27 before for test builds), `_docker.yml`'s builds 30 (slowest 7.5,
+unchanged).
+
+`overwrite: true` on try 2: `upload-artifact` (v7.0.2, `@actions/artifact` 6.3.1) then looks the
+name up in the run (`ListArtifacts`) and deletes what it finds before `CreateArtifact`; finding
+none is not an error, and a failed delete is only a debug line. Without it, an artifact of that
+name already in the run makes `CreateArtifact` fail at once with "(409) Conflict: an artifact with
+this name already exists on the workflow run", which `upload-artifact` does not try again. That is
+the case of a try 1 that ran out of time after the service had finished the artifact (the bytes
+are up only when `FinalizeArtifact` is sent, with their SHA-256). The delete is safe: nothing has
+read the artifact yet, since every job that downloads it `needs` this one to end, and the files
+have not changed between the tries. A try 1 cut off between `CreateArtifact` and
+`FinalizeArtifact` leaves an unfinished artifact; whether `ListArtifacts` lists one (so that
+`overwrite` deletes it) is not documented, and no run has shown it yet: a 409 on try 2 would be
+that case. Try 1 does not overwrite: an artifact by that name before it would be a mistake in the
+workflow, and a failure says so.
 
 Why: release rehearsal 42846972124 lost `desktop macos-arm64 / build (macos-latest)` 10 minutes
 into the job, after the installers were built and checked: "Failed to CreateArtifact: Unable to
-make request: ENOTFOUND" at 16:04:28 UTC, 30 s after the step started (upload-artifact's own five
-attempts). The same job had uploaded `pkg-macos-arm64` at 15:54. A macOS VM that cannot resolve
-names for a while is known from the start of a job (the wait for github.com before checkout);
-this one lost DNS in the middle. It is the network of the runner, not the build: the build's
-result is not retried, only its upload, once. The test results, reports and logs keep their
-`continue-on-error` uploads (Rules). How long such a loss lasts varies: about a minute at the
-start of a job (run 41283766285), over 3.5 minutes (run 42023369370, where checkout gave up after
-the 3-minute wait), and over 8 minutes on an Intel clean-machine (soak run 41994029873:
+make request: ENOTFOUND" at 16:04:28 UTC, 30 s after the step started. A macOS VM that cannot
+resolve names for a while is known from the start of a job (the wait for github.com before
+checkout); this one lost DNS in the middle. How long such a loss lasts varies: about a minute at
+the start of a job (run 41283766285), over 3.5 minutes (run 42023369370, where checkout gave up
+after the 3-minute wait), and over 8 minutes on an Intel clean-machine (soak run 41994029873:
 `ListArtifacts` ENOTFOUND for the artifact service's host from 08:36 to 08:44 UTC, while the blob
 host still resolved, so `fetch-artifact`'s tries and REST fallback all failed). The wait saves the
-short ones; a longer one still fails the job, after at most 5 more minutes. In the 200 failed runs
-of every workflow from 2026-10-28 to 2026-11-10, that was the one upload lost this way.
+short ones. Then two more, after the first version of `upload-build` (one composite step, both
+tries inside, used only by the desktop builds):
+
+- Pipeline run 43232320009 lost `docker / Build linux-arm64` with its build done: its upload was
+  a plain `upload-artifact` step, and "Failed to CreateArtifact: Unable to make request:
+  ETIMEDOUT" came after 2 min 16 s (a TCP connect that never got an answer). `@actions/artifact`
+  throws a network error code (`ENOTFOUND`, `ETIMEDOUT`, `ECONNRESET`...) at once, with none of
+  its own retries. Now `_build.yml` and `_docker.yml` upload through `upload-build` too.
+- Pipeline run 43088776972: `Upload desktop-macos-arm64` took 22 minutes to fail. Each of try 1's
+  five `CreateArtifact` requests waited 2 minutes for an HTML error page ("Unexpected token '<'"),
+  11 minutes in all; try 2, after the service answered at once, did the same and ended in "(404)
+  Not Found: workflow run not found", the run itself gone wrong on GitHub's side. No step had a
+  limit: one more hung request and the job's own limit would have been the only one. Now each try
+  ends after 5 minutes.
+
+`@actions/artifact`'s own limits, for reading a log: each twirp call (`CreateArtifact`,
+`FinalizeArtifact`) is tried 5 times, 8, 12-18, 18-27 and 27-40 s apart, on a 5xx, a 429 or an
+unreadable answer, with no time limit on a request; the blob upload fails after 5 minutes without
+progress (`ACTIONS_ARTIFACT_UPLOAD_TIMEOUT_MS`), never for being slow. One try can therefore take
+over 20 minutes without hanging, which is why the step limit decides.
+
+The other uploads keep test results, reports, coverage and logs, which no job reads:
+`continue-on-error` with a 5-minute limit (Rules), so they never fail a job. The guide
+screenshots (`_desktop.yml`, a run by hand with `screenshots`) go through `upload-build`'s two
+tries, both `continue-on-error`: no job reads them either. The caches that are artifacts
+(`cargo-crates/save`, `test-images/save`) are `continue-on-error` with a 5-minute limit; a job
+that does not find them builds or fetches what they hold. `site.yml`'s Pages artifact
+(`upload-pages-artifact`, deploys on `main` only) is not part of the pipeline.
 
 ### Remote actions
 
@@ -901,8 +974,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
   the place that needs it: apt, only when a job's saved `.deb` set does not fit its runner image (`apt-retry.sh` through `apt-debs.sh`; "Ubuntu packages" above), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), the build artifacts' uploads (`upload-build`: once more
-  when the artifact service answers again, a warning; "Artifact uploads" above), the remote actions our steps run (`fetch-remote`: a git
+  then the REST fallback, each a warning), the uploads of artifacts a later job needs (`upload-build`:
+  a second try, each try a step with its own time limit, the second when the artifact service
+  answers again, a warning; "Artifact uploads" above), the remote actions our steps run (`fetch-remote`: a git
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
   41636784175), the pinned
   downloads (`fetch-binaries.mjs`; also the AppImage tools, through `appimage-tools.mjs`, so the
@@ -928,9 +1002,10 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `./.github/actions/cache-restore`, which cuts a try off after 90 s and tries once more, then goes
   on without the cache (see "Stalled cache restores" below); and the save steps (`./.github/actions/setup/save`, the
   Playwright browsers) are not even entered on events that save nothing and have a 3-minute
-  limit. Uploads of test results, reports and logs, and the job-summary steps, are
+  limit. Uploads of test results, reports, coverage and logs, and the job-summary steps, are
   `continue-on-error` with a 5-minute limit. Nothing else is: a test, a build, a check or an
-  upload of build artifacts that fails, fails the job. (Two pipelines of one soak batch lost a
+  upload of an artifact a later job needs that fails, fails the job (that upload after two tries,
+  each with its own time limit, its failure named `infra:`; "Artifact uploads"). (Two pipelines of one soak batch lost a
   job each to GitHub's "Incident with Actions, Pages, and Webhooks" of 2026-10-30, 17:50 UTC: one
   in `setup/save` with every step skipped, one in the post-job "Cleaning up orphan processes" of
   `ci-ok`, both at a 5-minute job limit.)

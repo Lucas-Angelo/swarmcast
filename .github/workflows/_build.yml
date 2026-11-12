@@ -33,7 +33,9 @@ jobs:
   web:
     name: web + windows-x64 package
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The slowest run took 3.5 minutes (2026-11-03 to 11-12); 25 keeps room for one build
+    # artifact's two upload tries at their limits (5 + 12 minutes).
+    timeout-minutes: 25
     env:
       RETENTION: ${{ github.event_name == 'pull_request' && 3 || 14 }}
     steps:
@@ -76,12 +78,31 @@ jobs:
         run: node .github/scripts/no-dev-deps.mjs --server --web
       - name: Pack web-dist
         run: tar -cf "$RUNNER_TEMP/web-dist.tar" apps/viewer/dist apps/admin/dist apps/server/dist
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      # Each build artifact goes up in two tries, each with its own time limit: the upload took
+      # at most 34 s (pkg-windows-x64, 88 MB; web-dist, 4 MB, at most 4 s) in the 289 runs of
+      # 2026-11-03 to 11-12, and 5 minutes is enough for the largest build artifact of a run (the
+      # Docker suites' 335 MB) at the slowest rate any of them went up at (1.6 MB/s). Try 2 only
+      # after a failed or timed-out try 1: up to 5 minutes' wait for the artifact service, then
+      # the upload (README.md, "Artifact uploads").
+      - name: Upload web-dist
+        id: web-dist-1
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: web-dist
           path: ${{ runner.temp }}/web-dist.tar
-          if-no-files-found: error
           retention-days: ${{ env.RETENTION }}
+      - name: Upload web-dist (try 2)
+        id: web-dist-2
+        if: steps.web-dist-1.outcome == 'failure'
+        uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: web-dist
+          path: ${{ runner.temp }}/web-dist.tar
+          retention-days: ${{ env.RETENTION }}
+          try: '2'
 
       - name: windows-x64 package
         run: |
@@ -92,12 +113,33 @@ jobs:
       # above.
       - name: No development dependencies in the windows-x64 package
         run: node .github/scripts/no-dev-deps.mjs --server --staging release/staging/windows-x64
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      - name: Upload pkg-windows-x64
+        id: pkg-1
+        uses: ./.github/actions/upload-build
+        continue-on-error: true
+        timeout-minutes: 5
         with:
           name: pkg-windows-x64
           path: ${{ runner.temp }}/pkg-windows-x64.tar
-          if-no-files-found: error
           retention-days: ${{ env.RETENTION }}
+      - name: Upload pkg-windows-x64 (try 2)
+        id: pkg-2
+        if: steps.pkg-1.outcome == 'failure'
+        uses: ./.github/actions/upload-build
+        timeout-minutes: 12
+        with:
+          name: pkg-windows-x64
+          path: ${{ runner.temp }}/pkg-windows-x64.tar
+          retention-days: ${{ env.RETENTION }}
+          try: '2'
+      # A try 2 that failed or ran out of time: GitHub's artifact service or the runner's network,
+      # not the build (which passed, and is not run again).
+      - name: Name a failed upload as infrastructure
+        if: ${{ failure() && (steps.web-dist-2.outcome == 'failure' || steps.pkg-2.outcome == 'failure') }}
+        env:
+          NAME: ${{ steps.web-dist-2.outcome == 'failure' && 'web-dist' || 'pkg-windows-x64' }}
+        run: |
+          echo "::error title=Artifact upload (infrastructure)::infra: $NAME could not be uploaded in 2 tries, each failed or out of time: GitHub's artifact service or the runner's network, not the build (which passed). Start a new run."
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3
