@@ -6,8 +6,9 @@
 //   node .github/scripts/rust-toolchain.mjs key        dir= and prefix= of the saved copy (an Actions cache)
 //   node .github/scripts/rust-toolchain.mjs install [--components a,b] [--targets t,u]
 //                                                      the toolchain, its default, offline when it can be
-//   node .github/scripts/rust-toolchain.mjs pin        rewrites rust-toolchain.sha256 for the channel (a
-//                                                      developer's step after a channel change; downloads)
+//   node .github/scripts/rust-toolchain.mjs pin <channel>
+//                                                      rewrites rust-toolchain.sha256 for rust-toolchain.toml's
+//                                                      channel (a developer's step after a channel change; downloads)
 //
 // The pin: apps/desktop/src-tauri/rust-toolchain.sha256 holds the SHA-256 of the release's channel
 // manifest (channel-rust-<channel>.toml, as static.rust-lang.org publishes it, in its own `.sha256`
@@ -39,14 +40,42 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 export const CRATE_DIR = path.join(ROOT, 'apps/desktop/src-tauri');
 const TOOLCHAIN_FILE = path.join(CRATE_DIR, 'rust-toolchain.toml');
 const PIN_FILE = path.join(CRATE_DIR, 'rust-toolchain.sha256');
-/** Where the manifest's archives live; the mirror keeps the same paths below it. */
-export const DIST_ROOT = 'https://static.rust-lang.org/';
+/** The one origin the cold path downloads from; the mirror keeps its paths below it. */
+export const DIST_ORIGIN = 'https://static.rust-lang.org';
+/** How the manifest's archive URLs start. */
+export const DIST_ROOT = `${DIST_ORIGIN}/`;
+/**
+ * The only paths the cold path asks for and writes: a channel manifest in dist/, or an archive in
+ * a dist/<date>/ folder. One file name, no other folder, no `..`.
+ */
+const DIST_PATH = /^dist\/(?:\d{4}-\d{2}-\d{2}\/)?[a-z0-9][a-z0-9_.+-]*\.(?:toml|tar\.xz|tar\.gz)$/;
+/** The channels rust-toolchain.toml may name. */
+const CHANNEL = /^(?:\d+\.\d+(?:\.\d+)?|stable|beta|nightly(?:-\d{4}-\d{2}-\d{2})?)$/;
+
+/** `rel` when it is such a path, else an error: nothing else is ever fetched or written. */
+export function distPath(rel) {
+  if (typeof rel !== 'string' || !DIST_PATH.test(rel) || rel.includes('..')) throw new Error(`not a path of static.rust-lang.org's dist/ this script fetches: ${JSON.stringify(rel)}`);
+  return rel;
+}
+
+/** The URL of a dist/ path: the fixed origin and the checked path, never a URL from a file. */
+export const distUrl = (rel) => `${DIST_ORIGIN}/${distPath(rel)}`;
+
+/** Where a dist/ path lands in the mirror at `root`: below it, whatever the path says. */
+export function mirrorPath(root, rel) {
+  const base = path.resolve(root);
+  const full = path.resolve(base, ...distPath(rel).split('/'));
+  if (!full.startsWith(base + path.sep)) throw new Error(`${rel} would land outside ${base}`);
+  return full;
+}
 const isWin = process.platform === 'win32';
 
 /** Part of the saved copy's key: a change in what the mirror holds starts a new family. */
@@ -96,6 +125,7 @@ export function readToolchain(toml) {
   };
   const channel = str('channel');
   if (!channel) throw new Error('rust-toolchain.toml: no channel');
+  if (!CHANNEL.test(channel)) throw new Error(`rust-toolchain.toml: ${channel} is not a release, stable, beta or a dated nightly`);
   return { channel, profile: str('profile') ?? 'minimal', components: list('components'), targets: list('targets') };
 }
 
@@ -110,7 +140,7 @@ export function readPin(text, channel) {
   const m = /^([0-9a-f]{64})\s+\*?(\S+)\s*$/m.exec(text.replace(/\r\n/g, '\n'));
   if (!m) throw new Error('rust-toolchain.sha256: not "<sha256>  channel-rust-<channel>.toml"');
   if (m[2] !== manifestName(channel)) {
-    throw new Error(`rust-toolchain.sha256 pins ${m[2]}, but rust-toolchain.toml's channel is ${channel}: run node .github/scripts/rust-toolchain.mjs pin`);
+    throw new Error(`rust-toolchain.sha256 pins ${m[2]}, but rust-toolchain.toml's channel is ${channel}: run node .github/scripts/rust-toolchain.mjs pin ${channel}`);
   }
   return m[1];
 }
@@ -256,7 +286,8 @@ export function wanted({ host, profile = 'minimal', components = [], targets = [
 
 /**
  * The archive rustup downloads for each component (the .tar.xz, as rustup prefers it), with its
- * path below the mirror and its SHA-256 from the manifest.
+ * path below the mirror and its SHA-256 from the manifest. The manifest's URL must be a dist/
+ * archive of static.rust-lang.org (distPath); the URL fetched is rebuilt from the fixed origin.
  * @param {ReturnType<typeof parseManifest>} manifest
  * @param {{ pkg: string, target: string, name: string }[]} list
  */
@@ -268,7 +299,8 @@ export function archives(manifest, list) {
     if (typeof url !== 'string' || !url.startsWith(DIST_ROOT) || !/^[0-9a-f]{64}$/.test(sha ?? '')) {
       throw new Error(`the manifest has no archive on ${DIST_ROOT} for ${w.name}`);
     }
-    return { name: w.name, url, rel: url.slice(DIST_ROOT.length), sha };
+    const rel = distPath(url.slice(DIST_ROOT.length));
+    return { name: w.name, url: distUrl(rel), rel, sha };
   });
 }
 
@@ -291,6 +323,8 @@ function listFiles(dir) {
 export function checkMirror(dir, channel, pin) {
   const removed = [];
   const ok = new Map();
+  // A download's private folder that a killed job left behind (downloadWithTries).
+  if (fs.existsSync(dir)) for (const d of fs.readdirSync(dir)) if (d.startsWith('.download-')) fs.rmSync(path.join(dir, d), { recursive: true, force: true });
   const manifestRel = `dist/${manifestName(channel)}`;
   const manifestFile = path.join(dir, manifestRel);
   if (!fs.existsSync(manifestFile)) return { manifest: null, ok, removed };
@@ -332,8 +366,9 @@ function reason(err) {
 class NotThere extends Error {}
 
 /**
- * One try: `url` into `file`, cut off after `tryMs` or `idleMs` without data. Resolves the SHA-256
- * of what arrived; rejects with the reason (NotThere for a 404 or 410).
+ * One try: `url` into `file`, a new file (created exclusively, mode 0600), cut off after `tryMs`
+ * or `idleMs` without data. Resolves the SHA-256 of what arrived; rejects with the reason
+ * (NotThere for a 404 or 410).
  */
 export async function downloadOnce(url, file, { tryMs = TRY_MS, idleMs = IDLE_MS, fetchImpl = fetch } = {}) {
   const ac = new AbortController();
@@ -344,18 +379,20 @@ export async function downloadOnce(url, file, { tryMs = TRY_MS, idleMs = IDLE_MS
   };
   const total = setTimeout(() => cut(`cut off after ${limit(tryMs)}`), tryMs);
   let idle = setTimeout(() => cut(`no data for ${limit(idleMs)}`), idleMs);
-  const fd = fs.openSync(file, 'w');
   try {
     const res = await fetchImpl(url, { signal: ac.signal, redirect: 'follow' });
     if (res.status === 404 || res.status === 410) throw new NotThere(`HTTP ${res.status}`);
     if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
     const hash = crypto.createHash('sha256');
-    for await (const chunk of res.body) {
-      clearTimeout(idle);
-      idle = setTimeout(() => cut(`no data for ${limit(idleMs)}`), idleMs);
-      hash.update(chunk);
-      fs.writeSync(fd, chunk);
-    }
+    const meter = new Transform({
+      transform(chunk, _encoding, done) {
+        clearTimeout(idle);
+        idle = setTimeout(() => cut(`no data for ${limit(idleMs)}`), idleMs);
+        hash.update(chunk);
+        done(null, chunk);
+      },
+    });
+    await pipeline(Readable.fromWeb(res.body), meter, fs.createWriteStream(file, { flags: 'wx', mode: 0o600 }), { signal: ac.signal });
     return hash.digest('hex');
   } catch (err) {
     if (err instanceof NotThere) throw err;
@@ -363,25 +400,32 @@ export async function downloadOnce(url, file, { tryMs = TRY_MS, idleMs = IDLE_MS
   } finally {
     clearTimeout(total);
     clearTimeout(idle);
-    fs.closeSync(fd);
   }
 }
 
 /**
- * `url` into `file` with tries: one more after a try that failed, was cut off or brought another
- * file than `sha` (a CDN that served a damaged or partial body), at most `tries`, none that
- * could not end by `deadline`. A 404 is not tried again. Returns { tries }; throws an InfraError with the
- * reason when every try failed. A file that came only after failed tries logs an
- * `infra recovery:` warning (docs/TESTING.md, "Infra recoveries").
+ * The dist/ path `rel` from static.rust-lang.org into the mirror at `root`, with tries: one more
+ * after a try that failed, was cut off or brought another file than `sha` (a CDN that served a
+ * damaged or partial body), at most `tries`, none that could not end by `deadline`. A 404 is
+ * not tried again. Each try downloads into a private folder of its own in the mirror
+ * (fs.mkdtemp), and only a file with the SHA-256 `sha` (the pin, or the pinned manifest's) is
+ * moved to its place, mirrorPath(root, rel); the URL is the fixed origin and the checked path
+ * (distUrl). Returns { tries }; throws an InfraError with the reason when every try failed. A
+ * file that came only after failed tries logs an `infra recovery:` warning (docs/TESTING.md,
+ * "Infra recoveries").
  */
-export async function downloadWithTries({ url, file, sha, tries = TRIES, tryMs = TRY_MS, idleMs = IDLE_MS, pauses = PAUSES_MS, deadline = Infinity, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, fetchImpl = fetch }) {
+export async function downloadWithTries({ root, rel, sha, tries = TRIES, tryMs = TRY_MS, idleMs = IDLE_MS, pauses = PAUSES_MS, deadline = Infinity, now = Date.now, sleep = (ms) => new Promise((r) => setTimeout(r, ms)), log = console.log, fetchImpl = fetch }) {
+  const url = distUrl(rel);
+  const file = mirrorPath(root, rel);
+  if (!/^[0-9a-f]{64}$/.test(sha)) throw new Error(`${rel}: no SHA-256 to check it against`);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  const part = `${file}.part`;
   let first = '';
   for (let n = 1; ; n++) {
     if (n === 1 && now() >= deadline) throw new InfraError(`${url}: the cold path had no time left for it`);
     let why;
+    const tmp = fs.mkdtempSync(path.join(path.resolve(root), '.download-'));
     try {
+      const part = path.join(tmp, path.basename(file));
       const got = await downloadOnce(url, part, { tryMs, idleMs, fetchImpl });
       if (got === sha) {
         fs.renameSync(part, file);
@@ -390,11 +434,11 @@ export async function downloadWithTries({ url, file, sha, tries = TRIES, tryMs =
       }
       why = `it sent a file with SHA-256 ${got}, not ${sha}`;
     } catch (err) {
-      fs.rmSync(part, { force: true });
       if (err instanceof NotThere) throw new Error(`static.rust-lang.org has no ${url} (${err.message})`, { cause: err });
       why = err instanceof Error ? err.message : String(err);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
-    fs.rmSync(part, { force: true });
     first ||= why;
     const pause = pauses[Math.min(n - 1, pauses.length - 1)] ?? 0;
     if (n >= tries || now() + pause + tryMs > deadline) {
@@ -468,7 +512,15 @@ export function linkToolchain(rustupHome, from, name) {
 
 const mb = (bytes) => `${Math.round(bytes / 1e6)} MB`;
 const rustupHomeDir = (env = process.env) => env.RUSTUP_HOME || path.join(os.homedir(), '.rustup');
-const mirrorDir = (env = process.env) => env.SC_RUST_TOOLCHAIN_DIR || path.join(env.RUNNER_TEMP || os.tmpdir(), 'rust-toolchain');
+/**
+ * The mirror: $SC_RUST_TOOLCHAIN_DIR (the restore step sets it), else in the job's own
+ * $RUNNER_TEMP, else (outside CI) a new private folder of the system's temporary folder.
+ */
+function mirrorDir(env = process.env) {
+  if (env.SC_RUST_TOOLCHAIN_DIR) return path.resolve(env.SC_RUST_TOOLCHAIN_DIR);
+  if (env.RUNNER_TEMP) return path.join(path.resolve(env.RUNNER_TEMP), 'rust-toolchain');
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'rust-toolchain-'));
+}
 
 function appendGithub(file, lines) {
   if (process.env[file]) fs.appendFileSync(process.env[file], lines.map((l) => `${l}\n`).join(''));
@@ -560,15 +612,15 @@ async function installCommand(argv) {
       const copy = restored ? `the saved copy ${restored} lacks ${lacks.join(', ')}` : 'no saved copy was restored (none saved on main yet for this channel and host, or the Actions cache did not answer)';
       return `${copy}, and ${image}`;
     };
-    const get = async (url, rel, sha) => {
-      await downloadWithTries({ url, file: path.join(dir, rel), sha, deadline });
+    const get = async (rel, sha) => {
+      await downloadWithTries({ root: dir, rel, sha, deadline });
       fetched.push(rel);
     };
     try {
       if (!check.manifest) {
         lacks.push(manifestName(channel));
         console.log(`Rust toolchain: fetching ${manifestName(channel)} from static.rust-lang.org (the cold path)`);
-        await get(`${DIST_ROOT}dist/${manifestName(channel)}`, `dist/${manifestName(channel)}`, pin);
+        await get(`dist/${manifestName(channel)}`, pin);
         check = checkMirror(dir, channel, pin);
         for (const r of check.removed) console.log(`::warning title=Rust toolchain::the saved copy's ${r.rel} is not used: ${r.why}`);
       }
@@ -579,7 +631,7 @@ async function installCommand(argv) {
       lacks.push(...missing.map((f) => f.name));
       for (const f of missing) {
         console.log(`Rust toolchain: fetching ${f.rel} from static.rust-lang.org (the cold path)`);
-        await get(f.url, f.rel, f.sha);
+        await get(f.rel, f.sha);
         check.ok.set(f.rel, f.sha);
       }
       const bytes = files.reduce((n, f) => n + fs.statSync(path.join(dir, f.rel)).size, 0);
@@ -597,8 +649,11 @@ async function installCommand(argv) {
       }
       throw err;
     }
-    // rustup reads the manifest's .sha256 first: the pin, in static.rust-lang.org's format.
-    fs.writeFileSync(path.join(dir, 'dist', `${manifestName(channel)}.sha256`), `${pin}  ${manifestName(channel)}\n`);
+    // rustup reads the manifest's .sha256 first: the pin, in static.rust-lang.org's format, as a
+    // new file of its own (a restored one is replaced).
+    const sumFile = `${mirrorPath(dir, `dist/${manifestName(channel)}`)}.sha256`;
+    fs.rmSync(sumFile, { force: true });
+    fs.writeFileSync(sumFile, `${pin}  ${manifestName(channel)}\n`, { flag: 'wx', mode: 0o600 });
     const args = ['toolchain', 'install', name, '--profile', profile, '--no-self-update'];
     if (components.length) args.push('--component', components.join(','));
     if (targets.length) args.push('--target', targets.join(','));
@@ -624,24 +679,34 @@ async function installCommand(argv) {
   if (saveKeyValue) appendGithub('GITHUB_ENV', [`SC_RUST_TOOLCHAIN_SAVE_KEY=${saveKeyValue}`]);
 }
 
-async function pinCommand() {
+/**
+ * `pin <channel>`: the SHA-256 of that channel's manifest into rust-toolchain.sha256, after a
+ * channel change. The channel comes from the command line and must be rust-toolchain.toml's; the
+ * URL is the fixed origin and the checked dist/ path.
+ */
+async function pinCommand(argv) {
+  const [wanted] = argv;
   const { channel } = readToolchain(fs.readFileSync(TOOLCHAIN_FILE, 'utf8'));
-  const url = `${DIST_ROOT}dist/${manifestName(channel)}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`${url}: HTTP ${res.status}`);
+  if (!wanted || !CHANNEL.test(wanted)) throw new Error('usage: rust-toolchain.mjs pin <channel> (the channel rust-toolchain.toml names)');
+  if (wanted !== channel) throw new Error(`rust-toolchain.toml's channel is ${channel}, not ${wanted}: change it first`);
+  const rel = distPath(`dist/channel-rust-${wanted}.toml`);
+  const res = await fetch(distUrl(rel));
+  if (!res.ok) throw new Error(`${rel}: HTTP ${res.status}`);
   const sha = sha256(Buffer.from(await res.arrayBuffer()));
-  const published = (await (await fetch(`${url}.sha256`)).text()).trim().split(/\s+/)[0];
-  if (published !== sha) throw new Error(`${url} has SHA-256 ${sha}, but its .sha256 says ${published}: try again later`);
-  fs.writeFileSync(PIN_FILE, `${sha}  ${manifestName(channel)}\n`);
-  console.log(`${path.relative(ROOT, PIN_FILE)}: ${sha}  ${manifestName(channel)}`);
+  const sums = await fetch(`${distUrl(rel)}.sha256`);
+  if (!sums.ok) throw new Error(`${rel}.sha256: HTTP ${sums.status}`);
+  const published = (await sums.text()).trim().split(/\s+/)[0];
+  if (published !== sha) throw new Error(`${rel} has SHA-256 ${sha}, but its .sha256 says ${published}: try again later`);
+  fs.writeFileSync(PIN_FILE, `${sha}  channel-rust-${wanted}.toml\n`);
+  console.log(`${path.relative(ROOT, PIN_FILE)}: ${sha}  channel-rust-${wanted}.toml`);
 }
 
 async function main() {
   const [cmd, ...rest] = process.argv.slice(2);
   if (cmd === 'key') return keyCommand();
   if (cmd === 'install') return installCommand(rest);
-  if (cmd === 'pin') return pinCommand();
-  console.error('usage: rust-toolchain.mjs key | install [--components a,b] [--targets t] | pin');
+  if (cmd === 'pin') return pinCommand(rest);
+  console.error('usage: rust-toolchain.mjs key | install [--components a,b] [--targets t] | pin <channel>');
   process.exit(2);
 }
 

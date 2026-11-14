@@ -702,7 +702,7 @@ job's `cargo fmt` and the crates' cold path) installs the toolchain of
   manifest lists every archive of the release with its SHA-256, so the pin fixes the whole
   toolchain. Not a line in `rust-toolchain.toml`: rust-cache hashes that file into all eight Rust
   cache keys. A channel change without the pin fails at once (`node
-  .github/scripts/rust-toolchain.mjs pin` writes it).
+  .github/scripts/rust-toolchain.mjs pin <channel>` writes it).
 - The runner image first, with no network at all: a toolchain of this host that rustup installed
   from the pinned manifest and that has every component the job needs. rustup records both:
   `$RUSTUP_HOME/update-hashes/<toolchain>` holds the first 20 hex digits of the manifest's SHA-256
@@ -726,6 +726,12 @@ job's `cargo fmt` and the crates' cold path) installs the toolchain of
   apart; the cold path ends 4 minutes in, within setup-rust's 8 with the restore; a 404 is not
   tried again; a whole host took 9 s in a container), each file checked
   against the pin or the manifest, into the mirror, and rustup installs from the mirror as above.
+  Only `https://static.rust-lang.org/` plus a `dist/` path of a strict form (a channel manifest,
+  or one archive name in a `dist/<date>/` folder, no `..`) is ever asked for, whatever the
+  manifest's URLs say; each try writes into a private folder of its own in the mirror
+  (`fs.mkdtemp`, the file created exclusively with mode 0600), and only a file with the right
+  SHA-256 is moved to its place below the mirror. The mirror is in `$RUNNER_TEMP`, never in the
+  shared temporary folder.
   A file that came only after failed tries logs `infra recovery:`. When static.rust-lang.org does
   not answer, the step fails with `Rust toolchain (infrastructure): static.rust-lang.org did not
   answer: <file>: <the tries' reasons>. The job needed it because <no saved copy was restored / the

@@ -15,15 +15,19 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
+  DIST_ORIGIN,
   InfraError,
   PAUSES_MS,
   archives,
   cachePrefix,
   checkMirror,
+  distPath,
+  distUrl,
   downloadWithTries,
   hostTriple,
   linkToolchain,
   manifestName,
+  mirrorPath,
   parseManifest,
   readPin,
   readToolchain,
@@ -121,6 +125,14 @@ describe('readToolchain and readPin', () => {
     expect(t).toEqual({ channel: '1.99.1', profile: 'minimal', components: ['rustfmt', 'clippy'], targets: [] });
   });
 
+  it('refuses a channel that is not a release, stable, beta or a dated nightly (it names a URL path)', () => {
+    // Act
+    const read = () => readToolchain('[toolchain]\nchannel = "1.99.1/../../x"\n');
+
+    // Assert
+    expect(read).toThrow(/is not a release, stable, beta or a dated nightly/);
+  });
+
   it("returns the pin in static.rust-lang.org's .sha256 format", () => {
     // Act
     const pin = readPin(`${PIN}  channel-rust-1.99.1.toml\n`, CHANNEL);
@@ -134,7 +146,7 @@ describe('readToolchain and readPin', () => {
     const read = () => readPin(`${PIN}  channel-rust-1.99.1.toml\n`, '1.100.0');
 
     // Assert
-    expect(read).toThrow(/pins channel-rust-1\.99\.1\.toml, but rust-toolchain\.toml's channel is 1\.100\.0: run node \.github\/scripts\/rust-toolchain\.mjs pin/);
+    expect(read).toThrow(/pins channel-rust-1\.99\.1\.toml, but rust-toolchain\.toml's channel is 1\.100\.0: run node \.github\/scripts\/rust-toolchain\.mjs pin 1\.100\.0/);
   });
 
   it("the repository's pin is the one of rust-toolchain.toml's channel", () => {
@@ -286,6 +298,20 @@ describe('checkMirror', () => {
     expect(fs.existsSync(path.join(root, archiveRel('cargo', HOST)))).toBe(false);
   });
 
+  it("deletes a download's private folder that a killed job left behind", () => {
+    // Arrange
+    const root = mirror(PKGS.slice(0, 1));
+    fs.mkdirSync(path.join(root, '.download-abc123'));
+    fs.writeFileSync(path.join(root, '.download-abc123', 'rustc.tar.xz'), 'half');
+
+    // Act
+    const check = checkMirror(root, CHANNEL, PIN);
+
+    // Assert
+    expect(fs.existsSync(path.join(root, '.download-abc123'))).toBe(false);
+    expect([...check.ok.keys()]).toEqual([archiveRel('rustc', HOST)]);
+  });
+
   it('has nothing to judge by without a manifest (none saved yet)', () => {
     // Arrange
     const root = mirror([], null);
@@ -379,84 +405,157 @@ describe('usableInstalled and linkToolchain', () => {
   });
 });
 
+describe('distPath, distUrl and mirrorPath', () => {
+  it("accepts a channel manifest and a dated archive of dist/, and builds the URL on the fixed origin", () => {
+    // Act
+    const urls = [distUrl('dist/channel-rust-1.99.1.toml'), distUrl(archiveRel('rustc', HOST))];
+
+    // Assert
+    expect(urls).toEqual(['https://static.rust-lang.org/dist/channel-rust-1.99.1.toml', `https://static.rust-lang.org/${archiveRel('rustc', HOST)}`]);
+  });
+
+  it('refuses any other path: another folder, a separator in the name, a .. or a URL', () => {
+    // Arrange
+    const bad = ['dist/../../etc/passwd', 'dist/2026-10-15/../x.tar.xz', 'dist/2026-10-15/a/b.tar.xz', 'dist/2026-10-15/a\\b.tar.xz', 'dist/x..y.tar.xz', 'other/channel-rust-1.99.1.toml', 'https://example.com/dist/a.tar.xz', 'dist/a.sh'];
+
+    // Act
+    const refused = bad.filter((rel) => {
+      try {
+        distPath(rel);
+        return false;
+      } catch {
+        return true;
+      }
+    });
+
+    // Assert
+    expect(refused).toEqual(bad);
+  });
+
+  it('places a path below the mirror', () => {
+    // Act
+    const file = mirrorPath(dir, archiveRel('cargo', HOST));
+
+    // Assert
+    expect(file).toBe(path.join(path.resolve(dir), 'dist', DATE, `cargo-${CHANNEL}-${HOST}.tar.xz`));
+  });
+
+  it("refuses a manifest whose archive is not a dist/ file of static.rust-lang.org", () => {
+    // Arrange
+    const manifest = parseManifest(MANIFEST.replace(`xz_url = "https://static.rust-lang.org/${archiveRel('clippy-preview', HOST)}"`, 'xz_url = "https://static.rust-lang.org/dist/../../evil.tar.xz"'));
+
+    // Act
+    const files = () => archives(manifest, wanted({ host: HOST, components: ['clippy'], manifest }));
+
+    // Assert
+    expect(files).toThrow(/not a path of static\.rust-lang\.org's dist\//);
+  });
+});
+
 describe('downloadWithTries (the cold path)', () => {
   type Answer = (res: http.ServerResponse) => void;
   const BODY = 'rustc archive bytes';
+  const REL = archiveRel('rustc', HOST);
   const ok: Answer = (res) => res.end(BODY);
   const unavailable: Answer = (res) => res.writeHead(503).end('Service Unavailable');
   const damaged: Answer = (res) => res.end(BODY.slice(0, 5));
   const notFound: Answer = (res) => res.writeHead(404).end('Not Found');
   const stall: Answer = (res) => res.writeHead(200, { 'Content-Length': String(BODY.length) }).flushHeaders();
 
-  /** A stand-in for static.rust-lang.org that gives `answers` in turn, then the file. */
+  /**
+   * A stand-in for static.rust-lang.org that gives `answers` in turn, then the file; `fetchImpl`
+   * sends the script's requests for the fixed origin there, and records their URLs.
+   */
   async function server(answers: Answer[]) {
-    let requests = 0;
-    const s = http.createServer((_req, res) => {
-      requests++;
-      (answers.shift() ?? ok)(res);
-    });
+    const urls: string[] = [];
+    const s = http.createServer((_req, res) => (answers.shift() ?? ok)(res));
     await new Promise<void>((resolve) => s.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${(s.address() as AddressInfo).port}/dist/${DATE}/rustc.tar.xz`;
-    return { url, requests: () => requests, close: () =>
-        new Promise<void>((resolve) => {
-          s.closeAllConnections();
-          s.close(() => resolve());
-        }),
+    const local = `http://127.0.0.1:${(s.address() as AddressInfo).port}`;
+    const fetchImpl = (url: string, init: RequestInit) => {
+      urls.push(url);
+      return fetch(url.replace(DIST_ORIGIN, local), init);
     };
+    const close = () =>
+      new Promise<void>((resolve) => {
+        s.closeAllConnections();
+        s.close(() => resolve());
+      });
+    return { fetchImpl, urls, close };
   }
-  const opts = (url: string, logs: string[], pauses: number[]) => ({
-    url,
-    file: path.join(dir, 'out', 'rustc.tar.xz'),
+  const opts = (fetchImpl: unknown, logs: string[], pauses: number[]) => ({
+    root: dir,
+    rel: REL,
     sha: sha256(BODY),
+    fetchImpl,
     sleep: async (ms: number) => void pauses.push(ms),
     log: (l: string) => void logs.push(l),
   });
+  const landed = () => path.join(dir, REL);
+  const leftovers = () => fs.readdirSync(dir).filter((d) => d.startsWith('.download-'));
 
-  it('downloads the file and checks it, in one try', async () => {
+  it('downloads the file from the fixed origin, checks it, and moves it to its place in the mirror (mode 0600)', async () => {
     // Arrange
     const s = await server([]);
     const logs: string[] = [];
 
     // Act
-    const result = await downloadWithTries(opts(s.url, logs, []));
+    const result = await downloadWithTries(opts(s.fetchImpl, logs, []));
     await s.close();
 
     // Assert
     expect(result.tries).toBe(1);
-    expect(fs.readFileSync(path.join(dir, 'out', 'rustc.tar.xz'), 'utf8')).toBe(BODY);
+    expect(s.urls).toEqual([`https://static.rust-lang.org/${REL}`]);
+    expect(fs.readFileSync(landed(), 'utf8')).toBe(BODY);
+    if (process.platform !== 'win32') expect(fs.statSync(landed()).mode & 0o777).toBe(0o600);
+    expect(leftovers()).toEqual([]);
     expect(logs).toEqual([]);
   });
 
-  it('tries again after a 503 and a damaged body, and logs the recovery', async () => {
+  it('tries again after a 503 and a damaged body, which never reach the mirror, and logs the recovery', async () => {
     // Arrange
     const s = await server([unavailable, damaged]);
     const logs: string[] = [];
     const pauses: number[] = [];
 
     // Act
-    const result = await downloadWithTries(opts(s.url, logs, pauses));
+    const result = await downloadWithTries(opts(s.fetchImpl, logs, pauses));
     await s.close();
 
     // Assert
     expect(result.tries).toBe(3);
     expect(pauses).toEqual(PAUSES_MS);
+    expect(logs[1]).toMatch(/try 2 of 3 failed \(it sent a file with SHA-256 [0-9a-f]{64}, not /);
     expect(logs.at(-1)).toMatch(/infra recovery: .* downloaded on try 3 of 3 \(try 1: HTTP 503\)/);
-    expect(fs.existsSync(path.join(dir, 'out', 'rustc.tar.xz.part'))).toBe(false);
+    expect(fs.readFileSync(landed(), 'utf8')).toBe(BODY);
+    expect(leftovers()).toEqual([]);
+  });
+
+  it('leaves nothing in the mirror when every try brought a damaged file', async () => {
+    // Arrange
+    const s = await server([damaged, damaged]);
+
+    // Act
+    const result = downloadWithTries({ ...opts(s.fetchImpl, [], []), tries: 2 });
+
+    // Assert
+    await expect(result).rejects.toThrow(InfraError);
+    await s.close();
+    expect(fs.existsSync(landed())).toBe(false);
+    expect(leftovers()).toEqual([]);
   });
 
   it('cuts off a try that stops sending, and fails as infrastructure when every try did', async () => {
     // Arrange
     const s = await server([stall, stall]);
-    const logs: string[] = [];
 
     // Act
-    const result = downloadWithTries({ ...opts(s.url, logs, []), tries: 2, idleMs: 200 });
+    const result = downloadWithTries({ ...opts(s.fetchImpl, [], []), tries: 2, idleMs: 200 });
 
     // Assert
     await expect(result).rejects.toThrow(InfraError);
     await expect(result).rejects.toThrow(/2 tries failed, the last: no data for 200 ms/);
     await s.close();
-    expect(fs.existsSync(path.join(dir, 'out', 'rustc.tar.xz'))).toBe(false);
+    expect(fs.existsSync(landed())).toBe(false);
   });
 
   it('fails as infrastructure with the lookup error when the runner has no DNS (the incident)', async () => {
@@ -467,7 +566,7 @@ describe('downloadWithTries (the cold path)', () => {
     const pauses: number[] = [];
 
     // Act
-    const result = downloadWithTries({ ...opts('https://static.rust-lang.org/dist/channel-rust-1.99.1.toml', [], pauses), fetchImpl: lookupFailed });
+    const result = downloadWithTries({ ...opts(lookupFailed, [], pauses), rel: 'dist/channel-rust-1.99.1.toml' });
 
     // Assert
     await expect(result).rejects.toThrow(InfraError);
@@ -480,13 +579,26 @@ describe('downloadWithTries (the cold path)', () => {
     const s = await server([notFound]);
 
     // Act
-    const result = downloadWithTries(opts(s.url, [], []));
+    const result = downloadWithTries(opts(s.fetchImpl, [], []));
 
     // Assert
     await expect(result).rejects.toThrow(/static\.rust-lang\.org has no .* \(HTTP 404\)/);
     await expect(result).rejects.not.toThrow(InfraError);
     await s.close();
-    expect(s.requests()).toBe(1);
+    expect(s.urls).toHaveLength(1);
+  });
+
+  it('asks for nothing outside dist/ (a path from a manifest that is not one of its files)', async () => {
+    // Arrange
+    const s = await server([]);
+
+    // Act
+    const result = downloadWithTries({ ...opts(s.fetchImpl, [], []), rel: 'dist/../../etc/passwd' });
+
+    // Assert
+    await expect(result).rejects.toThrow(/not a path of static\.rust-lang\.org's dist\//);
+    await s.close();
+    expect(s.urls).toEqual([]);
   });
 
   it('starts no try that could not end before the cold path runs out of time', async () => {
@@ -495,7 +607,7 @@ describe('downloadWithTries (the cold path)', () => {
     const pauses: number[] = [];
 
     // Act
-    const result = downloadWithTries({ ...opts(s.url, [], pauses), tryMs: 60_000, deadline: 60_000, now: () => 1000 });
+    const result = downloadWithTries({ ...opts(s.fetchImpl, [], pauses), tryMs: 60_000, deadline: 60_000, now: () => 1000 });
 
     // Assert
     await expect(result).rejects.toThrow(InfraError);
@@ -509,12 +621,12 @@ describe('downloadWithTries (the cold path)', () => {
     const s = await server([]);
 
     // Act
-    const result = downloadWithTries({ ...opts(s.url, [], []), deadline: 1000, now: () => 1000 });
+    const result = downloadWithTries({ ...opts(s.fetchImpl, [], []), deadline: 1000, now: () => 1000 });
 
     // Assert
     await expect(result).rejects.toThrow(InfraError);
     await expect(result).rejects.toThrow(/the cold path had no time left for it/);
     await s.close();
-    expect(s.requests()).toBe(0);
+    expect(s.urls).toEqual([]);
   });
 });
