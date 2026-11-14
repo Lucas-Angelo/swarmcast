@@ -41,6 +41,10 @@ jobs:
           persist-credentials: false
       - uses: ./.github/actions/setup
         timeout-minutes: 8
+      # The saved Rust toolchain for cargo fmt at the end, fetched now with the job's other caches.
+      - uses: ./.github/actions/rust-toolchain/restore
+        continue-on-error: true
+        timeout-minutes: 4
       - run: npm run lint
       - run: npm run typecheck
       # Reads package-lock.json; fails on high or critical advisories in runtime dependencies.
@@ -73,9 +77,20 @@ jobs:
             echo "::warning title=Upstream binaries::Newer MediaMTX/cloudflared releases or a new AppImage runtime build exist (see the job summary); run node scripts/build/update-binaries.mjs to update the pins (the runtime by hand, docs/RELEASING.md section 8)."
           fi
 
-      - name: cargo fmt
+      # The pinned toolchain with rustfmt, from the runner image or the saved copy, which the job
+      # restored at its start (after setup): no download from static.rust-lang.org unless neither
+      # has it (README.md, "Rust toolchain").
+      - name: Rust toolchain for cargo fmt
+        id: rust
         if: ${{ !cancelled() }}
-        run: |
-          channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)"
-          rustup toolchain install "$channel" --profile minimal --component rustfmt --no-self-update
-          cargo "+$channel" fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml
+        timeout-minutes: 6
+        uses: ./.github/actions/rust-toolchain
+        with:
+          components: rustfmt
+      - name: cargo fmt
+        if: ${{ !cancelled() && steps.rust.outcome == 'success' }}
+        env:
+          TOOLCHAIN: ${{ steps.rust.outputs.toolchain }}
+          RUSTUP_AUTO_INSTALL: '0'
+          RUSTUP_DIST_SERVER: ${{ steps.rust.outputs.dist-server }}
+        run: cargo "+$TOOLCHAIN" fmt --check --manifest-path apps/desktop/src-tauri/Cargo.toml

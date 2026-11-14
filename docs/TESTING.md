@@ -79,6 +79,7 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | An artifact service hiccup | `.github/actions/fetch-artifact` | CI infrastructure |
 | An upload of an artifact a later job needs (web-dist, a staged server, the installers, the Docker suites' build) that failed or hung, for example a macOS VM that lost DNS mid-job | `.github/actions/upload-build`, two steps in the workflow | the runner's network or GitHub's artifact service, not the build (release rehearsal 42846972124: "Failed to CreateArtifact: Unable to make request: ENOTFOUND" after the installers were built and checked; pipeline run 43232320009: ETIMEDOUT after the Docker suites' build): try 1 cut off after 5 minutes, then a wait of at most 5 minutes until the artifact service answers and one more upload with `overwrite`, cut off after 12 minutes, logged `infra recovery:`; a second failure fails the job with an `infra:` error. Only the upload is tried again, never the build ([.github/workflows/README.md](../.github/workflows/README.md), "Artifact uploads") |
 | A crates.io download that failed (a `206` with a partial body, a 5xx, a refused or cut-off connection, a corrupt `.crate`) or stalled, only when the Rust crates are fetched (no saved artifact for this `Cargo.lock` yet) | `fetchWithTries` in [.github/scripts/cargo-crates.mjs](../.github/scripts/cargo-crates.mjs) | crates.io's CDN, not the test (release rehearsal 42799834042: `got 206`, which cargo does not try again): 3 tries, each cut off after 60 s; a failure that is not the network fails at once; every cargo command after it runs offline ([below](#no-third-party-service-in-the-gate)) |
+| A static.rust-lang.org download that failed (a 5xx, a refused or cut-off connection, a lookup that failed, a damaged file) or stalled, only when neither the runner image nor the saved copy has the pinned Rust toolchain (none saved on `main` yet for this channel and host, or a component no job of that host had) | `downloadWithTries` in [.github/scripts/rust-toolchain.mjs](../.github/scripts/rust-toolchain.mjs) | static.rust-lang.org or the runner's network, not the test (campaign run 43573407339: a macOS runner lost DNS and `rustup toolchain install` failed before any test): 3 tries, each cut off after 90 s or 30 s without data, 4 minutes in all, every file checked against the pinned manifest; a 404 fails at once; a failure stops the step with `Rust toolchain (infrastructure)`, and rustup itself never downloads ([.github/workflows/README.md](../.github/workflows/README.md), "Rust toolchain") |
 | A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
 | A GitHub release download that answers 5xx, breaks off or stalls (MediaMTX, cloudflared, Pebble, the test ffmpeg, cargo-llvm-cov, the AppImage tools, pkg's Node.js base binary) | `download` in [scripts/build/fetch-binaries.mjs](../scripts/build/fetch-binaries.mjs) (also through `pkg-base.mjs`), after the Actions download cache (`.github/actions/setup`) | github.com's release downloads, not the test (504s for most of an hour, PR #141): 6 tries in a row without progress, resumed with Range, then the next source, and the GitHub release files once more through GitHub's REST API (`githubApiUrl`, which served them during that outage); a source that worked only after failed tries or through the API logs `infra recovery:`; a SHA-256 pin decides, whichever source. In CI the cache serves the file first, and a download that still fails stops the job at that step (`::error title=fetch-binaries::`): no test runs without its binaries ([.github/workflows/README.md](../.github/workflows/README.md), "Release downloads") |
 | NSIS and its Tauri plugin for the Windows installer | the Tauri tools cache of `.github/actions/setup` (`tauri-tools`) | `tauri build` downloads them from github.com with one try each; the cached folder means it does not (a cold cache still downloads once) |
@@ -539,6 +540,25 @@ blocked in every cargo job (`/etc/hosts`; an online `cargo fetch` then fails) pa
 (42808529703), 7 of 7 jobs green each, with no crate downloaded and no index update in any cargo
 job. A job that finds no artifact fetches the crates itself (soak 42804773481: 4 s).
 
+Every job that runs cargo also installed the pinned Rust toolchain with `rustup toolchain
+install`, which asks static.rust-lang.org for the channel's manifest every time, also with the
+toolchain installed. Campaign run 43573407339 lost its macOS node job that way, before its tests,
+when the runner lost DNS mid-job. The toolchain now comes from the runner image when rustup
+installed it there from the manifest pinned in `apps/desktop/src-tauri/rust-toolchain.sha256`
+with every component the job needs (no network at all), else from a saved copy of the release's
+archives (an Actions cache per host, restored at the job's start in the node and quick jobs),
+checked against that manifest and installed by rustup from it as a local mirror; only what
+neither has comes from static.rust-lang.org, with the tries [above](#infra-recoveries), and
+`main` saves it for the next jobs. rustup never downloads by itself: it installs from the mirror,
+and after setup-rust `RUSTUP_AUTO_INSTALL=0` and `RUSTUP_DIST_SERVER=<the mirror>` hold for the
+job ([.github/workflows/README.md](../.github/workflows/README.md), "Rust toolchain"). Checked in
+Linux containers with rustup 1.29.3: a copy made with the network (the cold path, 7 files in 9 s)
+installed the toolchain with `--network none` (cargo, clippy, rustfmt and llvm-tools, and a crate
+built offline), and so did the image's stable of the pinned release with no copy (linked, no
+download); a copy without llvm-tools, one with a damaged archive (deleted, with a warning), no copy
+at all, and an image stable without llvm-tools each failed there with the infrastructure error,
+naming the file, the lookup error and why the job needed it.
+
 The gating Linux jobs' apt packages (the Tauri build dependencies, the system libraries of
 Playwright's Firefox and WebKit, the desktop test's AppImage host libraries and `.deb`
 dependencies) came from the Ubuntu archive in every job: each restored a `.deb` cache for its
@@ -585,7 +605,7 @@ browsers' P2P candidates (the viewers find each other on loopback without it), D
 IP lookup in the Windows direct suite (1.1.1.1/cdn-cgi/trace), and cloudflared's own lookup of its
 feature flags in DNS (`cfd-features.argotunnel.com`, 10 s limit, defaults on failure). CI set-up
 downloads (npm, pinned binaries, actions, a Docker test image's cold build, the Rust crates'
-cold fetch and a `.deb` set's cold fetch) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
+cold fetch, a `.deb` set's cold fetch and the Rust toolchain's cold fetch) are infrastructure with their own recoveries ([above](#infra-recoveries)), not services
 under test.
 
 ### Chat bench

@@ -176,7 +176,7 @@ Everything is pinned so a surprise major release cannot break a build, while bug
 
 - **npm:** `^` ranges in `package.json` (minor + patch, never a new major) and an exact `package-lock.json`; `npm ci` installs exactly the lockfile. Dependabot groups minor/patch updates weekly and ignores majors, which are upgraded deliberately.
 - **MediaMTX / cloudflared:** exact versions with SHA-256 in [`scripts/build/versions.json`](../scripts/build/versions.json). `node scripts/build/update-binaries.mjs --check` (also a scheduled CI job) reports newer releases within the same major; running it without `--check` rewrites the pins and hashes.
-- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Rust `1.99.1` for the desktop app (`apps/desktop/src-tauri/rust-toolchain.toml`, bumped deliberately), Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
+- **Toolchains:** Node `24.x` (embedded runtime: Node 24 LTS via `@yao-pkg/pkg`), Rust `1.99.1` for the desktop app (`apps/desktop/src-tauri/rust-toolchain.toml`, bumped deliberately, with `node .github/scripts/rust-toolchain.mjs pin` after it: CI installs only the toolchain whose channel manifest `rust-toolchain.sha256` pins), Playwright browsers from the lockfile, GitHub Actions pinned by commit SHA (Dependabot updates them).
 
 ## Releases
 

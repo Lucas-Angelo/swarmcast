@@ -29,15 +29,17 @@ runs:
           echo "Rust crates: no artifact $name yet; fetching and saving it (cold)"
           echo "save=true" >>"$GITHUB_OUTPUT"
         fi
+    # The pinned toolchain, from the runner image or the saved copy (README.md, "Rust toolchain").
+    - name: Rust toolchain
+      if: steps.find.outputs.save == 'true'
+      uses: ./.github/actions/rust-toolchain
     # A cargo home of its own, so the artifact holds Cargo.lock's crates and nothing the runner
-    # image or another step left in ~/.cargo; the pinned toolchain without components.
+    # image or another step left in ~/.cargo.
     - name: Fetch them from crates.io
       if: steps.find.outputs.save == 'true'
       shell: bash
       run: |
         export CARGO_HOME="$RUNNER_TEMP/cargo-crates-home"
-        channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' apps/desktop/src-tauri/rust-toolchain.toml)"
-        rustup toolchain install "$channel" --profile minimal --no-self-update
         node .github/scripts/cargo-crates.mjs fetch
         node .github/scripts/cargo-crates.mjs check
         mkdir -p "$RUNNER_TEMP/cargo-crates-save"

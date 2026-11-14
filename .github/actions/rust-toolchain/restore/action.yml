@@ -1,0 +1,41 @@
+name: Restore the saved Rust toolchain
+description: >-
+  The saved copy of the pinned Rust toolchain for this host and channel (an Actions cache:
+  rust-toolchain-v1-<host>-<channel>-<run>-<hash>, the newest), into $SC_RUST_TOOLCHAIN_DIR, for
+  ./.github/actions/rust-toolchain, which installs from it with no network. Run it right after
+  ./.github/actions/setup in a job whose Rust steps come late (the node job runs them after its
+  Node.js tests): the cache is then fetched at the job's start, with the job's other caches, not
+  minutes later (campaign run 43573407339: a macOS runner lost DNS mid-job and its
+  `rustup toolchain install` could no longer reach static.rust-lang.org). Elsewhere
+  ./.github/actions/rust-toolchain runs this itself. Never fails: a miss leaves the cold path.
+  .github/workflows/README.md, "Rust toolchain".
+
+runs:
+  using: composite
+  steps:
+    - name: Saved Rust toolchain key
+      id: key
+      shell: bash
+      run: node "$GITHUB_WORKSPACE/.github/scripts/rust-toolchain.mjs" key
+    # Only this exact channel's entries (the key has it): every archive of a release is fixed by
+    # its manifest, so any of them is a good start, and the newest is the fullest. One that lacks
+    # an archive a job needs is completed from static.rust-lang.org (the cold path) and main saves
+    # the fuller one. Never another channel's: none of its archives would serve.
+    - name: Restore the saved Rust toolchain
+      id: restore
+      continue-on-error: true
+      env:
+        SEGMENT_DOWNLOAD_TIMEOUT_MINS: '2'
+      uses: ./.github/actions/cache-restore
+      with:
+        path: ${{ steps.key.outputs.dir }}
+        key: ${{ steps.key.outputs.prefix }}
+        restore-keys: ${{ steps.key.outputs.prefix }}
+    - name: Remember the saved Rust toolchain
+      shell: bash
+      env:
+        MATCHED: ${{ steps.restore.outputs.cache-matched-key }}
+        PREFIX: ${{ steps.key.outputs.prefix }}
+      run: |
+        echo "SC_RUST_TOOLCHAIN_RESTORED=$MATCHED" >> "$GITHUB_ENV"
+        if [ -n "$MATCHED" ]; then echo "Rust toolchain: saved copy $MATCHED"; else echo "Rust toolchain: no saved copy for ${PREFIX%-} yet"; fi

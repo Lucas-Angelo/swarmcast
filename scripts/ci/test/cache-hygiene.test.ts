@@ -24,8 +24,8 @@ function cache(key: string, { ref = 'refs/heads/main', created = 48, used = crea
   return { id: nextId++, key, ref, sizeInBytes: size, createdAt: at(created), lastAccessedAt: at(used) };
 }
 
-function run(caches: ReturnType<typeof cache>[], opts: { branches?: string[]; openPrs?: number[]; graceHours?: number } = {}) {
-  const result = plan({ caches, branches: opts.branches ?? ['main'], openPrs: opts.openPrs ?? [], tokens: TOKENS, now: NOW, graceHours: opts.graceHours ?? 24 });
+function run(caches: ReturnType<typeof cache>[], opts: { branches?: string[]; openPrs?: number[]; graceHours?: number; staleHours?: number } = {}) {
+  const result = plan({ caches, branches: opts.branches ?? ['main'], openPrs: opts.openPrs ?? [], tokens: TOKENS, now: NOW, graceHours: opts.graceHours ?? 24, staleHours: opts.staleHours ?? 96 });
   const reason = (c: ReturnType<typeof cache>) => [...result.keep, ...result.remove].find((x) => x.cache === c)?.reason;
   return { removed: result.remove.map((x) => x.cache), kept: result.keep.map((x) => x.cache), reason };
 }
@@ -242,5 +242,51 @@ describe('plan: superseded entries on main', () => {
 
     // Assert
     expect(r.removed).toEqual([]);
+  });
+});
+
+describe('plan: families no job restores any more', () => {
+  it("deletes a family whose key changed shape once main's other caches were used for 96 h without it", () => {
+    // Arrange: the download cache before its keys had a run and a hash, and the pre-v2 .deb cache
+    // whose sets took over; the listing of 2026-11-14.
+    const oldShape = cache(`sc-downloads-Linux-X64-ffmpeg-false-for-linux-x64-${LOCK_OLD}`, { created: 200, used: 140 });
+    const newShape = cache(`sc-downloads-Linux-X64-ffmpeg-false-for-linux-x64-${LOCK}-42487648849-bfaf36a0c91e`, { created: 100, used: 1 });
+    const preV2 = cache(`apt-debs-playwright-${LOCK}-ubuntu24-20261101.360.1-X64`, { created: 300, used: 100 });
+    const v2 = cache(`apt-debs-v2-ubuntu24-X64-playwright-${LOCK}-20261101.360.1-37d84ceb636022b1`, { created: 90, used: 1 });
+
+    // Act
+    const r = run([oldShape, newShape, preV2, v2]);
+
+    // Assert
+    expect(r.removed).toEqual([oldShape, preV2]);
+    expect(r.reason(preV2)).toBe("no job restored its family for 96 h while main's other caches were used");
+    expect(r.reason(v2)).toBe('current inputs: package-lock.json (sc-tauri-tools, apt-debs-playwright)');
+  });
+
+  it("keeps a family used within 96 h of main's last use, and deletes nothing after a quiet week", () => {
+    // Arrange: no run on main for a week, then nothing new; a weekly job's family used 90 h before.
+    const weekly = cache('ms-playwright-Linux-X64-1.64.1', { created: 400, used: 258 });
+    const daily = cache(`node-cache-Linux-x64-npm-${NPM}`, { created: 400, used: 168 });
+
+    // Act
+    const r = run([weekly, daily]);
+
+    // Assert
+    expect(r.removed).toEqual([]);
+  });
+
+  it('keeps the Rust toolchain copies of a host that main restores, and rolls them over like any family', () => {
+    // Arrange: a node job saved a fuller copy after a build job had saved the first.
+    const first = cache('rust-toolchain-v1-x86_64-unknown-linux-gnu-1.99.1-43600000001-0a1b2c3d4e5f6071', { created: 50, used: 40 });
+    const fuller = cache('rust-toolchain-v1-x86_64-unknown-linux-gnu-1.99.1-43600000002-1a2b3c4d5e6f7081', { created: 30, used: 1 });
+    const arm = cache('rust-toolchain-v1-aarch64-unknown-linux-gnu-1.99.1-43600000001-2b3c4d5e6f708192', { created: 50, used: 2 });
+
+    // Act
+    const r = run([first, fuller, arm]);
+
+    // Assert
+    expect(familyOf(fuller.key)).toBe('rust-toolchain-v1-x86_64-unknown-linux-gnu-*-*-*');
+    expect(r.removed).toEqual([first]);
+    expect(r.reason(arm)).toBe('newest of its family');
   });
 });
