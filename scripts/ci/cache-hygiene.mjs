@@ -3,14 +3,19 @@
 // .github/workflows/README.md "Caches"). Over the limit GitHub evicts the least recently used
 // entries, so a job can find main's npm or Rust cache gone and run cold.
 //
-//   node scripts/ci/cache-hygiene.mjs [--dry-run] [--grace-hours 24] [--main-ref origin/main]
-//                                     [--repo owner/name] [--caches listing.json]
+//   node scripts/ci/cache-hygiene.mjs [--dry-run] [--grace-hours 24] [--stale-hours 96]
+//                                     [--main-ref origin/main] [--repo owner/name] [--caches listing.json]
 //
 // What it deletes:
 // - the caches of a pull request that is no longer open (refs/pull/<n>/merge, refs/pull/<n>/head);
 // - the caches of a branch that no longer exists;
 // - on main, superseded entries: per cache "family" (the key with its hashes and versions taken
-//   out, see familyOf), every entry except the ones still in use (see plan).
+//   out, see familyOf), every entry except the ones still in use (see plan);
+// - on main, a whole family that no job restored for `--stale-hours` before the last use of any
+//   of main's caches: nothing restores it any more (its key changed shape, as the download cache's
+//   did when it gained a run and a hash; a cache no workflow uses since a change, like the pre-v2
+//   .deb caches or sc-pkg). Measured against main's last use, not the clock, so a quiet week
+//   deletes nothing; GitHub itself deletes an entry unused for 7 days.
 // Everything else stays (open pull requests, existing branches, tags).
 //
 // Never deleted on main: an entry whose key holds a hash of main's current inputs (the same
@@ -23,6 +28,7 @@
 // restored the old one by prefix, then nothing does), and how the download and Tauri tools
 // caches do with one hash (a new entry per run that added or changed files, the restore takes the newest:
 // .github/scripts/cache-files.mjs).
+// Families no job restored are the exception to all of the above.
 // --dry-run prints the plan and deletes nothing. --caches reads the listing from a file
 // (`gh cache list --json id,key,ref,sizeInBytes,createdAt,lastAccessedAt`) instead of the API.
 // Needs `gh` with GH_TOKEN (actions: write to delete; actions: read for a dry run).
@@ -84,7 +90,7 @@ const newestFirst = (by) => (a, b) => time(b[by]) - time(a[by]) || b.id - a.id;
  * `openPrs`: the numbers of the open pull requests; `tokens`: currentTokens(); `now`: a Date.
  * Returns { keep, remove }, each a list of { cache, reason }.
  */
-export function plan({ caches, branches, openPrs, tokens, now, graceHours = 24 }) {
+export function plan({ caches, branches, openPrs, tokens, now, graceHours = 24, staleHours = 96 }) {
   if (!branches.includes(MAIN_BRANCH)) throw new Error(`the branch list has no ${MAIN_BRANCH}: refusing to judge branches from it`);
   for (const t of tokens) if (!HASH.test(t.token)) throw new Error(`not a hash: ${t.what} = ${t.token}`);
   const mainRef = `refs/heads/${MAIN_BRANCH}`;
@@ -112,7 +118,14 @@ export function plan({ caches, branches, openPrs, tokens, now, graceHours = 24 }
     }
   }
   const graceStart = now.getTime() - graceHours * 3600e3;
+  const mainLastUse = Math.max(...[...families.values()].flat().map((c) => time(c.lastAccessedAt)));
   for (const entries of families.values()) {
+    const familyLastUse = Math.max(...entries.map((c) => time(c.lastAccessedAt)));
+    if (familyLastUse < mainLastUse - staleHours * 3600e3) {
+      const reason = `no job restored its family for ${staleHours} h while main's other caches were used`;
+      for (const cache of entries) remove.push({ cache, reason });
+      continue;
+    }
     const newest = [...entries].sort(newestFirst('createdAt'))[0];
     const lastUsed = [...entries].sort(newestFirst('lastAccessedAt'))[0];
     for (const cache of entries) {
@@ -163,9 +176,11 @@ function main() {
   const repo = arg('repo', process.env.GITHUB_REPOSITORY);
   const mainRef = arg('main-ref', `origin/${MAIN_BRANCH}`);
   const graceHours = Number(arg('grace-hours', '24'));
+  const staleHours = Number(arg('stale-hours', '96'));
   const cachesFile = arg('caches');
   if (!repo) throw new Error('--repo owner/name (or GITHUB_REPOSITORY) is required');
   if (!(graceHours >= 0)) throw new Error('--grace-hours must be a number >= 0');
+  if (!(staleHours >= 48)) throw new Error('--stale-hours must be a number >= 48');
   const gh = (...args) => run('gh', args);
 
   const usage = () => JSON.parse(gh('api', `repos/${repo}/actions/cache/usage`));
@@ -195,7 +210,7 @@ function main() {
     const found = caches.some((c) => c.ref === `refs/heads/${MAIN_BRANCH}` && c.key.includes(t.token));
     console.log(`  ${t.token}  ${t.what}${found ? '' : '  (no cache on main yet)'}`);
   }
-  const result = plan({ caches, branches, openPrs, tokens, now: new Date(), graceHours });
+  const result = plan({ caches, branches, openPrs, tokens, now: new Date(), graceHours, staleHours });
   const text = report(result, { dryRun });
   console.log(text);
 

@@ -1,7 +1,8 @@
 name: Save the SwarmCast setup caches
 description: >-
   Last step of a job that used ./.github/actions/setup: saves the caches the job added or changed
-  files in (pinned downloads with pkg's Node.js base binary, the Tauri tools on Windows, the .deb set).
+  files in (pinned downloads with pkg's Node.js base binary, the Tauri tools on Windows, the .deb
+  set, the Rust toolchain's saved copy).
   On main only, so pull requests restore main's caches instead of each storing its own copy (the
   repository's 10 GB cache limit), except the pinned-downloads cache, which pull requests save
   too (see below). Never fatal: a save that fails is a warning. Call it with
@@ -57,6 +58,17 @@ runs:
       with:
         path: ${{ env.SC_TAURI_TOOLS_DIR }}
         key: ${{ steps.added.outputs.tauri-tools-key }}
+    # The Rust toolchain's saved copy (.github/scripts/rust-toolchain.mjs): a new entry only when
+    # the job had to fetch archives from static.rust-lang.org (its key ends in the run and a hash
+    # of what the mirror holds, so the newest entry is the fullest). Main only, like the Rust
+    # cache: what a release build restores is what main's own runs wrote.
+    - name: Save the Rust toolchain (main)
+      if: github.ref == 'refs/heads/main' && env.SC_RUST_TOOLCHAIN_SAVE_KEY != '' && steps.cache-action.outputs.fetched == 'true'
+      continue-on-error: true
+      uses: ./.git/remote-actions/actions/cache/save
+      with:
+        path: ${{ env.SC_RUST_TOOLCHAIN_DIR }}
+        key: ${{ env.SC_RUST_TOOLCHAIN_SAVE_KEY }}
     # The .deb set (.github/scripts/apt-debs.sh finish): a new entry only when the job had to add
     # .debs from the archive (its key ends in a hash of the new SHA256SUMS): the .debs it used, plus
     # the rest of the restored set when that was made on the same runner image. Main only: the set

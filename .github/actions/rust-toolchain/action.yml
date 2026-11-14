@@ -1,0 +1,46 @@
+name: Rust toolchain (rust-toolchain.toml), offline
+description: >-
+  The toolchain pinned in apps/desktop/src-tauri/rust-toolchain.toml (its channel, components and
+  targets, plus the `components` and `targets` asked here), made the default, with no download
+  from static.rust-lang.org when the runner image or the saved copy has it
+  (.github/scripts/rust-toolchain.mjs): the image's toolchain when rustup installed it from the
+  manifest pinned in rust-toolchain.sha256 with every component; else the saved copy
+  (./.github/actions/rust-toolchain/restore, run here unless the job ran it already), checked
+  against that manifest, which rustup installs from as a local mirror; only what that lacks comes
+  from static.rust-lang.org, with tries, and ./.github/actions/setup/save saves the fuller copy
+  (main only). When static.rust-lang.org does not answer then, the step fails with
+  `Rust toolchain (infrastructure)`. rustup never downloads by itself. .github/workflows/README.md,
+  "Rust toolchain".
+
+inputs:
+  components:
+    description: Extra rustup components (comma-separated), e.g. `clippy,llvm-tools`.
+    default: ''
+  targets:
+    description: Extra rustup targets (comma-separated), e.g. x86_64-apple-darwin.
+    default: ''
+
+outputs:
+  toolchain:
+    description: The toolchain's full name, `<channel>-<host>`.
+    value: ${{ steps.install.outputs.toolchain }}
+  source:
+    description: "Where it came from: `image`, `saved` or `network`."
+    value: ${{ steps.install.outputs.source }}
+  dist-server:
+    description: The local mirror as a file URL, for RUSTUP_DIST_SERVER.
+    value: ${{ steps.install.outputs.dist-server }}
+
+runs:
+  using: composite
+  steps:
+    - name: Restore the saved Rust toolchain
+      if: env.SC_RUST_TOOLCHAIN_DIR == ''
+      uses: ./.github/actions/rust-toolchain/restore
+    - name: Rust toolchain (rust-toolchain.toml)
+      id: install
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+        TARGETS: ${{ inputs.targets }}
+      run: node "$GITHUB_WORKSPACE/.github/scripts/rust-toolchain.mjs" install --components "$COMPONENTS" --targets "$TARGETS"

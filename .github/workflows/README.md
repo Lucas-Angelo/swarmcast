@@ -293,7 +293,8 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/cache-restore` | `actions/cache/restore` with a time limit per try (90 s) and one more try after a try that timed out or failed (`.github/actions/cache-restore/restore.mjs`); every `actions/cache` restore goes through it |
 | `.github/actions/fetch-remote` | fetches remote actions with git at their pins into `.git/remote-actions/`, 4 tries, so steps run them from there (see "Remote actions" below) |
 | `.github/actions/remote-pins` | never runs: the pins (`uses:` lines, bumped by Dependabot) of the remote actions `fetch-remote` fetches |
-| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml`, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux from the saved `.deb` set with apt offline (`apt-debs.sh`) |
+| `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml` (`rust-toolchain`) with rustup offline from then on, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux from the saved `.deb` set with apt offline (`apt-debs.sh`) |
+| `.github/actions/rust-toolchain` | the pinned Rust toolchain, made the default, from the runner image or the saved copy with no network, else what the copy lacks from static.rust-lang.org with tries (`.github/scripts/rust-toolchain.mjs`); `rust-toolchain/restore` fetches the saved copy at a job's start (see "Rust toolchain" below) |
 | `.github/actions/cargo-crates` | every crate of `apps/desktop/src-tauri/Cargo.lock` into `$CARGO_HOME/registry` from the artifact an earlier run saved, checked against `Cargo.lock`'s SHA-256 values, else from crates.io with tries; then `CARGO_NET_OFFLINE=true` for the job; `cargo-crates/save` (the build stage) saves that artifact once per `Cargo.lock` and toolchain (`.github/scripts/cargo-crates.mjs`; see "Rust crates" below) |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
@@ -687,6 +688,95 @@ job with a full rust-cache hit printed `Updating crates.io index` and asked inde
 (that run's `node / unit, integration, rust (ubuntu-24.04)`, in clippy). Not the Actions cache
 for the crates: the caches held 9.6 of their 10 GB (see "Test images").
 
+### Rust toolchain
+
+No gating job downloads the Rust toolchain while the runner image or the saved copy has it, and
+rustup never downloads by itself: `./.github/actions/rust-toolchain` (in `setup-rust`, the quick
+job's `cargo fmt` and the crates' cold path) installs the toolchain of
+`apps/desktop/src-tauri/rust-toolchain.toml` with its components and targets plus the job's own
+(`clippy,llvm-tools` for the node job, `x86_64-apple-darwin` for the macOS x64 build), through
+`.github/scripts/rust-toolchain.mjs`:
+
+- The pin: `apps/desktop/src-tauri/rust-toolchain.sha256`, the SHA-256 of the release's channel
+  manifest (`channel-rust-<channel>.toml`, in static.rust-lang.org's own `.sha256` format). The
+  manifest lists every archive of the release with its SHA-256, so the pin fixes the whole
+  toolchain. Not a line in `rust-toolchain.toml`: rust-cache hashes that file into all eight Rust
+  cache keys. A channel change without the pin fails at once (`node
+  .github/scripts/rust-toolchain.mjs pin <channel>` writes it).
+- The runner image first, with no network at all: a toolchain of this host that rustup installed
+  from the pinned manifest and that has every component the job needs. rustup records both:
+  `$RUSTUP_HOME/update-hashes/<toolchain>` holds the first 20 hex digits of the manifest's SHA-256
+  it installed from (they must start the pin), and `toolchains/<toolchain>/lib/rustlib/components`
+  the installed components. `<channel>-<host>` itself, or another such as the image's
+  `stable-<host>`: stable's manifest is byte for byte the file of its version, so an image built
+  while stable was the pinned release passes, and is linked as `<channel>-<host>` (a junction on
+  Windows). The log names each toolchain of the host that does not fit, and why (another
+  manifest, a missing component such as `llvm-tools-preview`).
+- Else the saved copy: a mirror of static.rust-lang.org's `dist/` with the manifest and the
+  archives (the `.tar.xz` rustup takes) that the jobs of this host used, in `$SC_RUST_TOOLCHAIN_DIR`.
+  The manifest must have the pinned SHA-256 and each archive the manifest's; a file that does not
+  is deleted with a warning, like a `.deb` that does not match its set's `SHA256SUMS`. rustup then
+  installs from it with `RUSTUP_DIST_SERVER=file://...` (and checks every archive against the
+  manifest itself). Key `rust-toolchain-v1-<host>-<channel>-<run id>-<hash of the files>`, one
+  family per host and channel; the restore takes the newest entry of this exact channel (any of
+  them is a good start: a release's archives never change, and the newest is the fullest), never
+  another channel's.
+- The cold path, only for what neither has: the manifest and the missing archives from
+  static.rust-lang.org (each try cut off after 90 s, or 30 s without data; 3 tries, 5 and 15 s
+  apart; the cold path ends 4 minutes in, within setup-rust's 8 with the restore; a 404 is not
+  tried again; a whole host took 9 s in a container), each file checked
+  against the pin or the manifest, into the mirror, and rustup installs from the mirror as above.
+  Only `https://static.rust-lang.org/` plus a `dist/` path of a strict form (a channel manifest,
+  or one archive name in a `dist/<date>/` folder, no `..`) is ever asked for, whatever the
+  manifest's URLs say; each try writes into a private folder of its own in the mirror
+  (`fs.mkdtemp`, the file created exclusively with mode 0600), and only a file with the right
+  SHA-256 is moved to its place below the mirror. The mirror is in `$RUNNER_TEMP`, never in the
+  shared temporary folder.
+  A file that came only after failed tries logs `infra recovery:`. When static.rust-lang.org does
+  not answer, the step fails with `Rust toolchain (infrastructure): static.rust-lang.org did not
+  answer: <file>: <the tries' reasons>. The job needed it because <no saved copy was restored / the
+  saved copy <key> lacks <components>>, and <the image's toolchains and why each did not fit>`;
+  nothing is skipped. `./.github/actions/setup/save` then saves the fuller mirror, on `main` only
+  (`SC_RUST_TOOLCHAIN_SAVE_KEY`), like the Rust cache.
+- Then the toolchain is the default, `rustc -vV` in `apps/desktop/src-tauri` must give the pinned
+  release for the host with no install (what every later cargo call there resolves), and
+  `setup-rust` sets `RUSTUP_AUTO_INSTALL=0` and `RUSTUP_DIST_SERVER=<the mirror>` for the rest of
+  the job, after rust-cache (it puts every `RUST*` variable into its key): rustup's proxies install
+  whatever `rust-toolchain.toml` names and is missing at a cargo call (rustup 1.29 does, from the
+  network), and from then on any download rustup tries goes to the local mirror.
+- The node job and the quick job run `./.github/actions/rust-toolchain/restore` right after
+  `setup`, since their Rust steps come minutes later; elsewhere the action restores the copy
+  itself, right after `setup`.
+
+The saved copy is an Actions cache, not an artifact like the crates: one entry per host (Linux
+x64 and arm64, Windows x64, macOS arm64, which also holds the x86_64-apple-darwin standard library
+for the macOS x64 build), 115-175 MB each, about 0.6 GB in all, where an artifact would need a
+producer job per runner kind or uploads from the consumers.
+
+So static.rust-lang.org is asked once per channel and host on `main` (more archives when a job
+asks for a component no job of that host had), by the first jobs that need them, and by a pull
+request that changes the channel until it merges; never by a job whose image or copy has the
+toolchain. Until `main` has saved a copy for a host (the first runs after this change, and after
+GitHub evicts one), a job takes the image's toolchain when it fits (an image built while stable
+was the pinned release, for a job that needs none of the components or targets it lacks), else
+the cold path: those runs need static.rust-lang.org, and fail with the infrastructure error when it
+does not answer. Stable moved on to 1.100.0 on 2026-11-12, so new images stop fitting until the
+pin moves too.
+
+Still reached at setup-rust's time, which in the node job comes after the Node.js tests: rust-cache's
+restore and the crates' artifact, from GitHub's cache and artifact services (a failure is a warning
+and a cold build, or the crates' cold path: "Rust crates"). A runner that has lost DNS by then
+still fails there, in the crates' cold path, with that step's error.
+
+Why: campaign run 43573407339 lost `node / unit, integration, rust (macos-latest)` before its
+tests: the runner lost DNS mid-job (two report uploads had just failed with `CreateArtifact
+ENOTFOUND`), and setup-rust's `rustup toolchain install 1.99.1 --component clippy,llvm-tools`
+failed with "could not download file" for static.rust-lang.org's `channel-rust-1.99.1.toml.sha256`
+("dns error: failed to lookup address information"). rustup asks for the channel's
+manifest at every `toolchain install`, also when the toolchain is installed already, and every
+gating job that runs cargo installed the pinned toolchain that way, at the moment setup-rust ran
+(the node job: after its Node.js tests).
+
 ### Ubuntu packages
 
 No gating Linux job asks the Ubuntu archive for a package while its saved set fits the runner
@@ -844,7 +934,7 @@ Outside our control: github/codeql-action downloads its CodeQL bundle when the r
 copy is not the version it is linked to ("Unable to download and extract CodeQL CLI: Unexpected
 HTTP response: 504" in the same outage, `codeql.yml`, not a required check). Not GitHub: the
 WebView2 bootstrapper `tauri build` takes from go.microsoft.com, Playwright's browsers (their CDN,
-cached on Linux), Rust toolchains (static.rust-lang.org), npm packages (the registry, `npm ci`'s
+cached on Linux), the Rust toolchain's cold path (static.rust-lang.org: "Rust toolchain" above), npm packages (the registry, `npm ci`'s
 retry). Rust crates come from crates.io only on their cold path ("Rust crates" above).
 
 ## Caches
@@ -860,6 +950,7 @@ again (a cold run). The Docker suites' test images are artifacts, not caches, fo
 | `v0-rust-checks-node-*` | `setup-rust` in the Rust checks (`_node.yml`), per OS | 3 | 0.62-0.99 GB each, 2.42 GB (before `CARGO_PROFILE_DEV_DEBUG=0`) |
 | `sc-downloads-*` | `setup/save`: the pinned downloads (on Linux also the AppImage tools, about 21 MB per architecture; with pkg's Node.js base binary in the jobs that package, 40-50 MB), per OS and with/without ffmpeg (pull requests too); one target per entry (`-for-<target>-`); the Windows quality and OBS suites have their own (`-app-ffmpeg-`: the app's ffmpeg zip, 0.17 GB more; `-obs-studio-`: the portable OBS zip, 0.22 GB more), which start from the plain entry until they exist; a new entry per run that added or changed files ("Release downloads"); also restored, never saved, by `Playwright in Docker` ("Pinned downloads in Docker") | 9 | about 1.3 GB |
 | `node-cache-*-npm-*` | `setup` (`actions/cache` in `lookup-only` mode, its post step), per OS | 5 | 0.40 GB |
+| `rust-toolchain-v1-*` | `setup/save`: the pinned Rust toolchain's archives (`rust-toolchain.mjs`), per host and channel, a new entry only when a job had to fetch some ("Rust toolchain") | 4 | 115-175 MB each, about 0.6 GB |
 | `apt-debs-v2-*` | `setup/save`: the saved `.deb` sets (`apt-debs.sh`), per runner image OS, architecture and list, a new entry only when a job had to add to one ("Ubuntu packages") | 7-8 | about 0.45 GB |
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
 | `sc-tauri-tools-*` | `setup/save` in the Windows desktop build: NSIS and its Tauri plugin ("Release downloads") | 1 | about 0.005 GB |
@@ -869,6 +960,10 @@ That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-0
 them as 6.7 GiB), about 6.4 GB once the Rust checks' caches are saved without debug info (a third
 smaller: 1.77 GB to 1.19 GB for their target folder, measured on macOS). Every Rust entry is
 needed: each pipeline restores all eight (one per job and target); none is saved outside `main`.
+On 2026-11-14 the caches held 9.18 GB in 51 entries, 0.86 GB of them in families no job had
+restored since 2026-11-08 (the download cache's keys before they had a run and a hash, `sc-pkg-*`),
+which the sweep now deletes (below); with the Rust toolchain's copies that is about 8.9 GB, and
+8.5 GB once the pre-v2 `.deb` caches (0.41 GB, unused since 2026-11-11) go too.
 
 **`cache-hygiene.yml`** (`scripts/ci/cache-hygiene.mjs`, tested in `scripts/ci/test`) deletes what
 nobody restores again, and prints each deletion with its reason and the size before and after:
@@ -887,7 +982,13 @@ nobody restores again, and prints each deletion with its reason and the size bef
   saved, within 24 hours (a run of an older commit, a pull request on an older base, a runner
   image version still being rolled out). An older entry last used before the newest was saved is
   superseded: a Rust or CodeQL cache rolls over that way (the run that saves the new entry
-  restored the old one by prefix, then nothing does).
+  restored the old one by prefix, then nothing does);
+- on `main`, a whole family that no job restored for 96 hours before the last use of any of
+  `main`'s caches (`--stale-hours`): nothing restores it any more. Families split when a key
+  changes shape (the download cache's entries before they had a run and a hash, which kept 0.75 GB
+  for a week), and a cache no workflow restores since a change (the pre-v2 `.deb` caches,
+  `sc-pkg-*`) stays until GitHub's own 7 days. Measured against `main`'s last use, so a week with
+  no runs deletes nothing.
 
 The sweep runs after every Pipeline and CodeQL run on `main` (once their caches are saved),
 daily, and by hand: run `cache-hygiene.yml` from the Actions tab, with `dry-run` (the default) to

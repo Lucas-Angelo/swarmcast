@@ -1,8 +1,10 @@
 name: Set up Rust for the desktop app
 description: >-
   The Rust toolchain pinned in apps/desktop/src-tauri/rust-toolchain.toml (also made the default),
-  the rust-cache for apps/desktop/src-tauri (saved on main only), every crate of its Cargo.lock
-  from a saved artifact with cargo offline from then on (./.github/actions/cargo-crates), and on
+  from the runner image or the saved copy with no network, else from static.rust-lang.org
+  (./.github/actions/rust-toolchain), with rustup offline for the rest of the job; the rust-cache
+  for apps/desktop/src-tauri (saved on main only), every crate of its Cargo.lock from a saved
+  artifact with cargo offline from then on (./.github/actions/cargo-crates), and on
   Linux the Tauri build dependencies from the job's saved .deb set with apt offline
   (.github/scripts/apt-debs.sh). Run ./.github/actions/setup first, with `apt-debs: tauri-build`
   on Linux, which restores that set. The job needs `actions: read`.
@@ -32,22 +34,16 @@ inputs:
 runs:
   using: composite
   steps:
+    # No download from static.rust-lang.org when the runner image or the saved copy has the
+    # pinned toolchain: campaign run 43573407339 lost its macOS node job here, before any test,
+    # when the runner lost DNS and `rustup toolchain install` could not fetch the channel's
+    # manifest (README.md, "Rust toolchain").
     - name: Rust toolchain (rust-toolchain.toml)
-      shell: bash
-      env:
-        COMPONENTS: ${{ inputs.components }}
-        TARGETS: ${{ inputs.targets }}
-      run: |
-        file="$GITHUB_WORKSPACE/apps/desktop/src-tauri/rust-toolchain.toml"
-        channel="$(sed -n 's/^channel *= *"\(.*\)"$/\1/p' "$file")"
-        [ -n "$channel" ] || { echo "::error file=$file::no channel in rust-toolchain.toml"; exit 1; }
-        args=(--profile minimal --no-self-update)
-        [ -z "$COMPONENTS" ] || args+=(--component "$COMPONENTS")
-        [ -z "$TARGETS" ] || args+=(--target "$TARGETS")
-        rustup toolchain install "$channel" "${args[@]}"
-        # Also the default: rust-cache computes its key with the default rustc, and the scripts run
-        # cargo outside apps/desktop/src-tauri too.
-        rustup default "$channel"
+      id: toolchain
+      uses: ./.github/actions/rust-toolchain
+      with:
+        components: ${{ inputs.components }}
+        targets: ${{ inputs.targets }}
     # Saved from main only: pull requests restore main's cache instead of each storing a copy (the
     # repository's 10 GB cache limit). Every CARGO_* variable is part of the key, so set the build
     # profile overrides before this step.
@@ -95,6 +91,18 @@ runs:
         key: ${{ inputs.cache-key }}
         save-if: 'false'
         cache-on-failure: true
+    # rustup offline for the rest of the job: it never installs a toolchain or component by
+    # itself (its proxies do, at a cargo call, for whatever rust-toolchain.toml names and is
+    # missing), and any download it tries goes to the local mirror, never to static.rust-lang.org.
+    # After rust-cache, for the same reason as CARGO_NET_OFFLINE below: rust-cache puts every
+    # RUST* variable into its key.
+    - name: rustup offline from here on
+      shell: bash
+      env:
+        DIST_SERVER: ${{ steps.toolchain.outputs.dist-server }}
+      run: |
+        echo "RUSTUP_AUTO_INSTALL=0" >> "$GITHUB_ENV"
+        echo "RUSTUP_DIST_SERVER=$DIST_SERVER" >> "$GITHUB_ENV"
     # After rust-cache: CARGO_NET_OFFLINE, which this sets, is a CARGO_* variable and so would
     # change rust-cache's key; and the crates go over what rust-cache restored. Before any cargo
     # command of the job: from here on, cargo never asks crates.io (README.md, "Rust crates").

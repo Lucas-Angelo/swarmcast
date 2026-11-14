@@ -71,6 +71,13 @@ jobs:
         with:
           ffmpeg: 'true'
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
+      # The saved Rust toolchain for setup-rust, which runs after the Node.js tests: fetched now,
+      # with the job's other caches (campaign run 43573407339 lost this job on macOS when the
+      # runner lost DNS mid-job and setup-rust could no longer reach static.rust-lang.org). Not
+      # fatal here: setup-rust restores it itself when this did not, and fails with the cause.
+      - uses: ./.github/actions/rust-toolchain/restore
+        continue-on-error: true
+        timeout-minutes: 4
       - uses: ./.github/actions/get-build
         timeout-minutes: 10
         with:
