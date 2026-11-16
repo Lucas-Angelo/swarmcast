@@ -300,20 +300,31 @@ export async function loseFirstGet(page: Page, url: string): Promise<() => numbe
   return () => lost;
 }
 
+/** Numbers rememberLang's calls, so that the latest one wins (fixtures run in one process per worker). */
+let langChoices = 0;
+
 /**
- * Makes `lang` the page's remembered language choice (what `?lang=` stores, i18n/browser.ts) before
- * its next navigation, unless one is stored already, so the panel opens in it on its own first load.
- * A second goto (`/?lang=`) right after the login lands would replace a page still loading, a
- * navigation WebKit sometimes never sends (JoinOptions.watch).
+ * Makes `lang` the page's remembered language choice (what `?lang=` stores, i18n/browser.ts) on the
+ * next document of each origin it opens, so the panel opens in it on its own first load. A later
+ * call wins over an earlier one; between calls the page keeps whatever the viewer picks. A second
+ * goto (`/?lang=`) right after the login lands would replace a page still loading, a navigation
+ * WebKit sometimes never sends (JoinOptions.watch).
  */
 export async function rememberLang(page: Page, lang: 'en' | 'pt-BR'): Promise<void> {
-  await page.addInitScript((l) => {
-    try {
-      if (localStorage.getItem('swarmcast.lang') === null) localStorage.setItem('swarmcast.lang', l);
-    } catch {
-      /* no storage on this document (about:blank) */
-    }
-  }, lang);
+  langChoices += 1;
+  await page.addInitScript(
+    ({ l, n }) => {
+      try {
+        // Every init script runs on every document: only the latest choice, and only once per origin.
+        if (Number(sessionStorage.getItem('e2e.langChoice')) >= n) return;
+        sessionStorage.setItem('e2e.langChoice', String(n));
+        localStorage.setItem('swarmcast.lang', l);
+      } catch {
+        /* no storage on this document (about:blank) */
+      }
+    },
+    { l: lang, n: langChoices },
+  );
 }
 
 /** The panel, logged in and showing the stream status, in English or in `lang`. */
