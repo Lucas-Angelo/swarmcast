@@ -1,0 +1,63 @@
+name: Restore the saved Android SDK archives
+description: >-
+  The device suite's pinned Android SDK archives (scripts/test/devices/android-sdk.pins: the
+  command-line tools, platform-tools, the emulator, the system image; about 2.4 GB) from the
+  artifact main's build stage saved (./.github/actions/android-sdk/save), into
+  $SC_ANDROID_ARCHIVES, where `setup.sh install android` takes them after checking each one's
+  SHA-256, with no download. A miss or a failed download leaves setup.sh's cold path (dl.google.com
+  with tries, then an `Android SDK (infrastructure)` error), and $SC_ANDROID_ARCHIVES_FROM says
+  why for that error. Never fails the job: run it with `continue-on-error: true` and a
+  `timeout-minutes`. The job needs `actions: read`. .github/workflows/README.md, "Android SDK".
+
+runs:
+  using: composite
+  steps:
+    - name: Which saved copy
+      id: find
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        # Main's only: only main saves it (a release's tag restores main's too).
+        TRUSTED_BRANCHES: ${{ github.event.repository.default_branch || 'main' }}
+      run: |
+        dir="$RUNNER_TEMP/android-archives"
+        mkdir -p "$dir"
+        name="$(scripts/test/devices/setup.sh artifact android)" || exit 1
+        echo "SC_ANDROID_ARCHIVES=$dir" >>"$GITHUB_ENV"
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        if out="$(node .github/scripts/android-sdk.mjs find "$name")"; then
+          echo "$out" >>"$GITHUB_OUTPUT"
+          if [ -z "$out" ]; then
+            echo "Android SDK: no saved copy $name on main yet; setup.sh downloads the archives (cold)"
+            echo "SC_ANDROID_ARCHIVES_FROM=main has saved no copy $name yet (its build stage saves one after a pin change)" >>"$GITHUB_ENV"
+          fi
+        else
+          echo "::warning title=Android SDK::could not look up the saved copy $name; setup.sh downloads the archives"
+          echo "SC_ANDROID_ARCHIVES_FROM=the lookup of the saved copy $name failed" >>"$GITHUB_ENV"
+        fi
+    - name: Download it
+      id: fetch
+      if: steps.find.outputs.run-id != ''
+      continue-on-error: true
+      uses: ./.github/actions/fetch-artifact
+      with:
+        name: ${{ steps.find.outputs.name }}
+        path: ${{ runner.temp }}/android-archives
+        run-id: ${{ steps.find.outputs.run-id }}
+        github-token: ${{ github.token }}
+    - name: What setup.sh will install from
+      if: steps.find.outputs.run-id != ''
+      shell: bash
+      env:
+        NAME: ${{ steps.find.outputs.name }}
+        RUN: ${{ steps.find.outputs.run-id }}
+        OUTCOME: ${{ steps.fetch.outcome }}
+      run: |
+        ls -l "$SC_ANDROID_ARCHIVES"
+        if [ "$OUTCOME" = success ]; then
+          echo "Android SDK: saved copy $NAME from run $RUN"
+          echo "SC_ANDROID_ARCHIVES_FROM=the saved copy $NAME (run $RUN) did not hold it with the pinned SHA-256" >>"$GITHUB_ENV"
+        else
+          echo "::warning title=Android SDK::the saved copy $NAME (run $RUN) could not be downloaded; setup.sh downloads the archives"
+          echo "SC_ANDROID_ARCHIVES_FROM=the saved copy $NAME (run $RUN) could not be downloaded" >>"$GITHUB_ENV"
+        fi

@@ -79,6 +79,7 @@ test. Each is named, logged as `infra recovery: …` (counted by the soak) and n
 | An artifact service hiccup | `.github/actions/fetch-artifact` | CI infrastructure |
 | An upload of an artifact a later job needs (web-dist, a staged server, the installers, the Docker suites' build) that failed or hung, for example a macOS VM that lost DNS mid-job | `.github/actions/upload-build`, two steps in the workflow | the runner's network or GitHub's artifact service, not the build (release rehearsal 42846972124: "Failed to CreateArtifact: Unable to make request: ENOTFOUND" after the installers were built and checked; pipeline run 43232320009: ETIMEDOUT after the Docker suites' build): try 1 cut off after 5 minutes, then a wait of at most 5 minutes until the artifact service answers and one more upload with `overwrite`, cut off after 12 minutes, logged `infra recovery:`; a second failure fails the job with an `infra:` error. Only the upload is tried again, never the build ([.github/workflows/README.md](../.github/workflows/README.md), "Artifact uploads") |
 | A crates.io download that failed (a `206` with a partial body, a 5xx, a refused or cut-off connection, a corrupt `.crate`) or stalled, only when the Rust crates are fetched (no saved artifact for this `Cargo.lock` yet) | `fetchWithTries` in [.github/scripts/cargo-crates.mjs](../.github/scripts/cargo-crates.mjs) | crates.io's CDN, not the test (release rehearsal 42799834042: `got 206`, which cargo does not try again): 3 tries, each cut off after 60 s; a failure that is not the network fails at once; every cargo command after it runs offline ([below](#no-third-party-service-in-the-gate)) |
+| A dl.google.com download that failed (a 5xx, a refused or cut-off connection, a lookup that failed, a damaged file) or stalled, only when the saved copy lacks a pinned Android SDK archive (none saved on `main` yet for these pins, or its download failed) | `fetch_archive` in [scripts/test/devices/setup.sh](../scripts/test/devices/setup.sh) | Google's download server or the runner's network, not the test (campaign run 43952387955: sdkmanager's download of the system image arrived damaged and the job failed before any test): 3 tries resumed where the last stopped, each cut off after 180 s or 30 s below 100 kB/s, 7 minutes in all in CI, every file checked against its pinned SHA-256 (a damaged one is downloaded again); a 404 fails at once; a failure stops the step with `Android SDK (infrastructure)`, and sdkmanager never downloads ([.github/workflows/README.md](../.github/workflows/README.md), "Android SDK") |
 | A static.rust-lang.org download that failed (a 5xx, a refused or cut-off connection, a lookup that failed, a damaged file) or stalled, only when neither the runner image nor the saved copy has the pinned Rust toolchain (none saved on `main` yet for this channel and host, or a component no job of that host had) | `downloadWithTries` in [.github/scripts/rust-toolchain.mjs](../.github/scripts/rust-toolchain.mjs) | static.rust-lang.org or the runner's network, not the test (campaign run 43573407339: a macOS runner lost DNS and `rustup toolchain install` failed before any test): 3 tries, each cut off after 90 s or 30 s without data, 4 minutes in all, every file checked against the pinned manifest; a 404 fails at once; a failure stops the step with `Rust toolchain (infrastructure)`, and rustup itself never downloads ([.github/workflows/README.md](../.github/workflows/README.md), "Rust toolchain") |
 | A network error in `npm ci` that npm's own retries did not get past, or a timed-out prebuild-install download in an install script | the "npm ci" step of `.github/actions/setup` (`.github/scripts/npm-network-error.mjs` tells them apart) | the registry or GitHub, not the test: one more `npm ci`, as a warning; any other failure fails the step (run 41664754395) |
 | A GitHub release download that answers 5xx, breaks off or stalls (MediaMTX, cloudflared, Pebble, the test ffmpeg, cargo-llvm-cov, the AppImage tools, pkg's Node.js base binary) | `download` in [scripts/build/fetch-binaries.mjs](../scripts/build/fetch-binaries.mjs) (also through `pkg-base.mjs`), after the Actions download cache (`.github/actions/setup`) | github.com's release downloads, not the test (504s for most of an hour, PR #141): 6 tries in a row without progress, resumed with Range, then the next source, and the GitHub release files once more through GitHub's REST API (`githubApiUrl`, which served them during that outage); a source that worked only after failed tries or through the API logs `infra recovery:`; a SHA-256 pin decides, whichever source. In CI the cache serves the file first, and a download that still fails stops the job at that step (`::error title=fetch-binaries::`): no test runs without its binaries ([.github/workflows/README.md](../.github/workflows/README.md), "Release downloads") |
@@ -387,7 +388,7 @@ Android taps, every one ended in a click on its element.
   held. It also runs with `-feature -Vulkan,-HardwareDecoder` (`EMULATOR_FEATURES`), with
   animations off (the three `*_animation_scale` settings, as Android's guide to testing asks:
   https://developer.android.com/training/testing/espresso/setup#set-up-environment), and
-  `setup.sh` pins version 37.2.12. The AVD has four cores (`hw.cpu.ncore`, the CI runner's count):
+  `setup.sh` installs version 37.2.12 (`android-sdk.pins`). The AVD has four cores (`hw.cpu.ncore`, the CI runner's count):
   with the default two the guest stayed CPU-bound (CPU pressure near 90 % in every ANR report), and
   in Devices run 42316622933 SystemUI did not start in time at two cold boots of the eight; its
   "isn't responding" dialog took the window focus from Chrome, so Android refused Chrome's requests
@@ -593,6 +594,26 @@ requests, Playwright's list and a `.deb`'s dependencies with `--network none`, a
 image version; a request outside the set, a changed `.deb` and an installed library newer than
 the set's `-dev` package pins each went to the archive and failed there with the infrastructure
 error.
+
+The devices workflow's Android job (a gate in release-flavour runs) installed its Android SDK with
+`sdkmanager --install platform-tools emulator system-images;android-36;google_apis;x86_64` from
+dl.google.com in every job, unpinned but for the command-line tools and the emulator. Campaign run
+43952387955 lost it before any test: the 1.9 GB system image arrived damaged ("Error reading Zip
+content from a SeekableByteChannel"), sdkmanager went on, and avdmanager then found no system image
+("Package path is not valid"). Every package is now an archive pinned by SHA-256 in
+`scripts/test/devices/android-sdk.pins` (Google's SHA-1 from its repository listing checked when
+pinned), and `setup.sh install android` unzips them into the SDK itself with the `package.xml`
+sdkmanager would write, so sdkmanager downloads nothing. In CI they come from an artifact `main`'s
+build stage saves (`.github/actions/android-sdk`), each checked against its pin; only an archive
+the copy lacks comes from dl.google.com, with the tries [above](#infra-recoveries), and then an
+`Android SDK (infrastructure)` error ([.github/workflows/README.md](../.github/workflows/README.md),
+"Android SDK"). Checked in `ubuntu:24.04` (linux/amd64) containers: `setup.sh fetch android` with
+the network saved the four archives (2.44 GB), and `setup.sh install android` with
+`--network none` installed them from there (`sdkmanager --list_installed`: cmdline-tools;latest 22.0,
+emulator 37.2.12, platform-tools 37.0.1, the system image revision 7) and created the AVD with
+avdmanager; a second run reinstalled nothing; a truncated system image was deleted and its
+download failed there with the infrastructure error, naming the file, each try and why the job
+needed it; a damaged partial download was replaced on the next try (`infra recovery:`).
 
 A bump of the pinned cloudflared (`scripts/build/versions.json`) runs `local-cloudflare.test.ts`
 with the new binary in its own pull request, so a change in the tunnel protocol fails there first

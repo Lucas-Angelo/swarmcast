@@ -18,7 +18,9 @@ name: build
 #
 # Also the Rust crates of apps/desktop/src-tauri/Cargo.lock, saved as an artifact once per
 # Cargo.lock and toolchain (./.github/actions/cargo-crates/save), before any job that runs cargo
-# starts: those jobs take them from it and run cargo offline (README.md, "Rust crates").
+# starts: those jobs take them from it and run cargo offline (README.md, "Rust crates"). And, on
+# main, the device suite's pinned Android SDK archives for devices.yml's Android job
+# (./.github/actions/android-sdk/save; README.md, "Android SDK").
 on:
   workflow_call:
 
@@ -140,6 +142,16 @@ jobs:
           NAME: ${{ steps.web-dist-2.outcome == 'failure' && 'web-dist' || 'pkg-windows-x64' }}
         run: |
           echo "::error title=Artifact upload (infrastructure)::infra: $NAME could not be uploaded in 2 tries, each failed or out of time: GitHub's artifact service or the runner's network, not the build (which passed). Start a new run."
+      # The device suite's pinned Android SDK archives for the devices workflow's Android job, saved
+      # from main only, when main has none for the current pins or the newest expires within 30
+      # days (an API lookup otherwise; README.md, "Android SDK"). The cold path fetches about
+      # 2.4 GB from dl.google.com (under a minute) and uploads it. Not fatal: that job then
+      # downloads the archives itself.
+      - name: Android SDK archives for the devices jobs (main)
+        if: github.ref == 'refs/heads/main'
+        uses: ./.github/actions/android-sdk/save
+        continue-on-error: true
+        timeout-minutes: 10
       - uses: ./.github/actions/setup/save
         continue-on-error: true
         timeout-minutes: 3

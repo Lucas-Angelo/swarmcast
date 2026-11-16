@@ -43,8 +43,8 @@ const OWN_EMULATOR_PORT = 5580;
 const BOOT_MS = 240_000;
 /**
  * Emulator features turned off: two host-side parts of the emulator that crashed it, version
- * 37.2.13 (SIGSEGV in emulator.log, the device gone mid-test, nothing else in its output; setup.sh
- * now pins 37.2.12, see there).
+ * 37.2.13 (SIGSEGV in emulator.log, the device gone mid-test, nothing else in its output;
+ * scripts/test/devices/android-sdk.pins now pins 37.2.12, see there).
  * - HardwareDecoder: the emulator decodes H.264 for Android on the host (Chrome gets
  *   c2.goldfish.h264.decoder). In Devices run 41178761001 all four emulators crashed right after
  *   "Failed to call cuInit, cannot use nvidia cuvid decoder for h264 stream", as Chrome's first
@@ -66,7 +66,7 @@ export const EMULATOR_FEATURES = ['-feature', '-Vulkan,-HardwareDecoder'] as con
  * passed every test on one emulator; -gpu software (ANGLE over Lavapipe) crashed the same way in
  * its fourth test; swiftshader_indirect on Android 15 lost two emulators. `-gpu guest` is not
  * honoured (run 41190536745). SWARMCAST_EMULATOR_GPU picks another mode (setup.sh's SC_ANDROID_API
- * another Android).
+ * another Android, once its system image is pinned in android-sdk.pins).
  */
 export const EMULATOR_GPU = process.env.SWARMCAST_EMULATOR_GPU ?? 'swangle_indirect';
 

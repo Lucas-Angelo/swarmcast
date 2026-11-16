@@ -1,0 +1,32 @@
+# The Android SDK archives that `setup.sh install android` installs, one line per host and package:
+#
+#   <host> <package path> <version> <archive> <sha256> <sha1>
+#
+# host: setup.sh's android_host (linux is x86_64). archive: a path below Google's repository
+# (dl.google.com/android/repository/). sha256: what setup.sh checks, computed from the archive when
+# it was pinned. sha1: Google's own checksum from its repository listing (repository2-3.xml,
+# sys-img/google_apis/sys-img2-4.xml), which the archive matched then; `-` for the emulator 37.2.12,
+# which the listing no longer offers (it lists only the newest builds).
+#
+# To move a pin: download the archive, check its SHA-1 against the listing, put its SHA-256 here.
+# A changed line changes the saved copy's name (setup.sh artifact android), so CI fetches and saves
+# the new set once (.github/workflows/README.md, "Android SDK").
+#
+# cmdline-tools 22.0, not 23.0: 23.0's sdkmanager hands over to the new "Android CLI", which
+# downloads itself into ~/.android and collects usage data unless told not to. setup.sh never runs
+# sdkmanager to install (22.0's also says it is deprecated): it unzips these files itself.
+# emulator 37.2.12: a known build under the device suite, not whatever Google released last (37.2.13
+# came out mid-way through the suite's first CI runs); both crashed alike with one GPU mode
+# (apps/server/test/devices/android.ts EMULATOR_GPU).
+linux cmdline-tools;latest 22.0 commandlinetools-linux-15859902_latest.zip 4e4c464f145a7512b57d088ac6c278c03c9eea610886b35a5e0804e74eedf583 040d3996a65543d22ec4bf73e4c37aa37a8d4af4
+linux platform-tools 37.0.1 platform-tools_r37.0.1-linux.zip d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1 477254aa5f903c15cf51001717bdf347fb6b53e0
+linux emulator 37.2.12 emulator-linux_x64-16428233.zip b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1 -
+linux system-images;android-36;google_apis;x86_64 7 sys-img/google_apis/x86_64-36_r07.zip b1bb0769d0bed7698e61f203d7dc9bf6e7c37cd01a39d0d8788a11186bc78160 c6bf44bdcd885bb902b4ba752d111a073ad7a817
+mac_arm64 cmdline-tools;latest 22.0 commandlinetools-mac_arm64-15859902_latest.zip 835b62a26162b229b441d1f6d4680383815a270809eb33522c0d480fa5002c4e c4e0dbc53f1a4ce04fc2b11d4e2c4675001a95af
+mac_arm64 platform-tools 37.0.1 platform-tools_r37.0.1-darwin.zip ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d 6ae73f4de6452dc57e62ec02b68eed92a4c21661
+mac_arm64 emulator 37.2.12 emulator-darwin_aarch64-16428233.zip f4c4a142bda54fcec064bdb32b51f19e25bae0a45ad019197ef968bf7a48979b -
+mac_arm64 system-images;android-36;google_apis;arm64-v8a 7 sys-img/google_apis/arm64-v8a-36_r07.zip fb47d861d6f87230ee0fe70f610d579935ca77f41a0eefbf391595d3dc4b5ee2 5a99183b6d924da606260e45fd41a3eb8eca6eb7
+mac_x86_64 cmdline-tools;latest 22.0 commandlinetools-mac_x86_64-15859902_latest.zip c5a6378ab5cf7e0d5701921405115befff13e9ff7417fb588389338f8bd050f3 1a79e61677b99cb0ce622792713cbea7ff2dc5de
+mac_x86_64 platform-tools 37.0.1 platform-tools_r37.0.1-darwin.zip ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d 6ae73f4de6452dc57e62ec02b68eed92a4c21661
+mac_x86_64 emulator 37.2.12 emulator-darwin_x64-16428233.zip 9fdae8c07ac92155aeb175835669ef9b12adf19130f5557792139fb4ebd01256 -
+mac_x86_64 system-images;android-36;google_apis;x86_64 7 sys-img/google_apis/x86_64-36_r07.zip b1bb0769d0bed7698e61f203d7dc9bf6e7c37cd01a39d0d8788a11186bc78160 c6bf44bdcd885bb902b4ba752d111a073ad7a817

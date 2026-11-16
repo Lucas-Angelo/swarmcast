@@ -33,6 +33,7 @@ on:
 
 permissions:
   contents: read
+  actions: read # the saved Android SDK archives' lookup and fetch-artifact's REST fallback (.github/actions/android-sdk)
 
 # Called from a pipeline run (every-event), the group is that run's own: a called workflow's
 # concurrency is evaluated in the caller's context, and with one shared group per branch a third
@@ -142,6 +143,13 @@ jobs:
         timeout-minutes: 8
         with:
           ffmpeg: 'true'
+      # The pinned SDK archives (about 2.4 GB) from the artifact main saved, at the job's start
+      # (README.md, "Android SDK"): setup.sh below then downloads nothing. Never fatal: a miss
+      # leaves setup.sh's cold path.
+      - name: Saved Android SDK archives
+        uses: ./.github/actions/android-sdk
+        continue-on-error: true
+        timeout-minutes: 6
       - name: Build the viewer and the panel
         timeout-minutes: 5
         run: npm run build -w @swarmcast/shared && npm run build -w @swarmcast/viewer && npm run build -w @swarmcast/admin
@@ -155,17 +163,25 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
       # Android 16 with Google APIs (it ships Chrome, and is a debuggable build: Chrome reads the
-      # suite's command-line flags). The SDK, the emulator and the AVD as on a developer's machine: setup.sh with its pinned
-      # command-line tools (not the image's newer ones, which hand over to a tool that collects
-      # usage data), in a folder of the job's own. The image's Android SDK and other toolchains this
-      # job never uses go first, for room on the disk.
+      # suite's command-line flags). The SDK, the emulator and the AVD as on a developer's machine:
+      # setup.sh unzips the archives pinned in android-sdk.pins (the command-line tools, not the
+      # image's newer ones, which hand over to a tool that collects usage data) into a folder of the
+      # job's own, from the saved copy restored above, each checked against its SHA-256;
+      # sdkmanager downloads nothing. Only an archive the copy lacks comes from dl.google.com, with
+      # tries for at most 7 minutes, then an `Android SDK (infrastructure)` error (campaign run
+      # 43952387955: sdkmanager's download of the system image arrived damaged). The image's
+      # Android SDK and other toolchains this job never uses go first, for room on the disk, and
+      # the archives once they are unzipped.
       - name: Android SDK, emulator and AVD
         timeout-minutes: 10
         run: |
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/local/.ghcup /opt/ghc /usr/share/swift /usr/local/share/powershell /opt/hostedtoolcache/CodeQL
           sdk="$RUNNER_TEMP/android-sdk"
           { echo "ANDROID_HOME=$sdk"; echo "ANDROID_SDK_ROOT=$sdk"; } >>"$GITHUB_ENV"
+          export SC_ANDROID_ARCHIVES="${SC_ANDROID_ARCHIVES:-$RUNNER_TEMP/android-archives}"
+          export SC_ANDROID_ARCHIVES_FROM="${SC_ANDROID_ARCHIVES_FROM:-the restore of the saved copy did not finish}"
           ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" scripts/test/devices/setup.sh install android
+          rm -rf "$SC_ANDROID_ARCHIVES"
           df -m "$HOME"
       # The suite boots the AVD itself (no device connected; android.ts AndroidDevice.attach), as it
       # does on a developer's machine, and keeps the emulator's output and exit in

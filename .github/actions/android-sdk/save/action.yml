@@ -1,0 +1,56 @@
+name: Save the Android SDK archives for the devices jobs
+description: >-
+  Main's half of ./.github/actions/android-sdk, in the build stage: when main has no saved copy of
+  the device suite's pinned Android SDK archives for Linux x64 (scripts/test/devices/android-sdk.pins;
+  the first run after a pin change) or the newest expires within 30 days, fetches them from
+  dl.google.com (`setup.sh fetch android`: each one checked against its pinned SHA-256, with tries)
+  and uploads them as that artifact, kept 90 days. A run that finds a fresh one does nothing more.
+  An artifact, not an Actions cache: about 2.4 GB, where the caches hold about 9 of their 10 GB.
+  Main only (call it with `if: github.ref == 'refs/heads/main'`), never fatal (call it with
+  `continue-on-error: true` and a `timeout-minutes`). The job needs `actions: read` and a Linux x64
+  runner. .github/workflows/README.md, "Android SDK".
+
+runs:
+  using: composite
+  steps:
+    - name: Has main saved these archives
+      id: plan
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+        TRUSTED_BRANCHES: ${{ github.event.repository.default_branch || 'main' }}
+      run: |
+        name="$(scripts/test/devices/setup.sh artifact android)" || exit 1
+        echo "name=$name" >>"$GITHUB_OUTPUT"
+        # A lookup that fails saves nothing: the next run on main looks again.
+        out="$(node .github/scripts/android-sdk.mjs plan "$name")" || { echo "::warning title=Android SDK::could not look up the saved copy $name; nothing saved"; exit 0; }
+        if [ -n "$out" ]; then echo "$out" >>"$GITHUB_OUTPUT"; else echo "Android SDK: $name is saved and fresh; nothing to do"; fi
+    - name: Fetch them from dl.google.com
+      if: steps.plan.outputs.save == 'true'
+      shell: bash
+      run: SC_ANDROID_ARCHIVES="$RUNNER_TEMP/android-archives-save" scripts/test/devices/setup.sh fetch android
+    # upload-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins):
+    # the runner's own download of a remote action is not tried again after a 404
+    # (.github/workflows/README.md, "Remote actions"). One that cannot be fetched skips the upload,
+    # with a warning: the next run on main saves it.
+    - name: upload-artifact (git fetch, with tries)
+      id: action
+      if: steps.plan.outputs.save == 'true'
+      uses: ./.github/actions/fetch-remote
+      with:
+        repos: actions/upload-artifact
+        optional: 'true'
+    # compression-level 0: the files are zip archives already.
+    - name: Upload them
+      if: steps.plan.outputs.save == 'true' && steps.action.outputs.fetched == 'true'
+      uses: ./.git/remote-actions/actions/upload-artifact
+      with:
+        name: ${{ steps.plan.outputs.name }}
+        path: ${{ runner.temp }}/android-archives-save
+        if-no-files-found: error
+        compression-level: 0
+        retention-days: 90
+    - name: Free the disk
+      if: always() && steps.plan.outputs.save == 'true'
+      shell: bash
+      run: rm -rf "$RUNNER_TEMP/android-archives-save"

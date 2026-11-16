@@ -296,11 +296,13 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/setup-rust` | the toolchain from `apps/desktop/src-tauri/rust-toolchain.toml` (`rust-toolchain`) with rustup offline from then on, rust-cache (saved on `main` only), the crates of `Cargo.lock` with cargo offline from then on (`cargo-crates`), the Tauri build dependencies on Linux from the saved `.deb` set with apt offline (`apt-debs.sh`) |
 | `.github/actions/rust-toolchain` | the pinned Rust toolchain, made the default, from the runner image or the saved copy with no network, else what the copy lacks from static.rust-lang.org with tries (`.github/scripts/rust-toolchain.mjs`); `rust-toolchain/restore` fetches the saved copy at a job's start (see "Rust toolchain" below) |
 | `.github/actions/cargo-crates` | every crate of `apps/desktop/src-tauri/Cargo.lock` into `$CARGO_HOME/registry` from the artifact an earlier run saved, checked against `Cargo.lock`'s SHA-256 values, else from crates.io with tries; then `CARGO_NET_OFFLINE=true` for the job; `cargo-crates/save` (the build stage) saves that artifact once per `Cargo.lock` and toolchain (`.github/scripts/cargo-crates.mjs`; see "Rust crates" below) |
+| `.github/actions/android-sdk` | the device suite's pinned Android SDK archives (`scripts/test/devices/android-sdk.pins`) from the artifact `main` saved, into `$SC_ANDROID_ARCHIVES`, for `setup.sh install android` in `devices.yml`'s Android job; `android-sdk/save` (the build stage, `main` only) saves that artifact once per pin set and again before it expires (see "Android SDK" below) |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
 | `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/actions/upload-build` | one try of `actions/upload-artifact` for an artifact a later job needs; the workflow runs it twice, as two steps with their own time limits, try 2 only after a failed or timed-out try 1, when the artifact service answers again, with `overwrite` (see "Artifact uploads" below) |
 | `.github/scripts/apt-debs.sh` | every apt install of a gating Linux job: from the job's saved `.deb` set, checked against its `SHA256SUMS`, with apt offline (the set is its only source); the Ubuntu archive only when the set does not fit the runner image; `install`, `download`, `playwright-deps`, `finish` (see "Ubuntu packages" below) |
+| `.github/scripts/android-sdk.mjs` | finds the saved Android SDK archives' artifact (`find`) and tells the build stage on `main` when to save it (`plan`: none, or the newest expires within 30 days; tested in `scripts/ci/test`) |
 | `.github/scripts/apt-retry.sh` | apt with a time limit per try, retries and a mirror switch (`update`, `install`, `download`): `apt-debs.sh`'s cold path, the Docker test images' builds, the soak's `apt` suite |
 | `.github/scripts/cache-files.mjs` | which download and Tauri tools cache entries `setup/save` saves: a new one only when the job added files to what it restored or changed one (tested in `scripts/ci/test`) |
 | `.github/scripts/changes.sh` | the `changes` job |
@@ -855,6 +857,72 @@ when it answered: apt fetched whatever the archive had updated since the cache w
 (3.8 MB of GStreamer in `desktop linux-x64 / build` of run 43017518002), and that cache, saved
 once per image, never held it.
 
+### Android SDK
+
+`devices.yml`'s Android job (a gate in release-flavour runs) downloads nothing from dl.google.com
+while main's saved copy has its archives, and sdkmanager never downloads:
+
+- The pins: `scripts/test/devices/android-sdk.pins`, one line per host and package: the
+  command-line tools 22.0, platform-tools 37.0.1, the emulator 37.2.12 and the Android 16 (API 36)
+  Google APIs system image revision 7, each an archive of Google's repository with the SHA-256
+  that `setup.sh` checks, and Google's SHA-1 from its repository listing, which the archive matched
+  when it was pinned (the emulator build is no longer listed). Not sdkmanager's own pinning: it
+  installs a package path at the newest revision of a channel, and its command-line tools are
+  deprecated (22.0's sdkmanager says `'android sdk' is the replacement`; 23.0 hands over to that
+  Android CLI, which downloads itself and collects usage data). The deprecation does not touch
+  the pins: setup.sh runs no sdkmanager, only avdmanager, offline.
+- `setup.sh install android` takes each archive from `$SC_ANDROID_ARCHIVES` when it holds it with
+  the pinned SHA-256 (a file that differs is deleted with a warning), unzips it into its folder of
+  the SDK and writes the `package.xml` sdkmanager would write (avdmanager finds the emulator and
+  the system image by it; with the archives' `source.properties` alone it fails), then creates the
+  AVD with avdmanager. A package whose folder holds the same archive already is left as it is.
+- `./.github/actions/android-sdk`, right after `setup`, restores the saved copy: the artifact
+  `android-sdk-linux-<hash of the pins>` (`setup.sh artifact android`), the newest uploaded by a
+  run of this repository on the default branch (`android-sdk.mjs find`, `test-images.mjs`'s rules),
+  through `fetch-artifact`, into `$SC_ANDROID_ARCHIVES`. A miss or a failed download is a warning,
+  and `$SC_ANDROID_ARCHIVES_FROM` says which for the error below. The install step deletes the
+  archives once they are unzipped.
+- The cold path, only for an archive the copy lacks: dl.google.com, 3 tries 5 and 15 s apart, each
+  resumed where the last stopped and cut off after 180 s or 30 s below 100 kB/s, at most 7
+  minutes for all of them (within the step's 10), each file checked against its pin (a damaged one
+  is downloaded again; a 404 is not tried again). A file that came only after failed tries logs
+  `infra recovery:`. When dl.google.com does not answer, the step fails with `Android SDK
+  (infrastructure): dl.google.com did not answer: <archive>: <each try's reason>. The job needed
+  it because <no saved copy on main yet / the lookup failed / the saved copy could not be
+  downloaded / did not hold it>`; nothing is tested.
+- `./.github/actions/android-sdk/save`, in the build stage on `main` only (the Linux x64 runner of
+  the `web` job, after its uploads): when `main` has no copy for the current pins or the newest
+  expires within 30 days (`android-sdk.mjs plan`), `setup.sh fetch android` fetches the four
+  archives with the cold path's tries and checks, and the job uploads them (`compression-level: 0`,
+  kept 90 days). Otherwise one API lookup. Not fatal (`continue-on-error`, 10 minutes): the devices
+  job then takes the cold path.
+
+An artifact, not an Actions cache: the Linux x64 set is 2.44 GB (the system image 1.90 GB, the
+emulator 0.35 GB, the command-line tools 0.18 GB, platform-tools 0.01 GB), which does not fit
+next to the caches' 8.5-9 GB of 10 GB ("Caches"); a public repository's artifacts have no storage
+quota. The 30-day refresh keeps a copy for the devices jobs, which run on `main` by hand only, as
+long as `main`'s pipeline runs, with at most two copies alive at once. Nothing is added to the
+Actions cache, so `cache-hygiene.yml` has nothing new to sweep.
+
+So dl.google.com is asked once per pin set and about every 60 days by `main`'s build stage, and by
+a devices job only when no copy could be restored: the first runs after this change or after a pin
+change, until `main`'s next pipeline run has saved one (a pull request that changes a pin takes
+the cold path on every run until it merges). A developer's machine (Linux, or a Mac with its own
+pins) downloads from dl.google.com with the same checks, with an hour for the downloads.
+
+Still reached at job time: the cold path above; `gdb` for a crashed emulator's core (diagnostics
+after a failure, "Ubuntu packages"). The iOS job downloads nothing: `setup.sh install ios` takes
+the newest iOS runtime of the `macos-26` image and runs `xcodebuild -downloadPlatform iOS` (about
+8 GB from Apple) only when the image has none.
+
+Why: campaign run 43952387955 lost `devices / Android Chrome (emulator)` in its SDK step, before
+any test: setup.sh ran `sdkmanager --install platform-tools emulator
+system-images;android-36;google_apis;x86_64` from dl.google.com in every job, the system image
+(`x86_64-36_r07.zip`, 1.90 GB) arrived damaged ("Error reading Zip content from a
+SeekableByteChannel"), sdkmanager carried on, and avdmanager then said "Package path is not valid"
+for the image. Only the command-line tools (SHA-1) and the emulator (SHA-256) were pinned; the
+system image and platform-tools were whatever Google served that day.
+
 ### Release downloads
 
 Files downloaded from `github.com/<owner>/<repo>/releases/download/...` while a job runs come from
@@ -955,6 +1023,8 @@ again (a cold run). The Docker suites' test images are artifacts, not caches, fo
 | `ms-playwright-*` | `_e2e.yml`: Firefox and WebKit for Playwright | 1 | 0.21 GB |
 | `sc-tauri-tools-*` | `setup/save` in the Windows desktop build: NSIS and its Tauri plugin ("Release downloads") | 1 | about 0.005 GB |
 | `codeql-trap-*` | CodeQL's TRAP cache for JavaScript, one per analysed commit | 1 | 0.02 GB |
+
+Not a cache: the devices suite's Android SDK archives (2.44 GB), an artifact ("Android SDK" above).
 
 That is 7.2 GB on `main` in steady state (measured from the listing of 2026-11-01; GitHub counts
 them as 6.7 GiB), about 6.4 GB once the Rust checks' caches are saved without debug info (a third
