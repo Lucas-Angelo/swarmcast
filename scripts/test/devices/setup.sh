@@ -6,11 +6,16 @@
 #   scripts/test/devices/setup.sh install android|ios|windows ...
 #   scripts/test/devices/setup.sh remove  android|ios|windows ...   (or: remove all)
 #   scripts/test/devices/setup.sh status
+#   scripts/test/devices/setup.sh fetch android      (only the archives, into $SC_ANDROID_ARCHIVES)
+#   scripts/test/devices/setup.sh artifact android   (the name of CI's saved copy of them)
 #
 # android  Android SDK command-line tools, platform-tools, the emulator and an Android 16
 #          (API 36) Google APIs system image (it ships Chrome), plus the AVD "swarmcast-pixel"
 #          (a Pixel 7 with the on-screen keyboard). SDK: $ANDROID_HOME, else
 #          ~/Library/Android/sdk (macOS) or ~/Android/Sdk (Linux). Needs Java 17 or newer.
+#          Every package is an archive pinned by SHA-256 in android-sdk.pins, unzipped into the
+#          SDK by this script (sdkmanager downloads nothing): from $SC_ANDROID_ARCHIVES when it
+#          holds them, else from dl.google.com with tries (kept there when that is set).
 # ios      macOS: an iOS Simulator runtime (only when Xcode has none) and the simulator
 #          "SwarmCast iPhone" (an iPhone 17) set up for safaridriver, with the daemons a page in
 #          Safari never needs turned off. Needs Xcode.
@@ -30,31 +35,11 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 STATE="${SC_DEVICES_HOME:-$HOME/.swarmcast-devices}"
 MANIFEST="$STATE/created"
 
-# Pinned: Android SDK command-line tools 22.0 (build 15859902), SHA-1 as Google publishes them
-# in https://dl.google.com/android/repository/repository2-3.xml. Not 23.0: its sdkmanager hands
-# over to the new "Android CLI", which downloads itself into ~/.android and collects usage data
-# unless told not to. sdkmanager verifies the packages it installs itself.
-CMDLINE_BUILD=15859902
-cmdline_sha1() {
-  case "$1" in
-    mac_arm64) echo c4e0dbc53f1a4ce04fc2b11d4e2c4675001a95af ;;
-    mac_x86_64) echo 1a79e61677b99cb0ce622792713cbea7ff2dc5de ;;
-    linux) echo 040d3996a65543d22ec4bf73e4c37aa37a8d4af4 ;;
-  esac
-}
-# Pinned: Android Emulator 37.2.12 (build 16428233), SHA-256 of Google's archives (no longer in its
-# repository listing, which offers only the newest): a known build under the device suite, not
-# whatever Google released last (37.2.13 came out mid-way through the suite's first CI runs).
-# Both crashed alike with one GPU mode (apps/server/test/devices/android.ts EMULATOR_GPU).
-EMULATOR_VERSION=37.2.12
-EMULATOR_BUILD=16428233
-emulator_zip_sha256() {
-  case "$1" in
-    mac_arm64) echo "emulator-darwin_aarch64-$EMULATOR_BUILD.zip f4c4a142bda54fcec064bdb32b51f19e25bae0a45ad019197ef968bf7a48979b" ;;
-    mac_x86_64) echo "emulator-darwin_x64-$EMULATOR_BUILD.zip 9fdae8c07ac92155aeb175835669ef9b12adf19130f5557792139fb4ebd01256" ;;
-    linux) echo "emulator-linux_x64-$EMULATOR_BUILD.zip b08fc43d8608d2955f607f1b287beb525041e730086bdca3af152accac3af9c1" ;;
-  esac
-}
+# The Android SDK packages, pinned: each archive with its SHA-256 in android-sdk.pins. They come
+# from $SC_ANDROID_ARCHIVES when it holds them (CI restores the saved copy there), else from
+# dl.google.com with tries; setup.sh unzips them into the SDK itself, with no sdkmanager download.
+PINS="$DIR/android-sdk.pins"
+ANDROID_REPOSITORY=https://dl.google.com/android/repository
 ANDROID_API="${SC_ANDROID_API:-36}"
 AVD_NAME=swarmcast-pixel
 AVD_DEVICE=pixel_7
@@ -104,7 +89,7 @@ android_sdk() {
   fi
 }
 
-# Host flavour of the command-line tools and the system image ABI the emulator runs natively.
+# Host flavour of the archives (android-sdk.pins) and the system image ABI the emulator runs natively.
 android_host() {
   case "$(uname -s)-$(uname -m)" in
     Darwin-arm64) echo "mac_arm64 arm64-v8a" ;;
@@ -120,41 +105,195 @@ java_ok() {
   [ -n "$v" ] && [ "${v%%.*}" -ge 17 ]
 }
 
-install_android() {
-  local sdk host abi zip url sha tmp image
-  sdk="$(android_sdk)"
+# SHA-256 of a file, or of stdin without one.
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then sha256sum "$@"; else shasum -a 256 "$@"; fi | cut -d ' ' -f1
+}
+
+warn() {
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then echo "::warning title=Android SDK::$*"; else printf 'setup.sh: %s\n' "$*" >&2; fi
+}
+
+# The packages this host installs, "<package path> <version> <archive> <sha256>" per line: the
+# command-line tools, platform-tools, the emulator and the system image of ANDROID_API.
+android_wanted() {
+  local host abi image lines
   read -r host abi <<<"$(android_host)"
-  java_ok || die "sdkmanager needs Java 17 or newer on PATH (java -version)"
   image="system-images;android-$ANDROID_API;google_apis;$abi"
+  lines="$(awk -v h="$host" -v img="$image" '$1 == h && ($2 !~ /^system-images;/ || $2 == img) { print $2, $3, $4, $5 }' "$PINS")"
+  grep -q "^$image " <<<"$lines" || die "$image is not pinned for $host in $PINS"
+  [ "$(wc -l <<<"$lines")" -eq 4 ] || die "$PINS: $host needs one line each for cmdline-tools;latest, platform-tools, emulator and $image"
+  printf '%s\n' "$lines"
+}
+
+# The saved copy's name (CI's artifact, .github/actions/android-sdk): the host and a hash of the
+# pins it installs, so a changed pin makes a new one.
+android_artifact() {
+  local host lines
+  read -r host _ <<<"$(android_host)"
+  lines="$(android_wanted)" || exit 1
+  printf 'android-sdk-%s-%s\n' "$host" "$(printf '%s\n' "$lines" | sha256_of | cut -c1-16)"
+}
+
+# The downloads of one run share a time limit (seconds), so a CI step ends with the
+# infrastructure error below before its own limit: 7 minutes in CI (about 2.4 GB, which takes well
+# under a minute from GitHub's runners), an hour elsewhere.
+if [ "${GITHUB_ACTIONS:-}" = true ]; then FETCH_LIMIT="${SC_ANDROID_FETCH_LIMIT:-420}" TRY_LIMIT=180; else FETCH_LIMIT="${SC_ANDROID_FETCH_LIMIT:-3600}" TRY_LIMIT=3600; fi
+FETCH_START=
+
+# dl.google.com or the runner's network failed, not SwarmCast: in CI a `(infrastructure)` error
+# that names the file and why the job had to download it.
+android_infra() {
+  local msg="dl.google.com did not answer: $1: $2"
+  [ -z "${SC_ANDROID_ARCHIVES_FROM:-}" ] || msg="$msg. The job needed it because $SC_ANDROID_ARCHIVES_FROM"
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    echo "::error title=Android SDK (infrastructure)::$msg. Nothing was tested: an outage of Google's download server or of the runner's network, not a failure of SwarmCast. Run the job again once it answers."
+  fi
+  die "$msg"
+}
+
+# The pinned archive in <dir>, its SHA-256 checked. Taken from <dir> when it is there with the
+# pinned SHA-256 (a file that differs is deleted); else from dl.google.com (the cold path): each
+# try cut off after TRY_LIMIT seconds, or 30 s below 100 kB/s, and resumed where the last one
+# stopped; 3 tries, 5 and 15 s apart, within FETCH_LIMIT for the whole run; a 404 is not tried
+# again. A file that came only after failed tries logs `infra recovery:`.
+fetch_archive() {
+  local archive="$1" sum="$2" dir="$3" file part url try code rc left reason reasons=""
+  file="$dir/$(basename "$archive")"
+  if [ -f "$file" ]; then
+    if [ "$(sha256_of "$file")" = "$sum" ]; then
+      say "  $(basename "$archive"): from $dir, SHA-256 as pinned"
+      return 0
+    fi
+    warn "$file is not the pinned file (SHA-256 differs from $sum): deleted, downloaded again"
+    rm -f "$file"
+  fi
+  url="$ANDROID_REPOSITORY/$archive"
+  part="$file.part"
+  [ -n "$FETCH_START" ] || FETCH_START=$SECONDS
+  for try in 1 2 3; do
+    left=$((FETCH_LIMIT - (SECONDS - FETCH_START)))
+    if [ "$left" -lt 10 ]; then
+      reasons="$reasons; out of time ($FETCH_LIMIT s for the downloads)"
+      break
+    fi
+    [ "$left" -le "$TRY_LIMIT" ] || left=$TRY_LIMIT
+    say "  $(basename "$archive"): downloading $url (try $try of 3)"
+    code="$(curl -fsSL --connect-timeout 20 --max-time "$left" --speed-limit 100000 --speed-time 30 -C - -o "$part" -w '%{http_code}' "$url")"
+    rc=$?
+    if [ -f "$part" ] && [ "$(sha256_of "$part")" = "$sum" ]; then
+      mv "$part" "$file" || die "cannot move $part to $file"
+      [ "$try" = 1 ] || warn "infra recovery: $url downloaded on try $try of 3 (${reasons#; })"
+      return 0
+    fi
+    if [ "$rc" = 0 ] || [ "$code" = 416 ]; then
+      reason="the file's SHA-256 is not the pinned $sum"
+      rm -f "$part"
+    else
+      reason="curl exit $rc, HTTP $code"
+    fi
+    reasons="$reasons; try $try: $reason"
+    say "    $reason"
+    if [ "$code" = 404 ]; then break; fi
+    if [ "$try" = 1 ]; then sleep 5; elif [ "$try" = 2 ]; then sleep 15; fi
+  done
+  rm -f "$part"
+  android_infra "$archive" "${reasons#; }"
+}
+
+# The local package.xml that sdkmanager writes next to a package it installs, for the package
+# unzipped in <dir>: avdmanager finds the emulator and the system image by it (with the archives'
+# source.properties alone it says '"emulator" package must be installed!'). A system image's
+# details as sdkmanager's own (sys-img2/05), the extension level from its source.properties:
+# without the `abis` list and that level, avdmanager failed with just "null".
+package_xml() {
+  local path="$1" version="$2" dir="$3" major minor micro rev details name api tag abi ext
+  IFS=. read -r major minor micro <<<"$version"
+  rev="<major>$major</major>"
+  [ -z "$minor" ] || rev="$rev<minor>$minor</minor>"
+  [ -z "$micro" ] || rev="$rev<micro>$micro</micro>"
+  details='<type-details xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:type="ns5:genericDetailsType"/>'
+  case "$path" in
+    cmdline-tools\;*) name="Android SDK Command-line Tools (latest)" ;;
+    platform-tools) name="Android SDK Platform-Tools" ;;
+    emulator) name="Android Emulator" ;;
+    system-images\;*\;google_apis\;*)
+      IFS=';' read -r _ api tag abi <<<"$path"
+      ext="$(awk -F = '$1 == "AndroidVersion.ExtensionLevel" { e = $2 } $1 == "AndroidVersion.IsBaseSdk" { b = $2 } END { if (e != "") printf "<extension-level>%s</extension-level><base-extension>%s</base-extension>", e, (b == "" ? "true" : b) }' "$dir/source.properties")"
+      details="<type-details xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"ns14:sysImgDetailsType\"><api-level>${api#android-}</api-level>$ext<tag><id>$tag</id><display>Google APIs</display></tag><vendor><id>google</id><display>Google Inc.</display></vendor><abi>$abi</abi><abis>$abi</abis></type-details>"
+      name="Google APIs $abi System Image"
+      ;;
+    *) die "no package.xml for $path" ;;
+  esac
+  printf '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><ns2:repository xmlns:ns2="http://schemas.android.com/repository/android/common/02" xmlns:ns5="http://schemas.android.com/repository/android/generic/02" xmlns:ns14="http://schemas.android.com/sdk/android/repo/sys-img2/05"><localPackage path="%s" obsolete="false">%s<revision>%s</revision><display-name>%s</display-name></localPackage></ns2:repository>\n' "$path" "$details" "$rev" "$name"
+}
+
+# One package from its checked archive: unzipped into its folder of the SDK (the package path,
+# `;` as `/`), with its package.xml. Skipped when that folder holds this archive already.
+install_package() {
+  local sdk="$1" path="$2" version="$3" file="$4" sum="$5" dir tmp top
+  dir="$sdk/$(printf '%s' "$path" | tr ';' /)"
+  if [ "$(cat "$dir/.swarmcast-archive" 2>/dev/null)" = "$sum" ]; then
+    say "  $path $version: installed already"
+    return 0
+  fi
+  tmp="$(mktemp -d "$sdk/.unzip.XXXXXX")" || die "no temp folder in $sdk"
+  (cd "$tmp" && unzip -q "$file") || die "cannot unzip $file"
+  top="$(ls -A "$tmp")"
+  { [ "$(printf '%s\n' "$top" | wc -l)" -eq 1 ] && [ -d "$tmp/$top" ]; } || die "$file does not hold one folder ($top)"
+  package_xml "$path" "$version" "$tmp/$top" >"$tmp/$top/package.xml"
+  printf '%s\n' "$sum" >"$tmp/$top/.swarmcast-archive"
+  mkdir -p "$(dirname "$dir")"
+  rm -rf "${dir:?}"
+  mv "$tmp/$top" "$dir" || die "cannot move $path into $sdk"
+  rmdir "$tmp"
+  say "  $path $version: installed from $(basename "$file")"
+}
+
+# Where the archives are: $SC_ANDROID_ARCHIVES (kept), else a download folder of this run (deleted
+# after the install).
+archives_dir() {
+  if [ -n "${SC_ANDROID_ARCHIVES:-}" ]; then
+    mkdir -p "$SC_ANDROID_ARCHIVES" || die "cannot create $SC_ANDROID_ARCHIVES"
+    printf '%s\n' "$SC_ANDROID_ARCHIVES"
+  else
+    make_dir "$STATE/downloads"
+    mktemp -d "$STATE/downloads/android.XXXXXX" || die "no temp folder"
+  fi
+}
+
+# `fetch android`: only the archives, checked, into $SC_ANDROID_ARCHIVES (CI saves them).
+fetch_android() {
+  [ -n "${SC_ANDROID_ARCHIVES:-}" ] || die "fetch android needs SC_ANDROID_ARCHIVES (the folder for the archives)"
+  local wanted path version archive sum dir
+  wanted="$(android_wanted)" || exit 1
+  dir="$(archives_dir)" || exit 1
+  say "Android SDK archives (android-sdk.pins) into $dir"
+  while read -r path version archive sum; do
+    fetch_archive "$archive" "$sum" "$dir"
+  done <<<"$wanted"
+}
+
+install_android() {
+  local sdk abi image wanted dir path version archive sum
+  sdk="$(android_sdk)"
+  read -r _ abi <<<"$(android_host)"
+  java_ok || die "avdmanager needs Java 17 or newer on PATH (java -version)"
+  image="system-images;android-$ANDROID_API;google_apis;$abi"
+  wanted="$(android_wanted)" || exit 1
 
   make_dir "$sdk"
-  # ~/.android (sdkmanager's cache, the AVDs, adb's key) is created by the first Android tool
-  # that runs, and the emulator's console token by the first emulator: recorded here when they do
-  # not exist yet.
+  # ~/.android (the AVDs, adb's key) is created by the first Android tool that runs, and the
+  # emulator's console token by the first emulator: recorded here when they do not exist yet.
   make_dir "$HOME/.android"
   [ -e "$HOME/.emulator_console_auth_token" ] || record file "$HOME/.emulator_console_auth_token"
-  if [ ! -x "$sdk/cmdline-tools/latest/bin/sdkmanager" ]; then
-    zip="commandlinetools-$host-${CMDLINE_BUILD}_latest.zip"
-    url="https://dl.google.com/android/repository/$zip"
-    sha="$(cmdline_sha1 "$host")"
-    make_dir "$STATE/downloads"
-    tmp="$(mktemp -d "$STATE/downloads/cmdline.XXXXXX")" || die "no temp folder"
-    say "Downloading $url"
-    curl -fsSL --retry 3 -o "$tmp/$zip" "$url" || die "download failed: $url"
-    [ "$(shasum -a 1 "$tmp/$zip" | cut -d ' ' -f1)" = "$sha" ] || die "$zip: SHA-1 differs from $sha"
-    (cd "$tmp" && unzip -q "$zip") || die "cannot unzip $zip"
-    mkdir -p "$sdk/cmdline-tools"
-    rm -rf "${sdk:?}/cmdline-tools/latest"
-    mv "$tmp/cmdline-tools" "$sdk/cmdline-tools/latest" || die "cannot move the tools into $sdk"
-    rm -rf "${tmp:?}"
-  fi
-  local sdkmanager="$sdk/cmdline-tools/latest/bin/sdkmanager"
-  say "Accepting the Android SDK licences and installing platform-tools, emulator, $image"
-  # `yes` ends on SIGPIPE once sdkmanager stops reading: not a failure (pipefail).
-  { yes 2>/dev/null || true; } | "$sdkmanager" --sdk_root="$sdk" --licenses >/dev/null || die "sdkmanager --licenses failed"
-  "$sdkmanager" --sdk_root="$sdk" --install platform-tools emulator "$image" | grep -v '^\[' || true
-  [ -d "$sdk/system-images/android-$ANDROID_API/google_apis/$abi" ] || die "$image did not install"
-  install_emulator "$sdk" "$host"
+  dir="$(archives_dir)" || exit 1
+  say "Android SDK packages (android-sdk.pins) into $sdk, archives in $dir"
+  while read -r path version archive sum; do
+    fetch_archive "$archive" "$sum" "$dir"
+    install_package "$sdk" "$path" "$version" "$dir/$(basename "$archive")" "$sum"
+  done <<<"$wanted"
+  [ -n "${SC_ANDROID_ARCHIVES:-}" ] || rm -rf "${dir:?}"
 
   mkdir -p "$HOME/.android/avd"
   if [ ! -d "$HOME/.android/avd/$AVD_NAME.avd" ]; then
@@ -182,29 +321,6 @@ install_android() {
     fi
   done
   say "Android ready: SDK $sdk ($(size_of "$sdk")), AVD $AVD_NAME ($(size_of "$HOME/.android/avd/$AVD_NAME.avd"))."
-}
-
-# The pinned emulator in place of the one sdkmanager installed (the newest), its package.xml kept
-# with the pinned version so that sdkmanager lists what is there.
-install_emulator() {
-  local sdk="$1" host="$2" zip sum tmp
-  [ "$(cat "$sdk/emulator/.swarmcast-build" 2>/dev/null)" = "$EMULATOR_BUILD" ] && return 0
-  read -r zip sum <<<"$(emulator_zip_sha256 "$host")"
-  make_dir "$STATE/downloads"
-  tmp="$(mktemp -d "$STATE/downloads/emulator.XXXXXX")" || die "no temp folder"
-  say "Downloading the Android Emulator $EMULATOR_VERSION ($zip)"
-  curl -fsSL --retry 3 -o "$tmp/$zip" "https://dl.google.com/android/repository/$zip" || die "download failed: $zip"
-  [ "$(shasum -a 256 "$tmp/$zip" | cut -d ' ' -f1)" = "$sum" ] || die "$zip: SHA-256 differs from $sum"
-  (cd "$tmp" && unzip -q "$zip") || die "cannot unzip $zip"
-  if [ -f "$sdk/emulator/package.xml" ]; then
-    sed -e "s|<major>[0-9]*</major>|<major>${EMULATOR_VERSION%%.*}</major>|" \
-      -e "s|<minor>[0-9]*</minor>|<minor>$(echo "$EMULATOR_VERSION" | cut -d . -f2)</minor>|" \
-      -e "s|<micro>[0-9]*</micro>|<micro>${EMULATOR_VERSION##*.}</micro>|" "$sdk/emulator/package.xml" >"$tmp/emulator/package.xml"
-  fi
-  echo "$EMULATOR_BUILD" >"$tmp/emulator/.swarmcast-build"
-  rm -rf "${sdk:?}/emulator"
-  mv "$tmp/emulator" "$sdk/emulator" || die "cannot move the emulator into $sdk"
-  rm -rf "${tmp:?}"
 }
 
 remove_android() {
@@ -429,6 +545,10 @@ verb="$1"
 shift
 case "$verb" in
   status) status ;;
+  fetch | artifact)
+    [ "$*" = android ] || usage
+    if [ "$verb" = fetch ]; then fetch_android; else android_artifact; fi
+    ;;
   install | remove)
     [ $# -ge 1 ] || usage
     [ "$*" = all ] && set -- windows ios android
