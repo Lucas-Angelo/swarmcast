@@ -5,9 +5,9 @@
 // slow-down 0.5× instead of 0.95×), so the delay follows that clock: a 5 s change takes 10 s
 // instead of 100 s. The real-time numbers are covered by latency-controller.test.ts. The page
 // honours both flags only because server.ts starts SwarmCast with SWARMCAST_TEST_HOOKS=1.
-// Viewers join once the live playlist is long enough to start ~20 s behind live, then reopen the
-// player on the fast clock, with sound (fixtures.ts unmute: the browser then clocks playback in
-// real time).
+// Viewers join once the live playlist is long enough to start ~20 s behind live, land on the
+// watch page with the fast clock (fixtures.ts JoinOptions.watch: no second navigation) and turn the
+// sound on (fixtures.ts unmute: the browser then clocks playback in real time).
 //
 // Good network (Chromium and WebKit; Chromium emulates a good home connection, 30 Mbps and 20
 // ms): the delay drifts below 15 s with a gentle catch-up (at most the profile's limit) and no
@@ -66,12 +66,13 @@ const UPPER_BOUND_S = 29.5;
 
 const delayOf = (page: Page): Promise<Delay> => page.evaluate(() => (window as unknown as { __swarmcast: { delay: Delay } }).__swarmcast.delay);
 
-/** Joins once the live playlist is long enough to start ~20 s behind live, then reopens the player on the fast clock, with sound. */
-async function watchWithFastClock(viewers: Audience, nick: string, before?: (page: Page) => Promise<void>): Promise<Viewer> {
+/**
+ * Joins once the live playlist is long enough to start ~20 s behind live, on the watch page with
+ * the fast clock, with sound. `prepare` runs on the page before it opens the link (its network).
+ */
+async function watchWithFastClock(viewers: Audience, nick: string, prepare?: (page: Page) => Promise<void>): Promise<Viewer> {
   await waitForPlaylist(32);
-  const viewer = await viewers.join(nick);
-  await before?.(viewer.page);
-  await viewer.page.goto(FAST);
+  const viewer = await viewers.join(nick, { watch: FAST, ...(prepare ? { prepare } : {}) });
   await waitPlaying(viewer.page);
   await unmute(viewer.page);
   return viewer;

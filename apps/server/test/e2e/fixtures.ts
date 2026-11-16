@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type TestInfo } from '@playwright/test';
+import { expect, test as base, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type Response, type TestInfo } from '@playwright/test';
 import WebSocket from 'ws';
 import type { AdminChatState, AdminState, ChatItem, ChatSettings, ChatYou, QualitySettingsUpdate, QualityState, ServerMessage } from '@swarmcast/shared';
 import { NICKNAME_MAX } from '@swarmcast/shared';
@@ -233,6 +233,40 @@ export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpd
 }
 
 // ---------------------------------------------------------------------------------------------
+// Navigations
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * How long a navigation the fixtures start may take: the servers answer on loopback at once and
+ * their pages load in 1-2 s (the slowest first commit 5.7 s in a busy container, first-goto.spec.ts).
+ * A navigation the browser lost never ends: without a bound of its own it took the whole test's
+ * budget and failed as "page closed" (adaptive-delay.spec.ts, WebKit on a macOS runner: 4 minutes).
+ */
+const NAVIGATION_MS = 30_000;
+
+/**
+ * `page.goto(url)`, bounded by NAVIGATION_MS: a navigation that does not get to `waitUntil` fails
+ * then, saying what it was for and what the page was still showing.
+ */
+export async function navigate(page: Page, url: string, what: string, waitUntil: 'commit' | 'load' = 'load'): Promise<Response | null> {
+  try {
+    return await page.goto(url, { waitUntil, timeout: NAVIGATION_MS });
+  } catch (e) {
+    throw new Error(`${what}: the navigation to ${url} did not reach "${waitUntil}" in ${NAVIGATION_MS / 1000} s; the page still showed ${await shownDocument(page)}\n${(e as Error).message}`, { cause: e });
+  }
+}
+
+/** The address and readyState of the document a page shows, for a diagnostic (a page that never answers says so in 5 s). */
+async function shownDocument(page: Page): Promise<string> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const silent = new Promise<string>((resolve) => {
+    timer = setTimeout(() => resolve('a document that did not answer'), 5_000);
+  });
+  const shown = page.evaluate(() => `${location.href} (${document.readyState})`).catch((e: Error) => `nothing readable (${e.message.split('\n')[0]})`);
+  return Promise.race([shown, silent]).finally(() => clearTimeout(timer));
+}
+
+// ---------------------------------------------------------------------------------------------
 // The panel in a browser
 // ---------------------------------------------------------------------------------------------
 
@@ -246,15 +280,10 @@ export function ladderUpdate(q: QualityState, ladder: Partial<QualitySettingsUpd
  * another WebKit fault: routeFirstRequestOfEachPage.)
  */
 export async function loginPanel(page: Page, login = serverEnv().adminLoginUrl): Promise<void> {
-  await page.goto(login, { waitUntil: 'commit' });
+  await navigate(page, login, 'the panel login', 'commit');
   await expect(page).toHaveURL(new URL('/', login).toString());
 }
 
-/**
- * The panel, logged in and showing the stream status, in English or in `lang`. The language
- * switch is a second navigation, started only once the login has landed on `/` (a goto during
- * the meta refresh would be interrupted by it).
- */
 /**
  * Makes the network lose the page's first GET to `url` (a glob): it fails with net::ERR_FAILED,
  * so fetch() rejects with no answer, as a dropped connection does (net::ERR_NO_BUFFER_SPACE on a
@@ -271,10 +300,26 @@ export async function loseFirstGet(page: Page, url: string): Promise<() => numbe
   return () => lost;
 }
 
+/**
+ * Makes `lang` the page's remembered language choice (what `?lang=` stores, i18n/browser.ts) before
+ * its next navigation, unless one is stored already, so the panel opens in it on its own first load.
+ * A second goto (`/?lang=`) right after the login lands would replace a page still loading, a
+ * navigation WebKit sometimes never sends (JoinOptions.watch).
+ */
+export async function rememberLang(page: Page, lang: 'en' | 'pt-BR'): Promise<void> {
+  await page.addInitScript((l) => {
+    try {
+      if (localStorage.getItem('swarmcast.lang') === null) localStorage.setItem('swarmcast.lang', l);
+    } catch {
+      /* no storage on this document (about:blank) */
+    }
+  }, lang);
+}
+
+/** The panel, logged in and showing the stream status, in English or in `lang`. */
 export async function openPanel(page: Page, lang?: 'en' | 'pt-BR'): Promise<void> {
-  const login = serverEnv().adminLoginUrl;
-  await loginPanel(page, login);
-  if (lang) await page.goto(new URL(`/?lang=${lang}`, login).toString());
+  if (lang) await rememberLang(page, lang);
+  await loginPanel(page);
   await expect(page.getByTestId('status')).toBeVisible();
 }
 
@@ -358,7 +403,7 @@ function recordConsole(page: Page): void {
  * lost a script on the way reloads itself first (its startup guard), and a nickname typed into
  * the page it replaces would be gone.
  */
-async function joinFrom(page: Page, nickname: string): Promise<void> {
+async function joinFrom(page: Page, nickname: string, watch = '/watch'): Promise<void> {
   const consoleLines = consoles.get(page) ?? [];
   await expect(page.locator('#join')).toBeEnabled();
   await page.fill('#nickname', nickname);
@@ -384,8 +429,16 @@ async function joinFrom(page: Page, nickname: string): Promise<void> {
   if (res === 'stuck') throw new Error(`join as "${nickname}": no POST /api/join answer in ${JOIN_ANSWER_MS / 1000} s; the page: ${await joinPageState(page)}; console: ${JSON.stringify(consoleLines.slice(-20))}`);
   if (!res) throw new Error(`join as "${nickname}" failed without a final POST /api/join answer; the page says: ${await page.locator('#error').textContent()}`);
   expect(res.status(), `POST /api/join as "${nickname}" answered ${res.status()}: ${await res.text().catch(() => '(no body)')}`).toBe(200);
-  await expect(page).toHaveURL(/\/watch$/);
+  await expect(page).toHaveURL(new URL(watch, page.url()).toString());
 }
+
+/**
+ * An init script for every document of a viewer's context: the watch page the join opens takes the
+ * address `watch` (its query) before any of its scripts reads it. Only a watch page without a query.
+ */
+const landOnWatch = (watch: string): void => {
+  if (location.pathname === '/watch' && location.search === '') history.replaceState(history.state, '', watch);
+};
 
 export interface Viewer {
   readonly nickname: string;
@@ -405,6 +458,24 @@ export interface JoinPageOptions extends BrowserOptions {
   link?: string;
   /** Runs on the new page before it opens the link (a CDP session that shapes its network). */
   prepare?: (page: Page) => Promise<void>;
+}
+
+export interface JoinOptions extends JoinPageOptions {
+  /**
+   * The watch page to land on, with its query (a test hook such as `?delaySpeed=10`): the page
+   * the join opens is that one from its first script on, with no second navigation.
+   *
+   * A goto started right after the join lands replaces a watch page that is still loading, and
+   * WebKit sometimes never sends the request of such a navigation: the server never sees it, it
+   * neither commits nor fails, and the old page stays (readyState "interactive"), every load it
+   * starts refused ("access control checks"). adaptive-delay.spec.ts waited 4 minutes for it on a
+   * macOS runner. Measured on macOS with Playwright 1.64.1, no SwarmCast (a page that moves itself
+   * to a COOP page with a script, images, XHR polling and a WebSocket; 16 at once, busy CPU): a goto
+   * right after the URL changed was lost 22 times in 18,000; run side by side, 0 in 6,000 once the
+   * goto waited for the page's `load`, and 0 in 6,000 landing on the address at once, as here.
+   * Same origin, no process swap (routeFirstRequestOfEachPage is another WebKit fault).
+   */
+  watch?: string;
 }
 
 /**
@@ -468,15 +539,22 @@ export class Audience {
     const page = await (await this.browserContext(o)).newPage();
     recordConsole(page);
     await o.prepare?.(page);
-    await page.goto(o.link ?? (await liveLink()));
+    await navigate(page, o.link ?? (await liveLink()), 'the join link');
     await expect(page).toHaveURL(/\/join$/);
     return page;
   }
 
   /** A new browser that opened the live link, joined as `nickname` and is on the watch page. */
-  async join(nickname: string, o: JoinPageOptions = {}): Promise<Viewer> {
-    const page = await this.atJoinPage(o);
-    await joinFrom(page, nickname);
+  async join(nickname: string, o: JoinOptions = {}): Promise<Viewer> {
+    const { watch, setup } = o;
+    const lands = watch
+      ? async (context: BrowserContext): Promise<void> => {
+          await context.addInitScript(landOnWatch, watch);
+          await setup?.(context);
+        }
+      : setup;
+    const page = await this.atJoinPage({ ...o, setup: lands });
+    await joinFrom(page, nickname, watch);
     return { nickname, context: page.context(), page };
   }
 
