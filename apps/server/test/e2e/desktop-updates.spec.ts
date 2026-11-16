@@ -18,7 +18,7 @@ import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mj
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { decodeDesktopMessage, type DesktopOutMessage } from '../../src/desktop/protocol.js';
 import { ROOT, serverArgs } from '../integration/helpers.js';
-import { loginPanel } from './fixtures.js';
+import { loginPanel, rememberLang } from './fixtures.js';
 
 type Desktop = { adminUrl: string; dataDir: string; messages: DesktopOutMessage[] };
 
@@ -77,8 +77,8 @@ const savedChannel = (d: Desktop) => (JSON.parse(fs.readFileSync(path.join(d.dat
 
 /** The desktop server's panel (logged in through its login URL), in `lang`, with the Desktop app card shown. */
 async function openPanel(page: Page, d: Desktop, lang: 'en' | 'pt-BR'): Promise<void> {
+  await rememberLang(page, lang);
   await loginPanel(page, d.adminUrl);
-  await page.goto(new URL(`/?lang=${lang}`, d.adminUrl).toString());
   await expect(page.getByTestId('desktop-card')).toBeVisible();
 }
 

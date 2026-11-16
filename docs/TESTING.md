@@ -150,7 +150,9 @@ E2E (`apps/server/test/e2e`): one server per run. The gate resets it before each
 fixtures put back what a test changes. Get browsers, scripted viewers, chat and branding from the
 fixtures. In WebKit the first request of every page the fixtures' contexts open goes through a route
 that lets it through unchanged, since WebKit can lose a page's first navigation to a COOP page
-otherwise (fixtures.ts, `routeFirstRequestOfEachPage`). Test bodies hold only Arrange/Act/Assert
+otherwise (fixtures.ts, `routeFirstRequestOfEachPage`). A spec never starts a second navigation right after a join or a login (a
+page still loading): `viewers.join(nick, { watch })` lands on a watch page with its query, `rememberLang` opens
+the panel in a language, and every navigation the fixtures start fails within 30 s, naming its step (`navigate`). Test bodies hold only Arrange/Act/Assert
 comments. The only real-time wait is `measuredWindow()`, for measured windows. Names come from
 `uid()`, which is unique per test. Never retry. Run with
 `SWARMCAST_NO_OPEN=1 SWARMCAST_E2E_PORT_OFFSET=<n> npx playwright test`. The e2e ports are 11080
