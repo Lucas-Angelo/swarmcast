@@ -200,24 +200,100 @@ async function webInspectorReady(udid: string): Promise<net.Socket | null> {
   return socket;
 }
 
-/** Simulator.app showing this simulator (its Device menu acts on the window), once its window is up. */
-async function openSimulatorApp(udid: string): Promise<void> {
-  await run('open', ['-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid]);
+/**
+ * How long Simulator.app may take to show its window, and System Events to answer, each counted
+ * from the request to start it, on a job's first boot: one and a half times the slowest whole
+ * sequence measured on the CI Mac, rounded up to whole minutes. From "Safari launched" to
+ * "Simulator.app started and hidden" (the rotator check, Simulator.app's start and window, System
+ * Events' first start and the hide, one after the other) took 36 s at the median, 80 s at the 95th
+ * percentile and 155 s at most in 115 first boots (the iOS jobs of the Pipeline, Devices and Soak
+ * runs of 2026-11-13 to 2026-11-16, macos-26). device.log now notes each step's own time.
+ */
+const SIMULATOR_APP_START_MS = 240_000;
+
+/** A start asked of Launch Services (`open`), not awaited: when it was asked, and how `open` ended. */
+interface Start {
+  asked: number;
+  /** "open still running" until `open` exits, then "open done"; throws once `open` failed (the app will not come). */
+  state(): string;
+}
+
+function startApp(args: readonly string[]): Start {
+  let state = 'open still running';
+  let failed: Error | null = null;
+  void run('open', args).then(
+    () => (state = 'open done'),
+    (e: Error) => (failed = new Error(`open ${args.join(' ')} failed: ${e.message.split('\n')[0]}`)),
+  );
+  return {
+    asked: Date.now(),
+    state: () => {
+      if (failed) throw failed;
+      return state;
+    },
+  };
+}
+
+/**
+ * Asks Launch Services to start System Events, without waiting for it: rotate(),
+ * hideSimulatorApp() and verifyStart() drive Simulator.app through it. A runner's first
+ * osascript to System Events starts it and waits for its answer. Started that way by the window
+ * check, right after Safari's start, with the simulator's first boot keeping the 3-core Mac at a
+ * load of 300 to 550 and 0 % idle, its process appeared about 70 s after the request, and the
+ * window wait (60 s then) ended with no check ever answered (release-flavour run 43870370876: the
+ * wait's detail empty; host-load.log shows Simulator.app running 40 s before the deadline and
+ * System Events only after it). Started here, it comes up while the simulator finishes its
+ * setup, and systemEventsAnswers() waits for it with its own bound and state.
+ */
+function startSystemEvents(): Start {
+  return startApp(['-g', '-b', 'com.apple.systemevents']);
+}
+
+/** Waits until System Events, started by startSystemEvents(), answers an Apple event; returns how long after the request. */
+async function systemEventsAnswers(started: Start): Promise<number> {
   let state = '';
   await until(
     async () => {
-      state = `${await simulatorAppWindows()} windows, ${(await simulatorAppRunning()) ? 'running' : 'not running'}`;
-      return (await simulatorAppWindows()) > 0;
+      state = `System Events ${(await processRunning('System Events')) ? 'running' : 'not running'}, ${started.state()}`;
+      await osascript(['tell application "System Events" to count processes']);
+      return true;
     },
-    { timeoutMs: 60_000, what: "Simulator.app's window", detail: () => state },
+    { timeoutMs: Math.max(0, started.asked + SIMULATOR_APP_START_MS - Date.now()), what: 'System Events to answer', detail: () => state },
   );
+  return Date.now() - started.asked;
 }
 
-async function simulatorAppRunning(): Promise<boolean> {
-  return run('pgrep', ['-x', 'Simulator']).then(
+/**
+ * Simulator.app showing this simulator (its Device menu acts on the window), once its window is
+ * up; returns how long that took from the request. The window is read from the window server's
+ * list, not through System Events (simulatorAppWindows), so this wait is Simulator.app's own
+ * start; `open` itself is part of it (it returns once the app has started).
+ */
+async function openSimulatorApp(udid: string): Promise<number> {
+  const started = startApp(['-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid]);
+  let state = '';
+  await until(
+    async () => {
+      state = `Simulator.app ${(await processRunning('Simulator')) ? 'running' : 'not running'}, ${started.state()}`;
+      const windows = await simulatorAppWindows();
+      state += `, ${windows} windows on screen`;
+      return windows > 0;
+    },
+    { timeoutMs: SIMULATOR_APP_START_MS, what: "Simulator.app's window", detail: () => state },
+  );
+  return Date.now() - started.asked;
+}
+
+/** Whether a process of this exact name runs (pgrep -x). */
+async function processRunning(name: string): Promise<boolean> {
+  return run('pgrep', ['-x', name]).then(
     () => true,
     () => false,
   );
+}
+
+function simulatorAppRunning(): Promise<boolean> {
+  return processRunning('Simulator');
 }
 
 /**
@@ -242,8 +318,21 @@ async function quitSimulatorApp(): Promise<void> {
   );
 }
 
+/**
+ * Simulator.app's windows on screen (layer 0, the normal windows), from the window server's list
+ * (CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly) in osascript's own JavaScript:
+ * no other app, no Accessibility, no Apple event. Owner names and layers need no Screen Recording
+ * permission (only window titles do).
+ */
 async function simulatorAppWindows(): Promise<number> {
-  return Number((await run('osascript', ['-e', 'tell application "System Events" to count windows of process "Simulator"']).catch(() => ({ stdout: '0' }))).stdout.trim());
+  const script = [
+    'function run(argv) {',
+    '  ObjC.import("CoreGraphics");',
+    '  const all = ObjC.deepUnwrap(ObjC.castRefToObject($.CGWindowListCopyWindowInfo(1, 0))) || [];',
+    '  return all.filter((w) => w.kCGWindowOwnerName === argv[0] && w.kCGWindowLayer === 0).length;',
+    '}',
+  ].join('\n');
+  return Number((await run('osascript', ['-l', 'JavaScript', '-e', script, 'Simulator'])).stdout.trim());
 }
 
 /**
@@ -340,6 +429,13 @@ export class IosDevice {
       }
       await simctl(['bootstatus', sim.udid, '-b']);
       note('booted');
+      const checked = Date.now();
+      const rotator: Rotator = await run('xcrun', ['devicectl', 'device', 'orientation', 'get', '--device', sim.udid]).then(
+        () => 'devicectl',
+        () => 'simulator-app',
+      );
+      note(`turned by ${rotator} (checked in ${Date.now() - checked} ms)`);
+      const systemEvents = rotator === 'simulator-app' ? startSystemEvents() : null;
       const missing: string[] = [];
       for (const [domain, key] of SIMULATOR_KEYS) {
         const value = await simctl(['spawn', sim.udid, 'defaults', 'read', domain, key]).catch(() => '');
@@ -361,14 +457,11 @@ export class IosDevice {
       // (without it a new simulator answered safaridriver with a timeout: the same source).
       await simctl(['launch', sim.udid, SAFARI]);
       note('Safari launched');
-      const rotator: Rotator = await run('xcrun', ['devicectl', 'device', 'orientation', 'get', '--device', sim.udid]).then(
-        () => 'devicectl',
-        () => 'simulator-app',
-      );
-      if (rotator === 'simulator-app') {
-        // Opened here, where its first start (up to two minutes on CI) has the fixture's time, and
-        // hidden: rotate() shows it only to turn the phone.
-        await openSimulatorApp(sim.udid);
+      if (systemEvents) {
+        // Opened here, where its first start has the fixture's time, and hidden: rotate() shows
+        // it only to turn the phone.
+        note(`Simulator.app's window up after ${await openSimulatorApp(sim.udid)} ms`);
+        note(`System Events answering ${await systemEventsAnswers(systemEvents)} ms after it was started`);
         await hideSimulatorApp();
         note('Simulator.app started and hidden');
       }
