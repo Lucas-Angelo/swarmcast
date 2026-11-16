@@ -16,7 +16,7 @@ import { firefoxEnv, firefoxPrefs } from '../lib/firefox.mjs';
 import { junitXml } from '../lib/junit.mjs';
 import { isListening } from '../lib/ports.mjs';
 import { waitForTunnelName } from '../lib/viewer.mjs';
-import { orTimeout, poll, WaitError } from '../lib/wait.mjs';
+import { orTimeout, poll, until, WaitError } from '../lib/wait.mjs';
 
 /** A process that waits can depend on (wait.mjs Owner), which exits when `exit()` is called. */
 function owner() {
@@ -82,6 +82,27 @@ describe('poll', () => {
 
     // Assert
     expect((err as Error).message).toMatch(/^timed out waiting for phase live after \d+ ms \(phase waiting-obs; last error: ECONNREFUSED\)$/);
+  });
+});
+
+describe('until', () => {
+  it('says that its last check never returned when the deadline passes during it', async () => {
+    // Arrange
+    const hangs = () => new Promise<boolean>(() => {});
+
+    // Act
+    const err = await until(hangs, { timeoutMs: 50, what: "Simulator.app's window", detail: () => 'Simulator.app running' }).catch((e: Error) => e);
+
+    // Assert
+    expect((err as Error).message).toMatch(/^timed out waiting for Simulator\.app's window after \d+ ms \(Simulator\.app running; a check still running after \d+ ms\)$/);
+  });
+
+  it('names only the state when every check answered', async () => {
+    // Act
+    const err = await until(() => false, { timeoutMs: 50, pollMs: 5, what: "Simulator.app's window", detail: () => '0 windows' }).catch((e: Error) => e);
+
+    // Assert
+    expect((err as Error).message).toMatch(/^timed out waiting for Simulator\.app's window after \d+ ms \(0 windows\)$/);
   });
 });
 

@@ -12,14 +12,17 @@ export class WaitError extends Error {
   name = 'WaitError';
 }
 
-function describe(detail) {
-  if (!detail) return '';
-  try {
-    const d = detail();
-    return d ? ` (${d})` : '';
-  } catch (err) {
-    return ` (detail failed: ${err.message})`;
+function describe(detail, extra) {
+  let d = '';
+  if (detail) {
+    try {
+      d = detail() ?? '';
+    } catch (err) {
+      d = `detail failed: ${err.message}`;
+    }
   }
+  const all = [d, extra].filter(Boolean).join('; ');
+  return all ? ` (${all})` : '';
 }
 
 /** "code 1", "SIGKILL" or "error: spawn ENOENT". */
@@ -35,7 +38,9 @@ export function formatExit(x) {
  * fails the wait at once with that error.
  *
  * Rejects with a WaitError:
- * - after `timeoutMs`: "timed out waiting for <what> after N ms (<detail()>)";
+ * - after `timeoutMs`: "timed out waiting for <what> after N ms (<detail()>)", plus "a check
+ *   still running after M ms" when the last `pred()` had not returned by then (a probe that hangs,
+ *   such as an osascript whose target app is still launching, is then told from a false answer);
  * - as soon as a process in `abortOn` exits (or had already exited): "<what>: <name> exited
  *   (<code or signal>)", followed by that process's last output lines.
  */
@@ -45,6 +50,8 @@ export function until(pred, o) {
     let done = false;
     let checking = false;
     let again = false;
+    /** When the `pred()` call in flight began (null: none in flight). */
+    let checkSince = null;
     const cleanups = [];
     const finish = (err) => {
       if (done) return;
@@ -63,16 +70,20 @@ export function until(pred, o) {
       try {
         do {
           again = false;
+          checkSince = Date.now();
           if (await pred()) return finish();
+          checkSince = null;
         } while (again && !done);
       } catch (err) {
         finish(err);
       } finally {
         checking = false;
+        checkSince = null;
       }
     };
     const started = Date.now();
-    const timer = setTimeout(() => finish(new WaitError(`timed out waiting for ${what} after ${Date.now() - started} ms${describe(detail)}`)), timeoutMs);
+    const inFlight = () => (checkSince === null ? '' : `a check still running after ${Date.now() - checkSince} ms`);
+    const timer = setTimeout(() => finish(new WaitError(`timed out waiting for ${what} after ${Date.now() - started} ms${describe(detail, inFlight())}`)), timeoutMs);
     cleanups.push(() => clearTimeout(timer));
     const poll = setInterval(() => void check(), pollMs);
     cleanups.push(() => clearInterval(poll));

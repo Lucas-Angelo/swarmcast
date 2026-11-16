@@ -337,6 +337,18 @@ Android taps, every one ended in a click on its element.
   down 538 ms, a long press on the nickname field (Devices run 42715017924). Shown, Simulator.app draws the simulator's screen, and taps then took up to 2.4 s
   from finger down to up (Devices runs 41227486868, 41235159056): it is shown only to turn the
   phone, and the job records no simulator video.
+- **Simulator.app and System Events on a first boot:** on Xcode 26 the phone is turned through
+  Simulator.app's Device menu, by osascript through System Events. Neither runs on a new runner.
+  The window check used to go through System Events too, so its first osascript also started
+  System Events, right after Safari's start, with the Mac at a load of 300 to 550. Its process
+  came up about 70 s later, and the 60 s window wait timed out with no check answered, though
+  Simulator.app was running (release-flavour run 43870370876). Now the attach starts System
+  Events as soon as the simulator has booted, reads Simulator.app's window from the window
+  server's list (`CGWindowListCopyWindowInfo` in osascript's JavaScript, no other app), and waits
+  for each with its own bound (`SIMULATOR_APP_START_MS`: 1.5 times the slowest whole start of 115
+  first boots, 155 s), writing each one's time to `device.log`. A wait whose check is still
+  running at the deadline says so (`until` in `scripts/test/lib/wait.mjs`), so a probe that hangs
+  is told apart from one that answers "no".
 - **Safari's tips on iOS:** a new simulator's Safari shows its "More" button tip (TipKit) once,
   over the first page, and a tap while it was still coming up went to its popover (release-rehearsal
   pipeline 42399897758). `setup.sh` and the suite set TipKit's own switch in Safari's defaults
