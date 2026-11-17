@@ -74,10 +74,11 @@ for p in $PROJECTS; do
   # only under DEBUG=pw:browser, and a renderer that crashes prints its signal and stack only
   # there ("Received signal 11 ..."), while the test reads just "Target crashed" (release
   # rehearsal 44054408334 kept nothing else).
-  DEBUG=pw:browser npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p" \
-    2> >(tee test-results/browser.log | grep --line-buffered -v ' pw:browser ' >&2)
-  RC[$p]=$?
-  wait "$!"
+  # A plain pipeline on fd 3 (not a process substitution, whose $! this bash leaves unset): the
+  # stderr filter has ended when the pipeline returns, and PIPESTATUS keeps Playwright's exit.
+  { DEBUG=pw:browser npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p" \
+      2>&1 1>&3 3>&- | tee test-results/browser.log | grep --line-buffered -v ' pw:browser ' >&2; } 3>&1
+  RC[$p]=${PIPESTATUS[0]}
   mkdir -p "/out/$p"
   cp -a test-results/pw "/out/$p/test-results" 2>/dev/null
   cp -a playwright-report "/out/$p/playwright-report" 2>/dev/null
