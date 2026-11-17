@@ -130,7 +130,9 @@ Copies the repo into the container (without `node_modules`, build output, `vendo
 H.264/AAC support of the bundled browsers (`codec-probe.mjs`), then runs each project with
 `playwright.linux.config.ts`: the main config, but the chromium project has no `channel`
 (Google Chrome does not exist for Linux arm64). Reports go to `test-results/docker-e2e/<project>/`,
-with that project's `e2e-server.log` and `fake-obs.log` (CI uploads them when a project fails).
+with that project's `e2e-server.log`, `fake-obs.log` and `browser.log`, the browsers' own output
+(`DEBUG=pw:browser`; a renderer that crashes prints its signal and stack only there, while the
+test reads "Target crashed"). CI uploads them when a project fails.
 After every Playwright invocation, nothing of the e2e web server (its own process, the MediaMTX
 and cloudflared it started) may still run 10 s after Playwright stopped it: a check that fails the
 run (what is left is then killed, so the next invocation can bind its ports).

@@ -162,6 +162,10 @@ jobs:
           GROUP: ${{ matrix.group }}
           # Server-side coverage: every Node process writes its V8 coverage here when it exits.
           NODE_V8_COVERAGE: ${{ runner.temp }}/v8-e2e
+          # The browsers' own output (stderr), which Playwright shows only under this: a renderer
+          # that crashes prints its signal and stack there, while the test reads just "Target
+          # crashed". It goes to browser-logs/browser.log (uploaded with the report), not to this log.
+          DEBUG: pw:browser
         run: |
           case "$GROUP" in
             chat) grep=(--grep "$CHAT_FILES") ;;
@@ -170,7 +174,15 @@ jobs:
             ui) grep=(--grep "^(?!.*@media)" --grep-invert "$CHAT_FILES|$LIVE_FILES|$UI_WITH_MEDIA") ;;
             *) echo "::error::unknown e2e group $GROUP"; exit 1 ;;
           esac
-          npx playwright test "${grep[@]}" --fail-on-flaky-tests
+          mkdir -p browser-logs
+          # A plain pipeline on fd 3 (a process substitution may still be writing when the step
+          # ends); Playwright's exit is PIPESTATUS[0] (grep -v exits 1 when nothing is left).
+          set +e
+          { npx playwright test "${grep[@]}" --fail-on-flaky-tests \
+              2>&1 1>&3 3>&- | tee browser-logs/browser.log | grep --line-buffered -v ' pw:browser ' >&2; } 3>&1
+          rc=${PIPESTATUS[0]}
+          set -e
+          exit "$rc"
       # The e2e server's coverage (scripts/coverage/e2e-server.mjs keeps that process's files, c8
       # maps them onto the sources), its table in the job summary and this group's floors
       # (scripts/coverage/floors.json). Only after a passing run: a failed one covers less.
@@ -217,7 +229,7 @@ jobs:
           node .github/scripts/test-summary.mjs --title "$TITLE" --playwright test-results/results.json
           if [ -n "$CHAT" ]; then node .github/scripts/test-summary.mjs --title "$CHAT" --playwright test-results/chat-ui.json; fi
       # Kept for every run that was not cancelled (green ones too): the HTML report, results.json,
-      # the traces and screenshots of failed tests, e2e-server.log, fake-obs.log.
+      # the traces and screenshots of failed tests, e2e-server.log, fake-obs.log, browser.log.
       - name: Upload Playwright report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -228,6 +240,7 @@ jobs:
           path: |
             playwright-report/
             test-results/
+            browser-logs/
           if-no-files-found: ignore
           retention-days: 14
       # actions/cache/save from the copy fetched with git at its pin (the browsers' restore fetched
