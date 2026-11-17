@@ -244,6 +244,7 @@ jobs:
         continue-on-error: true
         with:
           images: e2e
+          max-try-seconds: '175'
       # The container does the rest (npm ci, binaries, build, firefox + chromium). 45 minutes:
       # about 3 times the slowest run.
       - name: Playwright in the Playwright image (e2e.sh)

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # The parts of fetch-artifact (action.yml) that do not go through actions/download-artifact.
 #
-#   rest.sh diagnose TRY   what a failed download-artifact try ran into, from this runner
-#   rest.sh fetch          the fallback: the same artifacts through the REST API and curl
+#   rest.sh diagnose TRY   what a failed download-artifact try ran into, from this runner (at
+#                          most DIAG_S seconds)
+#   rest.sh fetch          try 2: the same artifacts through the REST API and curl, within a
+#                          budget that follows their size
 #
 # Environment (from action.yml): NAME or PATTERN, DEST, MERGE (true/false), RUN_ID, REPO, TOKEN
-# (needs actions: read), and for `fetch` FETCH_TRIES (default 4) and FETCH_BUDGET (seconds,
-# default 240: no new try starts after that).
+# (needs actions: read), and for `fetch` FETCH_TRIES (curl tries, default 4) and FETCH_MAX_S
+# (the caller's max-try-seconds: a cap on the budget, counted from the start of the fetch).
 #
 # Why: download-artifact prints only "Artifact download failed after 5 retries." Its retry loop
 # logs the cause with core.debug, which a run shows only with step debug logging on, so a failure
@@ -14,10 +16,25 @@
 # Node.js's https (the runtime download-artifact uses, probe.mjs) and curl, and prints the
 # resolver's answer, every stage's timing, the HTTP status and Azure's error code and request id.
 # `fetch` then gets the artifacts by another route: the REST API's own signed URL
-# (GET /repos/{repo}/actions/artifacts/{id}/zip, a 302 to the blob), downloaded by curl, resumed
-# with a range request after a cut, checked against the size and SHA-256 digest the API recorded
-# at upload, and only then unzipped where download-artifact would have put it.
+# (GET /repos/{repo}/actions/artifacts/{id}/zip, a 302 to the blob), downloaded by curl, cut when
+# it stalls and resumed with a range request, checked against the size and SHA-256 digest the API
+# recorded at upload, and only then unzipped where download-artifact would have put it.
 set -u
+
+# The limits of try 1 (download.mjs; fetch-artifact.test.ts checks that they are the same): the
+# budget is LIMIT_BASE_S, PER_ARTIFACT_S for each artifact and the bytes at RATE_FLOOR_BPS. Every
+# request gets at most what is left of it, so try 2 ends within its budget, stalled or not.
+RATE_FLOOR_BPS=4000000
+LIMIT_BASE_S=45
+PER_ARTIFACT_S=1
+# The listing before the budget is known; the whole of the diagnostics.
+LIST_S=30
+DIAG_S=45
+# A curl download slower than STALL_BPS for STALL_S seconds has stalled: it is cut and resumed.
+STALL_BPS=102400
+STALL_S=30
+# The end of the current budget, as a value of $SECONDS.
+DEADLINE=$((SECONDS + LIST_S))
 
 API="${GITHUB_API_URL:-https://api.github.com}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,9 +44,26 @@ CURL_TIMES='http=%{http_code} ip=%{remote_ip} dns=%{time_namelookup}s tcp=%{time
 # spaces, so no answer can forge a log line or a workflow command.
 say() { printf 'fetch-artifact: %s\n' "$(printf '%s' "$*" | tr '\000-\037\177' ' ')"; }
 
-# curl to the REST API: bounded, retried on any error (its own short outages).
+# Seconds left before DEADLINE, at most $1, never below 0.
+left() {
+  local l=$((DEADLINE - SECONDS))
+  [ "$l" -le "$1" ] || l="$1"
+  [ "$l" -ge 0 ] || l=0
+  echo "$l"
+}
+
+# curl to the REST API: each request at most 20 s, tried again on any error (its own short
+# outages) while the budget lasts, never past DEADLINE.
 api() {
-  curl -sS --connect-timeout 15 --max-time 60 --retry 3 --retry-all-errors --retry-delay 5 \
+  local t m retry=()
+  t="$(left 60)"
+  if [ "$t" -lt 3 ]; then
+    say "no time left for the REST API" >&2
+    return 1
+  fi
+  m=$((t < 20 ? t : 20))
+  [ $((t - m)) -ge 5 ] && retry=(--retry 3 --retry-all-errors --retry-delay 5 --retry-max-time $((t - m)))
+  curl -sS --connect-timeout 10 --max-time "$m" ${retry[@]+"${retry[@]}"} \
     -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
     -H "X-GitHub-Api-Version: 2022-11-28" "$@"
 }
@@ -103,8 +137,20 @@ resolver() {
   echo
 }
 
+# The budget of try 2 for the artifacts in ROWS (JSON lines), in seconds: what try 1 has
+# (download.mjs, tryLimitMs), capped by FETCH_MAX_S.
+fetch_budget() {
+  local rows="$1" count bytes budget
+  count="$(grep -c . <<<"$rows")"
+  bytes="$(jq -s 'map(.size) | add // 0' <<<"$rows")"
+  budget=$((LIMIT_BASE_S + PER_ARTIFACT_S * count + (bytes + RATE_FLOOR_BPS - 1) / RATE_FLOOR_BPS))
+  if [ -n "${FETCH_MAX_S:-}" ] && [ "$FETCH_MAX_S" -gt 0 ] && [ "$FETCH_MAX_S" -lt "$budget" ]; then budget="$FETCH_MAX_S"; fi
+  echo "$budget"
+}
+
 diagnose() {
-  local try="$1" rows n=0 url host body
+  local try="$1" rows url host body t
+  DEADLINE=$((SECONDS + DIAG_S))
   echo "::group::fetch-artifact diagnostics after failed try $try (${NAME:-$PATTERN})"
   say "$(date -u +%FT%TZ) runner ${RUNNER_NAME:-?} (${RUNNER_OS:-?} ${RUNNER_ARCH:-?}, image ${ImageOS:-?} ${ImageVersion:-?})"
   say "$(curl --version | head -n 1)"
@@ -116,27 +162,26 @@ diagnose() {
   [ -n "$rows" ] || say "no artifact of run $RUN_ID matches '${NAME:-$PATTERN}'"
   while IFS= read -r row; do
     [ -n "$row" ] || continue
-    n=$((n + 1))
-    local id name size digest expired
-    id="$(jq -r .id <<<"$row")" name="$(jq -r .name <<<"$row")" size="$(jq -r .size <<<"$row")"
-    digest="$(jq -r .digest <<<"$row")" expired="$(jq -r .expired <<<"$row")"
-    say "artifact $name: id $id, $size bytes, digest ${digest:-none}, expired $expired"
-    # Probe at most three artifacts; the rest of a pattern goes the same way.
-    [ "$n" -le 3 ] || continue
-    url="$(signed_url "$id")" || continue
+    say "artifact $(jq -r '"\(.name): id \(.id), \(.size) bytes, digest \(if .digest == "" then "none" else .digest end), expired \(.expired)"' <<<"$row")"
+  done <<<"$rows"
+  # The probes ask for the first artifact only: the others are on the same blob storage, and the
+  # diagnostics must leave try 2 its time.
+  if [ -n "$rows" ] && url="$(signed_url "$(head -n 1 <<<"$rows" | jq -r .id)")"; then
     host="$(host_of "$url")"
     say "blob URL: $(bare "$url")"
     say "resolver ($RUNNER_OS) for $host: $(resolver "$host")"
     # curl: the first 8 MiB, so a probe costs seconds, not the whole file.
     body="$(mktemp)"
-    say "curl: $(curl -sS -o "$body" -r 0-8388607 --connect-timeout 15 --max-time 30 -w "$CURL_TIMES" "$url" 2>&1 | tr '\n' ' ')"
+    t="$(left 15)"
+    [ "$t" -ge 1 ] && say "curl: $(curl -sS -o "$body" -r 0-8388607 --connect-timeout "$t" --max-time "$t" -w "$CURL_TIMES" "$url" 2>&1 | tr '\n' ' ')"
     if [ "$(file_size "$body")" -lt 4096 ] && grep -q '<Error>' "$body" 2>/dev/null; then
       say "blob storage said: $(tr -d '\r\n' <"$body" | head -c 600)"
     fi
     rm -f "$body"
-    # Node.js: a whole-file GET like download-artifact's, stopped after 8 MiB.
-    node "$HERE/probe.mjs" "$url" 2>&1 | sed 's/^/fetch-artifact: node: /' || true
-  done <<<"$rows"
+    # Node.js: a whole-file GET like download-artifact's, stopped after 8 MiB or what is left.
+    t="$(left 15)"
+    [ "$t" -ge 1 ] && { node "$HERE/probe.mjs" "$url" "$t" 2>&1 | sed 's/^/fetch-artifact: node: /' || true; }
+  fi
   echo "::endgroup::"
 }
 
@@ -155,19 +200,23 @@ extract() {
   fi
 }
 
-# Download one artifact into DIR: up to FETCH_TRIES curl tries, each with a fresh signed URL,
-# resuming the partial file; a file of the wrong size or digest is thrown away and fetched again.
+# Download one artifact into DIR: up to TRIES curl tries within the budget (DEADLINE), each with
+# a fresh signed URL, resuming the partial file; a file of the wrong size or digest is thrown
+# away and fetched again.
 fetch_one() {
   local id="$1" name="$2" size="$3" digest="$4" dir="$5"
-  local zip="$TMP_DIR/$id.zip" try=0 url got hash wait
+  local zip="$TMP_DIR/$id.zip" try=0 url got hash wait t
   : >"$zip"
   while :; do
     try=$((try + 1))
     if url="$(signed_url "$id")"; then
       got="$(file_size "$zip")"
       [ "$got" -gt 0 ] && say "$name: try $try resumes at byte $got of $size"
-      say "$name: try $try: $(curl -sS -o "$zip" -C - --connect-timeout 20 --speed-limit 102400 --speed-time 30 \
-        --max-time 300 -w "$CURL_TIMES" "$url" 2>&1 | tr '\n' ' ')"
+      t="$(left 100000)"
+      if [ "$t" -ge 1 ]; then
+        say "$name: try $try (at most $t s): $(curl -sS -o "$zip" -C - --connect-timeout "$((t < 20 ? t : 20))" \
+          --speed-limit "$STALL_BPS" --speed-time "$STALL_S" --max-time "$t" -w "$CURL_TIMES" "$url" 2>&1 | tr '\n' ' ')"
+      fi
       got="$(file_size "$zip")"
       if [ "$got" = "$size" ]; then
         hash="$(sha256 "$zip")"
@@ -185,25 +234,34 @@ fetch_one() {
       fi
     fi
     wait=$((15 * try))
-    if [ "$try" -ge "$TRIES" ] || [ "$((SECONDS - START + wait))" -gt "$BUDGET" ]; then
-      echo "::error::fetch-artifact: $name: the REST fallback gave up after $try tries and $((SECONDS - START)) s"
+    if [ "$try" -ge "$TRIES" ] || [ "$((SECONDS + wait + 5))" -ge "$DEADLINE" ]; then
+      say "$name: try 2 gave up after $try curl tries and $((SECONDS - START)) s of its $BUDGET s (got $(file_size "$zip") of $size bytes)"
       return 1
     fi
-    say "$name: try $try did not finish; next try in $wait s"
+    say "$name: curl try $try did not finish; next one in $wait s"
     sleep "$wait"
   done
 }
 
+# An artifact that is not there (or expired) is no infrastructure failure: action.yml says so.
+missing() { [ -z "${GITHUB_OUTPUT:-}" ] || echo "missing=true" >>"$GITHUB_OUTPUT"; }
+
 fetch() {
-  local rows ok=0 failed=0
-  START=$SECONDS TRIES="${FETCH_TRIES:-4}" BUDGET="${FETCH_BUDGET:-240}"
+  local rows ok=0 failed=0 count
+  START=$SECONDS TRIES="${FETCH_TRIES:-4}" BUDGET=$LIST_S
+  DEADLINE=$((SECONDS + LIST_S))
   TMP_DIR="$(mktemp -d)"
   trap 'rm -rf "$TMP_DIR"' EXIT
-  rows="$(list_artifacts)" || { echo "::error::fetch-artifact: the REST fallback could not list the artifacts"; return 1; }
+  rows="$(list_artifacts)" || { say "try 2 could not list the artifacts"; return 1; }
   if [ -z "$rows" ]; then
     echo "::error::fetch-artifact: no artifact of run $RUN_ID matches '${NAME:-$PATTERN}'"
+    missing
     return 1
   fi
+  BUDGET="$(fetch_budget "$rows")"
+  DEADLINE=$((START + BUDGET))
+  count="$(grep -c . <<<"$rows")"
+  say "try 2 of 2 (REST API and curl): $count artifact(s), $(jq -s 'map(.size) | add' <<<"$rows") bytes, $BUDGET s from its start"
   local out="$DEST"
   [ "${RUNNER_OS:-}" = Windows ] && out="$(cygpath -u "$out")"
   while IFS= read -r row; do
@@ -212,19 +270,21 @@ fetch() {
     digest="$(jq -r .digest <<<"$row")" expired="$(jq -r .expired <<<"$row")"
     if [ "$expired" = true ]; then
       echo "::error::fetch-artifact: $name (id $id) has expired"
+      missing
       failed=$((failed + 1))
       continue
     fi
-    # Where download-artifact puts it: path itself for a name or merge-multiple, else path/<name>.
+    # Where download-artifact puts it: path itself for a name, merge-multiple or a pattern that
+    # matches one artifact, else path/<name>.
     dir="$out"
-    [ -z "$NAME" ] && [ "$MERGE" != true ] && dir="$out/$name"
+    [ -z "$NAME" ] && [ "$MERGE" != true ] && [ "$count" -gt 1 ] && dir="$out/$name"
     if fetch_one "$id" "$name" "$size" "$digest" "$dir"; then ok=$((ok + 1)); else failed=$((failed + 1)); fi
   done <<<"$rows"
   if [ "$failed" -gt 0 ]; then
-    echo "::error::fetch-artifact: the REST fallback got $ok of $((ok + failed)) artifacts"
+    say "try 2 got $ok of $((ok + failed)) artifacts"
     return 1
   fi
-  echo "::warning::fetch-artifact: infra recovery: download-artifact failed twice; the REST fallback (curl, digest checked) got ${NAME:-$PATTERN} ($ok artifact(s)) in $((SECONDS - START)) s"
+  echo "::warning::fetch-artifact: infra recovery: try 1 (download-artifact) failed; try 2 (REST API and curl, digest checked) got ${NAME:-$PATTERN} ($ok artifact(s)) in $((SECONDS - START)) s"
 }
 
 case "${1:-}" in

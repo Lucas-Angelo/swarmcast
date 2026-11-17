@@ -1,16 +1,15 @@
-name: Download artifacts, with diagnostics and a REST fallback
+name: Download artifacts, in two tries with limits of their own
 description: >-
-  actions/download-artifact, tried twice 30 s apart; after each failed try, diagnostics that name
-  the cause (rest.sh diagnose); after the second, the same artifacts through the REST API with
-  curl, resumed and checked against the SHA-256 digest recorded at upload (rest.sh fetch), logged
-  as an infra-recovery warning. download-artifact alone names nothing ("Artifact download failed
-  after 5 retries."; the cause is in its debug log only), and once one runner's download of one
-  artifact started failing, it failed the same way for 3.5 minutes (pipeline run 41199245404: 15
-  attempts, 14 of them over within milliseconds, too fast to have reached the blob storage).
-  download-artifact itself runs from a copy fetched with git (./.github/actions/fetch-remote); when
-  that cannot be fetched, the REST fallback runs straight away. Same inputs as download-artifact;
-  the job needs `actions: read` (the REST API). .github/workflows/README.md, "Artifact downloads"
-  and "Remote actions".
+  Two tries, each with a time limit that follows the artifacts' size and a cut as soon as a
+  download stops making progress, so a stalled download never uses up the calling step's limit
+  and try 2 always has time of its own. Try 1: actions/download-artifact, run with those limits
+  by ./try1 (../download.mjs). Try 2, after a try 1 that failed, stalled or ran out of time:
+  diagnostics that name the cause (rest.sh diagnose), then the same artifacts through the REST
+  API with curl, resumed after a cut and checked against the SHA-256 digest recorded at upload
+  (rest.sh fetch), logged as an infra-recovery warning. When try 2 fails too, an error titled
+  "Artifact download (infrastructure)" (a warning with `required: false`) and the step fails.
+  Same inputs as download-artifact; the job needs `actions: read` (the REST API).
+  .github/workflows/README.md, "Artifact downloads".
 
 inputs:
   name:
@@ -31,24 +30,25 @@ inputs:
   github-token:
     description: Token for run-id.
     default: ''
+  max-try-seconds:
+    description: >-
+      A limit for each try from its start, below the size-based one, for a caller whose step
+      limit is smaller than two tries at the floor rate (a saved copy of gigabytes): the two tries
+      and the diagnostics then take at most 2 x this + 110 s.
+    default: ''
+  required:
+    description: >-
+      `false` for a saved copy the job can do without (a cache): when both tries fail, a warning
+      instead of an error. The step fails either way.
+    default: 'true'
 
 runs:
   using: composite
   steps:
-    # download-artifact runs from a copy fetched with git at its pin (.github/actions/remote-pins),
-    # with tries: the runner's own download of a remote action is not tried again after a 404
-    # (.github/workflows/README.md, "Remote actions"). If it cannot be fetched, the REST fallback
-    # downloads the artifacts.
-    - name: download-artifact (git fetch, with tries)
-      id: action
-      uses: ./.github/actions/fetch-remote
-      with:
-        repos: actions/download-artifact
-        optional: 'true'
-    - id: try1
-      if: steps.action.outputs.fetched == 'true'
+    - name: download-artifact, with a time limit and a stall cut (try 1 of 2)
+      id: try1
       continue-on-error: true
-      uses: ./.git/remote-actions/actions/download-artifact
+      uses: ./.github/actions/fetch-artifact/try1
       with:
         name: ${{ inputs.name }}
         pattern: ${{ inputs.pattern }}
@@ -56,7 +56,13 @@ runs:
         merge-multiple: ${{ inputs.merge-multiple }}
         run-id: ${{ inputs.run-id }}
         github-token: ${{ inputs.github-token }}
-    - if: steps.try1.outcome == 'failure'
+        max-try-seconds: ${{ inputs.max-try-seconds }}
+    # Try 2 has a budget of its own (rest.sh: the artifacts' size at RATE_FLOOR_BPS), within what
+    # try 1's limits left of the calling step's.
+    - name: Diagnostics, then the REST API and curl (try 2 of 2)
+      id: try2
+      if: steps.try1.outputs.ok != 'true'
+      continue-on-error: true
       shell: bash
       env:
         NAME: ${{ inputs.name }}
@@ -66,37 +72,21 @@ runs:
         RUN_ID: ${{ inputs.run-id || github.run_id }}
         REPO: ${{ github.repository }}
         TOKEN: ${{ inputs.github-token || github.token }}
+        FETCH_MAX_S: ${{ inputs.max-try-seconds }}
       run: |
-        echo "::warning::artifact download failed (try 1 of 2); diagnostics, then a retry in 30 s"
         bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 1
-        sleep 30
-    - id: try2
-      if: steps.try1.outcome == 'failure'
-      continue-on-error: true
-      uses: ./.git/remote-actions/actions/download-artifact
-      with:
-        name: ${{ inputs.name }}
-        pattern: ${{ inputs.pattern }}
-        path: ${{ inputs.path }}
-        merge-multiple: ${{ inputs.merge-multiple }}
-        run-id: ${{ inputs.run-id }}
-        github-token: ${{ inputs.github-token }}
-    - if: steps.try2.outcome == 'failure' || steps.action.outputs.fetched != 'true'
+        bash "$GITHUB_ACTION_PATH/rest.sh" fetch
+    # A missing or expired artifact is not infrastructure: rest.sh has named it in an error.
+    - name: Name a failed download as infrastructure
+      if: steps.try2.outcome == 'failure'
       shell: bash
       env:
-        NAME: ${{ inputs.name }}
-        PATTERN: ${{ inputs.pattern }}
-        DEST: ${{ inputs.path }}
-        MERGE: ${{ inputs.merge-multiple }}
-        RUN_ID: ${{ inputs.run-id || github.run_id }}
-        REPO: ${{ github.repository }}
-        TOKEN: ${{ inputs.github-token || github.token }}
-        NO_ACTION: ${{ steps.action.outputs.fetched != 'true' }}
+        WHAT: ${{ inputs.name || inputs.pattern }}
+        WHY1: ${{ steps.try1.outputs.why || 'the step itself failed' }}
+        MISSING: ${{ steps.try2.outputs.missing == 'true' }}
+        LEVEL: ${{ inputs.required == 'false' && 'warning' || 'error' }}
       run: |
-        if [ "$NO_ACTION" = true ]; then
-          echo "::warning::download-artifact could not be fetched; the REST fallback"
-        else
-          echo "::warning::artifact download failed (try 2 of 2); diagnostics, then the REST fallback"
-          bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 2
+        if [ "$MISSING" != true ]; then
+          echo "::$LEVEL title=Artifact download (infrastructure)::infra: $WHAT could not be downloaded in 2 tries: try 1 (download-artifact) $WHY1; try 2 (REST API and curl) did not finish, its log says why. GitHub's artifact service or the runner's network, not the build: start a new run"
         fi
-        bash "$GITHUB_ACTION_PATH/rest.sh" fetch
+        exit 1

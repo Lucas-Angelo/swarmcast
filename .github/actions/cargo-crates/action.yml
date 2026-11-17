@@ -37,6 +37,10 @@ runs:
         path: ${{ runner.temp }}/cargo-crates
         run-id: ${{ steps.find.outputs.run-id }}
         github-token: ${{ github.token }}
+        # About 82 MB, 7 s. 50 s per try: both tries and the diagnostics (at most 2 x 50 + 110 s)
+        # leave setup-rust's 8 minutes the toolchain's cold path (4 minutes).
+        max-try-seconds: '50'
+        required: 'false'
     - name: Into the registry, checked; else from crates.io; then cargo offline
       shell: bash
       env:

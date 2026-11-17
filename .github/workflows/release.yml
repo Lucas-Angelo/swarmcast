@@ -221,6 +221,9 @@ jobs:
           cat notes-page.md
 
       # ---- Desktop app: the tested installers + .sig (desktop.yml) and the updater manifest ----
+      # Five artifacts, about 880 MB (about 60 s at 15 MB/s). 200 s per try (4.4 MB/s, just over
+      # fetch-artifact's floor of 4 MB/s): both tries and the diagnostics between them (at most
+      # 2 x 200 + 110 s) fit the 10 minutes, so try 2 always has its own time.
       - name: Download the desktop installers
         uses: ./.github/actions/fetch-artifact
         timeout-minutes: 10
@@ -228,6 +231,7 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
           path: release/desktop
+          max-try-seconds: '200'
       # latest.json: what the app's updater reads at releases/latest/download/latest.json
       # (version, notes, per-platform URL + signature). /latest skips pre-releases.
       - name: Add latest.json (desktop updater manifest)
