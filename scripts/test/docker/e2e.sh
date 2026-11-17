@@ -5,8 +5,8 @@
 #
 #   scripts/test/docker/e2e.sh [--platform linux/amd64] [PROJECT...]   (default: firefox chromium)
 #
-# Reports, with the e2e server log and the fake OBS log, are copied to
-# ./test-results/docker-e2e/<project>/ in the repo.
+# Reports, with the e2e server log, the fake OBS log and the browsers' own output (browser.log),
+# are copied to ./test-results/docker-e2e/<project>/ in the repo.
 #
 # SC_DOWNLOAD_CACHE=<dir> (fetch-binaries.mjs; CI's setup action restores it): mounted into the
 # container, so the pinned MediaMTX and cloudflared come from it (SHA-256 checked) and only

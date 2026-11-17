@@ -68,13 +68,20 @@ for p in $PROJECTS; do
   echo "== playwright test --project=$p (scripts/test/docker/playwright.linux.config.ts)"
   # The e2e server writes its log and the fake OBS's next to outputDir (test-results/, not
   # test-results/pw, which Playwright empties): one set per project.
-  rm -f test-results/e2e-server.log test-results/fake-obs.log
-  npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p"
+  rm -f test-results/e2e-server.log test-results/fake-obs.log test-results/browser.log
+  mkdir -p test-results
+  # The browsers' own output (stderr) goes to browser.log, not to this log: Playwright shows it
+  # only under DEBUG=pw:browser, and a renderer that crashes prints its signal and stack only
+  # there ("Received signal 11 ..."), while the test reads just "Target crashed" (release
+  # rehearsal 44054408334 kept nothing else).
+  DEBUG=pw:browser npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p" \
+    2> >(tee test-results/browser.log | grep --line-buffered -v ' pw:browser ' >&2)
   RC[$p]=$?
+  wait "$!"
   mkdir -p "/out/$p"
   cp -a test-results/pw "/out/$p/test-results" 2>/dev/null
   cp -a playwright-report "/out/$p/playwright-report" 2>/dev/null
-  cp -a test-results/e2e-server.log test-results/fake-obs.log "/out/$p/" 2>/dev/null
+  cp -a test-results/e2e-server.log test-results/fake-obs.log test-results/browser.log "/out/$p/" 2>/dev/null
   leftovers "--project=$p"
 done
 

@@ -25,9 +25,16 @@
 // without ever starting it; here it holds every segment, waiting for the trickling peer. Load:
 // one transcoded rung (480p; both viewers watch it: one swarm per quality, so they are peers of
 // each other) from a pre-encoded 720p feed, so a 4-vCPU runner encodes as little as the scenario
-// needs next to Chrome and the throttle. The honest viewer is on a tunnel-like link (300 ms
-// round trip), like real viewers. Media played is measured, not currentTime − t0: the stall
-// watchdog may reload the source, which restarts the timeline without any loss of playback.
+// needs next to Chrome and the throttle. The honest viewer's link to the server is tunnel-like
+// (300 ms round trip), like real viewers'; its WebRTC with the other viewer is not throttled: it
+// never goes through the tunnel. `Network.emulateNetworkConditions` would throttle both, since
+// Chromium applies global conditions to WebRTC too (its UDP through DevTools' simulated network):
+// the data channel to the trickling peer stayed "connecting" (0 kB over P2P in every CI run, so
+// that peer was never tested), and the page's renderer crashed once, 2 s after it turned P2P on,
+// in that state (Playwright in Docker arm64, release rehearsal 44054408334). The throttle is a
+// rule for the server's origin only (`serverLink`). Media played is measured, not
+// currentTime − t0: the stall watchdog may reload the source, which restarts the timeline
+// without any loss of playback.
 // This link (300 ms RTT, a trickling peer, the CPU ladder) has many short stalls by design:
 // measured locally, the player plays 25–27 s of 30 s with or without the adaptive delay, so the
 // bar is two thirds; starvation itself is the longest stall. Recovered for real means playing
@@ -73,8 +80,8 @@ const SOAK_BEFORE_MS = 40_000;
 const SOAK_AFTER_MS = 20_000;
 /** The forced stall: 25 s at 40 kbit/s drains the buffer and pushes the delay past the catch-up limit, where the old player froze for good. */
 const FORCED_STALL_MS = 25_000;
-const STARVED = { offline: false, latency: 300, downloadThroughput: 5000, uploadThroughput: 5000 } as const;
-const TUNNEL = { offline: false, latency: 300, downloadThroughput: -1, uploadThroughput: -1 } as const;
+const STARVED = { latency: 300, downloadThroughput: 5000, uploadThroughput: 5000 } as const;
+const TUNNEL = { latency: 300, downloadThroughput: -1, uploadThroughput: -1 } as const;
 /** How long the trickling peer holds each data chunk: just under the P2P core's 2 s no-bytes timeout. */
 const TRICKLE_MS = 1800;
 
@@ -85,6 +92,16 @@ function bufferAhead(page: Page): Promise<number> {
     for (let i = 0; i < v.buffered.length; i++) if (v.buffered.start(i) <= v.currentTime + 0.5 && v.currentTime < v.buffered.end(i)) return v.buffered.end(i) - v.currentTime;
     return 0;
   });
+}
+
+/**
+ * The page's link to the server (HTTP and its WebSocket) gets `link`; its WebRTC with peers is left
+ * alone. A rule with a URL pattern applies to the matching requests only, while global conditions
+ * (`Network.emulateNetworkConditions`, or a rule with an empty pattern) throttle WebRTC too.
+ */
+async function serverLink(cdp: CDPSession, origin: string, link: typeof TUNNEL | typeof STARVED): Promise<void> {
+  const { host } = new URL(origin);
+  await cdp.send('Network.emulateNetworkConditionsByRule', { matchedNetworkConditions: [{ urlPattern: `*://${host}/*`, ...link }] });
 }
 
 const peerCount = async (page: Page): Promise<number> => (await stats(page)).peers.length;
@@ -252,7 +269,7 @@ test('"Allow P2P for viewers" off in the panel stops P2P for everyone live; view
   expect((await stats(page)).p2pEnabled).toBe(true);
 });
 
-test('a peer that barely delivers never starves playback, even after a forced stall', { tag: '@media' }, async ({ viewers, browserName }) => {
+test('a peer that barely delivers never starves playback, even after a forced stall', { tag: '@media' }, async ({ viewers, browserName, baseURL }) => {
   // Arrange
   test.skip(browserName !== 'chromium', 'network throttling needs CDP (Chromium)');
   const q0 = await adminApi<QualityState>('GET', '/api/quality');
@@ -279,7 +296,7 @@ test('a peer that barely delivers never starves playback, even after a forced st
     setup: watch480,
     prepare: async (p) => {
       cdp = await p.context().newCDPSession(p);
-      await cdp.send('Network.emulateNetworkConditions', TUNNEL);
+      await serverLink(cdp, baseURL!, TUNNEL);
     },
   });
   await waitPlaying(page);
@@ -300,9 +317,9 @@ test('a peer that barely delivers never starves playback, even after a forced st
   expect(before.maxStallMs, 'stall next to a slow peer').toBeLessThan(4000);
 
   // Act
-  await cdp!.send('Network.emulateNetworkConditions', STARVED);
+  await serverLink(cdp!, baseURL!, STARVED);
   await measuredWindow(page, FORCED_STALL_MS);
-  await cdp!.send('Network.emulateNetworkConditions', TUNNEL);
+  await serverLink(cdp!, baseURL!, TUNNEL);
 
   // Assert
   await expect.poll(async () => (await stallReport(page)).currentStallMs, { timeout: 25_000, intervals: [500] }).toBe(0);
