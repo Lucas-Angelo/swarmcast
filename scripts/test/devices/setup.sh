@@ -142,10 +142,13 @@ if [ "${GITHUB_ACTIONS:-}" = true ]; then FETCH_LIMIT="${SC_ANDROID_FETCH_LIMIT:
 FETCH_START=
 
 # dl.google.com or the runner's network failed, not SwarmCast: in CI a `(infrastructure)` error
-# that names the file and why the job had to download it.
+# that names the file, why the job had to download it (<why>: what the archives' folder lacked)
+# and, from $SC_ANDROID_ARCHIVES_FROM, where that folder's archives came from (CI's saved copy, or
+# why there was none: .github/actions/android-sdk).
+#   android_infra <archive> <each try's reason> <why>
 android_infra() {
-  local msg="dl.google.com did not answer: $1: $2"
-  [ -z "${SC_ANDROID_ARCHIVES_FROM:-}" ] || msg="$msg. The job needed it because $SC_ANDROID_ARCHIVES_FROM"
+  local msg="dl.google.com did not answer: $1: $2. The job needed it because $3"
+  [ -z "${SC_ANDROID_ARCHIVES_FROM:-}" ] || msg="$msg (the folder's archives: $SC_ANDROID_ARCHIVES_FROM)"
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
     echo "::error title=Android SDK (infrastructure)::$msg. Nothing was tested: an outage of Google's download server or of the runner's network, not a failure of SwarmCast. Run the job again once it answers."
   fi
@@ -158,14 +161,16 @@ android_infra() {
 # stopped; 3 tries, 5 and 15 s apart, within FETCH_LIMIT for the whole run; a 404 is not tried
 # again. A file that came only after failed tries logs `infra recovery:`.
 fetch_archive() {
-  local archive="$1" sum="$2" dir="$3" file part url try code rc left reason reasons=""
+  local archive="$1" sum="$2" dir="$3" file part url try code rc left reason reasons="" why
   file="$dir/$(basename "$archive")"
+  why="$dir did not hold it"
   if [ -f "$file" ]; then
     if [ "$(sha256_of "$file")" = "$sum" ]; then
       say "  $(basename "$archive"): from $dir, SHA-256 as pinned"
       return 0
     fi
     warn "$file is not the pinned file (SHA-256 differs from $sum): deleted, downloaded again"
+    why="$dir held it with another SHA-256 than the pinned $sum"
     rm -f "$file"
   fi
   url="$ANDROID_REPOSITORY/$archive"
@@ -198,7 +203,7 @@ fetch_archive() {
     if [ "$try" = 1 ]; then sleep 5; elif [ "$try" = 2 ]; then sleep 15; fi
   done
   rm -f "$part"
-  android_infra "$archive" "${reasons#; }"
+  android_infra "$archive" "${reasons#; }" "$why"
 }
 
 # The local package.xml that sdkmanager writes next to a package it installs, for the package
@@ -297,6 +302,10 @@ install_android() {
 
   mkdir -p "$HOME/.android/avd"
   if [ ! -d "$HOME/.android/avd/$AVD_NAME.avd" ]; then
+    # avdmanager 22.0 prints "Error: Could not load devices from <image>/devices.xml" and goes on:
+    # it looks for a system image's own device profiles, which only some images ship (Wear, TV);
+    # Google's archive of this one holds none, and an sdkmanager install printed the same. The AVD
+    # still gets the built-in pixel_7 (the emulator: 1080x2400 at 420 dpi).
     say "Creating the AVD $AVD_NAME ($AVD_DEVICE, $image)"
     echo no | ANDROID_SDK_ROOT="$sdk" "$sdk/cmdline-tools/latest/bin/avdmanager" create avd -n "$AVD_NAME" -k "$image" -d "$AVD_DEVICE" >/dev/null ||
       die "avdmanager could not create $AVD_NAME"

@@ -179,7 +179,7 @@ jobs:
           sdk="$RUNNER_TEMP/android-sdk"
           { echo "ANDROID_HOME=$sdk"; echo "ANDROID_SDK_ROOT=$sdk"; } >>"$GITHUB_ENV"
           export SC_ANDROID_ARCHIVES="${SC_ANDROID_ARCHIVES:-$RUNNER_TEMP/android-archives}"
-          export SC_ANDROID_ARCHIVES_FROM="${SC_ANDROID_ARCHIVES_FROM:-the restore of the saved copy did not finish}"
+          export SC_ANDROID_ARCHIVES_FROM="${SC_ANDROID_ARCHIVES_FROM:-none: the restore of the saved copy did not finish}"
           ANDROID_HOME="$sdk" ANDROID_SDK_ROOT="$sdk" scripts/test/devices/setup.sh install android
           rm -rf "$SC_ANDROID_ARCHIVES"
           df -m "$HOME"
