@@ -394,7 +394,13 @@ Android taps, every one ended in a click on its element.
   "isn't responding" dialog took the window focus from Chrome, so Android refused Chrome's requests
   for the keyboard while the suite's touches, which reach the page over DevTools, still focused the
   field. With four cores the 15 boots of three runs had no ANR (Devices runs 42321838235,
-  42321840933, 42321843458). `keyboardOnce` brings the keyboard up once after the boot (Gboard's
+  42321840933, 42321843458), but a first boot still runs the guest near four cores for a minute
+  or more: in release-rehearsal run 43992741373 the launcher missed a service deadline 31 s after
+  the boot, and its "isn't responding" dialog stayed in front of Chrome into the first test. So the
+  system shows no error dialogs (`hide_error_dialogs`, set as the boot completes: an app that
+  does not respond is closed, and logcat still says "ANR in"), and a dialog shown before that is
+  closed with the Home key once the boot is calm (`android-dialogs.ts`); every test still checks
+  that Chrome's window has the focus. `keyboardOnce` brings the keyboard up once after the boot (Gboard's
   first show took 13.9 s, Devices run 41226056177) once Chrome's window has the input focus.
   CI boots the emulator the suite's way, after `setup.sh install android`, so `emulator.log` keeps
   its output and exit, and a crash leaves a core and its backtrace with the job's artifacts.

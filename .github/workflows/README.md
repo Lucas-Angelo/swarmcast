@@ -880,7 +880,8 @@ while main's saved copy has its archives, and sdkmanager never downloads:
   `android-sdk-linux-<hash of the pins>` (`setup.sh artifact android`), the newest uploaded by a
   run of this repository on the default branch (`android-sdk.mjs find`, `test-images.mjs`'s rules),
   through `fetch-artifact`, into `$SC_ANDROID_ARCHIVES`. A miss or a failed download is a warning,
-  and `$SC_ANDROID_ARCHIVES_FROM` says which for the error below. The install step deletes the
+  and `$SC_ANDROID_ARCHIVES_FROM` says where the folder's archives came from (the saved copy and
+  its run, or `none:` and why) for the error below. The install step deletes the
   archives once they are unzipped.
 - The cold path, only for an archive the copy lacks: dl.google.com, 3 tries 5 and 15 s apart, each
   resumed where the last stopped and cut off after 180 s or 30 s below 100 kB/s, at most 7
@@ -888,8 +889,9 @@ while main's saved copy has its archives, and sdkmanager never downloads:
   is downloaded again; a 404 is not tried again). A file that came only after failed tries logs
   `infra recovery:`. When dl.google.com does not answer, the step fails with `Android SDK
   (infrastructure): dl.google.com did not answer: <archive>: <each try's reason>. The job needed
-  it because <no saved copy on main yet / the lookup failed / the saved copy could not be
-  downloaded / did not hold it>`; nothing is tested.
+  it because <the folder> did not hold it / held it with another SHA-256 (the folder's archives:
+  <the saved copy (run) / none: no saved copy on main yet / the lookup failed / the saved copy
+  could not be downloaded>)`; nothing is tested.
 - `./.github/actions/android-sdk/save`, in the build stage on `main` only (the Linux x64 runner of
   the `web` job, after its uploads): when `main` has no copy for the current pins or the newest
   expires within 30 days (`android-sdk.mjs plan`), `setup.sh fetch android` fetches the four

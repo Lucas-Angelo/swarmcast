@@ -26,6 +26,7 @@ import { spawnTracked, type Tracked } from '../../../../scripts/test/lib/proc.mj
 import { until } from '../../../../scripts/test/lib/wait.mjs';
 import { expect } from '../e2e/fixtures.js';
 import { actionablePoint, armTap, tapEndsInClick, touchState } from './actionability.js';
+import { errorDialogs, HIDE_ERROR_DIALOGS } from './android-dialogs.js';
 import { CALM_WINDOW_MS, measuredWindow, untilCalm, type Load } from './calm.js';
 import { joinPageReady, type Orientation, type Phone } from './phone.js';
 
@@ -200,6 +201,7 @@ export class AndroidDevice {
     await device.prepare();
     // The cold boot's own work done before the first test.
     await device.calm('after the boot', CALM_AFTER_BOOT_MS);
+    await device.closeErrorDialogs();
     return device;
   }
 
@@ -213,9 +215,17 @@ export class AndroidDevice {
   }
 
   /**
-   * Waits for the boot, then prepares the device: no animations, screen kept on, portrait, the
-   * full-screen notice already seen, Chrome's flags, and the e2e server's public port reachable
-   * on the device's 127.0.0.1.
+   * Waits for the boot, then prepares the device: no system error dialogs, no animations, screen
+   * kept on, portrait, the full-screen notice already seen, Chrome's flags, and the e2e server's
+   * public port reachable on the device's 127.0.0.1.
+   *
+   * The error dialogs first (android-dialogs.ts HIDE_ERROR_DIALOGS), before the cold boot's own
+   * work can make a system app miss one of Android's deadlines: the guest stays CPU-bound for a
+   * minute or more after a first boot, and an app's "isn't responding" dialog keeps the window
+   * focus until someone answers it. In release-rehearsal run 43992741373 the launcher's
+   * NotificationListener service took over 20 s to start, 31 s after the boot ("ANR in
+   * com.google.android.apps.nexuslauncher", CPU pressure 83 %); its dialog stayed in front of
+   * Chrome through the calm wait and the first test's start, which found it there.
    */
   private async prepare(): Promise<void> {
     const { serial, own, o } = this;
@@ -224,6 +234,7 @@ export class AndroidDevice {
       what: `${serial} to finish booting`,
       abortOn: own ? [own] : [],
     });
+    await this.shell(HIDE_ERROR_DIALOGS);
     this.log = spawnTracked(ADB, ['-s', serial, 'logcat', '-v', 'threadtime'], { name: 'logcat', logFile: path.join(o.logDir, 'logcat.txt') });
     // What the emulator gave Android (EMULATOR_FEATURES: neither should be on; the cores of
     // setup.sh's hw.cpu.ncore), for the record.
@@ -300,6 +311,25 @@ export class AndroidDevice {
   }
 
   /**
+   * Closes the system's error dialogs still on screen as a viewer would, with the Home key: the
+   * system then closes its dialogs (PhoneWindowManager sends ACTION_CLOSE_SYSTEM_DIALOGS, on which
+   * BaseErrorDialog closes: "Wait" for an ANR). Only a dialog the system showed before prepare()
+   * hid them can be there. Each one goes to device.log; one that stays fails the boot.
+   */
+  private async closeErrorDialogs(): Promise<void> {
+    const listed = async () => errorDialogs(await this.shellOut(['dumpsys', 'window', 'windows']));
+    let left = await listed();
+    if (left.length === 0) return;
+    this.record(`system dialogs left from the boot: ${left.join(', ')}; the Home key closes them`);
+    await this.shell(['input', 'keyevent', 'KEYCODE_HOME']);
+    await until(async () => (left = await listed()).length === 0, {
+      timeoutMs: 15_000,
+      what: "the system's error dialogs closed by the Home key",
+      detail: () => `still shown: ${left.join(', ')}`,
+    });
+  }
+
+  /**
    * Brings the on-screen keyboard up once after the boot, on the join page of `link` (a tap on the
    * nickname field), waits until the input method service reports it shown, and closes Chrome: a
    * phone's keyboard has been up before the viewer opens the link. The first show after a cold
@@ -309,7 +339,8 @@ export class AndroidDevice {
    * later; the page never saw the keyboard in time, and the later tests were fine. The tap waits
    * for the join page to take input (phone.ts joinPageReady) and for Chrome's window to have the
    * input focus: in Devices run 42316622933 SystemUI's "isn't responding" dialog had taken it
-   * at a cold boot on a two-core guest, and the keyboard never came up.
+   * at a cold boot on a two-core guest, and the keyboard never came up (since then the system
+   * shows no such dialog: prepare()).
    */
   async keyboardOnce(link: string): Promise<void> {
     const phone = await this.newPhone();
