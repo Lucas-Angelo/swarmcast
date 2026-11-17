@@ -13,6 +13,12 @@ inputs:
   images:
     description: The images the job's suites run, space-separated images.sh specs (appimage:ubuntu:22.04, obs, e2e).
     required: true
+  max-try-seconds:
+    description: >-
+      The limit of each of fetch-artifact's two tries: both, with the diagnostics between them,
+      fit the calling step's limit (2 x 85 + 110 s in 5 minutes; the Playwright image's caller,
+      8 minutes, gives 175).
+    default: '85'
 
 runs:
   using: composite
@@ -51,6 +57,8 @@ runs:
         path: ${{ runner.temp }}/test-images
         run-id: ${{ steps.find.outputs.run-id }}
         github-token: ${{ github.token }}
+        max-try-seconds: ${{ inputs.max-try-seconds }}
+        required: 'false'
     - name: What the suites will load
       shell: bash
       env:

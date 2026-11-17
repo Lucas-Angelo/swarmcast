@@ -299,7 +299,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/actions/android-sdk` | the device suite's pinned Android SDK archives (`scripts/test/devices/android-sdk.pins`) from the artifact `main` saved, into `$SC_ANDROID_ARCHIVES`, for `setup.sh install android` in `devices.yml`'s Android job; `android-sdk/save` (the build stage, `main` only) saves that artifact once per pin set and again before it expires (see "Android SDK" below) |
 | `.github/actions/get-build` | downloads and unpacks this run's build artifacts |
 | `.github/actions/test-images` | the Docker suites' test images of a job, from the artifact an earlier run saved (`.github/scripts/test-images.mjs` finds it), into `SC_TEST_IMAGES`; `test-images/save` uploads the ones a job had to build (see "Test images" below) |
-| `.github/actions/fetch-artifact` | `actions/download-artifact` tried twice, diagnostics after each failed try, then a REST API + curl fallback checked against the upload's SHA-256 digest (every download in these workflows goes through it; see "Artifact downloads" below) |
+| `.github/actions/fetch-artifact` | two tries, each with a time limit from the artifacts' size and a cut when it stalls: `actions/download-artifact` (`try1`, `download.mjs`), then diagnostics and the REST API + curl, checked against the upload's SHA-256 digest (`rest.sh`); an `Artifact download (infrastructure)` error when both fail (every download in these workflows goes through it; see "Artifact downloads" below) |
 | `.github/actions/upload-build` | one try of `actions/upload-artifact` for an artifact a later job needs; the workflow runs it twice, as two steps with their own time limits, try 2 only after a failed or timed-out try 1, when the artifact service answers again, with `overwrite` (see "Artifact uploads" below) |
 | `.github/scripts/apt-debs.sh` | every apt install of a gating Linux job: from the job's saved `.deb` set, checked against its `SHA256SUMS`, with apt offline (the set is its only source); the Ubuntu archive only when the set does not fit the runner image; `install`, `download`, `playwright-deps`, `finish` (see "Ubuntu packages" below) |
 | `.github/scripts/android-sdk.mjs` | finds the saved Android SDK archives' artifact (`find`) and tells the build stage on `main` when to save it (`plan`: none, or the newest expires within 30 days; tested in `scripts/ci/test`) |
@@ -315,18 +315,56 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 
 ### Artifact downloads
 
-Every artifact download goes through `.github/actions/fetch-artifact`:
+Every artifact download goes through `.github/actions/fetch-artifact`, in two tries, each with a
+time limit of its own:
 
-1. `actions/download-artifact`.
-2. If it fails: a warning, diagnostics (`rest.sh diagnose`), 30 s, then `download-artifact` again.
-3. If that fails too: a warning, diagnostics again, then the fallback (`rest.sh fetch`): the
-   artifact's REST API URL (`GET /repos/{repo}/actions/artifacts/{id}/zip`, a 302 to a signed blob
-   URL, a fresh one per try), downloaded by curl, at most 4 tries 15/30/45 s apart within 240 s,
-   each resuming the partial file (`-C -`), cut when slower than 100 kB/s for 30 s. The zip must
-   have the size and the SHA-256 digest that the API recorded at upload, or it is thrown away;
-   then it is unzipped where `download-artifact` would have put it. Success is a warning,
-   `fetch-artifact: infra recovery: ...`, so every use of the fallback is visible in the run's
+1. Try 1 (`fetch-artifact/try1`, `download.mjs`): `actions/download-artifact` (from the copy
+   `fetch-remote` fetches, here in 2 tries 5 s apart, at most 65 s), run as a child process.
+   It has 30 s to list the artifacts, and the whole try, from its start, 45 s plus 1 s per
+   artifact plus their bytes at 4 MB/s (`RATE_FLOOR_BPS`; 130 s for the 335 MB Docker build); it
+   is cut off sooner, as soon as 30 s pass without a byte more in the destination (measured
+   every 2 s). Its `::error` lines
+   become warnings, and a failed try 1 is a warning that says why (`stalled: no byte more in
+   30 s (... of ... bytes written)`, `reached its time limit ...`, download-artifact's own error).
+2. Try 2, only after a try 1 that failed, stalled or was cut off: diagnostics (`rest.sh diagnose`,
+   at most 45 s), then the REST API and curl (`rest.sh fetch`): the artifact's REST API URL
+   (`GET /repos/{repo}/actions/artifacts/{id}/zip`, a 302 to a signed blob URL, a fresh one per
+   curl try), downloaded by curl, at most 4 curl tries 15/30/45 s apart, each resuming the partial
+   file (`-C -`) and cut when slower than 100 kB/s for 30 s, all within the same budget as try 1
+   (30 s to list, then 45 s + 1 s per artifact + the bytes at 4 MB/s, from its start). Every
+   request gets at most what is left of it (`--max-time`), so try 2 ends within its budget too.
+   The zip must have the size and the SHA-256 digest that the API recorded at upload, or it is
+   thrown away; then it is unzipped where `download-artifact` would have put it. Success is a
+   warning, `fetch-artifact: infra recovery: ...`, so every use of it is visible in the run's
    annotations.
+3. When try 2 fails too, the step fails with an error titled `Artifact download
+   (infrastructure)`: `infra: <name> could not be downloaded in 2 tries: try 1 (download-artifact)
+   <why>; try 2 ...` (a warning with `required: false`, for the saved copies a job can do without).
+   An artifact that is not there or has expired is not infrastructure: `rest.sh` names it in an
+   error of its own.
+
+So the action takes at most 2 x (its budget) + 110 s (the fetch of download-artifact and the
+diagnostics at their limits), and every caller's `timeout-minutes` holds that for its artifacts:
+6 minutes 10 s for the 335 MB Docker build in 10 minutes, 5 minutes 24 s for the largest
+installers (241 MB). A caller whose artifacts are too large for two tries at 4 MB/s in its limit
+sets `max-try-seconds`, a cap on each try from its start, and both tries take at most 2 x that +
+110 s: the release's five installers (about 880 MB) 200 s in 10 minutes, the saved Android SDK
+(2.4 GB) 115 s in 6, the test images 85 s in 5 (the Playwright image, 0.9 GB, 175 in 8), the
+Rust crates (82 MB) 50 s inside `setup-rust`'s 8.
+
+Why limits inside the action: a composite action's steps cannot have `timeout-minutes` ("Artifact
+uploads" below), so the calling step's limit was the only one, shared by every try. In release
+rehearsal 44018931697, `docker / AppImage debian:12 x64` got the 200 for `linux-docker-x64`
+(334,827,666 bytes) from `productionresultssa15.blob.core.windows.net` at 04:48:06 and nothing
+more; at 04:58:04 "The action has timed out" ended try 1 after 599 s, the step's 10 minutes, and
+the diagnostics after it in 7 ms, and try 2 never ran ("no results: appimage.log was not
+written"). download-artifact's own 30 s no-data limit did not end it. The same download takes
+15-22 s in a working run; in the 60 pipeline runs before it (2026-11-15 to 11-17),
+download-artifact got 11-64 MB/s (the 2.4 GB Android SDK in 38-55 s, the 0.9 GB Playwright image
+in 40 s), and the slowest step that worked, 335 MB in 91 s with the fetch of the action and the
+unpack, still ran at 3.7 MB/s, inside its 130 s. Try 2 goes through another client and route
+(curl, the REST API's signed URL), which also resumes a cut download where download-artifact
+starts over.
 
 The diagnostics, in a `fetch-artifact diagnostics` log group: the runner and its image, the
 matching artifacts (id, size, digest, expired), the blob host the API redirects to, what the
@@ -516,7 +554,8 @@ codeload's tarball). `fetch.mjs` tries 4 times, 5, 10 and 20 s apart, each git c
 the job is not fetched again. One that only speeds the job up (actions/cache, rust-cache) is
 `optional`: if it cannot be fetched, the caches are skipped with a warning, where the runner's
 download failure used to fail the job even though the rust-cache step is `continue-on-error`.
-When download-artifact cannot be fetched, `fetch-artifact` goes straight to its REST fallback.
+When download-artifact cannot be fetched, `fetch-artifact`'s try 1 ends at once and try 2 (the
+REST API and curl) gets the artifacts.
 Inside `.git`, the copies are out of the way of everything that reads the workspace (git status
 and clean, ESLint, a later checkout). Still downloaded by the runner, so still exposed to a 404:
 actions/checkout (it puts `fetch-remote` there in the first place) and actions/upload-artifact,
@@ -628,7 +667,9 @@ OBS, the Playwright image):
   one of them (`built.txt`), with `compression-level: 0` (zstd already) and `retention-days: 90`.
   Any run saves, pull requests too: the scoping is in the restore.
 
-Both are `continue-on-error` with a time limit (5 minutes; the Playwright image, about 1 GB, 8).
+Both are `continue-on-error` with a time limit (5 minutes; the Playwright image, about 1 GB, 8);
+each of the download's two tries stops after 85 s (175 for the Playwright image), so both fit
+("Artifact downloads").
 So `main` builds each key once and every run after that, of every branch, restores it; a pull
 request that changes a Dockerfile builds its own once. Not the Actions cache: the images weigh
 about 3.5 GB per pipeline (both architectures), the caches held 9.6 GB of their 10 GB on
@@ -1173,8 +1214,9 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `--fail-on-flaky-tests` in every CI invocation, so a config that ever retried could not pass a test
   that failed first. Vitest's `retry` stays 0. `soak.yml`'s report fails on any single failed run;
   `ci-ok` fails on a re-run. Retries exist only for infrastructure that is not a test, each one at
-  the place that needs it: apt, only when a job's saved `.deb` set does not fit its runner image (`apt-retry.sh` through `apt-debs.sh`; "Ubuntu packages" above), artifact downloads (`fetch-artifact`: a second try,
-  then the REST fallback, each a warning), the uploads of artifacts a later job needs (`upload-build`:
+  the place that needs it: apt, only when a job's saved `.deb` set does not fit its runner image (`apt-retry.sh` through `apt-debs.sh`; "Ubuntu packages" above), artifact downloads (`fetch-artifact`: two tries,
+  each with a time limit from the artifacts' size and a cut when it stalls, the second through
+  the REST API, a warning), the uploads of artifacts a later job needs (`upload-build`:
   a second try, each try a step with its own time limit, the second when the artifact service
   answers again, a warning; "Artifact uploads" above), the remote actions our steps run (`fetch-remote`: a git
   fetch, 4 tries, each failed one a warning; the runner's own download stops at a 404, run
@@ -1226,7 +1268,7 @@ reports without checking. Background in docs/DEVELOPMENT.md ("Coverage").
   `npm run build` and `node scripts/build/package.mjs --target <host>`:
   `node .github/scripts/no-dev-deps.mjs --server --web --staging release/staging/<host>`.
 - **Permissions:** every workflow starts from `contents: read`, plus `actions: read` in those that
-  download artifacts (`fetch-artifact`'s REST fallback); a job that needs more says so
+  download artifacts (`fetch-artifact`'s try 2, through the REST API); a job that needs more says so
   (`codeql.yml`: `security-events: write`; `cache-hygiene.yml`: `actions: write` to delete caches; `site.yml` deploy: `pages`, `id-token`; `release.yml`
   publish: `contents`, `id-token`, `attestations`; `stats.yml`: `contents: write` for its branch).
   Checkouts use `persist-credentials: false`. Actions are pinned to a full commit SHA (those run

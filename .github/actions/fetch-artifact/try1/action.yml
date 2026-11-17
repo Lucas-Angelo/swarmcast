@@ -1,0 +1,42 @@
+name: Download artifacts, try 1 (download-artifact with limits)
+description: >-
+  Try 1 of ../action.yml: actions/download-artifact, from the copy ../../fetch-remote fetches with
+  git (2 tries here: try 2 does not need it), run as a child process with a time limit that
+  follows the listed artifacts' size and a cut as soon as the download stops making progress
+  (../download.mjs). Never fails the step: `ok` says whether the artifacts are in `path`, `why`
+  what went wrong.
+
+inputs:
+  name:
+    description: As ../action.yml's.
+    default: ''
+  pattern:
+    description: As ../action.yml's.
+    default: ''
+  path:
+    description: As ../action.yml's.
+    required: true
+  merge-multiple:
+    description: As ../action.yml's.
+    default: 'false'
+  run-id:
+    description: As ../action.yml's.
+    default: ''
+  github-token:
+    description: As ../action.yml's.
+    default: ''
+  max-try-seconds:
+    description: As ../action.yml's.
+    default: ''
+
+outputs:
+  ok:
+    description: '`true` when download-artifact got every artifact within the limits.'
+  why:
+    description: What went wrong, when `ok` is not `true`.
+  bytes:
+    description: The bytes download-artifact listed (empty when it listed none).
+
+runs:
+  using: node24
+  main: main.mjs

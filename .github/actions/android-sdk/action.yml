@@ -36,6 +36,10 @@ runs:
           echo "::warning title=Android SDK::could not look up the saved copy $name; setup.sh downloads the archives"
           echo "SC_ANDROID_ARCHIVES_FROM=none: the lookup of the saved copy $name failed" >>"$GITHUB_ENV"
         fi
+    # About 2.4 GB, 38-55 s at 44-64 MB/s. Each of fetch-artifact's two tries stops after 115 s
+    # (21 MB/s), so both, with the diagnostics between them, fit the caller's 6 minutes: a
+    # download that stalls or crawls leaves setup.sh's cold path, not a step cut off with try 2
+    # never run (.github/workflows/README.md, "Artifact downloads").
     - name: Download it
       id: fetch
       if: steps.find.outputs.run-id != ''
@@ -46,6 +50,8 @@ runs:
         path: ${{ runner.temp }}/android-archives
         run-id: ${{ steps.find.outputs.run-id }}
         github-token: ${{ github.token }}
+        max-try-seconds: '115'
+        required: 'false'
     - name: What setup.sh will install from
       if: steps.find.outputs.run-id != ''
       shell: bash

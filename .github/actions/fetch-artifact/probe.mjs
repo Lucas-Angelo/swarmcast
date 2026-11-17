@@ -2,15 +2,15 @@
 // https client, the runtime actions/download-artifact downloads with, the way it asks (a whole-file
 // GET, no range). Prints the resolver's answer, when the socket was looked up, connected and
 // secured, the HTTP status with Azure's error code and request id, and the exact error (code,
-// syscall, address; each inner error of an AggregateError). Stops after 8 MiB or 30 s. Never
+// syscall, address; each inner error of an AggregateError). Stops after 8 MiB or SECONDS (30 by default). Never
 // prints the URL's query (its signature).
 //
-//   node probe.mjs URL
+//   node probe.mjs URL [SECONDS]
 import dns from 'node:dns/promises';
 import https from 'node:https';
 
 const LIMIT_BYTES = 8 * 1024 * 1024;
-const LIMIT_MS = 30_000;
+const LIMIT_MS = Number(process.argv[3] ?? 30) * 1000;
 const url = new URL(process.argv[2] ?? '');
 const t0 = performance.now();
 const at = () => `${Math.round(performance.now() - t0)} ms`;
