@@ -4,10 +4,13 @@
 //   2. actionablePoint: the element is touched only once it is actionable (touchState), read the
 //      same before and after two animation frames, so that the browser shows what the page reports;
 //   3. the platform's finger: W3C touch actions through safaridriver on iOS, DevTools'
-//      Input.dispatchTouchEvent on Android, both the browser's own touch path;
+//      Input.dispatchTouchEvent on Android, both the browser's own touch path, with the finger
+//      put down and lifted by the browser in one go (one Perform Actions on iOS, both DevTools
+//      commands sent at once on Android): never down in one request and up in the next, where
+//      the time down would be the host's round trip;
 //   4. tapEndsInClick: the tap counts once the page got the click on the element; when it did
 //      not, the failure says what arrived, how long the finger was down and what the page
-//      revealed during the tap.
+//      revealed during the tap; a finger held as long as a long press fails as the harness's.
 // The checks are Playwright's for a click (https://playwright.dev/docs/actionability: attached,
 // visible, stable for two animation frames, enabled, receives events, scrolled into view), plus
 // what a phone's browser adds:
@@ -32,6 +35,7 @@
 //   or a change the page has not finished moves everything after the point was read.
 import { expect } from '../e2e/fixtures.js';
 import type { Phone } from './phone.js';
+import { describeTap, fingerDownMs, LONG_PRESS_MS, parseTapEvents, type TapEvent, type TapTiming } from './tap-record.js';
 
 /** Where a finger touches an element, in visual-viewport CSS pixels; see touchState(). */
 export interface TouchPoint {
@@ -232,91 +236,42 @@ export function armTap(el: Element): void {
   w.__tapStop = stop;
 }
 
-/** The entries armTap records. */
-const TAP_TYPES = ['touchstart', 'touchend', 'mouseover', 'mousedown', 'click', 'shown'] as const;
-
 /**
- * One entry of a tap's record: its type, the element it reached when that was not the tapped one
- * (for `shown`, the element revealed), its time stamp and when the page handled it (epoch ms).
+ * Waits until the tap armed by armTap and performed as `timing` says ended in a click on the
+ * element, as a finger's tap does. Its description goes to `log` either way, with how long the
+ * element took to become actionable (`waitedMs`). A tap that ends in no click fails here with what
+ * arrived and its timing, plus `onFailure`'s words (iOS: where the simulator's log of the tap is).
+ * A finger held for the phone's LONG_PRESS_MS or more fails at once as the harness's fault, click
+ * or not: the phone was sent a long press, so the check says that rather than "no click" (release
+ * rehearsal 44243243561: 2.3 s, with every check of the page in order).
  */
-export interface TapEvent {
-  type: (typeof TAP_TYPES)[number] | '?';
-  elsewhere?: string;
-  stamp: number;
-  handled: number;
-}
-
-/**
- * The page's record (`type[>element]@stamp:handled ...`). It comes from the page, so the type is
- * taken from TAP_TYPES and the times are numbers; only an element's name is the page's own text,
- * and describeTap leaves it out of what is written to taps.log.
- */
-export function parseTapEvents(record: string): TapEvent[] {
-  return record
-    .split(' ')
-    .filter(Boolean)
-    .map((entry) => {
-      const [what = '', times = ''] = entry.split('@');
-      const [raw = '', elsewhere] = what.split('>');
-      const [stamp = NaN, handled = NaN] = times.split(':').map(Number);
-      return { type: TAP_TYPES.find((t) => t === raw) ?? '?', ...(elsewhere === undefined ? {} : { elsewhere }), stamp, handled };
-    });
-}
-
-/**
- * What a tap delivered and when, for the log and a failure message: the events in order, the
- * finger's time down (touchstart to touchend, by the events' time stamps and by when the page
- * handled them) and the click's delay after touchend. "click" appears only when one arrived on the
- * element; one elsewhere is "click>element" ("click>elsewhere" without `names`, for the file). A
- * touch that ended in no click names the controls the page revealed from touchstart on, and
- * whether WebKit took the tap for a hover (moved the mouse, pressed nothing).
- */
-export function describeTap(events: readonly TapEvent[], started: number, performed: number, names = true): string {
-  const own = (type: string) => events.find((e) => e.type === type && e.elsewhere === undefined);
-  const down = own('touchstart');
-  const up = own('touchend');
-  const click = own('click');
-  const label = (e: TapEvent) => (e.elsewhere === undefined ? e.type : `${e.type}>${names ? e.elsewhere : e.type === 'shown' ? 'element' : 'elsewhere'}`);
-  // What the page revealed before the touch is not the tap's business: actionablePoint waited it out.
-  const during = events.filter((e) => e.type !== 'shown' || (down !== undefined && e.handled >= down.handled));
-  const parts = [`events: ${during.map(label).join(', ') || '(none)'}`, `actions performed in ${performed - started} ms`];
-  if (down) parts.push(`touchstart ${down.handled - started} ms after the actions began`);
-  if (down && up) parts.push(`finger down ${up.stamp - down.stamp} ms by time stamps, ${up.handled - down.handled} ms as handled`);
-  if (up && click) parts.push(`then the click ${click.handled - up.handled} ms after touchend`);
-  if (down && !click) {
-    const over = own('mouseover');
-    const shown = during.filter((e) => e.type === 'shown').map((e) => (names ? e.elsewhere : 'an element'));
-    const revealed = shown.length > 0 ? `the page revealed ${shown.join(', ')} during the tap` : '';
-    if (over && !own('mousedown')) parts.push(`taken for a hover (mouse moved, no press)${revealed ? `: ${revealed}` : ''}`);
-    else if (revealed) parts.push(revealed);
-  }
-  return parts.join('; ');
-}
-
-/**
- * Waits until the tap armed by armTap and performed between `started` and `performed` (epoch ms)
- * ended in a click on the element, as a finger's tap does. Its description goes to `log` either
- * way, with how long the element took to become actionable (`waitedMs`); a tap that ends in no
- * click fails here with what arrived and its timing, plus `onFailure`'s words (iOS: where the
- * simulator's log of the tap is).
- */
-export async function tapEndsInClick(phone: Phone, selector: string, started: number, performed: number, o: { waitedMs: number; log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
+export async function tapEndsInClick(phone: Phone, selector: string, timing: Omit<TapTiming, 'longPressMs'>, o: { waitedMs: number; log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
+  const t: TapTiming = { ...timing, longPressMs: LONG_PRESS_MS[phone.platform] };
   let events: TapEvent[] = [];
   // A tap on Watch navigates: the page that answers may be the next one already, or none for a
   // moment ("Execution context was destroyed"), and expect.poll stops at a callback that throws.
   const read = () => phone.evaluate(() => sessionStorage.getItem('__tap')).catch((e: Error) => `(unreadable while the page changes: ${e.message.split('\n')[0]})`);
+  const longPress = () => (fingerDownMs(events) ?? 0) >= t.longPressMs;
   const record = async () => {
     const text = (await read()) ?? '';
     if (text.startsWith('(unreadable')) return `not yet: ${text}`;
-    return describeTap((events = parseTapEvents(text)), started, performed);
+    const description = describeTap((events = parseTapEvents(text)), t);
+    return longPress() ? `long press: ${description}` : description;
   };
   try {
-    // A click on the element itself (one elsewhere is listed as "click>element").
-    await expect.poll(record, { message: `the tap on ${selector} ended in a click on it` }).toMatch(/^events: (\S+, )*click[,;]/);
+    // A click on the element itself (one elsewhere is listed as "click>element"), or a long press,
+    // which no click makes a tap.
+    await expect.poll(record, { message: `the tap on ${selector} ended in a click on it` }).toMatch(/^(long press: |events: (\S+, )*click[,;])/);
+    if (longPress()) {
+      throw new Error(
+        `harness: the finger stayed on ${selector} for ${fingerDownMs(events)} ms, which ${phone.platform} takes for a long press, not a tap ` +
+          `(${describeTap(events, t)}). The driver held it: on iOS see tapActions (webdriver.ts) for how the finger is lifted, and taps.log for the other taps`,
+      );
+    }
   } catch (e) {
     if (o.onFailure) (e as Error).message += `\n(${await o.onFailure()})`;
     throw e;
   } finally {
-    o.log(`${selector}: actionable after ${o.waitedMs} ms; ${describeTap(events, started, performed, false)}`);
+    o.log(`${selector}: actionable after ${o.waitedMs} ms; ${describeTap(events, t, false)}`);
   }
 }

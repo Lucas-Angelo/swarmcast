@@ -76,13 +76,16 @@ describe('the device suite WebDriver client', () => {
     ]);
   });
 
-  it('taps with one touch pointer at a point of the viewport, rounded to whole pixels, then releases the input state', async () => {
+  it('taps with one touch pointer at a point of the viewport, rounded to whole pixels, moved there again after the lift, then releases the input state', async () => {
     // Arrange
     const driver = await fakeDriver((r) => (r.path === '/session' ? NEW_SESSION : { value: null }));
     const session = await Session.create(driver.base, {});
+    const before = Date.now();
     // Act
-    await session.perform(tapActions(139.15, 356.92));
+    const answered = await session.perform(tapActions(139.15, 356.92));
     // Assert
+    expect(answered).toBeGreaterThanOrEqual(before);
+    expect(answered).toBeLessThanOrEqual(Date.now());
     expect(driver.requests.slice(1)).toEqual([
       {
         method: 'POST',
@@ -93,7 +96,12 @@ describe('the device suite WebDriver client', () => {
               type: 'pointer',
               id: 'finger',
               parameters: { pointerType: 'touch' },
-              actions: [{ type: 'pointerMove', duration: 0, origin: 'viewport', x: 139, y: 357 }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }],
+              actions: [
+                { type: 'pointerMove', duration: 0, origin: 'viewport', x: 139, y: 357 },
+                { type: 'pointerDown', button: 0 },
+                { type: 'pointerUp', button: 0 },
+                { type: 'pointerMove', duration: 0, origin: 'viewport', x: 139, y: 357 },
+              ],
             },
           ],
         },

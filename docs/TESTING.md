@@ -212,9 +212,9 @@ leaves none of them to luck; each rule below has the failure that taught it.
    (`SIMULATOR_CALM_CORES` 0.5 of a core, `GUEST_CALM_CORES` 1 core) after the boot, so that a new
    device's first-boot work is done before the first test, and again before each test; every window
    goes to `device.log` with the three busiest processes, and a timeout names them. A busy device
-   lengthens what the harness cannot time itself: on iOS finger down and up are two steps of one
-   W3C `POST /actions` that Safari's automation plays one after the other, and with the Mac 0 % idle
-   the finger stayed down 1.26 s, a long press (Devices run 42515339177).
+   lengthens what the harness cannot time itself: with the Mac 0 % idle a finger stayed down 1.26 s,
+   a long press (Devices run 42515339177; that finger, like every one before rule 3's lift, was lifted
+   by Release Actions, a second request).
 2. **A known start, checked** (`newPhone`, `pageAtRest`). Android: Chrome stopped, its data
    cleared, notifications allowed, upright, then checked: rotation 0, no keyboard, Chrome's window
    in front with the input focus (no dialog over it). iOS: a new WebDriver session (no cookies or
@@ -238,11 +238,19 @@ leaves none of them to luck; each rule below has the failure that taught it.
      plays them as touches on Safari's view, so Safari's own click synthesis decides, as for a
      finger), DevTools' `Input.dispatchTouchEvent` on Android (Chrome feeds it to the page as the
      system's touches: touch events, its gesture detector's tap, the click, and the keyboard for
-     a field; a mouse click raises no keyboard);
+     a field; a mouse click raises no keyboard). The browser puts the finger down and lifts it in
+     one go, so its time down is the browser's, never a round trip of the test process: on iOS
+     both happen inside one Perform Actions, ended by a move to the same point (WebKit's
+     automation on iOS 26 ignores a touch's pointerUp, WebKit bug 319610, and before that move
+     only Release Actions, `DELETE /actions`, lifted the finger: 2.3 s down on a loaded Mac,
+     release rehearsal 44243243561); on Android both DevTools commands are sent at once;
    - the tap counts only once the page got the click on the element (`tapEndsInClick`); otherwise
      the test fails with what arrived, the finger's time down, and what the page revealed during
-     the tap ("taken for a hover"); on iOS with the simulator's log of the tap. Every tap's timing
-     goes to `taps.log`.
+     the tap ("taken for a hover"); on iOS with the simulator's log of the tap and when the finger
+     was lifted against the answer to Perform Actions (after it, Release Actions lifted it). A
+     finger down for a long press (`LONG_PRESS_MS`: 500 ms on iOS, 400 ms on Android) fails at
+     once as the harness's, click or not. Every tap's timing goes to `taps.log` (`tap-record.ts`
+     describes it).
 4. **The page's own reveals waited out by state.** What a page shows by itself on its own clock
    cannot be gated by a tap: a spec waits for the state after it. The watch page reveals Unmute, Go
    live and "Live" with the video's first `playing`, and the delay behind live (with its "i"
