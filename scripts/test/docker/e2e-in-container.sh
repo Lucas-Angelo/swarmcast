@@ -62,6 +62,11 @@ leftovers() { # leftovers LABEL
   wait_for 10 none_left || echo "  still running after SIGKILL: $(pgrep -a -f "$LEFT_RE" | tr '\n' ' ')"
 }
 
+# A line of Playwright's DEBUG=pw:browser output, in each of the debug module's forms:
+# "  ESC[30;1mpw:browser ESC[0m..." (colours: Playwright gives its workers DEBUG_COLORS=1 unless it
+# is set), "  pw:browser ..." and "<ISO date> pw:browser ...". Such lines go to browser.log only.
+PW_LINE=$'^[0-9TZ:.-]* *(\e\\[[0-9;]*m)*pw:browser '
+
 declare -A RC
 for p in $PROJECTS; do
   echo
@@ -77,7 +82,7 @@ for p in $PROJECTS; do
   # A plain pipeline on fd 3 (not a process substitution, whose $! this bash leaves unset): the
   # stderr filter has ended when the pipeline returns, and PIPESTATUS keeps Playwright's exit.
   { DEBUG=pw:browser npx playwright test -c scripts/test/docker/playwright.linux.config.ts --project="$p" \
-      2>&1 1>&3 3>&- | tee test-results/browser.log | grep --line-buffered -v ' pw:browser ' >&2; } 3>&1
+      2>&1 1>&3 3>&- | tee test-results/browser.log | grep --line-buffered -v -E "$PW_LINE" >&2; } 3>&1
   RC[$p]=${PIPESTATUS[0]}
   mkdir -p "/out/$p"
   cp -a test-results/pw "/out/$p/test-results" 2>/dev/null

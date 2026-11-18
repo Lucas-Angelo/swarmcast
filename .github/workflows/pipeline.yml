@@ -223,7 +223,7 @@ jobs:
       os: ${{ github.event_name == 'schedule' && '["ubuntu-24.04","ubuntu-latest"]' || '["ubuntu-24.04"]' }}
       chat-windows: true
 
-  # macOS lane 2, second: the chat group (with the viewer chat UI) after rendering (a release
+  # macOS lane 2, second: the chat group (with half the viewer chat UI) after rendering (a release
   # rehearsal; otherwise skipped at once); desktop macos-arm64 after it.
   e2e-macos-chat:
     name: e2e
@@ -255,7 +255,8 @@ jobs:
       os: '["macos-latest"]'
       groups: '["media"]'
 
-  # macOS lane 3, second: the live group after the macOS node job; desktop macos-x64 after it.
+  # macOS lane 3, second: the live group (with the other half of the viewer chat UI) after the
+  # macOS node job; desktop macos-x64 after it.
   e2e-macos-live:
     name: e2e
     needs: [quick, build, node-macos]

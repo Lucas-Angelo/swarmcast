@@ -178,8 +178,8 @@ before it (not when the run is cancelled), so every check runs as before. `devic
 | Lane | Jobs, in order | Pull request, `main`: minutes (p50; max) | Release rehearsal: minutes (p50; max) |
 |---|---|---|---|
 | 1 | `devices / iOS Safari (Simulator)` (`macos-26`; release rehearsal only), `e2e / ui`, `e2e / media` | 23.6 (26.5) | 31.6 (40.0) |
-| 2 | `rendering / macos-latest` (release rehearsal only), `e2e / chat` (with the viewer chat UI), `desktop macos-arm64` (build, clean-machine) | 22.1 (25.1) | 33.1 (37.7) |
-| 3 | `node / unit, integration, rust`, `e2e / live`, `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 23.5 (26.1) | 29.5 (38.1) |
+| 2 | `rendering / macos-latest` (release rehearsal only), `e2e / chat` (with half the viewer chat UI), `desktop macos-arm64` (build, clean-machine) | 22.1 (25.1) | 33.1 (37.7) |
+| 3 | `node / unit, integration, rust`, `e2e / live` (with the other half), `desktop macos-x64` (build on Apple silicon, clean-machine on `macos-15-intel`) | 23.5 (26.1) | 29.5 (38.1) |
 
 (2026-11-11, with the fourth e2e group, `live`, and the viewer chat UI on two workers: the 16 pull
 request and `main` runs and the 30 release rehearsals of 2026-11-07 to 11-11 whose macOS jobs all
@@ -212,7 +212,11 @@ most three at once, and waited p50 2.3 minutes for runners (a pull request's 6.6
 release-flavour builds restore the test builds' Rust cache ("Desktop builds" above: build A p50
 3.6 to about 0.9 minutes on Apple silicon, so lanes 2 and 3 of a rehearsal or release end about
 2.7 minutes sooner), and `quick` ends with `build` (p50 1.1 instead of 2.0 minutes into a run,
-so in a pull request or `main` run every lane starts about 0.9 minutes sooner).
+so in a pull request or `main` run every lane starts about 0.9 minutes sooner). The viewer chat
+UI runs in halves (2026-11-18, `_e2e.yml`): two workers bought the 3-CPU runners (most of
+`macos-latest`) about 8 %, and the whole of it reached its 10-minute limit (release rehearsal
+44214018996, lane 2 ending 14.5 minutes after lane 3); half 1 runs after the live group in lane
+3 and half 2 after the chat group, so lane 2, the critical path, is about 3 minutes shorter (p50).
 
 **Wall time.** The critical path is the macOS lanes (the rest of a run ends by about minute 27,
 the Docker suites' Playwright jobs last). Of every assignment of the seven jobs to the three lanes,
