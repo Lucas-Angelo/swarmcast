@@ -721,11 +721,14 @@ export class IosPhone implements Phone {
     const asked = Date.now();
     const point = await actionablePoint(this, selector, () => this.session.execute<TouchState>(`return (${touchState.toString()})(arguments[0], arguments[1]);`, [element, wanted]));
     const started = Date.now();
-    await this.session.perform(tapActions(point.clientX, point.clientY));
+    // On iOS 26 Release Actions, not the pointerUp, lifts the finger: perform() sends it on the
+    // same connection right behind the actions (tapActions has the evidence).
+    const answered = await this.session.perform(tapActions(point.clientX, point.clientY));
     const performed = Date.now();
     // A tap that took 9.5 s to perform on an overloaded simulator ended in no click (run
-    // 41190536745), one with the finger down 1.3 s in a long press (run 42515339177).
-    await tapEndsInClick(this, selector, started, performed, { waitedMs: started - asked, log: (line) => this.device.noteTap(line), onFailure: () => this.device.tapLogs(new Date(started)) });
+    // 41190536745); fingers held 1.3 s and 2.3 s until Release Actions lifted them were long
+    // presses (runs 42515339177, 44243243561): the record says when the finger was lifted.
+    await tapEndsInClick(this, selector, { started, performed, answered }, { waitedMs: started - asked, log: (line) => this.device.noteTap(line), onFailure: () => this.device.tapLogs(new Date(started)) });
   }
 
   /**

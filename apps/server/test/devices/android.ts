@@ -637,6 +637,11 @@ export class AndroidPhone implements Phone {
    * system's touches are: touch events, its gesture detector's tap, then the click, and for a field
    * the on-screen keyboard (a mouse click raises none). Each command returns once Chrome has taken
    * the event (https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchTouchEvent).
+   * Both are sent at once, as Playwright's own touchscreen tap does: Chrome reads the end right
+   * after the start from the same DevTools connection, so the finger's time down is Chrome's, not
+   * a round trip of the test process (awaited one after the other, an answer, the test process's
+   * turn and a new request: the iOS harness's time down that way reached 2.3 s on a loaded host,
+   * a long press, release rehearsal 44243243561).
    */
   async tap(selector: string): Promise<void> {
     const target = this.current.locator(selector);
@@ -647,10 +652,9 @@ export class AndroidPhone implements Phone {
     const point = await actionablePoint(this, selector, () => target.evaluate(touchState, wanted));
     const cdp = this.cdp!;
     const started = Date.now();
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] });
-    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+    await Promise.all([cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: point.x, y: point.y }] }), cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })]);
     const performed = Date.now();
-    await tapEndsInClick(this, selector, started, performed, { waitedMs: started - asked, log: (line) => this.device.noteTap(line) });
+    await tapEndsInClick(this, selector, { started, performed }, { waitedMs: started - asked, log: (line) => this.device.noteTap(line) });
   }
 
   async type(selector: string, text: string): Promise<void> {
