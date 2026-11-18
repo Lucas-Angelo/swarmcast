@@ -4,10 +4,10 @@
 //   2. actionablePoint: the element is touched only once it is actionable (touchState), read the
 //      same before and after two animation frames, so that the browser shows what the page reports;
 //   3. the platform's finger: W3C touch actions through safaridriver on iOS, DevTools'
-//      Input.dispatchTouchEvent on Android, both the browser's own touch path, with the finger
-//      put down and lifted by the browser in one go (one Perform Actions on iOS, both DevTools
-//      commands sent at once on Android): never down in one request and up in the next, where
-//      the time down would be the host's round trip;
+//      Input.dispatchTouchEvent on Android, both the browser's own touch path. On Android both
+//      DevTools commands are sent at once, so the finger's time down is Chrome's; on iOS 26 only
+//      Release Actions lifts the finger (webdriver.ts tapActions), so its time down is the host's
+//      round trip, which the record measures;
 //   4. tapEndsInClick: the tap counts once the page got the click on the element; when it did
 //      not, the failure says what arrived, how long the finger was down and what the page
 //      revealed during the tap; a finger held as long as a long press fails as the harness's.

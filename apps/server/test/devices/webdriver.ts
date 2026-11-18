@@ -25,35 +25,36 @@ export interface Capabilities {
 /**
  * A W3C touch tap at `x`, `y` CSS pixels of the viewport (the page's client coordinates): one
  * pointer input source of type "touch", moved there, put down and lifted (WebDriver 2, "Actions":
- * pointerMove with the "viewport" origin, pointerDown, pointerUp), then moved to the same point
- * again, so that the finger is lifted inside this one Perform Actions, timed by Safari alone.
+ * pointerMove with the "viewport" origin, pointerDown, pointerUp).
  *
- * The last move is what lifts it on iOS 26. safaridriver sends pointerUp as a state that still
- * names the pressed button (mouseInteraction "Up", pressedButton "Left"), and the touch path of
- * WebKit's automation before 317834@main (WebKit bug 319610, July 2026) lifts a finger only when
- * the pressed button goes from set to unset: it ignores the Up, and the finger stays down until
- * the next state without a button. Without the move that state was the reset of Release Actions
- * (`DELETE /actions`, Automation.cancelInteractionSequence): a second request, sent once the first
- * was answered, so the finger's time down was the host's round trip. In every tap of release
- * rehearsal 44243243561 the touchend's time stamp was the moment safaridriver sent
- * cancelInteractionSequence (0 to 9 ms), and on the loaded Mac (0.3 % idle) that came 2.3 s after
- * the touchstart: the sequence answered in 1.27 s, the test process sent the DELETE 0.5 s later and
- * Safari answered safaridriver's check before it 0.55 s later. iOS took it for a long press (a drag
- * and a text selection at the point), and no click followed. safaridriver sends a move with no
- * button pressed as a state without pressedButton (the first move of every tap), so the old
- * WebKit lifts the finger there, at the point; a WebKit with the fix lifts it at the pointerUp and
- * takes the move to the point the finger already left as nothing (a touch move to the same point
- * is a no-op). Release Actions then has nothing left to lift.
+ * On iOS 26 the pointerUp lifts nothing: Release Actions does (Session.perform's `DELETE
+ * /actions`, Automation.cancelInteractionSequence), so the finger's time down is the host's round
+ * trip between the two requests, which no action here can bound. safaridriver sends pointerUp,
+ * and every state after it, with the button still pressed (mouseInteraction "Up", pressedButton
+ * "Left"), and WebKit's automation before 317834@main (WebKit bug 319610, July 2026) lifts a touch
+ * only when the button goes from pressed to not. In every tap of release rehearsal 44243243561 the
+ * touchend's time stamp was the moment safaridriver sent cancelInteractionSequence (0 to 9 ms);
+ * with the Mac 0.3 % idle that came 2.3 s after the touchstart (the sequence answered in 1.27 s,
+ * the test process sent the DELETE 0.5 s later, Safari answered safaridriver's check before it
+ * 0.55 s later): a long press, no click. A move to the same point after the pointerUp did not lift
+ * either (Devices run 44249240892: safaridriver sent it with pressedButton "Left" too, and all 13
+ * taps were lifted by Release Actions). So the tap record says when the finger was lifted against
+ * the answer to Perform Actions, and a finger held for a long press fails as the harness's
+ * (tap-record.ts, actionability.ts tapEndsInClick). A WebKit with the fix lifts the finger at the
+ * pointerUp, which the same record will show.
  */
 export function tapActions(x: number, y: number): unknown {
-  const at = { origin: 'viewport', x: Math.round(x), y: Math.round(y) };
   return {
     actions: [
       {
         type: 'pointer',
         id: 'finger',
         parameters: { pointerType: 'touch' },
-        actions: [{ type: 'pointerMove', duration: 0, ...at }, { type: 'pointerDown', button: 0 }, { type: 'pointerUp', button: 0 }, { type: 'pointerMove', duration: 0, ...at }],
+        actions: [
+          { type: 'pointerMove', duration: 0, origin: 'viewport', x: Math.round(x), y: Math.round(y) },
+          { type: 'pointerDown', button: 0 },
+          { type: 'pointerUp', button: 0 },
+        ],
       },
     ],
   };

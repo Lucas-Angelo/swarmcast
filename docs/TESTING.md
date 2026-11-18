@@ -213,8 +213,8 @@ leaves none of them to luck; each rule below has the failure that taught it.
    device's first-boot work is done before the first test, and again before each test; every window
    goes to `device.log` with the three busiest processes, and a timeout names them. A busy device
    lengthens what the harness cannot time itself: with the Mac 0 % idle a finger stayed down 1.26 s,
-   a long press (Devices run 42515339177; that finger, like every one before rule 3's lift, was lifted
-   by Release Actions, a second request).
+   a long press (Devices run 42515339177; on iOS 26 every finger is lifted by Release Actions, a
+   second request, rule 3).
 2. **A known start, checked** (`newPhone`, `pageAtRest`). Android: Chrome stopped, its data
    cleared, notifications allowed, upright, then checked: rotation 0, no keyboard, Chrome's window
    in front with the input focus (no dialog over it). iOS: a new WebDriver session (no cookies or
@@ -238,12 +238,13 @@ leaves none of them to luck; each rule below has the failure that taught it.
      plays them as touches on Safari's view, so Safari's own click synthesis decides, as for a
      finger), DevTools' `Input.dispatchTouchEvent` on Android (Chrome feeds it to the page as the
      system's touches: touch events, its gesture detector's tap, the click, and the keyboard for
-     a field; a mouse click raises no keyboard). The browser puts the finger down and lifts it in
-     one go, so its time down is the browser's, never a round trip of the test process: on iOS
-     both happen inside one Perform Actions, ended by a move to the same point (WebKit's
-     automation on iOS 26 ignores a touch's pointerUp, WebKit bug 319610, and before that move
-     only Release Actions, `DELETE /actions`, lifted the finger: 2.3 s down on a loaded Mac,
-     release rehearsal 44243243561); on Android both DevTools commands are sent at once;
+     a field; a mouse click raises no keyboard). On Android both DevTools commands are sent at
+     once, so the finger's time down is Chrome's. On iOS 26 the pointerUp lifts nothing (WebKit
+     bug 319610: safaridriver keeps the button pressed in that state and every later one, and
+     WebKit lifts a touch only when it is released); Release Actions (`DELETE /actions`, a second
+     request) lifts the finger, so its time down is the host's round trip: 2.3 s on a loaded Mac,
+     a long press (release rehearsal 44243243561). No action shape tried lifts it sooner
+     (`tapActions` has the evidence);
    - the tap counts only once the page got the click on the element (`tapEndsInClick`); otherwise
      the test fails with what arrived, the finger's time down, and what the page revealed during
      the tap ("taken for a hover"); on iOS with the simulator's log of the tap and when the finger
