@@ -1,7 +1,7 @@
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { ELEMENT_KEY, ready, Session, tapActions, WebDriverError } from '../devices/webdriver.js';
+import { ELEMENT_KEY, ready, Session, splitAnswers, tapActions, WebDriverError } from '../devices/webdriver.js';
 
 // The W3C WebDriver client of the device suite (apps/server/test/devices/webdriver.ts) against a
 // fake WebDriver server on 127.0.0.1, port 0: the requests it sends (method, path, JSON body) and
@@ -103,6 +103,67 @@ describe('the device suite WebDriver client', () => {
       },
       { method: 'DELETE', path: '/session/s1/actions', body: undefined },
     ]);
+  });
+
+  it('sends Release Actions on the same connection before Perform Actions is answered', async () => {
+    // Arrange
+    const raw = new Map<object, string>();
+    const sockets = new Set<object>();
+    let releaseBeforeAnswer = false;
+    const server = http.createServer((req, res) => {
+      req.resume();
+      req.on('end', () => {
+        const answer = (value: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(value));
+        if (req.url === '/session') return answer(NEW_SESSION);
+        sockets.add(req.socket);
+        if (req.method !== 'POST') return answer({ value: null });
+        // Perform Actions is answered once the connection has also brought Release Actions (or after 2 s).
+        const check = setInterval(() => {
+          if (!(raw.get(req.socket) ?? '').includes('DELETE /session/s1/actions HTTP/1.1')) return;
+          clearInterval(check);
+          clearTimeout(giveUp);
+          releaseBeforeAnswer = true;
+          answer({ value: null });
+        }, 5);
+        const giveUp = setTimeout(() => {
+          clearInterval(check);
+          answer({ value: null });
+        }, 2_000);
+      });
+    });
+    server.on('connection', (socket) => socket.on('data', (d: Buffer) => raw.set(socket, (raw.get(socket) ?? '') + d.toString())));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    onTestFinished(() => new Promise<void>((resolve) => server.close(() => resolve())));
+    const session = await Session.create(new URL(`http://127.0.0.1:${(server.address() as AddressInfo).port}`), {});
+    // Act
+    await session.perform(tapActions(10, 20));
+    // Assert
+    expect(releaseBeforeAnswer).toBe(true);
+    expect(sockets.size).toBe(1);
+  });
+
+  it('fails a tap with the W3C error of Perform Actions, once Release Actions is answered too', async () => {
+    // Arrange
+    const driver = await fakeDriver((r) => (r.path === '/session' ? NEW_SESSION : r.method === 'POST' ? { status: 400, value: { error: 'invalid argument', message: 'bad action' } } : { value: null }));
+    const session = await Session.create(driver.base, {});
+    // Act
+    const failure = session.perform(tapActions(10, 20));
+    // Assert
+    await expect(failure).rejects.toMatchObject({ code: 'invalid argument', message: 'invalid argument: bad action' });
+    expect(driver.requests.slice(1).map((r) => r.method)).toEqual(['POST', 'DELETE']);
+  });
+
+  it('splits answers read off a connection by their Content-Length or their chunks, and keeps a partial one for later', () => {
+    // Arrange
+    const buf = Buffer.from('HTTP/1.1 200 OK\r\nContent-Length: 14\r\n\r\n{"value":null}HTTP/1.1 404 Not Found\r\nTransfer-Encoding: chunked\r\n\r\n1\r\n{\r\n1\r\n}\r\n0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n{"va');
+    // Act
+    const { answers, rest } = splitAnswers(buf);
+    // Assert
+    expect(answers).toEqual([
+      { status: 200, body: '{"value":null}' },
+      { status: 404, body: '{}' },
+    ]);
+    expect(rest.toString()).toBe('HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n{"va');
   });
 
   it('turns a W3C error answer into a WebDriverError with its code and message', async () => {

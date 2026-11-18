@@ -1,3 +1,5 @@
+import net from 'node:net';
+
 // The few W3C WebDriver commands the iOS tests use (https://www.w3.org/TR/webdriver2/), over
 // fetch: safaridriver speaks W3C WebDriver, and these commands are small enough not to need a
 // client library. Every failed command throws with WebDriver's error code and message.
@@ -28,18 +30,23 @@ export interface Capabilities {
  * pointerMove with the "viewport" origin, pointerDown, pointerUp).
  *
  * On iOS 26 the pointerUp lifts nothing: Release Actions does (Session.perform's `DELETE
- * /actions`, Automation.cancelInteractionSequence), so the finger's time down is the host's round
- * trip between the two requests, which no action here can bound. safaridriver sends pointerUp,
- * and every state after it, with the button still pressed (mouseInteraction "Up", pressedButton
- * "Left"), and WebKit's automation before 317834@main (WebKit bug 319610, July 2026) lifts a touch
- * only when the button goes from pressed to not. In every tap of release rehearsal 44243243561 the
+ * /actions`, Automation.cancelInteractionSequence). safaridriver sends pointerUp, and every state
+ * after it, with the button still pressed (mouseInteraction "Up", pressedButton "Left"), and
+ * WebKit's automation before 317834@main (WebKit bug 319610, July 2026) lifts a touch only when
+ * the button goes from pressed to not. In every tap of release rehearsal 44243243561 the
  * touchend's time stamp was the moment safaridriver sent cancelInteractionSequence (0 to 9 ms);
- * with the Mac 0.3 % idle that came 2.3 s after the touchstart (the sequence answered in 1.27 s,
- * the test process sent the DELETE 0.5 s later, Safari answered safaridriver's check before it
- * 0.55 s later): a long press, no click. A move to the same point after the pointerUp did not lift
- * either (Devices run 44249240892: safaridriver sent it with pressedButton "Left" too, and all 13
- * taps were lifted by Release Actions). So the tap record says when the finger was lifted against
- * the answer to Perform Actions, and a finger held for a long press fails as the harness's
+ * sent as a second request once the first was answered, it came 2.3 s after the touchstart on
+ * the loaded Mac (the sequence answered in 1.27 s, the test process sent the DELETE 0.5 s later,
+ * Safari answered safaridriver's check before it 0.55 s later): a long press, no click. Nothing
+ * else lifts it sooner (Devices runs 44249240892, 44316576336, 6 to 13 taps each): a pause of 0
+ * or 50 ms, a move to the same point, with the "pointer" origin or 1 px away, a second pointerUp
+ * or a second pointer source after the pointerUp all went with the button pressed and were lifted
+ * by Release Actions; pointerCancel is "not currently supported"; Element Click left the finger
+ * down. A real finger cannot stand in: an XCUITest tap at the element's frame reached Safari's
+ * page with no event at all, 15 of 15, while safaridriver drove it (Devices run 44320302733). So
+ * Session.perform sends Release Actions on the same connection right behind Perform Actions
+ * (lifted 1 to 6 ms after the answer, Devices run 44323844014), the time down is Safari's
+ * handling of the touch and of safaridriver's commands, and the tap record checks it
  * (tap-record.ts, actionability.ts tapEndsInClick). A WebKit with the fix lifts the finger at the
  * pointerUp, which the same record will show.
  */
@@ -67,18 +74,74 @@ async function command<T>(base: URL, method: 'GET' | 'POST' | 'DELETE', pathname
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     signal: AbortSignal.timeout(timeoutMs),
   });
-  const text = await res.text();
+  return answerValue<T>(res.status, await res.text());
+}
+
+/** The W3C `value` of an answer with HTTP status `status` and body `text`; throws WebDriverError for an error or a body that is not JSON. */
+function answerValue<T>(status: number, text: string): T {
   let parsed: { value?: unknown } | null;
   try {
     parsed = JSON.parse(text) as { value?: unknown } | null;
   } catch {
-    throw new WebDriverError(`http ${res.status}`, text.slice(0, 500) || '(empty answer)');
+    throw new WebDriverError(`http ${status}`, text.slice(0, 500) || '(empty answer)');
   }
   const value = parsed?.value as { error?: unknown; message?: unknown } | undefined;
-  if (!res.ok || (value && typeof value === 'object' && typeof value.error === 'string')) {
-    throw new WebDriverError(typeof value?.error === 'string' ? value.error : `http ${res.status}`, typeof value?.message === 'string' ? value.message : text.slice(0, 500));
+  if (status < 200 || status > 299 || (value && typeof value === 'object' && typeof value.error === 'string')) {
+    throw new WebDriverError(typeof value?.error === 'string' ? value.error : `http ${status}`, typeof value?.message === 'string' ? value.message : text.slice(0, 500));
   }
   return parsed?.value as T;
+}
+
+/** One HTTP/1.1 answer read off a connection: its status and body. */
+interface RawAnswer {
+  status: number;
+  body: string;
+}
+
+/**
+ * The body of a chunked answer that starts at `start` of `buf`, and where it ends; null while it
+ * is not complete (RFC 9112 7.1: hex size lines, the data, a last chunk of size 0, no trailers).
+ */
+function chunkedBody(buf: Buffer, start: number): { body: Buffer; end: number } | null {
+  const parts: Buffer[] = [];
+  let at = start;
+  for (;;) {
+    const line = buf.indexOf('\r\n', at);
+    if (line < 0) return null;
+    const size = parseInt(buf.subarray(at, line).toString('latin1').split(';')[0]!, 16);
+    if (Number.isNaN(size)) throw new WebDriverError('http chunked', 'a chunk size that is not a number');
+    if (size === 0) return buf.length < line + 4 ? null : { body: Buffer.concat(parts), end: line + 4 };
+    if (buf.length < line + 2 + size + 2) return null;
+    parts.push(buf.subarray(line + 2, line + 2 + size));
+    at = line + 2 + size + 2;
+  }
+}
+
+/**
+ * Splits the complete HTTP/1.1 answers at the start of `buf` (with a Content-Length, as
+ * safaridriver sends them, or chunked): the answers and the bytes after them.
+ */
+export function splitAnswers(buf: Buffer): { answers: RawAnswer[]; rest: Buffer } {
+  const answers: RawAnswer[] = [];
+  let rest = buf;
+  for (;;) {
+    const end = rest.indexOf('\r\n\r\n');
+    if (end < 0) break;
+    const head = rest.subarray(0, end).toString('latin1');
+    const status = Number(/^HTTP\/1\.[01] (\d{3})/.exec(head)?.[1] ?? NaN);
+    if (/^transfer-encoding:\s*chunked/im.test(head)) {
+      const chunked = chunkedBody(rest, end + 4);
+      if (!chunked) break;
+      answers.push({ status, body: chunked.body.toString('utf8') });
+      rest = rest.subarray(chunked.end);
+      continue;
+    }
+    const length = Number(/^content-length:\s*(\d+)/im.exec(head)?.[1] ?? 0);
+    if (rest.length < end + 4 + length) break;
+    answers.push({ status, body: rest.subarray(end + 4, end + 4 + length).toString('utf8') });
+    rest = rest.subarray(end + 4 + length);
+  }
+  return { answers, rest };
 }
 
 /** Whether the WebDriver server at `base` answers /status with ready: true. */
@@ -133,15 +196,53 @@ export class Session {
   }
 
   /**
-   * Perform Actions, then Release Actions (which lifts whatever is still pressed). Returns when
-   * Perform Actions was answered (epoch ms): everything the actions did happened before it, and
-   * whatever only Release Actions did, after it (tapActions, actionability.ts describeTap).
+   * Perform Actions, then Release Actions (which lifts whatever is still pressed), written back to
+   * back on one connection: safaridriver reads a connection's requests one after the other, so it
+   * starts Release Actions as soon as it has answered Perform Actions, with no turn of this
+   * process in between (on iOS 26 only Release Actions lifts a finger: tapActions). Two separate
+   * requests left the finger down while this process read the answer and sent the next one (0.5 s
+   * of the 2.3 s long press of release rehearsal 44243243561), and two connections at once let
+   * Release Actions run first (Devices run 44316576336). Returns when Perform Actions was answered
+   * (epoch ms, as this process read it): what the actions did happened before it.
    */
-  async perform(actions: unknown): Promise<number> {
-    await this.cmd('POST', '/actions', actions);
-    const answered = Date.now();
-    await this.cmd('DELETE', '/actions');
-    return answered;
+  perform(actions: unknown, timeoutMs = 60_000): Promise<number> {
+    const body = Buffer.from(JSON.stringify(actions), 'utf8');
+    const path = `/session/${this.id}/actions`;
+    const host = `Host: ${this.base.host}\r\n`;
+    const request = Buffer.concat([
+      Buffer.from(`POST ${path} HTTP/1.1\r\n${host}Content-Type: application/json; charset=utf-8\r\nContent-Length: ${body.length}\r\n\r\n`, 'latin1'),
+      body,
+      Buffer.from(`DELETE ${path} HTTP/1.1\r\n${host}Content-Length: 0\r\nConnection: close\r\n\r\n`, 'latin1'),
+    ]);
+    return new Promise<number>((resolve, reject) => {
+      const socket = net.connect(Number(this.base.port), this.base.hostname);
+      let received = Buffer.alloc(0);
+      let answered = 0;
+      let settled = false;
+      const finish = (error: Error | null) => {
+        if (settled) return;
+        settled = true;
+        socket.destroy();
+        if (error) reject(error);
+        else resolve(answered);
+      };
+      socket.setTimeout(timeoutMs, () => finish(new WebDriverError('timeout', `no answer to Perform and Release Actions within ${timeoutMs} ms`)));
+      socket.on('connect', () => socket.write(request));
+      socket.on('data', (chunk: Buffer) => {
+        received = Buffer.concat([received, chunk]);
+        try {
+          const { answers } = splitAnswers(received);
+          if (answers.length >= 1 && !answered) answered = Date.now();
+          if (answers.length < 2) return;
+          for (const a of answers.slice(0, 2)) answerValue(a.status, a.body);
+          finish(null);
+        } catch (e) {
+          finish(e as Error);
+        }
+      });
+      socket.on('error', (e) => finish(e));
+      socket.on('close', () => finish(new WebDriverError('http closed', `the connection closed before both answers came (${received.length} bytes read)`)));
+    });
   }
 
   /** The handles of the session's windows (tabs). */

@@ -721,7 +721,8 @@ export class IosPhone implements Phone {
     const asked = Date.now();
     const point = await actionablePoint(this, selector, () => this.session.execute<TouchState>(`return (${touchState.toString()})(arguments[0], arguments[1]);`, [element, wanted]));
     const started = Date.now();
-    // On iOS 26 Release Actions, not the pointerUp, lifts the finger (tapActions has the evidence).
+    // On iOS 26 Release Actions, not the pointerUp, lifts the finger: perform() sends it on the
+    // same connection right behind the actions (tapActions has the evidence).
     const answered = await this.session.perform(tapActions(point.clientX, point.clientY));
     const performed = Date.now();
     // A tap that took 9.5 s to perform on an overloaded simulator ended in no click (run

@@ -49,7 +49,7 @@ export interface TapTiming {
   started: number;
   /** The driver's last command for the tap was answered. */
   performed: number;
-  /** iOS: Perform Actions was answered, before Release Actions was sent (webdriver.ts Session.perform). */
+  /** iOS: the test process read the answer to Perform Actions (webdriver.ts Session.perform); a lift after it was Release Actions'. */
   answered?: number;
   /** The phone's LONG_PRESS_MS. */
   longPressMs: number;

@@ -6,8 +6,9 @@
 //   3. the platform's finger: W3C touch actions through safaridriver on iOS, DevTools'
 //      Input.dispatchTouchEvent on Android, both the browser's own touch path. On Android both
 //      DevTools commands are sent at once, so the finger's time down is Chrome's; on iOS 26 only
-//      Release Actions lifts the finger (webdriver.ts tapActions), so its time down is the host's
-//      round trip, which the record measures;
+//      Release Actions lifts the finger (webdriver.ts tapActions), sent on the same connection
+//      right behind Perform Actions (Session.perform), so its time down is Safari's and
+//      safaridriver's, with no turn of the test process; the record measures it;
 //   4. tapEndsInClick: the tap counts once the page got the click on the element; when it did
 //      not, the failure says what arrived, how long the finger was down and what the page
 //      revealed during the tap; a finger held as long as a long press fails as the harness's.
