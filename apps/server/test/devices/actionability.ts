@@ -11,7 +11,8 @@
 //      safaridriver's, with no turn of the test process; the record measures it;
 //   4. tapEndsInClick: the tap counts once the page got the click on the element; when it did
 //      not, the failure says what arrived, how long the finger was down and what the page
-//      revealed during the tap; a finger held as long as a long press fails as the harness's.
+//      revealed during the tap, and first, for a finger held as long as a long press, that the
+//      harness held it; a held finger that still ended in the click passes with a warning.
 // The checks are Playwright's for a click (https://playwright.dev/docs/actionability: attached,
 // visible, stable for two animation frames, enabled, receives events, scrolled into view), plus
 // what a phone's browser adds:
@@ -34,6 +35,7 @@
 //   zoomed, it waits to see whether a second tap follows. iOS taps need zoom 1.
 // - The page in the orientation the phone was turned to, and no full-screen change running: a turn
 //   or a change the page has not finished moves everything after the point was read.
+import { test } from '@playwright/test';
 import { expect } from '../e2e/fixtures.js';
 import type { Phone } from './phone.js';
 import { describeTap, fingerDownMs, LONG_PRESS_MS, parseTapEvents, type TapEvent, type TapTiming } from './tap-record.js';
@@ -242,9 +244,13 @@ export function armTap(el: Element): void {
  * element, as a finger's tap does. Its description goes to `log` either way, with how long the
  * element took to become actionable (`waitedMs`). A tap that ends in no click fails here with what
  * arrived and its timing, plus `onFailure`'s words (iOS: where the simulator's log of the tap is).
- * A finger held for the phone's LONG_PRESS_MS or more fails at once as the harness's fault, click
- * or not: the phone was sent a long press, so the check says that rather than "no click" (release
- * rehearsal 44243243561: 2.3 s, with every check of the page in order).
+ * When the finger was also down for the phone's LONG_PRESS_MS or more, the failure says first that
+ * the phone was sent a long press, the harness's fault, not the page's (release rehearsal
+ * 44243243561: 2.3 s). A held finger that still ended in the click passes, with the hold in the
+ * line and a warning on the test: the touch's time stamps count from when the device made it, and
+ * a stall of the whole simulator between that and the page (Devices run 44371807546: no simulator
+ * process logged for 1.2 s, the Mac at a load of 95 to 100 with 140 MB free) lengthens them while
+ * the phone still sees a tap.
  */
 export async function tapEndsInClick(phone: Phone, selector: string, timing: Omit<TapTiming, 'longPressMs'>, o: { waitedMs: number; log(line: string): void; onFailure?(): Promise<string> }): Promise<void> {
   const t: TapTiming = { ...timing, longPressMs: LONG_PRESS_MS[phone.platform] };
@@ -252,24 +258,24 @@ export async function tapEndsInClick(phone: Phone, selector: string, timing: Omi
   // A tap on Watch navigates: the page that answers may be the next one already, or none for a
   // moment ("Execution context was destroyed"), and expect.poll stops at a callback that throws.
   const read = () => phone.evaluate(() => sessionStorage.getItem('__tap')).catch((e: Error) => `(unreadable while the page changes: ${e.message.split('\n')[0]})`);
-  const longPress = () => (fingerDownMs(events) ?? 0) >= t.longPressMs;
+  const held = () => fingerDownMs(events) ?? 0;
   const record = async () => {
     const text = (await read()) ?? '';
     if (text.startsWith('(unreadable')) return `not yet: ${text}`;
-    const description = describeTap((events = parseTapEvents(text)), t);
-    return longPress() ? `long press: ${description}` : description;
+    return describeTap((events = parseTapEvents(text)), t);
   };
   try {
-    // A click on the element itself (one elsewhere is listed as "click>element"), or a long press,
-    // which no click makes a tap.
-    await expect.poll(record, { message: `the tap on ${selector} ended in a click on it` }).toMatch(/^(long press: |events: (\S+, )*click[,;])/);
-    if (longPress()) {
-      throw new Error(
-        `harness: the finger stayed on ${selector} for ${fingerDownMs(events)} ms, which ${phone.platform} takes for a long press, not a tap ` +
-          `(${describeTap(events, t)}). The driver held it: on iOS see tapActions (webdriver.ts) for how the finger is lifted, and taps.log for the other taps`,
-      );
+    // A click on the element itself (one elsewhere is listed as "click>element").
+    await expect.poll(record, { message: `the tap on ${selector} ended in a click on it` }).toMatch(/^events: (\S+, )*click[,;]/);
+    if (held() >= t.longPressMs) {
+      test.info().annotations.push({ type: 'warning', description: `the finger stayed on ${selector} for ${held()} ms by the touch's time stamps, and the click still came: ${describeTap(events, t)}` });
     }
   } catch (e) {
+    if (held() >= t.longPressMs) {
+      (e as Error).message =
+        `harness: the finger stayed on ${selector} for ${held()} ms, which ${phone.platform} takes for a long press, not a tap, and no click came ` +
+        `(${describeTap(events, t)}). On iOS see tapActions (webdriver.ts) for how the finger is lifted, and taps.log for the other taps\n${(e as Error).message}`;
+    }
     if (o.onFailure) (e as Error).message += `\n(${await o.onFailure()})`;
     throw e;
   } finally {

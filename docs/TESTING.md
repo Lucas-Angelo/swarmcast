@@ -253,9 +253,13 @@ leaves none of them to luck; each rule below has the failure that taught it.
      the test fails with what arrived, the finger's time down, and what the page revealed during
      the tap ("taken for a hover"); on iOS with the simulator's log of the tap and when the finger
      was lifted against the answer to Perform Actions (after it, Release Actions lifted it). A
-     finger down for a long press (`LONG_PRESS_MS`: 500 ms on iOS, 400 ms on Android) fails at
-     once as the harness's, click or not. Every tap's timing goes to `taps.log` (`tap-record.ts`
-     describes it).
+     finger down for a long press (`LONG_PRESS_MS`: 500 ms on iOS, 400 ms on Android) with no
+     click fails as the harness's (the message says so first); one that still ended in the click
+     passes with the hold in its line and a warning on the test: the touch's time stamps count
+     from when the device made it, and a stall of the whole simulator in between (Devices run
+     44371807546: no simulator process logged for 1.2 s, the Mac at a load of 95 to 100 with
+     140 MB free) lengthens them while the phone still sees a tap. Every tap's timing goes to
+     `taps.log` (`tap-record.ts` describes it).
 4. **The page's own reveals waited out by state.** What a page shows by itself on its own clock
    cannot be gated by a tap: a spec waits for the state after it. The watch page reveals Unmute, Go
    live and "Live" with the video's first `playing`, and the delay behind live (with its "i"

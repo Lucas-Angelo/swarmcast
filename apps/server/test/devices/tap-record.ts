@@ -38,8 +38,8 @@ export function parseTapEvents(record: string): TapEvent[] {
  * long-press recognizers (UILongPressGestureRecognizer's minimumPressDuration, 0.5 s; Safari's
  * text selection and drag lift at the point began 0.57 s after the touch in release rehearsal
  * 44243243561), and Android's ViewConfiguration long-press timeout (400 ms since Android 12),
- * which Chrome's gesture detector uses. A finger held that long was the harness's doing (the
- * driver, a loaded host), not the page's: the touch is no tap, whatever followed it.
+ * which Chrome's gesture detector uses. A finger held that long with no click after it was the
+ * harness's doing (the driver, a loaded host), not the page's.
  */
 export const LONG_PRESS_MS: Readonly<Record<Platform, number>> = { ios: 500, android: 400 };
 
