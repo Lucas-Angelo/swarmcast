@@ -143,13 +143,15 @@ export function decodePlist(buf: Buffer): Plist {
         // Arrays, ordered sets and sets alike.
         return Array.from({ length }, (_, i) => read(uint(body + i * refWidth, refWidth), depth + 1));
       case 0xd: {
-        const dict: { [key: string]: Plist } = {};
+        // Keys come from the socket: collected in a Map and turned into own properties by
+        // Object.fromEntries, so a key such as "__proto__" can never reach a prototype.
+        const entries = new Map<string, Plist>();
         for (let i = 0; i < length; i++) {
           const key = read(uint(body + i * refWidth, refWidth), depth + 1);
           if (typeof key !== 'string') throw new Error('property list dictionary key is not a string');
-          dict[key] = read(uint(body + (length + i) * refWidth, refWidth), depth + 1);
+          entries.set(key, read(uint(body + (length + i) * refWidth, refWidth), depth + 1));
         }
-        return dict;
+        return Object.fromEntries(entries);
       }
       default:
         throw new Error(`property list object type 0x${type.toString(16)} not supported`);
