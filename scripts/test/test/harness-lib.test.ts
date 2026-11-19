@@ -97,6 +97,21 @@ describe('until', () => {
     expect((err as Error).message).toMatch(/^timed out waiting for Simulator\.app's window after \d+ ms \(Simulator\.app running; a check still running after \d+ ms\)$/);
   });
 
+  it('aborts the check still running when the deadline passes, so that its process ends with the wait', async () => {
+    // Arrange
+    let seen: AbortSignal | undefined;
+    const hangs = (signal: AbortSignal) => {
+      seen = signal;
+      return new Promise<boolean>(() => {});
+    };
+
+    // Act
+    await until(hangs, { timeoutMs: 50, what: 'a check that hangs' }).catch(() => {});
+
+    // Assert
+    expect(seen?.aborted).toBe(true);
+  });
+
   it('names only the state when every check answered', async () => {
     // Act
     const err = await until(() => false, { timeoutMs: 50, pollMs: 5, what: "Simulator.app's window", detail: () => '0 windows' }).catch((e: Error) => e);

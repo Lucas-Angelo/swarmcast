@@ -229,7 +229,7 @@ export class AndroidDevice {
    */
   private async prepare(): Promise<void> {
     const { serial, own, o } = this;
-    await until(async () => (await this.shellOut(['getprop', 'sys.boot_completed']).catch(() => '')) === '1', {
+    await until(async (signal) => (await this.shellOut(['getprop', 'sys.boot_completed'], signal).catch(() => '')) === '1', {
       timeoutMs: BOOT_MS,
       what: `${serial} to finish booting`,
       abortOn: own ? [own] : [],
@@ -256,15 +256,15 @@ export class AndroidDevice {
    * A process that ends between the glob and its read makes cat fail: the shell's status is not
    * the reading's (Devices run 42684571191).
    */
-  private async guestCpu(): Promise<GuestCpu> {
-    return parseGuestCpu(await this.shellOut(['sh', '-c', 'cat /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; exit 0']));
+  private async guestCpu(signal: AbortSignal): Promise<GuestCpu> {
+    return parseGuestCpu(await this.shellOut(['sh', '-c', 'cat /proc/stat; cat /proc/[0-9]*/stat 2>/dev/null; exit 0'], signal));
   }
 
   /** The guest's load over one measured window (CALM_WINDOW_MS): the cores used, and the three busiest processes. */
-  private async guestLoad(): Promise<Load> {
-    const before = await this.guestCpu();
+  private async guestLoad(signal: AbortSignal): Promise<Load> {
+    const before = await this.guestCpu(signal);
     await measuredWindow(CALM_WINDOW_MS);
-    const after = await this.guestCpu();
+    const after = await this.guestCpu(signal);
     const total = after.total - before.total;
     const cores = (ticks: number) => (total > 0 ? (ticks / total) * after.cpus : 0);
     const used = [...after.processes].map(([pid, p]) => ({ name: p.name, cores: cores(p.ticks - (before.processes.get(pid)?.ticks ?? 0)) })).sort((a, b) => b.cores - a.cores);
@@ -274,7 +274,7 @@ export class AndroidDevice {
 
   /** Waits until the guest is calm (GUEST_CALM_CORES, calm.ts); every window goes to device.log. */
   async calm(what: string, timeoutMs = CALM_BEFORE_TEST_MS): Promise<void> {
-    await untilCalm({ what: `guest ${what}`, maxCores: GUEST_CALM_CORES, timeoutMs, measure: () => this.guestLoad(), record: (line) => this.record(line) });
+    await untilCalm({ what: `guest ${what}`, maxCores: GUEST_CALM_CORES, timeoutMs, measure: (signal) => this.guestLoad(signal), record: (line) => this.record(line) });
   }
 
   /** Appends one tap's timing (actionability.ts tapEndsInClick) to taps.log in the log folder. */
@@ -305,8 +305,8 @@ export class AndroidDevice {
    * PHASE_CLIENT_VIEW_SERVED"), while the suite's touches, which reach the page over DevTools,
    * still focus its fields.
    */
-  async focusedWindow(): Promise<string> {
-    const line = (await this.shellOut(['dumpsys', 'window', 'displays'])).split('\n').find((l) => /^\s*mCurrentFocus=/.test(l));
+  async focusedWindow(signal?: AbortSignal): Promise<string> {
+    const line = (await this.shellOut(['dumpsys', 'window', 'displays'], signal)).split('\n').find((l) => /^\s*mCurrentFocus=/.test(l));
     return line?.trim().replace(/^mCurrentFocus=/, '') ?? '(none)';
   }
 
@@ -317,12 +317,12 @@ export class AndroidDevice {
    * hid them can be there. Each one goes to device.log; one that stays fails the boot.
    */
   private async closeErrorDialogs(): Promise<void> {
-    const listed = async () => errorDialogs(await this.shellOut(['dumpsys', 'window', 'windows']));
+    const listed = async (signal?: AbortSignal) => errorDialogs(await this.shellOut(['dumpsys', 'window', 'windows'], signal));
     let left = await listed();
     if (left.length === 0) return;
     this.record(`system dialogs left from the boot: ${left.join(', ')}; the Home key closes them`);
     await this.shell(['input', 'keyevent', 'KEYCODE_HOME']);
-    await until(async () => (left = await listed()).length === 0, {
+    await until(async (signal) => (left = await listed(signal)).length === 0, {
       timeoutMs: 15_000,
       what: "the system's error dialogs closed by the Home key",
       detail: () => `still shown: ${left.join(', ')}`,
@@ -349,7 +349,7 @@ export class AndroidDevice {
       await expect.poll(() => phone.url(), { message: 'the live link opens the join page' }).toMatch(/\/join$/);
       await joinPageReady(phone);
       let focus = '';
-      await until(async () => (focus = await this.focusedWindow()).includes(` ${CHROME}/`), {
+      await until(async (signal) => (focus = await this.focusedWindow(signal)).includes(` ${CHROME}/`), {
         timeoutMs: 30_000,
         what: "Chrome's window to have the input focus",
         detail: () => `the focus is on ${focus}`,
@@ -357,8 +357,8 @@ export class AndroidDevice {
       await phone.tap('#nickname');
       let state = '';
       await until(
-        async () => {
-          state = await phone.keyboardState();
+        async (signal) => {
+          state = await phone.keyboardState(signal);
           return state.includes('mInputShown=true');
         },
         { timeoutMs: 120_000, what: 'the on-screen keyboard up once after the boot', detail: () => state, pollMs: 1_000 },
@@ -387,8 +387,9 @@ export class AndroidDevice {
     await this.shellOut(args);
   }
 
-  async shellOut(args: readonly string[]): Promise<string> {
-    const { stdout } = await run(ADB, ['-s', this.serial, 'shell', ...args.map(shellWord)], { maxBuffer: 16 * 1024 * 1024 });
+  /** `signal`: a wait's (wait.mjs `until`), which ends the adb process with the wait. */
+  async shellOut(args: readonly string[], signal?: AbortSignal): Promise<string> {
+    const { stdout } = await run(ADB, ['-s', this.serial, 'shell', ...args.map(shellWord)], { maxBuffer: 16 * 1024 * 1024, signal });
     return stdout.trim();
   }
 
@@ -398,8 +399,8 @@ export class AndroidDevice {
    * has no activity. The record is named after the activity that started it (ChromeTabbedActivity
    * from a link, the launcher alias Main from the icon), so any record of the Chrome package counts.
    */
-  async chromeActivity(): Promise<{ state: string | null; idle: boolean } | null> {
-    const lines = (await this.shellOut(['dumpsys', 'activity', 'activities'])).split('\n');
+  async chromeActivity(signal?: AbortSignal): Promise<{ state: string | null; idle: boolean } | null> {
+    const lines = (await this.shellOut(['dumpsys', 'activity', 'activities'], signal)).split('\n');
     const at = lines.findIndex((l) => /\* Hist\b/.test(l) && l.includes(` ${CHROME}/`));
     if (at < 0) return null;
     let state: string | null = null;
@@ -412,19 +413,19 @@ export class AndroidDevice {
     return { state, idle };
   }
 
-  async chromeState(): Promise<string | null> {
-    return (await this.chromeActivity())?.state ?? null;
+  async chromeState(signal?: AbortSignal): Promise<string | null> {
+    return (await this.chromeActivity(signal))?.state ?? null;
   }
 
   /** Whether Chrome is the activity in front (`topResumedActivity`). */
-  async chromeInFront(): Promise<boolean> {
-    const top = (await this.shellOut(['dumpsys', 'activity', 'activities'])).split('\n').find((l) => l.includes('topResumedActivity='));
+  async chromeInFront(signal?: AbortSignal): Promise<boolean> {
+    const top = (await this.shellOut(['dumpsys', 'activity', 'activities'], signal)).split('\n').find((l) => l.includes('topResumedActivity='));
     return !!top && top.includes(` ${CHROME}/`);
   }
 
   /** The display's rotation in quarter turns (0 portrait, 1 landscape), from `dumpsys window`. */
-  async rotation(): Promise<number | null> {
-    const m = /^\s*mRotation=(\d)/m.exec(await this.shellOut(['dumpsys', 'window']));
+  async rotation(signal?: AbortSignal): Promise<number | null> {
+    const m = /^\s*mRotation=(\d)/m.exec(await this.shellOut(['dumpsys', 'window'], signal));
     return m ? Number(m[1]) : null;
   }
 
@@ -437,7 +438,7 @@ export class AndroidDevice {
     const quarter = to === 'landscape' ? 1 : 0;
     await this.shell(['wm', 'user-rotation', 'lock', String(quarter)]);
     this.turned = to;
-    await until(async () => (await this.rotation()) === quarter, { timeoutMs: 15_000, what: `the display turned ${to}`, detail: () => `rotation ${quarter} wanted` });
+    await until(async (signal) => (await this.rotation(signal)) === quarter, { timeoutMs: 15_000, what: `the display turned ${to}`, detail: () => `rotation ${quarter} wanted` });
   }
 
   get orientation(): Orientation {
@@ -459,8 +460,8 @@ export class AndroidDevice {
     await this.shell(['am', 'start', '-n', CHROME_LAUNCHER]);
     let seen: { state: string | null; idle: boolean } | null = null;
     await until(
-      async () => {
-        const activity = await this.chromeActivity();
+      async (signal) => {
+        const activity = await this.chromeActivity(signal);
         seen = activity;
         return activity?.state === 'RESUMED' && activity.idle;
       },
@@ -676,12 +677,12 @@ export class AndroidPhone implements Phone {
     this.lastUrl = await this.url();
     await this.detach();
     await this.device.shell(['input', 'keyevent', 'KEYCODE_HOME']);
-    await until(async () => (await this.device.chromeState()) === 'STOPPED', { timeoutMs: 15_000, what: 'Chrome stopped in the background' });
+    await until(async (signal) => (await this.device.chromeState(signal)) === 'STOPPED', { timeoutMs: 15_000, what: 'Chrome stopped in the background' });
   }
 
   async foreground(): Promise<void> {
     await this.device.shell(['am', 'start', '-n', CHROME_LAUNCHER]);
-    await until(() => this.device.chromeInFront(), { timeoutMs: 15_000, what: 'Chrome back in front' });
+    await until((signal) => this.device.chromeInFront(signal), { timeoutMs: 15_000, what: 'Chrome back in front' });
     const url = this.lastUrl;
     await this.attach((u) => u === url);
   }
@@ -691,14 +692,14 @@ export class AndroidPhone implements Phone {
   }
 
   /** The input method service's view: whether the keyboard is shown, and which keyboard app it is. */
-  private async inputMethodState(): Promise<string> {
-    const lines = (await this.device.shellOut(['dumpsys', 'input_method'])).split('\n').map((l) => l.trim());
+  private async inputMethodState(signal?: AbortSignal): Promise<string> {
+    const lines = (await this.device.shellOut(['dumpsys', 'input_method'], signal)).split('\n').map((l) => l.trim());
     return lines.filter((l) => /^(mInputShown|mImeWindowVis|mCurMethodId)=/.test(l)).join(' ') || '(no input method state)';
   }
 
   /** The input method service's view and the window it may serve (AndroidDevice.focusedWindow). */
-  async keyboardState(): Promise<string> {
-    return `${await this.inputMethodState()} focus=${await this.device.focusedWindow()}`;
+  async keyboardState(signal?: AbortSignal): Promise<string> {
+    return `${await this.inputMethodState(signal)} focus=${await this.device.focusedWindow(signal)}`;
   }
 
   async keyboardShown(): Promise<boolean> {

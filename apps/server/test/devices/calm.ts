@@ -24,14 +24,14 @@ export function measuredWindow(ms: number): Promise<void> {
 
 /**
  * Waits until two measured windows in a row use at most `maxCores` (`measure` measures one
- * window), within `timeoutMs`. Each window goes to `record`; a timeout names the last readings.
+ * window; the processes it runs take the wait's signal), within `timeoutMs`. Each window goes to `record`; a timeout names the last readings.
  */
-export async function untilCalm(o: { what: string; maxCores: number; timeoutMs: number; measure(): Promise<Load>; record(line: string): void }): Promise<void> {
+export async function untilCalm(o: { what: string; maxCores: number; timeoutMs: number; measure(signal: AbortSignal): Promise<Load>; record(line: string): void }): Promise<void> {
   const readings: Load[] = [];
   const started = Date.now();
   await until(
-    async () => {
-      const load = await o.measure();
+    async (signal) => {
+      const load = await o.measure(signal);
       readings.push(load);
       o.record(`${o.what}: ${load.cores.toFixed(2)} cores (bar ${o.maxCores}); ${load.busiest}`);
       const last = readings.slice(-2);

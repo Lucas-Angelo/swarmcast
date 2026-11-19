@@ -11,8 +11,8 @@
 // Simulator target ... productVersion = (unknown)", then "Could not find any session hosts").
 // Classic iOS 17 disk images still work there. docs/TESTING.md "Real devices" has the details.
 import { execFile, spawn, type ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
-import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { allocPorts } from '../../../../scripts/test/lib/ports.mjs';
@@ -22,6 +22,7 @@ import { expect } from '../e2e/fixtures.js';
 import { actionablePoint, armTap, tapEndsInClick, touchState, type TouchState } from './actionability.js';
 import { CALM_WINDOW_MS, measuredWindow, untilCalm, type Load } from './calm.js';
 import type { Orientation, Phone } from './phone.js';
+import { WebInspectorClient } from './web-inspector.js';
 import { ready, Session, tapActions } from './webdriver.js';
 
 const run = promisify(execFile);
@@ -93,8 +94,8 @@ const UNUSED_JOBS = [
   'com.apple.siriactionsd',
 ] as const;
 
-async function simctl(args: readonly string[]): Promise<string> {
-  return (await run('xcrun', ['simctl', ...args], { maxBuffer: 64 * 1024 * 1024 })).stdout.trim();
+async function simctl(args: readonly string[], signal?: AbortSignal): Promise<string> {
+  return (await run('xcrun', ['simctl', ...args], { maxBuffer: 64 * 1024 * 1024, signal })).stdout.trim();
 }
 
 interface SimDevice {
@@ -139,8 +140,8 @@ async function findSimulator(): Promise<SimDevice> {
 }
 
 /** Runs AppleScript lines in osascript; returns what the script returns. */
-async function osascript(lines: readonly string[]): Promise<string> {
-  return (await run('osascript', lines.flatMap((l) => ['-e', l]))).stdout.trim();
+async function osascript(lines: readonly string[], signal?: AbortSignal): Promise<string> {
+  return (await run('osascript', lines.flatMap((l) => ['-e', l]), { signal })).stdout.trim();
 }
 
 /** Simulator.app's I/O > Keyboard menu, for System Events. */
@@ -162,42 +163,43 @@ async function hardwareKeyboardConnected(): Promise<boolean> {
 }
 
 /**
- * Starts the simulator's Web Inspector daemon and waits until Safari has connected to it, before
- * any WebDriver session. launchd starts webinspectord only when something connects to its socket
- * (RWI_LISTEN_SOCKET, on the Mac's side); left to the first session, it took 16 s to come up on a
- * just-booted simulator, Safari connected to it then, and the Mac's side connected 25 s later still,
- * after safaridriver had given up ("timed out ... waiting for its RWIApplication to appear", the
- * first test of Devices runs 41171340670 and 41188080970; the simulator's log of the second).
+ * Connects to the simulator's Web Inspector (RWI_LISTEN_SOCKET, on the Mac's side), which starts
+ * its daemon: launchd starts webinspectord only when something connects to that socket. Left to
+ * the first session, it took 16 s to come up on a just-booted simulator, Safari connected to it
+ * then, and the Mac's side connected 25 s later still, after safaridriver had given up ("timed out
+ * ... waiting for its RWIApplication to appear", the first test of Devices runs 41171340670 and
+ * 41188080970; the simulator's log of the second). The connection stays open until release():
+ * closed at once, it let webinspectord exit again and launchd start a new one for the first
+ * session, as slowly (Devices run 41233270465). Opened before Safari starts, so that Safari finds
+ * webinspectord up when it starts.
  */
-async function webInspectorReady(udid: string): Promise<net.Socket | null> {
-  const running = async () => /"PID"\s*=/.test(await simctl(['spawn', udid, 'launchctl', 'list', 'com.apple.webinspectord']).catch(() => ''));
-  // Already up (a simulator booted and used before the suite): Safari connected to it when it came up.
-  if (await running()) return null;
-  // Safari's connection logged from now on (the log keeps earlier boots' lines).
-  const since = new Date(Date.now() - 1_000)
-    .toISOString()
-    .replace('T', ' ')
-    .replace(/\.\d+Z$/, '+0000');
-  const socketPath = await simctl(['getenv', udid, 'RWI_LISTEN_SOCKET']);
-  // Kept open until release(): closed at once, it let webinspectord exit again and launchd start a
-  // new one for the first session, as slowly (Devices run 41233270465: launched 19:26:31, Safari
-  // connected, the probe closed, a new webinspectord launched 19:26:46 while the session waited).
-  const socket = await new Promise<net.Socket>((resolve, reject) => {
-    const c = net.createConnection(socketPath, () => resolve(c));
-    c.once('error', reject);
+async function openWebInspector(udid: string): Promise<WebInspectorClient> {
+  return WebInspectorClient.connect(await simctl(['getenv', udid, 'RWI_LISTEN_SOCKET']), randomUUID());
+}
+
+/**
+ * How long Safari may take to connect to webinspectord, from the end of Simulator.app's start (or
+ * from Safari's launch, where Simulator.app is not used): the two waits it replaces had 60 s each
+ * (webinspectord running, then Safari connected).
+ */
+const SAFARI_INSPECTABLE_MS = 120_000;
+
+/**
+ * Waits until webinspectord lists Safari among its connected applications, as it tells its own
+ * client (web-inspector.ts): an event on the connection openWebInspector() holds, no process per
+ * check. The check it replaces read the simulator's log store (`simctl spawn log show`, every
+ * 2 s) for webinspectord's "Application Connected" line; with the CI Mac's memory full (150 MB
+ * free, 2 GB compressed, 120 processes waiting on the disk) one such read never came back
+ * (release-rehearsal run 44489485950: "a check still running after 45085 ms"; host-load.log shows
+ * a simctl blocked on the disk while webinspectord and Safari ran).
+ */
+async function safariInspectable(inspector: WebInspectorClient): Promise<void> {
+  await until(() => inspector.connected(SAFARI), {
+    timeoutMs: SAFARI_INSPECTABLE_MS,
+    what: "Safari connected to the simulator's Web Inspector",
+    detail: () => inspector.apps.describe(),
+    on: [[inspector.apps, 'change']],
   });
-  socket.on('error', () => {});
-  await until(running, { timeoutMs: 60_000, what: 'webinspectord running in the simulator' });
-  await until(
-    async () =>
-      (
-        await simctl(['spawn', udid, 'log', 'show', '--start', since, '--style', 'compact', '--predicate', 'process == "webinspectord" AND eventMessage CONTAINS "Application Connected" AND eventMessage CONTAINS "com.apple.mobilesafari"']).catch(
-          () => '',
-        )
-      ).includes('com.apple.mobilesafari'),
-    { timeoutMs: 60_000, what: "Safari connected to the simulator's Web Inspector", pollMs: 2_000 },
-  );
-  return socket;
 }
 
 /**
@@ -253,9 +255,9 @@ function startSystemEvents(): Start {
 async function systemEventsAnswers(started: Start): Promise<number> {
   let state = '';
   await until(
-    async () => {
-      state = `System Events ${(await processRunning('System Events')) ? 'running' : 'not running'}, ${started.state()}`;
-      await osascript(['tell application "System Events" to count processes']);
+    async (signal) => {
+      state = `System Events ${(await processRunning('System Events', signal)) ? 'running' : 'not running'}, ${started.state()}`;
+      await osascript(['tell application "System Events" to count processes'], signal);
       return true;
     },
     { timeoutMs: Math.max(0, started.asked + SIMULATOR_APP_START_MS - Date.now()), what: 'System Events to answer', detail: () => state },
@@ -273,9 +275,9 @@ async function openSimulatorApp(udid: string): Promise<number> {
   const started = startApp(['-a', 'Simulator', '--args', '-CurrentDeviceUDID', udid]);
   let state = '';
   await until(
-    async () => {
-      state = `Simulator.app ${(await processRunning('Simulator')) ? 'running' : 'not running'}, ${started.state()}`;
-      const windows = await simulatorAppWindows();
+    async (signal) => {
+      state = `Simulator.app ${(await processRunning('Simulator', signal)) ? 'running' : 'not running'}, ${started.state()}`;
+      const windows = await simulatorAppWindows(signal);
       state += `, ${windows} windows on screen`;
       return windows > 0;
     },
@@ -285,15 +287,15 @@ async function openSimulatorApp(udid: string): Promise<number> {
 }
 
 /** Whether a process of this exact name runs (pgrep -x). */
-async function processRunning(name: string): Promise<boolean> {
-  return run('pgrep', ['-x', name]).then(
+async function processRunning(name: string, signal?: AbortSignal): Promise<boolean> {
+  return run('pgrep', ['-x', name], { signal }).then(
     () => true,
     () => false,
   );
 }
 
-function simulatorAppRunning(): Promise<boolean> {
-  return processRunning('Simulator');
+function simulatorAppRunning(signal?: AbortSignal): Promise<boolean> {
+  return processRunning('Simulator', signal);
 }
 
 /**
@@ -307,12 +309,12 @@ async function quitSimulatorApp(): Promise<void> {
   // A signal, not AppleScript's quit: hidden and windowless, Simulator.app took the quit event and
   // went on running (Devices run 42708098423).
   await run('pkill', ['-TERM', '-x', 'Simulator']).catch(() => {});
-  const processes = () => run('ps', ['-axo', 'pid,stat,lstart,comm']).then((r) => r.stdout.split('\n').filter((l) => /\/Simulator(\.app|$)/.test(l)).join('; ') || 'none', (e: Error) => e.message);
+  const processes = (signal: AbortSignal) => run('ps', ['-axo', 'pid,stat,lstart,comm'], { signal }).then((r) => r.stdout.split('\n').filter((l) => /\/Simulator(\.app|$)/.test(l)).join('; ') || 'none', (e: Error) => e.message);
   let seen = '';
   await until(
-    async () => {
-      seen = await processes();
-      return !(await simulatorAppRunning());
+    async (signal) => {
+      seen = await processes(signal);
+      return !(await simulatorAppRunning(signal));
     },
     { timeoutMs: 30_000, what: 'Simulator.app to quit', detail: () => seen },
   );
@@ -324,7 +326,7 @@ async function quitSimulatorApp(): Promise<void> {
  * no other app, no Accessibility, no Apple event. Owner names and layers need no Screen Recording
  * permission (only window titles do).
  */
-async function simulatorAppWindows(): Promise<number> {
+async function simulatorAppWindows(signal: AbortSignal): Promise<number> {
   const script = [
     'function run(argv) {',
     '  ObjC.import("CoreGraphics");',
@@ -332,7 +334,7 @@ async function simulatorAppWindows(): Promise<number> {
     '  return all.filter((w) => w.kCGWindowOwnerName === argv[0] && w.kCGWindowLayer === 0).length;',
     '}',
   ].join('\n');
-  return Number((await run('osascript', ['-l', 'JavaScript', '-e', script, 'Simulator'])).stdout.trim());
+  return Number((await run('osascript', ['-l', 'JavaScript', '-e', script, 'Simulator'], { signal })).stdout.trim());
 }
 
 /**
@@ -365,8 +367,8 @@ function cpuSeconds(time: string): number {
  * process whose executable lies under a CoreSimulator folder (the runtime's root under
  * CoreSimulator/Volumes, the apps in the device's data). One simulator runs on the CI Mac.
  */
-async function simulatorCpu(): Promise<Map<number, { name: string; cpu: number }>> {
-  const { stdout } = await run('ps', ['-A', '-o', 'pid=,time=,comm='], { maxBuffer: 16 * 1024 * 1024 });
+async function simulatorCpu(signal: AbortSignal): Promise<Map<number, { name: string; cpu: number }>> {
+  const { stdout } = await run('ps', ['-A', '-o', 'pid=,time=,comm='], { maxBuffer: 16 * 1024 * 1024, signal });
   const found = new Map<number, { name: string; cpu: number }>();
   for (const line of stdout.split('\n')) {
     const m = /^\s*(\d+)\s+(\S+)\s+(.*)$/.exec(line);
@@ -377,11 +379,11 @@ async function simulatorCpu(): Promise<Map<number, { name: string; cpu: number }
 }
 
 /** The simulator's load over one measured window (CALM_WINDOW_MS): the cores its processes used, and the three busiest. */
-async function simulatorLoad(): Promise<Load> {
-  const before = await simulatorCpu();
+async function simulatorLoad(signal: AbortSignal): Promise<Load> {
+  const before = await simulatorCpu(signal);
   const started = Date.now();
   await measuredWindow(CALM_WINDOW_MS);
-  const after = await simulatorCpu();
+  const after = await simulatorCpu(signal);
   const seconds = (Date.now() - started) / 1000;
   const used = [...after].map(([pid, p]) => ({ name: p.name, cores: (p.cpu - (before.get(pid)?.cpu ?? 0)) / seconds })).sort((a, b) => b.cores - a.cores);
   const busiest = used.slice(0, 3).map((p) => `${p.name} ${Math.round(p.cores * 100)} %`);
@@ -403,8 +405,8 @@ export class IosDevice {
     /** Booted by the suite: shut down again in release(). */
     private readonly booted: boolean,
     private readonly logDir: string,
-    /** The connection that keeps the simulator's webinspectord running (webInspectorReady). */
-    private readonly inspector: net.Socket | null,
+    /** The connection that keeps the simulator's webinspectord running (openWebInspector). */
+    private readonly inspector: WebInspectorClient,
     /** `top` writing the Mac's load (simulator processes included) to host-load.log every 2 s. */
     private readonly sampler: ChildProcess,
   ) {}
@@ -420,7 +422,7 @@ export class IosDevice {
     note(`simulator ${sim.udid} (${sim.state})`);
     let booted = false;
     let driver: Tracked | null = null;
-    let inspector: net.Socket | null = null;
+    let inspector: WebInspectorClient | null = null;
     try {
       if (sim.state !== 'Booted') {
         await quitSimulatorApp();
@@ -453,6 +455,7 @@ export class IosDevice {
       const stopped = await unusedJobsOff(sim.udid);
       const left = await unusedJobsRunning(sim.udid);
       note(`unused jobs off (stopped: ${stopped.join(', ') || 'none'}; running still: ${left.join(', ') || 'none'})`);
+      inspector = await openWebInspector(sim.udid);
       // Safari running before the first session gives the Web Inspector an application to list
       // (without it a new simulator answered safaridriver with a timeout: the same source).
       await simctl(['launch', sim.udid, SAFARI]);
@@ -465,7 +468,7 @@ export class IosDevice {
         await hideSimulatorApp();
         note('Simulator.app started and hidden');
       }
-      inspector = await webInspectorReady(sim.udid);
+      await safariInspectable(inspector);
       note('Web Inspector up, Safari connected to it');
       const [port] = await allocPorts(1);
       driver = spawnTracked('safaridriver', ['-p', String(port), '--diagnose'], { name: 'safaridriver', logFile: path.join(o.logDir, 'safaridriver.log') });
@@ -482,7 +485,7 @@ export class IosDevice {
       // worker's attach starts from a shut-down simulator, not from this one's half-done setup.
       note(`attach failed: ${(e as Error).message.split('\n')[0]}`);
       await driver?.stop({ graceMs: 5_000 });
-      inspector?.destroy();
+      inspector?.close();
       if (booted) await simctl(['shutdown', sim.udid]).catch(() => {});
       sampler.kill();
       throw e;
@@ -656,7 +659,7 @@ export class IosDevice {
 
   async release(): Promise<void> {
     await this.driver.stop({ graceMs: 5_000 });
-    this.inspector?.destroy();
+    this.inspector.close();
     if (this.booted) await simctl(['shutdown', this.udid]);
     this.sampler.kill();
   }
