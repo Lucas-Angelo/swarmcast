@@ -95,6 +95,10 @@ jobs:
           npx playwright install $BROWSERS
           # shellcheck disable=SC2086
           if [ "$RUNNER_OS" = Linux ]; then .github/scripts/apt-debs.sh playwright-deps $BROWSERS; fi
+      # As _e2e.yml: WebKit's Screen Time observer (.github/scripts/screen-time-off.sh).
+      - name: Screen Time agent off (macOS)
+        if: runner.os == 'macOS'
+        run: .github/scripts/screen-time-off.sh
       # No retries; --fail-on-flaky-tests fails the run if a config ever retries a test that then passes.
       - name: Corpus and chat UI
         timeout-minutes: 15

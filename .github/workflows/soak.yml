@@ -170,6 +170,10 @@ jobs:
       - name: Playwright browsers (macOS)
         if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'macOS'
         run: npx playwright install firefox webkit
+      # As _e2e.yml: WebKit's Screen Time observer (.github/scripts/screen-time-off.sh).
+      - name: Screen Time agent off (macOS)
+        if: (matrix.suite == 'e2e' || matrix.suite == 'chat-ui') && runner.os == 'macOS'
+        run: .github/scripts/screen-time-off.sh
       # As _e2e.yml's chat-windows job: Google Chrome and Microsoft Edge from the runner image.
       - name: Playwright Firefox (chat UI, Windows)
         if: matrix.suite == 'chat-ui' && runner.os == 'Windows'

@@ -313,6 +313,7 @@ Pipeline runs of 2026-11-04 and 2026-11-05).
 | `.github/scripts/media-foundation.ps1` | waits for Media Foundation (Firefox's H.264 on Windows Server), which the first step of a Windows app job starts with DISM, and prints the servicing diagnostics when it fails |
 | `.github/scripts/no-dev-deps.mjs` | fails when a development dependency or test code would ship (see Rules) |
 | `.github/scripts/npm-network-error.mjs` | tells `setup` whether a failed `npm ci` failed on the network (npm's own errors, or prebuild-install's download in an install script), so it runs once more (tested in `scripts/ci/test`) |
+| `.github/scripts/screen-time-off.sh` | macOS jobs that run Playwright's WebKit (`_e2e.yml`, `soak.yml`, `rendering.yml`): disables the runner user's Screen Time agent and fails unless it is gone, so WebKit's Screen Time observer never gets the configuration whose arrival can abort the browser when a page closes right after its first commit (the script's header) |
 | `.github/scripts/test-summary.mjs` | a suite's results in the job summary: Playwright JSON, JUnit XML, the Windows suites' result files, `cargo test` output, the PASS/FAIL lines of the harnesses (the soak's parsers, `scripts/ci/soak-run.mjs`) |
 | `.github/scripts/annotate.mjs` | `::error` / `::warning` annotations for those two scripts |
 | `.github/soak-plan.json` | what `soak.yml` repeats |
