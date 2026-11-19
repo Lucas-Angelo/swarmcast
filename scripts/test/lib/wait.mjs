@@ -35,7 +35,9 @@ export function formatExit(x) {
 /**
  * Resolves once `pred()` is true. `pred` is checked at once, again on every event listed in
  * `on`, and on a slow poll as a safety net (`pollMs`, default 250 ms). A `pred` that throws
- * fails the wait at once with that error.
+ * fails the wait at once with that error. `pred` gets an AbortSignal that aborts as the wait
+ * ends (passed, failed or timed out): a check that runs a process passes it on (execFile's
+ * `signal`), so that no check outlives its wait.
  *
  * Rejects with a WaitError:
  * - after `timeoutMs`: "timed out waiting for <what> after N ms (<detail()>)", plus "a check
@@ -53,10 +55,12 @@ export function until(pred, o) {
     /** When the `pred()` call in flight began (null: none in flight). */
     let checkSince = null;
     const cleanups = [];
+    const over = new AbortController();
     const finish = (err) => {
       if (done) return;
       done = true;
       for (const c of cleanups) c();
+      over.abort(err ?? new Error(`${what}: the wait is over`));
       if (err) reject(err);
       else resolve();
     };
@@ -71,7 +75,7 @@ export function until(pred, o) {
         do {
           again = false;
           checkSince = Date.now();
-          if (await pred()) return finish();
+          if (await pred(over.signal)) return finish();
           checkSince = null;
         } while (again && !done);
       } catch (err) {
@@ -96,7 +100,7 @@ export function until(pred, o) {
       void p.exited.then((x) => {
         if (done) return;
         // The owner's last event may be the one that made pred true: one final check first.
-        void Promise.resolve(pred())
+        void Promise.resolve(pred(over.signal))
           .catch(() => false)
           .then((ok) => {
             if (ok) return finish();
@@ -113,16 +117,16 @@ export function until(pred, o) {
  * Polls `fn` every `everyMs` (default 500) until it returns something truthy, and resolves with
  * that value. Unlike `until`, an error thrown by `fn` only means "not yet" (an API that does not
  * answer while the app starts): the last one is in the timeout message. A WaitError thrown by
- * `fn` is a definite failure (the live start failed): it ends the wait at once. `abortOn` and
- * `detail` as in `until`.
+ * `fn` is a definite failure (the live start failed): it ends the wait at once. `abortOn`,
+ * `detail` and the AbortSignal `fn` gets as in `until`.
  */
 export async function poll(fn, o) {
   let value;
   let lastError;
   await until(
-    async () => {
+    async (signal) => {
       try {
-        value = await fn();
+        value = await fn(signal);
         lastError = undefined;
         return !!value;
       } catch (err) {

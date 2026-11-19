@@ -32,7 +32,11 @@ export interface UntilOptions {
   pollMs?: number;
 }
 
-export function until(pred: () => boolean | Promise<boolean>, o: UntilOptions): Promise<void>;
+/**
+ * Resolves once `pred` is true; `pred` gets an AbortSignal that aborts as the wait ends, for a
+ * process it runs (execFile's `signal`), so that no check outlives its wait.
+ */
+export function until(pred: (signal: AbortSignal) => boolean | Promise<boolean>, o: UntilOptions): Promise<void>;
 
 export interface PollOptions {
   timeoutMs: number;
@@ -47,7 +51,7 @@ export interface PollOptions {
  * Polls `fn` until it returns something truthy and resolves with it; a throw means "not yet",
  * except a WaitError, which fails the wait at once.
  */
-export function poll<T>(fn: () => T | Promise<T>, o: PollOptions): Promise<NonNullable<T>>;
+export function poll<T>(fn: (signal: AbortSignal) => T | Promise<T>, o: PollOptions): Promise<NonNullable<T>>;
 
 /** What `promise` resolves to, or `fallback` after `ms` (the timer is cleared either way). */
 export function orTimeout<T, F>(promise: Promise<T>, ms: number, fallback: F): Promise<T | F>;
