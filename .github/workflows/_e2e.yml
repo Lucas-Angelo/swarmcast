@@ -156,6 +156,13 @@ jobs:
         timeout-minutes: 8
         if: runner.os == 'macOS'
         run: npx playwright install firefox webkit
+      # Playwright's WebKit for macOS 26 aborts now and then when a page closes a few ms after its
+      # first commit, in its Screen Time observer (release rehearsal 44565310409, first-goto.spec):
+      # with the runner's Screen Time agent off, that observer never gets a configuration to race
+      # with (the script's header has the cause).
+      - name: Screen Time agent off (macOS)
+        if: runner.os == 'macOS'
+        run: .github/scripts/screen-time-off.sh
       # 20 minutes, a hang guard. The first runs of the three groups took 5.9/4.3/6.0 min
       # (ui/chat/media) on Ubuntu and 6.7/4.7/6.2 on macOS; with the 0.5.0 specs the old 13-minute
       # limit stopped a macOS media run 0.1 min after its last test passed (run 41543787536), and
