@@ -1,9 +1,12 @@
 name: Download artifacts, in two tries with limits of their own
 description: >-
-  Two tries, each with a time limit that follows the artifacts' size and a cut as soon as a
-  download stops making progress, so a stalled download never uses up the calling step's limit
-  and try 2 always has time of its own. Try 1: actions/download-artifact, run with those limits
-  by ./try1 (../download.mjs). Try 2, after a try 1 that failed, stalled or ran out of time:
+  Two tries, each with the time limit the caller gives it (max-try-seconds) and a cut as soon as
+  a download stops making progress, so a stalled download never uses up the calling step's limit
+  and try 2 always has time of its own. Each try downloads into a folder of its own next to
+  `path` and moves the files into `path` only when they came whole and checked: a try that
+  failed, stalled or was cut off leaves `path` as it was, so no caller can unpack half an
+  archive. Try 1: actions/download-artifact, run with those limits by ./try1 (../download.mjs).
+  Try 2, after a try 1 that failed, stalled or ran out of time:
   diagnostics that name the cause (rest.sh diagnose), then the same artifacts through the REST
   API with curl, resumed after a cut and checked against the SHA-256 digest recorded at upload
   (rest.sh fetch), logged as an infra-recovery warning. When try 2 fails too, an error titled
@@ -32,10 +35,11 @@ inputs:
     default: ''
   max-try-seconds:
     description: >-
-      A limit for each try from its start, below the size-based one, for a caller whose step
-      limit is smaller than two tries at the floor rate (a saved copy of gigabytes): the two tries
-      and the diagnostics then take at most 2 x this + 110 s.
-    default: ''
+      The time limit of each try, from its start: the room the calling step leaves it, (the
+      step's timeout-minutes - 110 s - the step's other work) / 2, since both tries and the
+      diagnostics take at most 2 x this + 110 s. A try that gets no byte more for 30 s is cut off
+      long before (the guard against a stall); a slow one that keeps moving may use all of it.
+    required: true
   required:
     description: >-
       `false` for a saved copy the job can do without (a cache): when both tries fail, a warning
@@ -45,6 +49,15 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Check the time limit
+      shell: bash
+      env:
+        MAX: ${{ inputs.max-try-seconds }}
+      run: |
+        if ! [[ "$MAX" =~ ^[1-9][0-9]*$ ]]; then
+          echo "::error title=fetch-artifact::max-try-seconds must be a whole number of seconds, the room the calling step leaves each try, not '$MAX'"
+          exit 1
+        fi
     - name: download-artifact, with a time limit and a stall cut (try 1 of 2)
       id: try1
       continue-on-error: true
@@ -57,8 +70,8 @@ runs:
         run-id: ${{ inputs.run-id }}
         github-token: ${{ inputs.github-token }}
         max-try-seconds: ${{ inputs.max-try-seconds }}
-    # Try 2 has a budget of its own (rest.sh: the artifacts' size at RATE_FLOOR_BPS), within what
-    # try 1's limits left of the calling step's.
+    # Try 2 has a budget of its own (rest.sh: max-try-seconds), within what try 1's limits left
+    # of the calling step's.
     - name: Diagnostics, then the REST API and curl (try 2 of 2)
       id: try2
       if: steps.try1.outputs.ok != 'true'
@@ -77,6 +90,7 @@ runs:
         bash "$GITHUB_ACTION_PATH/rest.sh" diagnose 1
         bash "$GITHUB_ACTION_PATH/rest.sh" fetch
     # A missing or expired artifact is not infrastructure: rest.sh has named it in an error.
+    # Neither try has put anything into `path`.
     - name: Name a failed download as infrastructure
       if: steps.try2.outcome == 'failure'
       shell: bash

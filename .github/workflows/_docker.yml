@@ -63,7 +63,7 @@ jobs:
       # from the saved .deb set with apt offline (.github/scripts/apt-debs.sh).
       # No rust-cache: a weekly build is not worth half a gigabyte of the repository's cache.
       - uses: ./.github/actions/setup-rust
-        timeout-minutes: 8
+        timeout-minutes: 12
       - run: npm run build
       # linux-release/: the staged server (server/, what obs.sh runs), the AppImage, VERSION.env;
       # a tar, unpacked by ./.github/actions/get-build (upload-artifact drops the executable bit).
@@ -141,6 +141,7 @@ jobs:
         timeout-minutes: 10
         with:
           names: linux-docker-${{ matrix.arch }}
+          max-try-seconds: '225'
       # The base's test image, saved by an earlier run (an artifact: .github/actions/test-images),
       # so the test asks no registry and no distribution mirror; none yet: appimage.sh builds it.
       - uses: ./.github/actions/test-images
@@ -188,6 +189,7 @@ jobs:
         timeout-minutes: 10
         with:
           names: linux-docker-${{ matrix.arch }}
+          max-try-seconds: '225'
       # OBS Studio's test image, saved by an earlier run (.github/actions/test-images); none yet:
       # obs.sh builds it (about 1.5 minutes) and the last step keeps it.
       - uses: ./.github/actions/test-images

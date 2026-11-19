@@ -6,6 +6,9 @@
 //   node .github/scripts/cargo-crates.mjs name          the artifact name: this Cargo.lock and toolchain
 //   node .github/scripts/cargo-crates.mjs find <name>   run-id= and artifact-id= of the newest one this
 //                                                       run may trust (test-images.mjs's rules), or nothing
+//   node .github/scripts/cargo-crates.mjs restore <tar> the artifact's tar into the registry: unpacked into a
+//                                                       folder of its own, every crate checked, only then moved
+//                                                       in, then `check`; a failure leaves the registry as it was
 //   node .github/scripts/cargo-crates.mjs fetch         `cargo fetch --locked` from crates.io, with tries (the cold path)
 //   node .github/scripts/cargo-crates.mjs check         every crate of Cargo.lock in the registry cache, with
 //                                                       its checksum, then an offline `cargo metadata`
@@ -22,12 +25,20 @@
 // is the crate crates.io served. The registry's folder name (index.crates.io-1949cf8c6b5b557f) is
 // the same on every OS since cargo 1.85; the offline `cargo metadata` of `check` catches a
 // difference, and the job then fetches from crates.io.
+//
+// `restore` never puts a crate into the registry that it has not checked: cargo trusts a .crate it
+// finds in its cache, so one cut short is unpacked as it is. Release rehearsal 44603650109: the
+// artifact's download was cut off with 73.5 of 82 MB of the tar written, the step unpacked that
+// straight into $CARGO_HOME/registry, tar stopped at "Unexpected EOF" with wasm-bindgen 0.2.129's
+// .crate half written, and the cold path's `cargo fetch` took that file for the crate and failed
+// with "failed to unpack entry ... unexpected end of file", not on the network.
 import { spawn, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { placeInto, removeStage, stageFor } from '../actions/fetch-artifact/place.mjs';
 import { findCommand } from './test-images.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -48,6 +59,9 @@ export const FETCH_TRIES = 3;
 export const FETCH_TRY_MS = 60_000;
 /** Pause before try 2, then before try 3. */
 export const FETCH_PAUSES_MS = [10_000, 30_000];
+
+/** A failure of crates.io or of the runner's network: the `Rust crates (infrastructure)` error. */
+export class InfraError extends Error {}
 
 /**
  * The packages of a Cargo.lock that come from crates.io: { name, version, checksum }. Throws on a
@@ -129,6 +143,46 @@ export function checkCrates(crates, registry) {
   return best;
 }
 
+/** Windows's own tar (bsdtar) takes `D:\...` paths; Git Bash's GNU tar reads them as host:path. */
+const tarBin = () => (isWin ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar');
+
+/**
+ * Puts the crates of the artifact's tar `tarball` into `registry` only when every one of `crates`
+ * is in it with Cargo.lock's checksum: unpacked into a new folder next to `registry` first, then
+ * its crates.io folders (index/ and cache/) moved in. A tar that does not read to its end (cut
+ * short), or one that lacks a crate or holds another one, leaves `registry` as it was.
+ * Returns { ok, why, placed }: `placed`, the paths it put into `registry`, for `unplace`.
+ * @param {{ tarball: string, registry: string, crates: { name: string, version: string, checksum: string }[], tar?: string }} args
+ */
+export function restoreCrates({ tarball, registry, crates, tar = tarBin() }) {
+  const stage = stageFor(registry, '.cargo-crates-');
+  try {
+    const x = spawnSync(tar, ['-xf', tarball, '-C', stage], { encoding: 'utf8', stdio: ['ignore', 'ignore', 'pipe'] });
+    if (x.status !== 0) {
+      const said = (x.stderr ?? '').trim().split('\n').slice(-3).join(' / ') || x.error?.message || `exit ${x.status}`;
+      return { ok: false, why: `the tar does not read to its end (${said}); nothing of it was used`, placed: [] };
+    }
+    const { dir, missing, wrong } = checkCrates(crates, stage);
+    if (!dir || missing.length || wrong.length) {
+      const why = [missing.length ? `${missing.length} crates missing (${missing.slice(0, 5).join(', ')})` : '', wrong.length ? `${wrong.length} with another checksum than Cargo.lock's (${wrong.slice(0, 5).join(', ')})` : ''].filter(Boolean).join('; ');
+      return { ok: false, why: `${why || 'no crates.io folder'}; nothing of it was used`, placed: [] };
+    }
+    const placed = [];
+    for (const part of ['index', 'cache']) {
+      const from = path.join(stage, part, dir);
+      if (fs.existsSync(from)) placed.push(...placeInto(from, path.join(registry, part, dir)));
+    }
+    return { ok: true, why: '', placed };
+  } finally {
+    removeStage(stage);
+  }
+}
+
+/** Takes out of the registry what restoreCrates put in (its `placed`), after a check that failed. */
+export function unplace(placed) {
+  for (const p of placed) fs.rmSync(p, { recursive: true, force: true });
+}
+
 /** Lines of cargo's output that show a network failure, a retry's reason (see isNetworkError). */
 const NETWORK = [
   /failed to download from/,
@@ -180,7 +234,11 @@ export async function fetchWithTries({ run, tries = FETCH_TRIES, tryMs = FETCH_T
     const why = r.timedOut ? `cut off after ${Math.round(tryMs / 1000)} s` : networkError(r.output);
     if (!why) throw new Error(`cargo fetch failed (exit ${r.code}), not on the network: not tried again`);
     first ||= why;
-    if (n === tries) throw new Error(`cargo fetch failed ${tries} times on the network; last: ${why}`);
+    if (n === tries) {
+      throw new InfraError(
+        `infra: cargo fetch from crates.io failed ${tries} times on the network; last: ${why}. The saved crates could not be used, so crates.io was the last resort: an outage of crates.io or of the runner's network, not a failure of SwarmCast. Start a new run once it answers.`,
+      );
+    }
     const pause = pauses[Math.min(n - 1, pauses.length - 1)] ?? 0;
     log(`::warning title=cargo-crates::cargo fetch try ${n} of ${tries} failed (${why}); trying again in ${Math.round(pause / 1000)} s`);
     await sleep(pause);
@@ -264,6 +322,21 @@ function check() {
   return true;
 }
 
+/** `restore <tar>`: true when the registry holds every crate of Cargo.lock from the tar, checked. */
+function restore(tarball) {
+  const crates = lockedCrates(fs.readFileSync(LOCKFILE, 'utf8'));
+  const registry = registryDir();
+  const r = restoreCrates({ tarball, registry, crates });
+  if (!r.ok) {
+    console.log(`::warning title=cargo-crates::the artifact's ${path.basename(tarball)}: ${r.why}`);
+    return false;
+  }
+  if (check()) return true;
+  unplace(r.placed);
+  console.log(`cargo-crates: took the ${r.placed.length} files of the artifact out of ${registry} again`);
+  return false;
+}
+
 function pack(out) {
   const crates = lockedCrates(fs.readFileSync(LOCKFILE, 'utf8'));
   const registry = registryDir();
@@ -287,6 +360,10 @@ async function main() {
       if (!arg) break;
       await findCommand(arg, 'cargo-crates');
       return;
+    case 'restore':
+      if (!arg) break;
+      if (!restore(path.resolve(arg))) process.exit(1);
+      return;
     case 'fetch': {
       const start = Date.now();
       const { tries } = await fetchWithTries({ run: cargoFetch });
@@ -301,13 +378,13 @@ async function main() {
       pack(path.resolve(arg));
       return;
   }
-  console.error('usage: cargo-crates.mjs name | find <name> | fetch | check | pack <tar>');
+  console.error('usage: cargo-crates.mjs name | find <name> | restore <tar> | fetch | check | pack <tar>');
   process.exit(2);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((err) => {
-    console.log(`::error title=cargo-crates::${err instanceof Error ? err.message : err}`);
+    console.log(`::error title=${err instanceof InfraError ? 'Rust crates (infrastructure)' : 'cargo-crates'}::${err instanceof Error ? err.message : err}`);
     process.exit(1);
   });
 }

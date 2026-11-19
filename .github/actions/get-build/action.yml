@@ -8,6 +8,11 @@ inputs:
   names:
     description: Comma-separated artifact names, e.g. `web-dist,pkg-windows-x64`.
     required: true
+  max-try-seconds:
+    description: >-
+      As ../fetch-artifact's: the room the calling step leaves each download try, (its
+      timeout-minutes - 110 s - the unpack) / 2; 225 in a 10-minute step.
+    required: true
 
 runs:
   using: composite
@@ -28,6 +33,7 @@ runs:
         pattern: ${{ steps.which.outputs.pattern }}
         merge-multiple: true
         path: ${{ runner.temp }}/build-artifacts
+        max-try-seconds: ${{ inputs.max-try-seconds }}
     - name: Unpack
       shell: bash
       env:

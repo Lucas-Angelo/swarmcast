@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fetchActions } from '../../fetch-remote/fetch.mjs';
-import { childEnv, downloadOnce } from '../download.mjs';
+import { childEnv, downloadPlaced } from '../download.mjs';
 
 const input = (name) => (process.env[`INPUT_${name.toUpperCase()}`] ?? '').trim();
 const setOutput = (name, value) => fs.appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${String(value).replace(/[\r\n]+/g, ' ')}\n`);
@@ -20,18 +20,19 @@ try {
   result = { ok: false, why: `download-artifact could not be fetched (${err.message})`, bytes: 0, seconds: 0 };
 }
 if (!result) {
-  // Where download-artifact puts the files (its own `~` expansion and path.resolve).
+  // Where download-artifact would put the files (its own `~` expansion and path.resolve); it
+  // writes into a folder next to it, moved in only when the download finished (../place.mjs).
   const dest = path.resolve(input('path').replace(/^~/, os.homedir()));
-  const env = childEnv(process.env, {
-    name: input('name'),
-    pattern: input('pattern'),
-    dest,
-    mergeMultiple: input('merge-multiple') || 'false',
-    runId: input('run-id'),
-    token: input('github-token'),
-  });
-  const cap = Number(input('max-try-seconds'));
-  result = await downloadOnce({ script, env, dest, capMs: cap > 0 ? cap * 1000 : Infinity });
+  const env = (stage) =>
+    childEnv(process.env, {
+      name: input('name'),
+      pattern: input('pattern'),
+      dest: stage,
+      mergeMultiple: input('merge-multiple') || 'false',
+      runId: input('run-id'),
+      token: input('github-token'),
+    });
+  result = await downloadPlaced({ script, env, dest, limitMs: Number(input('max-try-seconds')) * 1000 });
 }
 if (result.ok) console.log(`fetch-artifact: ${what}: ${result.bytes} bytes in ${result.seconds} s (try 1 of 2, download-artifact)`);
 else console.log(`::warning title=Artifact download::${what}: try 1 of 2 (download-artifact) failed after ${result.seconds} s: ${result.why}; try 2 goes through the REST API`);
