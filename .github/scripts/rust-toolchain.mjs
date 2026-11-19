@@ -90,7 +90,7 @@ export const IDLE_MS = 30_000;
 export const PAUSES_MS = [5_000, 15_000];
 /**
  * The cold path ends this long after it began: a try that could not end by then does not start.
- * With the saved copy's restore (2 x 90 s at most) and the install, under setup-rust's 8 minutes.
+ * With the saved copy's restore (2 x 90 s at most) and the install, under setup-rust's 12 minutes.
  */
 export const COLD_PATH_MS = 240_000;
 

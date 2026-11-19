@@ -115,6 +115,7 @@ jobs:
         timeout-minutes: 10
         with:
           names: web-dist
+          max-try-seconds: '225'
       - run: npm run fetch-bins
       # The runner's CPUs, memory and CPU model, which the job log does not show otherwise: the
       # macos-latest runners come in two speeds (the viewer chat UI step below), and these name
@@ -337,6 +338,7 @@ jobs:
         timeout-minutes: 10
         with:
           names: web-dist
+          max-try-seconds: '225'
       - name: Playwright Firefox
         timeout-minutes: 5
         run: npx playwright install firefox

@@ -3,12 +3,12 @@
 #
 #   rest.sh diagnose TRY   what a failed download-artifact try ran into, from this runner (at
 #                          most DIAG_S seconds)
-#   rest.sh fetch          try 2: the same artifacts through the REST API and curl, within a
-#                          budget that follows their size
+#   rest.sh fetch          try 2: the same artifacts through the REST API and curl, within the
+#                          caller's max-try-seconds
 #
 # Environment (from action.yml): NAME or PATTERN, DEST, MERGE (true/false), RUN_ID, REPO, TOKEN
-# (needs actions: read), and for `fetch` FETCH_TRIES (curl tries, default 4) and FETCH_MAX_S
-# (the caller's max-try-seconds: a cap on the budget, counted from the start of the fetch).
+# (needs actions: read), and for `fetch` FETCH_MAX_S (the caller's max-try-seconds: try 2's
+# budget, counted from the start of the fetch) and FETCH_TRIES (curl tries, default 4).
 #
 # Why: download-artifact prints only "Artifact download failed after 5 retries." Its retry loop
 # logs the cause with core.debug, which a run shows only with step debug logging on, so a failure
@@ -18,16 +18,14 @@
 # `fetch` then gets the artifacts by another route: the REST API's own signed URL
 # (GET /repos/{repo}/actions/artifacts/{id}/zip, a 302 to the blob), downloaded by curl, cut when
 # it stalls and resumed with a range request, checked against the size and SHA-256 digest the API
-# recorded at upload, and only then unzipped where download-artifact would have put it.
+# recorded at upload, and only then unzipped, into a folder next to DEST that is moved into DEST
+# once every artifact is there (place.mjs): a try that fails leaves DEST as it was.
 set -u
 
-# The limits of try 1 (download.mjs; fetch-artifact.test.ts checks that they are the same): the
-# budget is LIMIT_BASE_S, PER_ARTIFACT_S for each artifact and the bytes at RATE_FLOOR_BPS. Every
+# Try 2's budget is the caller's max-try-seconds (FETCH_MAX_S), as try 1's (download.mjs). Every
 # request gets at most what is left of it, so try 2 ends within its budget, stalled or not.
-RATE_FLOOR_BPS=4000000
-LIMIT_BASE_S=45
-PER_ARTIFACT_S=1
-# The listing before the budget is known; the whole of the diagnostics.
+# The listing before the budget is known (download.mjs's too: fetch-artifact.test.ts checks); the
+# whole of the diagnostics.
 LIST_S=30
 DIAG_S=45
 # A curl download slower than STALL_BPS for STALL_S seconds has stalled: it is cut and resumed.
@@ -137,17 +135,6 @@ resolver() {
   echo
 }
 
-# The budget of try 2 for the artifacts in ROWS (JSON lines), in seconds: what try 1 has
-# (download.mjs, tryLimitMs), capped by FETCH_MAX_S.
-fetch_budget() {
-  local rows="$1" count bytes budget
-  count="$(grep -c . <<<"$rows")"
-  bytes="$(jq -s 'map(.size) | add // 0' <<<"$rows")"
-  budget=$((LIMIT_BASE_S + PER_ARTIFACT_S * count + (bytes + RATE_FLOOR_BPS - 1) / RATE_FLOOR_BPS))
-  if [ -n "${FETCH_MAX_S:-}" ] && [ "$FETCH_MAX_S" -gt 0 ] && [ "$FETCH_MAX_S" -lt "$budget" ]; then budget="$FETCH_MAX_S"; fi
-  echo "$budget"
-}
-
 diagnose() {
   local try="$1" rows url host body t
   DEADLINE=$((SECONDS + DIAG_S))
@@ -200,9 +187,10 @@ extract() {
   fi
 }
 
-# Download one artifact into DIR: up to TRIES curl tries within the budget (DEADLINE), each with
-# a fresh signed URL, resuming the partial file; a file of the wrong size or digest is thrown
-# away and fetched again.
+# Download one artifact into DIR (in the stage): up to TRIES curl tries within the budget
+# (DEADLINE), each with a fresh signed URL, resuming the partial file; a file of the wrong size or
+# digest is thrown away and fetched again, and only a zip with the recorded size and digest is
+# unzipped.
 fetch_one() {
   local id="$1" name="$2" size="$3" digest="$4" dir="$5"
   local zip="$TMP_DIR/$id.zip" try=0 url got hash wait t
@@ -246,24 +234,37 @@ fetch_one() {
 # An artifact that is not there (or expired) is no infrastructure failure: action.yml says so.
 missing() { [ -z "${GITHUB_OUTPUT:-}" ] || echo "missing=true" >>"$GITHUB_OUTPUT"; }
 
+# A path as node takes it: Windows's form in Git Bash.
+native() { if [ "${RUNNER_OS:-}" = Windows ]; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+
 fetch() {
-  local rows ok=0 failed=0 count
-  START=$SECONDS TRIES="${FETCH_TRIES:-4}" BUDGET=$LIST_S
-  DEADLINE=$((SECONDS + LIST_S))
+  local rows ok=0 failed=0 count stage
+  START=$SECONDS TRIES="${FETCH_TRIES:-4}" BUDGET="${FETCH_MAX_S:-}"
+  if ! [[ "$BUDGET" =~ ^[1-9][0-9]*$ ]]; then
+    echo "::error::fetch-artifact: max-try-seconds must be a whole number of seconds, not '$BUDGET'"
+    return 1
+  fi
+  DEADLINE=$((SECONDS + (LIST_S < BUDGET ? LIST_S : BUDGET)))
   TMP_DIR="$(mktemp -d)"
-  trap 'rm -rf "$TMP_DIR"' EXIT
+  local out="$DEST"
+  [ "${RUNNER_OS:-}" = Windows ] && out="$(cygpath -u "$out")"
+  # The artifacts are unzipped here and moved into DEST only when every one is there.
+  if ! mkdir -p "$(dirname "$out")" || ! stage="$(mktemp -d "$(dirname "$out")/.fetch-artifact-XXXXXX")"; then
+    say "no folder next to $out for the download"
+    rm -rf "$TMP_DIR"
+    return 1
+  fi
+  # shellcheck disable=SC2064 # the folders of this call, fixed now
+  trap "rm -rf '$TMP_DIR' '$stage'" EXIT
   rows="$(list_artifacts)" || { say "try 2 could not list the artifacts"; return 1; }
   if [ -z "$rows" ]; then
     echo "::error::fetch-artifact: no artifact of run $RUN_ID matches '${NAME:-$PATTERN}'"
     missing
     return 1
   fi
-  BUDGET="$(fetch_budget "$rows")"
   DEADLINE=$((START + BUDGET))
   count="$(grep -c . <<<"$rows")"
   say "try 2 of 2 (REST API and curl): $count artifact(s), $(jq -s 'map(.size) | add' <<<"$rows") bytes, $BUDGET s from its start"
-  local out="$DEST"
-  [ "${RUNNER_OS:-}" = Windows ] && out="$(cygpath -u "$out")"
   while IFS= read -r row; do
     local id name size digest expired dir
     id="$(jq -r .id <<<"$row")" name="$(jq -r .name <<<"$row")" size="$(jq -r .size <<<"$row")"
@@ -276,12 +277,16 @@ fetch() {
     fi
     # Where download-artifact puts it: path itself for a name, merge-multiple or a pattern that
     # matches one artifact, else path/<name>.
-    dir="$out"
-    [ -z "$NAME" ] && [ "$MERGE" != true ] && [ "$count" -gt 1 ] && dir="$out/$name"
+    dir="$stage"
+    [ -z "$NAME" ] && [ "$MERGE" != true ] && [ "$count" -gt 1 ] && dir="$stage/$name"
     if fetch_one "$id" "$name" "$size" "$digest" "$dir"; then ok=$((ok + 1)); else failed=$((failed + 1)); fi
   done <<<"$rows"
   if [ "$failed" -gt 0 ]; then
-    say "try 2 got $ok of $((ok + failed)) artifacts"
+    say "try 2 got $ok of $((ok + failed)) artifacts; $DEST is left as it was"
+    return 1
+  fi
+  if ! node "$HERE/place.mjs" "$(native "$stage")" "$(native "$out")"; then
+    say "could not move the download into $DEST"
     return 1
   fi
   echo "::warning::fetch-artifact: infra recovery: try 1 (download-artifact) failed; try 2 (REST API and curl, digest checked) got ${NAME:-$PATTERN} ($ok artifact(s)) in $((SECONDS - START)) s"

@@ -242,7 +242,7 @@ jobs:
           apt-debs: ${{ runner.os == 'Linux' && 'tauri-build' || '' }}
       # The pinned toolchain, _node.yml's cache and the Linux build dependencies.
       - uses: ./.github/actions/setup-rust
-        timeout-minutes: 8
+        timeout-minutes: 12
         with:
           cache-key: checks
       # Compile once, so the soaked runs time the tests only.
@@ -423,6 +423,7 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
+          max-try-seconds: '225'
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
       - uses: ./.github/actions/fetch-artifact
@@ -430,6 +431,7 @@ jobs:
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
+          max-try-seconds: '225'
           run-id: ${{ needs.plan.outputs.desktop_run }}
           github-token: ${{ github.token }}
       # As in _desktop.yml's clean-machine job: the AppImage's host libraries, and the .deb's
@@ -497,7 +499,7 @@ jobs:
           echo CARGO_PROFILE_RELEASE_LTO=false >> "$GITHUB_ENV"
           echo CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 >> "$GITHUB_ENV"
       - uses: ./.github/actions/setup-rust
-        timeout-minutes: 8
+        timeout-minutes: 12
         with:
           cache-key: ${{ matrix.target }}
       # As _desktop.yml; every soaked run is then one `tauri build --bundles app,dmg`, which is
@@ -588,6 +590,7 @@ jobs:
         with:
           pattern: soak-*
           path: soak-results
+          max-try-seconds: '225'
       # Fails when any check failed or was flaky, or a planned run never reported.
       - name: Pass rates, flakes, bounds, durations, failure signatures
         run: node scripts/ci/soak-report.mjs soak-results --plan "$SOAK_PLAN" --out soak-report.md --json soak-report.json

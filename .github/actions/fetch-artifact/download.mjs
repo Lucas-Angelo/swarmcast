@@ -1,6 +1,7 @@
 // Try 1 of fetch-artifact (.github/actions/fetch-artifact/action.yml): actions/download-artifact,
-// run as a child process with a time limit that follows the artifacts' size and a cut when the
-// download stops making progress.
+// run as a child process with a time limit of its own and a cut when the download stops making
+// progress, into a folder of its own that is moved into the destination only when the download
+// finished (place.mjs).
 //
 // A composite action's steps cannot have a timeout-minutes; they share what is left of the calling
 // step's (.github/workflows/README.md, "Artifact uploads"). When download-artifact ran as such a
@@ -9,41 +10,27 @@
 // nothing for 599 s, until "The action has timed out" ended try 1 and, in the same instant, every
 // step after it (the diagnostics in 7 ms, try 2 skipped). So download-artifact runs here, from the
 // copy ../fetch-remote fetches, under limits of its own: LIST_S to list the artifacts
-// (`- <name> (ID: <id>, Size: <bytes>, ...)`); then the whole try has, from its start,
-// LIMIT_BASE_S, PER_ARTIFACT_S per artifact and the bytes at RATE_FLOOR_BPS (or the caller's
-// cap), and it is cut off as soon as STALL_S pass without a byte more in the destination. Try 2
-// (rest.sh fetch, another client and route) then has the same budget in what is left of the
-// caller's limit.
+// (`- <name> (ID: <id>, Size: <bytes>, ...)`); then the whole try has, from its start, the
+// caller's `max-try-seconds`, the room its step leaves each try ((step limit - 110 s - the step's
+// other work) / 2), and it is cut off as soon as STALL_S pass without a byte more. The stall cut is
+// the guard against a download that hangs; a slow one that keeps moving may use the whole room:
+// release rehearsal 44603650109 cut the crates' 82 MB off at a size-based 50 s with 73.5 MB
+// written (the blob store sent about 1.5 MB/s, and 0.8 MB/s to try 2). Try 2 (rest.sh fetch,
+// another client and route) has the same limit.
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { placeInto, removeStage, stageFor } from './place.mjs';
 
 const isWin = process.platform === 'win32';
 
-/**
- * The slowest rate a working download is given, in bytes per second. In 60 pipeline runs before
- * release rehearsal 44018931697, download-artifact got 11-64 MB/s (335 MB in 15-22 s, 2.4 GB in
- * 38-55 s) and its slowest step that worked, 335 MB in 91 s with the action's fetch and the unpack,
- * still ran at 3.7 MB/s (.github/workflows/README.md, "Artifact downloads"). rest.sh's
- * RATE_FLOOR_BPS is the same number (fetch-artifact.test.ts checks).
- */
-export const RATE_FLOOR_BPS = 4_000_000;
-/** Seconds a try has over its bytes at RATE_FLOOR_BPS: the requests and the unzip's end... */
-export const LIMIT_BASE_S = 45;
-/** ...and over that, for each artifact (its own request, redirect and unzip). */
-export const PER_ARTIFACT_S = 1;
 /** Seconds without a byte more in the destination after which a try has stalled. */
 export const STALL_S = 30;
 /** Seconds for download-artifact to start and list the artifacts (it takes about 1 s). */
 export const LIST_S = 30;
 /** How often the destination is measured. */
 export const POLL_MS = 2_000;
-
-/** A try's time limit, in ms, for `count` artifacts of `bytes` in all. */
-export function tryLimitMs(bytes, count = 1) {
-  return (LIMIT_BASE_S + PER_ARTIFACT_S * count + Math.ceil(bytes / RATE_FLOOR_BPS)) * 1000;
-}
 
 /** { name, id, bytes } from download-artifact's `- <name> (ID: <id>, Size: <bytes>, ...)` line, or null. */
 export function parseListed(line) {
@@ -77,17 +64,18 @@ export function bytesUnder(dir) {
 /**
  * The limits of one try, fed the clock and the destination's size: `listed` for each artifact
  * download-artifact says it downloads, `check` at every measurement; `check` returns why the try
- * must be cut off, or null. `capMs` (optional) bounds the whole try from its start, for a caller
- * whose own step limit is smaller than two tries at RATE_FLOOR_BPS (a saved copy of gigabytes).
+ * must be cut off, or null. `limitMs` bounds the whole try from its start (the caller's
+ * `max-try-seconds`); STALL_S without a byte more ends it sooner.
  */
 export class Watchdog {
-  constructor(now, size, capMs = Infinity) {
+  constructor(now, size, limitMs) {
+    if (!(limitMs > 0)) throw new Error(`a try needs a time limit (max-try-seconds), got ${limitMs}`);
     this.start = now;
-    this.capMs = capMs;
+    this.limitMs = limitMs;
     this.listedAt = null;
     this.bytes = 0;
     this.count = 0;
-    this.deadline = now + Math.min(LIST_S * 1000, capMs);
+    this.deadline = now + Math.min(LIST_S * 1000, limitMs);
     this.size = size;
     this.progressAt = now;
   }
@@ -96,7 +84,7 @@ export class Watchdog {
     this.bytes += bytes;
     this.count += 1;
     this.listedAt ??= now;
-    this.deadline = this.start + Math.min(tryLimitMs(this.bytes, this.count), this.capMs);
+    this.deadline = this.start + this.limitMs;
   }
 
   check(size, now) {
@@ -151,17 +139,17 @@ export function childEnv(env, { name = '', pattern = '', dest, mergeMultiple = '
 }
 
 /**
- * Runs download-artifact's `script` with `env` into `dest` under the Watchdog's limits (`capMs`).
+ * Runs download-artifact's `script` with `env` into `dest` under the Watchdog's limits (`limitMs`).
  * Resolves { ok, why, bytes, seconds }: `why` says what went wrong (empty when ok), `bytes` what
  * download-artifact listed. Its `::error` lines become warnings: try 2 may still get the files.
  * `clock` (now, every) is injectable, so the tests decide when time passes.
  */
-export function downloadOnce({ script, env, dest, capMs = Infinity, node = process.execPath, clock = realClock, log = console.log }) {
+export function downloadOnce({ script, env, dest, limitMs, node = process.execPath, clock = realClock, log = console.log }) {
   return new Promise((resolve) => {
     const outFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fetch-artifact-')), 'output');
     fs.writeFileSync(outFile, '');
     const start = clock.now();
-    const dog = new Watchdog(start, bytesUnder(dest), capMs);
+    const dog = new Watchdog(start, bytesUnder(dest), limitMs);
     // Its own process group, so a kill also stops whatever it started.
     const child = spawn(node, [script], { env: { ...env, GITHUB_OUTPUT: outFile }, stdio: ['ignore', 'pipe', 'pipe'], detached: !isWin });
     let cut = '';
@@ -200,4 +188,28 @@ export function downloadOnce({ script, env, dest, capMs = Infinity, node = proce
       resolve({ ok: !why, why, bytes: dog.bytes, seconds });
     });
   });
+}
+
+/**
+ * Try 1 as fetch-artifact runs it: downloadOnce into a new folder next to `dest` (`env(stage)`
+ * gives download-artifact its inputs with that folder as its path), and only when it finished, its
+ * files moved into `dest`. A try that failed, stalled or was cut off leaves `dest` as it was:
+ * download-artifact unzips as the bytes arrive, so a cut-off try has a part of each file written,
+ * and nothing may take that for the artifact. Same result as downloadOnce.
+ */
+export async function downloadPlaced({ script, env, dest, limitMs, node = process.execPath, clock = realClock, log = console.log }) {
+  const stage = stageFor(dest);
+  try {
+    const result = await downloadOnce({ script, env: env(stage), dest: stage, limitMs, node, clock, log });
+    if (result.ok) {
+      try {
+        placeInto(stage, dest);
+      } catch (err) {
+        return { ...result, ok: false, why: `could not move the download into ${dest} (${err.message})` };
+      }
+    }
+    return result;
+  } finally {
+    removeStage(stage, log);
+  }
 }

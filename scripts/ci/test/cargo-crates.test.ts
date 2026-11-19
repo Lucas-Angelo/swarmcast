@@ -2,13 +2,26 @@
 // instead of crates.io. Which crates a Cargo.lock needs and the artifact's name for it, the check
 // of a registry against Cargo.lock's checksums, which failed `cargo fetch` the cold path tries
 // again (the network, such as crates.io's CDN answering 206 in release rehearsal 42799834042)
-// and which it does not.
+// and which it does not, and the restore of the artifact's tar: unpacked apart and checked, so a
+// tar cut short never leaves a crate in the registry (release rehearsal 44603650109: a half
+// written wasm-bindgen .crate broke the cold path's `cargo fetch`).
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { FETCH_PAUSES_MS, artifactName, checkCrates, fetchWithTries, lockedCrates, networkError } from '../../../.github/scripts/cargo-crates.mjs';
+import {
+  FETCH_PAUSES_MS,
+  InfraError,
+  artifactName,
+  checkCrates,
+  fetchWithTries,
+  lockedCrates,
+  networkError,
+  restoreCrates,
+  unplace,
+} from '../../../.github/scripts/cargo-crates.mjs';
 
 const CRATES_IO = 'registry+https://github.com/rust-lang/crates.io-index';
 const REGISTRY_DIR = 'index.crates.io-1949cf8c6b5b557f';
@@ -141,6 +154,112 @@ describe('checkCrates', () => {
   });
 });
 
+/** The crates of an artifact whose last one, like wasm-bindgen in run 44603650109, is the largest. */
+const ARTIFACT_PACKAGES: [string, string, string][] = [...PACKAGES, ['wasm-bindgen', '0.2.129', 'w'.repeat(64 * 1024)]];
+
+/**
+ * The artifact's tar as `cargo-crates.mjs pack` makes it (index/ and cache/ of the crates.io
+ * folder), of the .crate files `files`; `cutInside` cuts it in the middle of that crate's bytes.
+ */
+function artifactTar(files: [string, string, string][], cutInside?: string) {
+  const src = fs.mkdtempSync(path.join(dir, 'src-'));
+  fs.mkdirSync(path.join(src, 'index', REGISTRY_DIR), { recursive: true });
+  fs.writeFileSync(path.join(src, 'index', REGISTRY_DIR, 'config.json'), '{"dl":"https://static.crates.io/crates"}');
+  fs.mkdirSync(path.join(src, 'cache', REGISTRY_DIR), { recursive: true });
+  const names = files.map(([name, version, data]) => {
+    fs.writeFileSync(path.join(src, 'cache', REGISTRY_DIR, `${name}-${version}.crate`), data);
+    return `cache/${REGISTRY_DIR}/${name}-${version}.crate`;
+  });
+  const tarball = path.join(dir, `${path.basename(src)}.tar`);
+  const made = spawnSync('tar', ['-cf', tarball, '-C', src, `index/${REGISTRY_DIR}`, ...names]);
+  if (made.status !== 0) throw new Error(`tar -cf: ${made.stderr}`);
+  if (cutInside) {
+    const bytes = fs.readFileSync(tarball);
+    const at = bytes.indexOf(`${cutInside}.crate`);
+    if (at < 0) throw new Error(`${cutInside} is not in the tar`);
+    // Past its 512-byte header, a quarter into its bytes: as a download cut off mid-file leaves it.
+    fs.writeFileSync(tarball, bytes.subarray(0, at - (at % 512) + 512 + 16 * 1024));
+  }
+  return tarball;
+}
+
+/** Every file under `root`, relative to it. */
+function filesUnder(root: string): string[] {
+  if (!fs.existsSync(root)) return [];
+  return fs.readdirSync(root, { recursive: true, withFileTypes: true }).filter((e) => e.isFile()).map((e) => path.relative(root, path.join(e.parentPath, e.name))).sort();
+}
+
+describe('restoreCrates', () => {
+  const crates = () => lockedCrates(lockfile(ARTIFACT_PACKAGES));
+  const home = () => path.join(dir, 'home');
+  const reg = () => path.join(home(), 'registry');
+  const stages = () => fs.readdirSync(home()).filter((n) => n.startsWith('.cargo-crates-'));
+
+  it('puts every crate of a whole, matching tar into the registry, next to what it held', () => {
+    // Arrange
+    const tarball = artifactTar(ARTIFACT_PACKAGES);
+    const kept = path.join(reg(), 'cache', REGISTRY_DIR, 'other-1.0.0.crate');
+    fs.mkdirSync(path.dirname(kept), { recursive: true });
+    fs.writeFileSync(kept, 'from rust-cache');
+
+    // Act
+    const result = restoreCrates({ tarball, registry: reg(), crates: crates() });
+
+    // Assert
+    expect(result).toMatchObject({ ok: true, why: '' });
+    expect(result.placed).toHaveLength(4);
+    expect(checkCrates(crates(), reg())).toMatchObject({ dir: REGISTRY_DIR, ok: 3, missing: [], wrong: [] });
+    expect(fs.readFileSync(kept, 'utf8')).toBe('from rust-cache');
+    expect(stages()).toEqual([]);
+  });
+
+  it('never unpacks a tar cut short into the registry, not even the crates before the cut (run 44603650109)', () => {
+    // Arrange
+    const tarball = artifactTar(ARTIFACT_PACKAGES, 'wasm-bindgen-0.2.129');
+    fs.mkdirSync(reg(), { recursive: true });
+
+    // Act
+    const result = restoreCrates({ tarball, registry: reg(), crates: crates() });
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.why).toMatch(/^the tar does not read to its end \(.+\); nothing of it was used$/);
+    expect(result.placed).toEqual([]);
+    expect(filesUnder(reg())).toEqual([]);
+    expect(stages()).toEqual([]);
+  });
+
+  it('puts nothing into the registry from a whole tar with a crate that is not the one Cargo.lock records', () => {
+    // Arrange
+    const tarball = artifactTar([...PACKAGES, ['wasm-bindgen', '0.2.129', 'not these bytes']]);
+    fs.mkdirSync(reg(), { recursive: true });
+
+    // Act
+    const result = restoreCrates({ tarball, registry: reg(), crates: crates() });
+
+    // Assert
+    expect(result.ok).toBe(false);
+    expect(result.why).toBe("1 with another checksum than Cargo.lock's (wasm-bindgen 0.2.129); nothing of it was used");
+    expect(filesUnder(reg())).toEqual([]);
+    expect(stages()).toEqual([]);
+  });
+
+  it('takes out again what it put in, for a restore whose offline check then failed', () => {
+    // Arrange
+    const tarball = artifactTar(ARTIFACT_PACKAGES);
+    const kept = path.join(reg(), 'cache', REGISTRY_DIR, 'other-1.0.0.crate');
+    fs.mkdirSync(path.dirname(kept), { recursive: true });
+    fs.writeFileSync(kept, 'from rust-cache');
+    const { placed } = restoreCrates({ tarball, registry: reg(), crates: crates() });
+
+    // Act
+    unplace(placed);
+
+    // Assert
+    expect(filesUnder(reg())).toEqual([path.join('cache', REGISTRY_DIR, 'other-1.0.0.crate')]);
+  });
+});
+
 /** The end of the failed `cargo metadata` of release rehearsal 42799834042 (linux-arm64 build). */
 const RUN_42799834042 = [
   '  Downloaded proc-macro2 v1.0.107',
@@ -263,6 +382,7 @@ describe('fetchWithTries', () => {
 
     // Assert
     await expect(fetching).rejects.toThrow(/not on the network: not tried again/);
+    await expect(fetching).rejects.not.toBeInstanceOf(InfraError);
     expect(f.runs).toHaveLength(1);
   });
 
@@ -274,7 +394,8 @@ describe('fetchWithTries', () => {
     const fetching = fetchWithTries(f);
 
     // Assert
-    await expect(fetching).rejects.toThrow(/failed 3 times on the network/);
+    await expect(fetching).rejects.toThrow(/^infra: cargo fetch from crates\.io failed 3 times on the network; last: error: failed to download from/);
+    await expect(fetching).rejects.toBeInstanceOf(InfraError);
     expect(f.runs).toHaveLength(3);
     expect(f.waited).toEqual(FETCH_PAUSES_MS);
   });

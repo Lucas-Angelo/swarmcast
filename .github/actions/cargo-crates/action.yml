@@ -3,11 +3,13 @@ description: >-
   Every crate of apps/desktop/src-tauri/Cargo.lock into $CARGO_HOME/registry from the artifact an
   earlier run of this repository saved on the default branch or this run's own branch (the build
   stage saves it once per Cargo.lock and toolchain: ./.github/actions/cargo-crates/save), each
-  .crate checked against Cargo.lock's SHA-256; then CARGO_NET_OFFLINE=true for the rest of the
-  job, so no cargo command asks crates.io. When there is no such artifact, or it cannot be
-  downloaded or does not match, the crates come from crates.io once, with tries (the cold path,
+  .crate checked against Cargo.lock's SHA-256 before anything goes into the registry; then
+  CARGO_NET_OFFLINE=true for the rest of the job, so no cargo command asks crates.io. When there
+  is no such artifact, or it cannot be downloaded or does not match, the registry is left as it
+  was and the crates come from crates.io once, with tries (the cold path, the last resort:
   .github/scripts/cargo-crates.mjs fetch), and cargo is offline after that too. Fails only when
-  the cold path fails. Called by ./.github/actions/setup-rust; the job needs `actions: read`.
+  the cold path fails: `Rust crates (infrastructure)` when crates.io or the network did not
+  answer. Called by ./.github/actions/setup-rust; the job needs `actions: read`.
   .github/workflows/README.md, "Rust crates".
 
 runs:
@@ -29,6 +31,7 @@ runs:
         node .github/scripts/cargo-crates.mjs find "$name" >>"$GITHUB_OUTPUT" ||
           echo "::warning title=cargo-crates::could not look up the artifact $name; the crates come from crates.io"
     - name: Download them
+      id: download
       if: steps.find.outputs.run-id != ''
       continue-on-error: true
       uses: ./.github/actions/fetch-artifact
@@ -37,34 +40,39 @@ runs:
         path: ${{ runner.temp }}/cargo-crates
         run-id: ${{ steps.find.outputs.run-id }}
         github-token: ${{ github.token }}
-        # About 82 MB, 7 s. 50 s per try: both tries and the diagnostics (at most 2 x 50 + 110 s)
-        # leave setup-rust's 8 minutes the toolchain's cold path (4 minutes).
-        max-try-seconds: '50'
+        # About 82 MB, 7 s at the usual rate; release rehearsal 44603650109 got 1.5 MB/s, then
+        # 0.8 MB/s. 150 s per try: a download that keeps moving at 0.6 MB/s still ends in one,
+        # and a stalled one is cut after 30 s. Both tries and the diagnostics (at most
+        # 2 x 150 + 110 s) leave setup-rust's 12 minutes the warm toolchain, rust-cache, the
+        # crates' cold path (3.7 minutes) and the .debs.
+        max-try-seconds: '150'
         required: 'false'
+    # The tar is used only when fetch-artifact got it whole, with the digest recorded at upload
+    # (a failed download leaves nothing in its path); `restore` unpacks it into a folder of its
+    # own and moves the crates in only when each has Cargo.lock's checksum, so the registry never
+    # holds a crate cut short, which cargo would trust (release rehearsal 44603650109).
     - name: Into the registry, checked; else from crates.io; then cargo offline
       shell: bash
       env:
         RUN: ${{ steps.find.outputs.run-id }}
+        DOWNLOADED: ${{ steps.download.outcome == 'success' }}
       run: |
         tarball="$RUNNER_TEMP/cargo-crates/cargo-crates.tar"
-        registry="${CARGO_HOME:-$HOME/.cargo}/registry"
-        # Git Bash's GNU tar reads "D:\..." as host:path; give it /d/... paths.
-        if [ "$RUNNER_OS" = Windows ]; then tarball="$(cygpath -u "$tarball")" registry="$(cygpath -u "$registry")"; fi
         restored=false
-        if [ -f "$tarball" ]; then
-          mkdir -p "$registry"
-          if tar -xf "$tarball" -C "$registry" && node .github/scripts/cargo-crates.mjs check; then
+        if [ "$DOWNLOADED" = true ] && [ -f "$tarball" ]; then
+          mb=$(($(wc -c <"$tarball") / 1000000))
+          if node .github/scripts/cargo-crates.mjs restore "$tarball"; then
             restored=true
-            echo "Rust crates: from run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT ($(($(wc -c <"$tarball") / 1000000)) MB)"
+            echo "Rust crates: from run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT ($mb MB)"
           else
-            echo "::warning title=cargo-crates::run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT did not give every crate of Cargo.lock; they come from crates.io"
+            echo "::warning title=cargo-crates::run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT did not give every crate of Cargo.lock; nothing of it is in the registry, and they come from crates.io"
           fi
-          rm -f "$tarball"
         elif [ -n "$RUN" ]; then
           echo "::warning title=cargo-crates::run $RUN's artifact $SC_CARGO_CRATES_ARTIFACT could not be downloaded; the crates come from crates.io"
         else
           echo "Rust crates: no artifact $SC_CARGO_CRATES_ARTIFACT yet; they come from crates.io (cold)"
         fi
+        rm -rf "$RUNNER_TEMP/cargo-crates"
         if [ "$restored" != true ]; then
           node .github/scripts/cargo-crates.mjs fetch || exit 1
           node .github/scripts/cargo-crates.mjs check || exit 1

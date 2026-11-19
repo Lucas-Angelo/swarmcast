@@ -155,7 +155,7 @@ jobs:
       # profile's two variables, in rust-cache's step only): build A is a test-profile build and
       # finds its crates compiled; the installers keep Cargo.toml's profile (the check below).
       - uses: ./.github/actions/setup-rust
-        timeout-minutes: 8
+        timeout-minutes: 12
         with:
           cache-key: ${{ matrix.target }}
           targets: ${{ matrix.rust-target || '' }}
@@ -175,6 +175,7 @@ jobs:
         timeout-minutes: 10
         with:
           names: ${{ matrix.target == 'windows-x64' && 'pkg-windows-x64' || 'web-dist' }}
+          max-try-seconds: '225'
       - name: Version
         run: echo "VERSION=$(node -p "require('./package.json').version")" >> "$GITHUB_ENV"
 
@@ -395,6 +396,7 @@ jobs:
         if: ${{ !cancelled() && steps.setup.outcome == 'success' && matrix.preflight }}
         with:
           names: pkg-${{ matrix.target }}
+          max-try-seconds: '225'
       # No Playwright browser download: verify.mjs --chrome drives the Google Chrome that the x64
       # runner images ship. Time limits on this and the checks below: 2 to 4 times their slowest
       # run; one that runs out fails, so the logs are still uploaded (a job that runs out is
@@ -415,6 +417,7 @@ jobs:
         with:
           name: desktop-${{ matrix.target }}
           path: release/desktop
+          max-try-seconds: '225'
       - uses: ./.github/actions/fetch-artifact
         id: update-test
         timeout-minutes: 10
@@ -422,6 +425,7 @@ jobs:
         with:
           name: update-test-${{ matrix.target }}
           path: release/update-test
+          max-try-seconds: '225'
       # The AppImage runs first, with only the host libraries the install guide lists. The .deb
       # pulls its own libraries: apt-debs.sh checks here that the job's saved .deb set holds them
       # (the Ubuntu archive only when it does not fit this runner image) and leaves apt offline
