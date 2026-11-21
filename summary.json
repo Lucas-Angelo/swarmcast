@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "generatedAt": "2026-11-20T14:03:12.816Z",
+  "generatedAt": "2026-11-21T13:29:46.645Z",
   "repo": "Lucas-Angelo/swarmcast",
   "downloads": {
     "total": 453,
@@ -16,9 +16,9 @@
     "about": 450
   },
   "apps": {
-    "week": 60,
-    "checks": 190,
-    "days": 7,
+    "week": 50,
+    "checks": 154,
+    "days": 7.1,
     "partial": false,
     "checksPerApp": 3
   },
