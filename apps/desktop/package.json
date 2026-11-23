@@ -9,6 +9,6 @@
     "mock": "node test/mock-server.mjs --desktop"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "~2.12.4"
+    "@tauri-apps/cli": "~2.12.6"
   }
 }
